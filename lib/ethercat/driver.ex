@@ -10,23 +10,42 @@ defmodule Ethercat.Driver do
       @behaviour Ethercat.Driver.Callbacks
       Module.register_attribute(__MODULE__, :signals, accumulate: true)
 
+      @before_compile Ethercat.Driver
+
       import Ethercat.Driver, only: [identity: 3, input: 2, input: 3, output: 2, output: 3]
 
+      @impl true
+      def configure(_device, _options), do: :ok
+
+      @impl true
+      def on_preop(_device, _options), do: :ok
+
+      @impl true
+      def on_safeop(_device, _options), do: :ok
+
+      @impl true
+      def on_op(_device, _options), do: :ok
+
+      @impl true
+      def terminate(_device, _reason), do: :ok
+
+      defoverridable configure: 2, on_preop: 2, on_safeop: 2, on_op: 2, terminate: 2
+    end
+  end
+
+  defmacro __before_compile__(env) do
+    signals = Module.get_attribute(env.module, :signals) |> Enum.reverse()
+
+    quote do
+      @impl true
       def signals do
-        @signals
-        |> Enum.reverse()
+        unquote(Macro.escape(signals))
         |> Enum.map(fn {name, dir, type, default} ->
           %{name: name, direction: dir, type: type, default: default}
         end)
       end
 
-      def configure(_device, _options), do: :ok
-      def on_preop(_device, _options), do: :ok
-      def on_safeop(_device, _options), do: :ok
-      def on_op(_device, _options), do: :ok
-      def terminate(_device, _reason), do: :ok
-
-      defoverridable configure: 2, on_preop: 2, on_safeop: 2, on_op: 2, terminate: 2, signals: 0
+      defoverridable signals: 0
     end
   end
 
@@ -34,6 +53,7 @@ defmodule Ethercat.Driver do
 
   defmacro identity(vendor_id, product_code, revision) do
     quote do
+      @impl true
       def identity do
         %{
           vendor_id: unquote(vendor_id),

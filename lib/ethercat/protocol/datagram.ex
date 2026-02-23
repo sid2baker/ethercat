@@ -5,6 +5,8 @@ defmodule Ethercat.Protocol.Datagram do
   without having to manipulate binaries directly.
   """
 
+  import Bitwise
+
   @typedoc """
   Working counter as defined in ETG.1000.
   """
@@ -46,12 +48,13 @@ defmodule Ethercat.Protocol.Datagram do
     armw: 13
   }
 
-  defstruct [:command, :index, :address, :length, :data, :working_counter]
+  defstruct [:command, :index, :adp, :ado, :length, :data, :working_counter]
 
   @type t :: %__MODULE__{
           command: command(),
           index: non_neg_integer(),
-          address: non_neg_integer(),
+          adp: integer(),
+          ado: non_neg_integer(),
           length: non_neg_integer(),
           data: binary(),
           working_counter: working_counter() | nil
@@ -65,22 +68,85 @@ defmodule Ethercat.Protocol.Datagram do
     command = Map.fetch!(@command_map, dg.command)
     wc = dg.working_counter || 0
     data = dg.data || <<>>
+    length_field = band(dg.length, 0x07FF)
+
+    adp = dg.adp || 0
+    ado = dg.ado || 0
 
     <<
-      command::4,
+      command::8,
       dg.index::8,
-      dg.address::16-little,
-      dg.length::11,
-      0::5,
+      adp::16-little-signed,
+      ado::16-little,
+      length_field::16-little,
+      0::16,
       data::binary,
       wc::16-little
     >>
   end
 
   @doc """
-  Convenience constructor for LRW datagrams.
+  Broadcast read.
   """
-  def lrw(address, length, data) do
-    %__MODULE__{command: :lrw, address: address, length: length, data: data, index: 0}
+  def brd(offset, length) do
+    data = :binary.copy(<<0>>, length)
+    build(:brd, 0, offset, length, data)
   end
+
+  @doc """
+  Auto-increment physical write.
+  """
+  def apwr(adp, offset, data) do
+    build(:apwr, adp, offset, byte_size(data), data)
+  end
+
+  @doc """
+  Configured address physical read.
+  """
+  def fprd(station_address, offset, length) do
+    data = :binary.copy(<<0>>, length)
+    build(:fprd, station_address, offset, length, data)
+  end
+
+  @doc """
+  Configured address physical write.
+  """
+  def fpwr(station_address, offset, data) do
+    build(:fpwr, station_address, offset, byte_size(data), data)
+  end
+
+  @doc """
+  Configured address physical read/write.
+
+  Writes the provided data and returns the read-back data in the response.
+  """
+  def fprw(station_address, offset, data) do
+    build(:fprw, station_address, offset, byte_size(data), data)
+  end
+
+  @doc """
+  Logical write.
+  """
+  def lwr(logical_address, length, data) do
+    build(:lwr, 0, logical_address, length, data)
+  end
+
+  @doc """
+  Logical read.
+  """
+  def lrd(logical_address, length) do
+    data = :binary.copy(<<0>>, length)
+    build(:lrd, 0, logical_address, length, data)
+  end
+
+  defp build(command, adp, ado, length, data) when byte_size(data) == length do
+    %__MODULE__{command: command, adp: adp, ado: ado, length: length, data: data, index: 0}
+  end
+
+  defp build(_command, _adp, _ado, length, data) do
+    raise ArgumentError, "payload length mismatch: expected #{length} got #{byte_size(data)}"
+  end
+
+  @doc false
+  def command_map, do: @command_map
 end

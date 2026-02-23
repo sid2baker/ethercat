@@ -8,21 +8,22 @@ without needing physical hardware attached at all times.
 
 ## Quick Start
 
-```elixir
-config = %{
-  interface: "eth0",
-  devices: [
-    %{name: :example_device, position: 0, driver: Example.Driver}
-  ]
-}
-
-{:ok, bus} = Ethercat.start(config)
-{:error, :unknown_signal} = Ethercat.read(bus, :example_device, :channel_1)
+```
+# Quick finite IO test (no SIGTERM needed)
+mix run --no-start examples/io_quick.exs --interface enp0s31f6
 ```
 
-The `Example.Driver` module is authored with `use Ethercat.Driver` and declares
-inputs/outputs that will be mapped into the runtime directory. As the transport
-layer matures, these APIs will begin interacting with actual EtherCAT slaves.
+You will need `CAP_NET_RAW` (or root) on the specified interface. The example
+configures SyncManagers and FMMUs, then uses logical LWR/LRD datagrams to write
+EL2809 outputs and read EL1809 inputs.
+
+Useful flags:
+
+```
+mix run --no-start examples/io_quick.exs --interface enp0s31f6 --verbose
+mix run --no-start examples/io_quick.exs --interface enp0s31f6 --dump-sm --cycles 1
+mix run --no-start examples/io_quick.exs --interface enp0s31f6 --physical
+```
 
 ## Installation
 

@@ -8,7 +8,6 @@ defmodule Ethercat.Application do
     children = [
       {Registry, keys: :unique, name: Ethercat.Registry},
       {Registry, keys: :duplicate, name: Ethercat.SignalRegistry},
-      {Ethercat.TransportSupervisor, []},
       {Ethercat.MasterSupervisor, []}
     ]
 

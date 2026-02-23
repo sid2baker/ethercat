@@ -16,6 +16,17 @@ defmodule Ethercat.Master do
               reason: nil
   end
 
+  @doc false
+  def child_spec(arg) do
+    %{
+      id: __MODULE__,
+      start: {__MODULE__, :start_link, [arg]},
+      type: :worker,
+      restart: :permanent,
+      shutdown: 5000
+    }
+  end
+
   # -- Public API -----------------------------------------------------------
 
   @spec start(map()) :: {:ok, reference()} | {:error, term()}
