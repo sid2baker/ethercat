@@ -23,6 +23,7 @@ defmodule EtherCAT.MixProject do
     [
       {:telemetry, "~> 1.0"},
       {:telemetry_metrics, "~> 1.0"},
+      {:vintage_net, "~> 0.13"},
       {:usage_rules, "~> 1.1", only: [:dev]}
     ]
   end

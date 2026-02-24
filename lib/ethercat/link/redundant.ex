@@ -4,6 +4,9 @@ defmodule EtherCAT.Link.Redundant do
 
   Sends each frame on both sockets. Per-datagram merge picks the higher WKC.
 
+  Subscribes to VintageNet `lower_up` for proactive carrier detection
+  on both interfaces.
+
   ## States
 
     - `:idle`     — both sockets open
@@ -17,11 +20,9 @@ defmodule EtherCAT.Link.Redundant do
   alias EtherCAT.{Frame, Telemetry}
   alias EtherCAT.Link.Socket
 
-  @reconnect_interval 1_000
+  @debounce_interval 200
 
   defstruct [
-    :interface,
-    :backup_interface,
     :primary,
     :secondary,
     :idx,
@@ -39,19 +40,48 @@ defmodule EtherCAT.Link.Redundant do
     interface = Keyword.fetch!(opts, :interface)
     backup = Keyword.fetch!(opts, :backup_interface)
 
-    data = %__MODULE__{interface: interface, backup_interface: backup, idx: 0}
+    VintageNet.subscribe(["interface", interface, "lower_up"])
+    VintageNet.subscribe(["interface", backup, "lower_up"])
 
     with {:ok, pri} <- Socket.open(interface),
          {:ok, sec} <- Socket.open(backup) do
-      {:ok, :idle, %{data | primary: pri, secondary: sec}}
+      {:ok, :idle, %__MODULE__{primary: pri, secondary: sec, idx: 0}}
     else
       {:error, reason} -> {:stop, reason}
     end
   end
 
-  # -- idle -------------------------------------------------------------------
+  # -- VintageNet carrier detection (any state) --------------------------------
 
   @impl true
+  def handle_event(
+        :info,
+        {VintageNet, ["interface", ifname, "lower_up"], _old, false, _meta},
+        state,
+        data
+      ) do
+    Telemetry.socket_down(ifname, :carrier_lost)
+    handle_carrier_lost(ifname, state, data)
+  end
+
+  # Carrier restored — debounce before reconnecting (NICs flap on replug)
+  def handle_event(
+        :info,
+        {VintageNet, ["interface", _ifname, "lower_up"], _old, true, _meta},
+        state,
+        _data
+      )
+      when state in [:down, :degraded] do
+    {:keep_state_and_data, [{:state_timeout, @debounce_interval, :reconnect}]}
+  end
+
+  # Ignore other VintageNet messages
+  def handle_event(:info, {VintageNet, _, _, _, _}, _state, _data) do
+    :keep_state_and_data
+  end
+
+  # -- idle -------------------------------------------------------------------
+
   def handle_event(:enter, _old, :idle, _data), do: :keep_state_and_data
 
   def handle_event({:call, from}, {:transact, datagrams}, :idle, data) do
@@ -95,17 +125,15 @@ defmodule EtherCAT.Link.Redundant do
 
   # -- degraded ---------------------------------------------------------------
 
-  def handle_event(:enter, _old, :degraded, _data) do
-    {:keep_state_and_data, [{:state_timeout, @reconnect_interval, :reconnect}]}
-  end
+  def handle_event(:enter, _old, :degraded, _data), do: :keep_state_and_data
 
   def handle_event(:state_timeout, :reconnect, :degraded, data) do
     data = try_reconnect(data)
 
-    if data.primary && data.secondary do
+    if Socket.open?(data.primary) and Socket.open?(data.secondary) do
       {:next_state, :idle, data}
     else
-      {:keep_state, data, [{:state_timeout, @reconnect_interval, :reconnect}]}
+      {:keep_state, data}
     end
   end
 
@@ -116,16 +144,16 @@ defmodule EtherCAT.Link.Redundant do
   # -- down -------------------------------------------------------------------
 
   def handle_event(:enter, _old, :down, data) do
-    {:keep_state, close_sockets(data), [{:state_timeout, @reconnect_interval, :reconnect}]}
+    {:keep_state, close_sockets(data)}
   end
 
   def handle_event(:state_timeout, :reconnect, :down, data) do
     data = try_reconnect(data)
 
     cond do
-      data.primary && data.secondary -> {:next_state, :idle, data}
-      data.primary || data.secondary -> {:next_state, :degraded, data}
-      true -> {:keep_state, data, [{:state_timeout, @reconnect_interval, :reconnect}]}
+      Socket.open?(data.primary) and Socket.open?(data.secondary) -> {:next_state, :idle, data}
+      Socket.open?(data.primary) or Socket.open?(data.secondary) -> {:next_state, :degraded, data}
+      true -> :keep_state_and_data
     end
   end
 
@@ -136,6 +164,43 @@ defmodule EtherCAT.Link.Redundant do
   # -- catch-all --------------------------------------------------------------
 
   def handle_event(_type, _event, _state, _data), do: :keep_state_and_data
+
+  # -- carrier helpers ---------------------------------------------------------
+
+  defp handle_carrier_lost(ifname, state, data) do
+    {data, which} =
+      cond do
+        Socket.open?(data.primary) and data.primary.interface == ifname ->
+          {%{data | primary: Socket.close(data.primary)}, :primary}
+
+        Socket.open?(data.secondary) and data.secondary.interface == ifname ->
+          {%{data | secondary: Socket.close(data.secondary)}, :secondary}
+
+        true ->
+          {data, nil}
+      end
+
+    pri_up = Socket.open?(data.primary)
+    sec_up = Socket.open?(data.secondary)
+
+    case {state, pri_up, sec_up, which} do
+      {_, _, _, nil} ->
+        :keep_state_and_data
+
+      {{:awaiting, _}, false, false, _} ->
+        {:next_state, :down, data, [{:reply, data.from, {:error, :down}}]}
+
+      {{:awaiting, _}, _, _, _} ->
+        # Still have one socket — let the timeout or remaining recv complete
+        :keep_state_and_data
+
+      {_, false, false, _} ->
+        {:next_state, :down, data}
+
+      _ ->
+        {:next_state, :degraded, data}
+    end
+  end
 
   # -- sending ----------------------------------------------------------------
 
@@ -165,13 +230,13 @@ defmodule EtherCAT.Link.Redundant do
             Telemetry.frame_sent(data.primary.interface, :primary, size, tx)
             Telemetry.socket_down(data.secondary.interface, reason)
             Socket.recv_async(data.primary)
-            await(%{data | secondary: nil}, from, idx, :primary_only)
+            await(%{data | secondary: Socket.close(data.secondary)}, from, idx, :primary_only)
 
           {{:error, reason}, {:ok, tx}} ->
             Telemetry.frame_sent(data.secondary.interface, :secondary, size, tx)
             Telemetry.socket_down(data.primary.interface, reason)
             Socket.recv_async(data.secondary)
-            await(%{data | primary: nil}, from, idx, :secondary_only)
+            await(%{data | primary: Socket.close(data.primary)}, from, idx, :secondary_only)
 
           {{:error, r1}, {:error, r2}} ->
             Telemetry.socket_down(data.primary.interface, r1)
@@ -186,7 +251,7 @@ defmodule EtherCAT.Link.Redundant do
     stamped = Enum.map(datagrams, &%{&1 | idx: idx})
 
     {sock, port} =
-      if data.primary,
+      if Socket.open?(data.primary),
         do: {data.primary, :primary},
         else: {data.secondary, :secondary}
 
@@ -285,8 +350,8 @@ defmodule EtherCAT.Link.Redundant do
   defp reply_and_transition(data, reply) do
     next =
       cond do
-        data.primary && data.secondary -> :idle
-        data.primary || data.secondary -> :degraded
+        Socket.open?(data.primary) and Socket.open?(data.secondary) -> :idle
+        Socket.open?(data.primary) or Socket.open?(data.secondary) -> :degraded
         true -> :down
       end
 
@@ -295,15 +360,13 @@ defmodule EtherCAT.Link.Redundant do
   end
 
   defp close_sockets(data) do
-    if data.primary, do: Socket.close(data.primary)
-    if data.secondary, do: Socket.close(data.secondary)
-    %{data | primary: nil, secondary: nil}
+    %{data | primary: Socket.close(data.primary), secondary: Socket.close(data.secondary)}
   end
 
   defp try_reconnect(data) do
     data =
-      if is_nil(data.primary) do
-        case Socket.open(data.interface) do
+      if not Socket.open?(data.primary) and carrier_up?(data.primary.interface) do
+        case Socket.open(data.primary.interface) do
           {:ok, sock} ->
             Telemetry.socket_reconnected(sock.interface)
             %{data | primary: sock}
@@ -315,8 +378,8 @@ defmodule EtherCAT.Link.Redundant do
         data
       end
 
-    if is_nil(data.secondary) do
-      case Socket.open(data.backup_interface) do
+    if not Socket.open?(data.secondary) and carrier_up?(data.secondary.interface) do
+      case Socket.open(data.secondary.interface) do
         {:ok, sock} ->
           Telemetry.socket_reconnected(sock.interface)
           %{data | secondary: sock}
@@ -327,5 +390,9 @@ defmodule EtherCAT.Link.Redundant do
     else
       data
     end
+  end
+
+  defp carrier_up?(interface) do
+    VintageNet.get(["interface", interface, "lower_up"]) == true
   end
 end

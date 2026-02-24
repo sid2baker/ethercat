@@ -2,9 +2,9 @@ defmodule EtherCAT.Link.Socket do
   @moduledoc """
   Raw AF_PACKET socket wrapper for EtherCAT.
 
-  Encapsulates the Erlang `:socket` handle, interface index, interface name,
-  and source MAC into a single struct. All low-level socket operations
-  (`open`, `send`, `recv`, `close`) operate on this struct.
+  Uses VintageNet for MAC address lookup and `:net` for interface index.
+  All low-level socket operations (`open`, `send`, `recv`, `close`)
+  operate on the `%Socket{}` struct.
   """
 
   @af_packet 17
@@ -23,8 +23,8 @@ defmodule EtherCAT.Link.Socket do
   @doc "Open a raw AF_PACKET socket bound to the given interface."
   @spec open(String.t()) :: {:ok, t()} | {:error, term()}
   def open(interface) do
-    with {:ok, idx} <- ifindex(String.to_charlist(interface)),
-         {:ok, src_mac} <- read_mac(interface),
+    with {:ok, idx} <- ifindex(interface),
+         {:ok, src_mac} <- mac_address(interface),
          {:ok, raw} <- :socket.open(@af_packet, :raw, {:raw, @ethertype}),
          :ok <- :socket.bind(raw, sockaddr_ll(idx)) do
       enable_rx_timestamping(raw)
@@ -36,8 +36,6 @@ defmodule EtherCAT.Link.Socket do
          interface: interface,
          src_mac: src_mac
        }}
-    else
-      {:error, _} = err -> err
     end
   end
 
@@ -58,9 +56,7 @@ defmodule EtherCAT.Link.Socket do
   def recv(%__MODULE__{raw: raw}) do
     case :socket.recvmsg(raw, 0, 0, :nowait) do
       {:ok, msg} ->
-        data = msg_data(msg)
-        rx_at = extract_timestamp(msg)
-        {:ok, data, rx_at}
+        {:ok, msg_data(msg), extract_timestamp(msg)}
 
       {:select, _} = sel ->
         sel
@@ -85,13 +81,22 @@ defmodule EtherCAT.Link.Socket do
     end
   end
 
-  @doc "Close the underlying socket."
-  @spec close(t()) :: :ok
-  def close(%__MODULE__{raw: raw}), do: :socket.close(raw)
+  @doc "Close the underlying socket. Returns the struct with `raw` set to `nil`."
+  @spec close(t()) :: t()
+  def close(%__MODULE__{raw: nil} = sock), do: sock
+
+  def close(%__MODULE__{raw: raw} = sock) do
+    :socket.close(raw)
+    %{sock | raw: nil}
+  end
+
+  @doc "Returns `true` when the socket handle is open."
+  @spec open?(t()) :: boolean()
+  def open?(%__MODULE__{raw: nil}), do: false
+  def open?(%__MODULE__{}), do: true
 
   # -- timestamp support ------------------------------------------------------
 
-  # Best-effort enable SO_TIMESTAMPING for RX software timestamps.
   # SOL_SOCKET=1, SO_TIMESTAMPING=37
   # Flags: SOF_TIMESTAMPING_RX_SOFTWARE(0x08) | SOF_TIMESTAMPING_SOFTWARE(0x10) = 0x18
   defp enable_rx_timestamping(raw) do
@@ -100,9 +105,7 @@ defmodule EtherCAT.Link.Socket do
     _, _ -> :ok
   end
 
-  # Extract RX timestamp from recvmsg ancillary data.
-  # SOL_SOCKET=1, SCM_TIMESTAMPING=37. Kernel delivers a struct with
-  # three timespecs; the software timestamp is the first one.
+  # SOL_SOCKET=1, SCM_TIMESTAMPING=37
   defp extract_timestamp(%{ctrl: ctrl}) when is_list(ctrl) do
     case Enum.find(ctrl, &match?(%{level: 1, type: 37}, &1)) do
       %{data: <<sec::native-64, nsec::native-64, _::binary>>} ->
@@ -120,35 +123,31 @@ defmodule EtherCAT.Link.Socket do
 
   # -- interface helpers ------------------------------------------------------
 
-  defp ifindex(name) do
-    case :net.getifaddrs(%{family: :packet}) do
-      {:ok, addrs} ->
-        case Enum.find(addrs, &(&1.name == name)) do
-          %{addr: addr} -> {:ok, addr.ifindex}
-          nil -> {:error, {:interface_not_found, name}}
-        end
-
-      {:error, _} = err ->
-        err
+  defp ifindex(interface) do
+    case :net.if_name2index(String.to_charlist(interface)) do
+      {:ok, _idx} = ok -> ok
+      {:error, _} = err -> err
     end
   end
 
-  defp read_mac(interface) do
-    path = "/sys/class/net/#{interface}/address"
+  defp mac_address(interface) do
+    case VintageNet.get(["interface", interface, "mac_address"]) do
+      mac_str when is_binary(mac_str) ->
+        mac =
+          mac_str
+          |> String.split(":")
+          |> Enum.map(&String.to_integer(&1, 16))
+          |> :binary.list_to_bin()
 
-    with {:ok, contents} <- File.read(path) do
-      mac =
-        contents
-        |> String.trim()
-        |> String.split(":")
-        |> Enum.map(&String.to_integer(&1, 16))
-        |> :binary.list_to_bin()
+        {:ok, mac}
 
-      {:ok, mac}
+      nil ->
+        {:error, {:no_mac_address, interface}}
     end
   end
 
-  # Build a sockaddr_ll binary for AF_PACKET bind/sendto.
+  # -- sockaddr_ll ------------------------------------------------------------
+
   # struct sockaddr_ll fields after family: protocol(16), ifindex(32),
   # hatype(16), pkttype(8), halen(8), addr(8).
   defp sockaddr_ll(ifindex, mac \\ <<0::48>>) do

@@ -6,7 +6,10 @@ defmodule EtherCAT.Link.Normal do
 
     - `:idle`     — socket open, ready for transactions
     - `:awaiting` — frame sent, waiting for response (new calls postponed)
-    - `:down`     — socket lost, reconnecting every 1s
+    - `:down`     — socket lost, waiting for carrier
+
+  Subscribes to VintageNet `lower_up` property for proactive carrier
+  detection — transitions to `:down` immediately when the cable is pulled.
   """
 
   @behaviour :gen_statem
@@ -14,9 +17,9 @@ defmodule EtherCAT.Link.Normal do
   alias EtherCAT.{Frame, Telemetry}
   alias EtherCAT.Link.Socket
 
-  @reconnect_interval 1_000
+  @debounce_interval 200
 
-  defstruct [:interface, :sock, :idx, :from, :expected_idx, :tx_at]
+  defstruct [:sock, :idx, :from, :expected_idx, :tx_at]
 
   @impl true
   def callback_mode, do: [:handle_event_function, :state_enter]
@@ -24,20 +27,55 @@ defmodule EtherCAT.Link.Normal do
   @impl true
   def init(opts) do
     interface = Keyword.fetch!(opts, :interface)
-    data = %__MODULE__{interface: interface, idx: 0}
+    VintageNet.subscribe(["interface", interface, "lower_up"])
 
     case Socket.open(interface) do
       {:ok, sock} ->
-        {:ok, :idle, %{data | sock: sock}}
+        {:ok, :idle, %__MODULE__{sock: sock, idx: 0}}
 
       {:error, reason} ->
         {:stop, reason}
     end
   end
 
-  # -- idle -------------------------------------------------------------------
+  # -- VintageNet carrier detection (any state) --------------------------------
 
   @impl true
+  def handle_event(
+        :info,
+        {VintageNet, ["interface", _, "lower_up"], _old, false, _meta},
+        state,
+        data
+      )
+      when state != :down do
+    Telemetry.socket_down(data.sock.interface, :carrier_lost)
+
+    case state do
+      :awaiting ->
+        {:next_state, :down, data, [{:reply, data.from, {:error, :down}}]}
+
+      :idle ->
+        {:next_state, :down, data}
+    end
+  end
+
+  # Carrier restored — debounce before reconnecting (NICs flap on replug)
+  def handle_event(
+        :info,
+        {VintageNet, ["interface", _, "lower_up"], _old, true, _meta},
+        :down,
+        _data
+      ) do
+    {:keep_state_and_data, [{:state_timeout, @debounce_interval, :reconnect}]}
+  end
+
+  # Ignore other VintageNet messages
+  def handle_event(:info, {VintageNet, _, _, _, _}, _state, _data) do
+    :keep_state_and_data
+  end
+
+  # -- idle -------------------------------------------------------------------
+
   def handle_event(:enter, _old, :idle, _data), do: :keep_state_and_data
 
   def handle_event({:call, from}, {:transact, datagrams}, :idle, data) do
@@ -66,7 +104,7 @@ defmodule EtherCAT.Link.Normal do
   def handle_event(:enter, _old, :awaiting, _data), do: :keep_state_and_data
 
   def handle_event({:call, _from}, {:transact, _}, :awaiting, data) do
-    Telemetry.transact_postponed(data.interface)
+    Telemetry.transact_postponed(data.sock.interface)
     {:keep_state_and_data, [:postpone]}
   end
 
@@ -97,18 +135,22 @@ defmodule EtherCAT.Link.Normal do
   # -- down -------------------------------------------------------------------
 
   def handle_event(:enter, _old, :down, data) do
-    if data.sock, do: Socket.close(data.sock)
-    {:keep_state, %{data | sock: nil}, [{:state_timeout, @reconnect_interval, :reconnect}]}
+    sock = Socket.close(data.sock)
+    {:keep_state, %{data | sock: sock}}
   end
 
   def handle_event(:state_timeout, :reconnect, :down, data) do
-    case Socket.open(data.interface) do
-      {:ok, sock} ->
-        Telemetry.socket_reconnected(sock.interface)
-        {:next_state, :idle, %{data | sock: sock}}
+    if carrier_up?(data.sock.interface) do
+      case Socket.open(data.sock.interface) do
+        {:ok, sock} ->
+          Telemetry.socket_reconnected(sock.interface)
+          {:next_state, :idle, %{data | sock: sock}}
 
-      {:error, _} ->
-        {:keep_state_and_data, [{:state_timeout, @reconnect_interval, :reconnect}]}
+        {:error, _} ->
+          :keep_state_and_data
+      end
+    else
+      :keep_state_and_data
     end
   end
 
@@ -145,5 +187,9 @@ defmodule EtherCAT.Link.Normal do
   defp reply_and_idle(data, reply) do
     {:next_state, :idle, %{data | from: nil, expected_idx: nil, tx_at: nil},
      [{:reply, data.from, reply}]}
+  end
+
+  defp carrier_up?(interface) do
+    VintageNet.get(["interface", interface, "lower_up"]) == true
   end
 end
