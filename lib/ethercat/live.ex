@@ -32,7 +32,7 @@ defmodule EtherCAT.Live do
       :ok
   """
 
-  alias EtherCAT.{Command, Link}
+  alias EtherCAT.{Command, Link, SII}
 
   import Bitwise
 
@@ -173,6 +173,18 @@ defmodule EtherCAT.Live do
          {:ok, <<build::16-little>>} <- read_reg(link, station, 0x0002, 2) do
       {:ok, %{type: esc_type, revision: revision, build: build}}
     end
+  end
+
+  @doc """
+  Read `word_count` words from a slave's SII EEPROM.
+
+      iex> read_eeprom(link, 0x1000, 0x00, 64)
+      {:ok, <<...>>}
+  """
+  @spec read_eeprom(pid(), non_neg_integer(), non_neg_integer(), pos_integer()) ::
+          {:ok, binary()} | {:error, term()}
+  def read_eeprom(link, station, word_address \\ 0x00, word_count \\ 64) do
+    SII.read(link, station, word_address, word_count)
   end
 
   @doc "Hex-dump a binary for quick inspection."
