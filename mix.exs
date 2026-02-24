@@ -21,6 +21,8 @@ defmodule EtherCAT.MixProject do
 
   defp deps do
     [
+      {:telemetry, "~> 1.0"},
+      {:telemetry_metrics, "~> 1.0"},
       {:usage_rules, "~> 1.1", only: [:dev]}
     ]
   end

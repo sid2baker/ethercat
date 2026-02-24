@@ -65,7 +65,8 @@ defmodule EtherCAT.Link.Normal do
 
   def handle_event(:enter, _old, :awaiting, _data), do: :keep_state_and_data
 
-  def handle_event({:call, _from}, {:transact, _}, :awaiting, _data) do
+  def handle_event({:call, _from}, {:transact, _}, :awaiting, data) do
+    Telemetry.transact_postponed(data.interface)
     {:keep_state_and_data, [:postpone]}
   end
 

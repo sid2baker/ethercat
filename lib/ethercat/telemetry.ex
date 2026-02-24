@@ -36,6 +36,12 @@ defmodule EtherCAT.Telemetry do
         measurements: %{size: integer()}
         metadata:     %{interface: String.t(), reason: atom()}
 
+  ### Transaction queueing
+
+      [:ethercat, :link, :transact, :postponed]
+        measurements: %{}
+        metadata:     %{interface: String.t()}
+
   ### Socket lifecycle events
 
       [:ethercat, :link, :socket, :down]
@@ -116,6 +122,15 @@ defmodule EtherCAT.Telemetry do
   end
 
   @doc false
+  def transact_postponed(interface) do
+    execute(
+      [:ethercat, :link, :transact, :postponed],
+      %{},
+      %{interface: interface}
+    )
+  end
+
+  @doc false
   def socket_down(interface, reason) do
     execute(
       [:ethercat, :link, :socket, :down],
@@ -131,6 +146,103 @@ defmodule EtherCAT.Telemetry do
       %{},
       %{interface: interface}
     )
+  end
+
+  # ---------------------------------------------------------------------------
+  # Lightweight event counters for IEx inspection
+  # ---------------------------------------------------------------------------
+
+  @handler_id "ethercat-counters"
+
+  @all_events [
+    [:ethercat, :link, :transact, :start],
+    [:ethercat, :link, :transact, :stop],
+    [:ethercat, :link, :transact, :exception],
+    [:ethercat, :link, :transact, :postponed],
+    [:ethercat, :link, :frame, :sent],
+    [:ethercat, :link, :frame, :received],
+    [:ethercat, :link, :frame, :dropped],
+    [:ethercat, :link, :socket, :down],
+    [:ethercat, :link, :socket, :reconnected]
+  ]
+
+  @event_index @all_events |> Enum.with_index() |> Map.new()
+
+  @doc """
+  Attach counters to all EtherCAT telemetry events.
+
+  Use `stats/0` to print current counts and `reset/0` to zero them.
+
+  ## Example
+
+      EtherCAT.Telemetry.attach()
+      # ... do some work ...
+      EtherCAT.Telemetry.stats()
+      EtherCAT.Telemetry.reset()
+  """
+  def attach do
+    ref = :counters.new(length(@all_events), [:write_concurrency])
+    :persistent_term.put({__MODULE__, :counters}, ref)
+
+    :telemetry.attach_many(
+      @handler_id,
+      @all_events,
+      fn event, _measurements, _metadata, _config ->
+        case @event_index do
+          %{^event => idx} -> :counters.add(ref, idx + 1, 1)
+          _ -> :ok
+        end
+      end,
+      nil
+    )
+
+    :ok
+  end
+
+  @doc """
+  Print event counts.
+  """
+  def stats do
+    ref = :persistent_term.get({__MODULE__, :counters}, nil)
+
+    if ref do
+      @all_events
+      |> Enum.with_index()
+      |> Enum.each(fn {event, idx} ->
+        count = :counters.get(ref, idx + 1)
+        name = event |> Enum.drop(1) |> Enum.join(".")
+        IO.puts("  #{String.pad_trailing(name, 30)} #{count}")
+      end)
+
+      :ok
+    else
+      IO.puts("  Not attached. Call EtherCAT.Telemetry.attach() first.")
+      :ok
+    end
+  end
+
+  @doc """
+  Reset all counters to zero.
+  """
+  def reset do
+    ref = :persistent_term.get({__MODULE__, :counters}, nil)
+
+    if ref do
+      for idx <- 0..(length(@all_events) - 1) do
+        :counters.put(ref, idx + 1, 0)
+      end
+    end
+
+    :ok
+  end
+
+  @doc """
+  Detach counters.
+  """
+  def detach do
+    :telemetry.detach(@handler_id)
+    :persistent_term.erase({__MODULE__, :counters})
+    :ok
   end
 
   # ---------------------------------------------------------------------------
