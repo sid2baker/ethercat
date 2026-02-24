@@ -1,11 +1,11 @@
-defmodule Ethercat.Master do
+defmodule EtherCAT.Master do
   @moduledoc false
 
   @behaviour :gen_statem
 
   require Logger
 
-  alias Ethercat.{Bus, Directory}
+  alias EtherCAT.{Bus, Directory}
 
   defmodule State do
     @moduledoc false
@@ -52,7 +52,7 @@ defmodule Ethercat.Master do
   end
 
   def unsubscribe(_ref, device, signal) do
-    Registry.unregister(Ethercat.SignalRegistry, {device, signal})
+    Registry.unregister(EtherCAT.SignalRegistry, {device, signal})
     :ok
   end
 
@@ -128,7 +128,7 @@ defmodule Ethercat.Master do
   def handle_event({:call, from}, {:subscribe, ref, device, signal, pid}, :operational, %{
         bus_ref: ref
       }) do
-    Registry.register(Ethercat.SignalRegistry, {device, signal}, pid)
+    Registry.register(EtherCAT.SignalRegistry, {device, signal}, pid)
     {:keep_state_and_data, [{:reply, from, :ok}]}
   end
 

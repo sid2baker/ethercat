@@ -1,7 +1,7 @@
-defmodule Ethercat.Bus do
+defmodule EtherCAT.Bus do
   @moduledoc false
 
-  alias Ethercat.Bus.Scanner
+  alias EtherCAT.Bus.Scanner
 
   defdelegate run_scanner(config), to: Scanner, as: :run
 

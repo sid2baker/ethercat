@@ -1,4 +1,4 @@
-defmodule Ethercat.MasterSupervisor do
+defmodule EtherCAT.MasterSupervisor do
   @moduledoc false
 
   use Supervisor
@@ -6,9 +6,9 @@ defmodule Ethercat.MasterSupervisor do
   @impl true
   def init(_arg) do
     children = [
-      {DynamicSupervisor, name: Ethercat.SlaveSupervisor, strategy: :one_for_one},
-      {DynamicSupervisor, name: Ethercat.DomainSupervisor, strategy: :one_for_one},
-      Ethercat.Master
+      {DynamicSupervisor, name: EtherCAT.SlaveSupervisor, strategy: :one_for_one},
+      {DynamicSupervisor, name: EtherCAT.DomainSupervisor, strategy: :one_for_one},
+      EtherCAT.Master
     ]
 
     Supervisor.init(children, strategy: :rest_for_one)

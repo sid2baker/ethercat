@@ -1,4 +1,4 @@
-defmodule Ethercat.MixProject do
+defmodule EtherCAT.MixProject do
   use Mix.Project
 
   def project do
@@ -14,7 +14,7 @@ defmodule Ethercat.MixProject do
 
   def application do
     [
-      mod: {Ethercat.Application, []},
+      mod: {EtherCAT.Application, []},
       extra_applications: [:logger]
     ]
   end

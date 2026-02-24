@@ -1,4 +1,4 @@
-defmodule Ethercat do
+defmodule EtherCAT do
   @moduledoc """
   Public entrypoint for the EtherCAT master runtime.
 
@@ -7,7 +7,7 @@ defmodule Ethercat do
   high level APIs while the low level AF_PACKET backend is being finalised.
   """
 
-  alias Ethercat.Master
+  alias EtherCAT.Master
 
   @type config :: map()
   @type bus_ref :: reference()

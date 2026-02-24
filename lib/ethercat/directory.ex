@@ -1,4 +1,4 @@
-defmodule Ethercat.Directory do
+defmodule EtherCAT.Directory do
   @moduledoc """
   Minimal directory that maps `{device, signal}` pairs to values. Once domains
   are wired up the directory will point to domain-owned ETS tables. For now we

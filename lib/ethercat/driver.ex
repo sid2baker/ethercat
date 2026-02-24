@@ -1,4 +1,4 @@
-defmodule Ethercat.Driver do
+defmodule EtherCAT.Driver do
   @moduledoc """
   Declarative helper for authoring EtherCAT device drivers. The current
   scaffolding supports declaring signals and basic metadata so the rest of the
@@ -7,12 +7,12 @@ defmodule Ethercat.Driver do
 
   defmacro __using__(_opts) do
     quote do
-      @behaviour Ethercat.Driver.Callbacks
+      @behaviour EtherCAT.Driver.Callbacks
       Module.register_attribute(__MODULE__, :signals, accumulate: true)
 
-      @before_compile Ethercat.Driver
+      @before_compile EtherCAT.Driver
 
-      import Ethercat.Driver, only: [identity: 3, input: 2, input: 3, output: 2, output: 3]
+      import EtherCAT.Driver, only: [identity: 3, input: 2, input: 3, output: 2, output: 3]
 
       @impl true
       def configure(_device, _options), do: :ok
@@ -84,7 +84,7 @@ defmodule Ethercat.Driver do
   defp default_for_type(_), do: 0
 end
 
-defmodule Ethercat.Driver.Callbacks do
+defmodule EtherCAT.Driver.Callbacks do
   @moduledoc false
 
   @callback identity() :: %{vendor_id: integer(), product_code: integer(), revision: integer()}

@@ -1,8 +1,8 @@
-defmodule EthercatTest do
+defmodule EtherCATTest do
   use ExUnit.Case
 
   defmodule TestDriver do
-    use Ethercat.Driver
+    use EtherCAT.Driver
 
     identity(0x00000002, 0x00000000, 0x00000000)
     input(:channel_1, :bool, default: false)
@@ -17,10 +17,10 @@ defmodule EthercatTest do
       ]
     }
 
-    assert {:ok, bus} = Ethercat.start(config)
-    assert {:ok, %{state: :operational}} = Ethercat.status(bus)
-    assert {:ok, false} = Ethercat.read(bus, :dev, :channel_1)
-    assert {:ok, 0} = Ethercat.read(bus, :dev, :channel_2)
-    assert :ok = Ethercat.stop(bus)
+    assert {:ok, bus} = EtherCAT.start(config)
+    assert {:ok, %{state: :operational}} = EtherCAT.status(bus)
+    assert {:ok, false} = EtherCAT.read(bus, :dev, :channel_1)
+    assert {:ok, 0} = EtherCAT.read(bus, :dev, :channel_2)
+    assert :ok = EtherCAT.stop(bus)
   end
 end
