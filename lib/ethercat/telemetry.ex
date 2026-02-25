@@ -2,9 +2,8 @@ defmodule EtherCAT.Telemetry do
   @moduledoc """
   Telemetry integration for the EtherCAT stack.
 
-  Emits events via `:telemetry` if the dependency is available.
-  When `:telemetry` is not installed, all calls are silent no-ops.
-  This makes `:telemetry` an optional dependency.
+  Emits events via `:telemetry` and provides lightweight atomic counters
+  for IEx inspection.
 
   ## Events
 
@@ -67,27 +66,14 @@ defmodule EtherCAT.Telemetry do
       ], &MyHandler.handle_event/4, nil)
   """
 
-  # ---------------------------------------------------------------------------
-  # Core wrappers — delegate to :telemetry at runtime, no-op if absent
-  # ---------------------------------------------------------------------------
-
   @doc false
   def execute(event, measurements, metadata \\ %{}) do
-    if telemetry_available?() do
-      :telemetry.execute(event, measurements, metadata)
-    end
-
-    :ok
+    :telemetry.execute(event, measurements, metadata)
   end
 
   @doc false
   def span(event_prefix, start_metadata, fun) when is_function(fun, 0) do
-    if telemetry_available?() do
-      :telemetry.span(event_prefix, start_metadata, fun)
-    else
-      {result, _stop_meta} = fun.()
-      result
-    end
+    :telemetry.span(event_prefix, start_metadata, fun)
   end
 
   # ---------------------------------------------------------------------------
@@ -243,13 +229,5 @@ defmodule EtherCAT.Telemetry do
     :telemetry.detach(@handler_id)
     :persistent_term.erase({__MODULE__, :counters})
     :ok
-  end
-
-  # ---------------------------------------------------------------------------
-  # Private
-  # ---------------------------------------------------------------------------
-
-  defp telemetry_available? do
-    Code.ensure_loaded?(:telemetry) and function_exported?(:telemetry, :execute, 3)
   end
 end

@@ -1,405 +1,133 @@
-defmodule Examples.IoQuick do
-  @moduledoc false
+#!/usr/bin/env elixir
+# Quick I/O cycle test using the current EtherCAT.Master + EtherCAT.Slave stack.
+#
+# Usage:
+#   mix run examples/io_quick.exs --interface enp0s31f6 [--cycles 200] [--period-ms 10]
+#
+# What it does:
+#   1. Starts the master → scans slaves → slaves auto-advance to :preop
+#   2. Advances all slaves to :op via Master.go_operational()
+#   3. Runs N cycles of LWR (logical write) + LRD (logical read) using the
+#      FMMU mappings configured in step 3 (hard-coded for the 3-slave setup
+#      seen in hardware: coupler + output module + input module).
+#   4. Prints input word whenever it changes, plus a heartbeat every 50 cycles.
 
-  import Bitwise
+alias EtherCAT.{Command, Link, Master, Slave}
 
-  alias Ethercat.Protocol.{Datagram, Transport}
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
 
-  def main(argv) do
-    {opts, _, _} =
-      OptionParser.parse(argv,
-        switches: [
-          interface: :string,
-          cycles: :integer,
-          period_ms: :integer,
-          out0: :integer,
-          out1: :integer,
-          in0: :integer,
-          hold_cycles: :integer,
-          count_only: :boolean,
-          dump_sm: :boolean,
-          verbose: :boolean,
-          physical: :boolean
-        ]
-      )
+{opts, _, _} =
+  OptionParser.parse(System.argv(),
+    switches: [interface: :string, cycles: :integer, period_ms: :integer]
+  )
 
-    interface = Keyword.get(opts, :interface) || usage()
+interface = opts[:interface] || raise "pass --interface enp0s31f6"
+cycles = Keyword.get(opts, :cycles, 200)
+period_ms = Keyword.get(opts, :period_ms, 10)
 
-    cycles = Keyword.get(opts, :cycles, 200)
-    period_ms = Keyword.get(opts, :period_ms, 10)
-    hold_cycles = Keyword.get(opts, :hold_cycles, 50)
+IO.puts("Interface : #{interface}")
+IO.puts("Cycles    : #{cycles}  Period: #{period_ms} ms")
 
-    out0 = Keyword.get(opts, :out0, 0x0F00)
-    out1 = Keyword.get(opts, :out1, 0x0F01)
-    in0 = Keyword.get(opts, :in0, 0x1000)
+# ---------------------------------------------------------------------------
+# Start master + wait for slaves to reach :preop
+# ---------------------------------------------------------------------------
 
-    {:ok, pid} = Transport.start_link(interface: interface)
+:ok = Master.start(interface: interface)
+Process.sleep(500)
 
-    {:ok, stations} = assign_station_addresses(pid)
-    IO.puts("Stations: #{inspect(stations)}")
+slave_list = Master.slaves()
+IO.puts("\nSlaves discovered: #{length(slave_list)}")
 
-    if Keyword.get(opts, :count_only, false) do
-      :ok
-    else
-      :ok = configure_known_sms(pid, stations)
-      :ok = configure_known_fmmus(pid, stations)
+for {station, _pid} <- slave_list do
+  state = Slave.state(station)
+  id = Slave.identity(station)
 
-      if Keyword.get(opts, :dump_sm, false) do
-        dump_sync_managers(pid, Map.fetch!(stations, 2))
-      end
+  id_str =
+    if id,
+      do:
+        "vendor=0x#{Integer.to_string(id.vendor_id, 16)} " <>
+          "product=0x#{Integer.to_string(id.product_code, 16)}",
+      else: "(no identity)"
 
-      :ok = transition_all(pid, stations, :safeop)
-      :ok = transition_all(pid, stations, :op)
-
-      verbose = Keyword.get(opts, :verbose, false)
-      physical? = Keyword.get(opts, :physical, false)
-
-      run_cycles(
-        pid,
-        stations,
-        cycles,
-        period_ms,
-        hold_cycles,
-        out0,
-        out1,
-        in0,
-        verbose,
-        physical?
-      )
-    end
-  end
-
-  defp usage do
-    IO.puts("Usage: mix run --no-start examples/io_quick.exs --interface enp0s31f6")
-    System.halt(1)
-  end
-
-  defp dump_sync_managers(pid, station) do
-    {:ok, [sm0, sm1]} =
-      Transport.transact(
-        pid,
-        [
-          Datagram.fprd(station, 0x0800, 8),
-          Datagram.fprd(station, 0x0808, 8)
-        ],
-        200_000
-      )
-
-    IO.puts("SM0 raw: #{inspect(sm0.data)}")
-    IO.puts("SM1 raw: #{inspect(sm1.data)}")
-    :ok
-  end
-
-  defp configure_known_sms(pid, stations) do
-    in_station = Map.fetch!(stations, 1)
-    out_station = Map.fetch!(stations, 2)
-
-    # These values are based on the PDO/SM dump you provided.
-    sm_in0 = sm_page(0x1000, 2, 0x20, 1)
-    sm_out0 = sm_page(0x0F00, 1, 0x44, 1)
-    sm_out1 = sm_page(0x0F01, 1, 0x44, 1)
-
-    {:ok, _} = Transport.transact(pid, [Datagram.fpwr(in_station, 0x0800, sm_in0)], 200_000)
-
-    {:ok, _} =
-      Transport.transact(
-        pid,
-        [
-          Datagram.fpwr(out_station, 0x0800, sm_out0),
-          Datagram.fpwr(out_station, 0x0808, sm_out1)
-        ],
-        200_000
-      )
-
-    :ok
-  end
-
-  defp sm_page(start_addr, length, control, enable) do
-    activate = if enable == 1, do: 0x01, else: 0x00
-    <<start_addr::16-little, length::16-little, control::8, 0::8, activate::8, 0::8>>
-  end
-
-  defp assign_station_addresses(pid) do
-    {:ok, [%{working_counter: count}]} =
-      Transport.transact(pid, [Datagram.brd(0x0000, 1)], 200_000)
-
-    stations =
-      for pos <- 0..(count - 1) do
-        station = 0x1000 + pos
-        adp = -pos
-
-        {:ok, _} =
-          Transport.transact(
-            pid,
-            [Datagram.apwr(adp, 0x0010, <<station::16-little>>)],
-            200_000
-          )
-
-        {pos, station}
-      end
-
-    {:ok, Map.new(stations)}
-  end
-
-  defp transition_all(pid, stations, target) do
-    stations
-    |> Enum.sort_by(fn {pos, _} -> pos end)
-    |> Enum.reduce_while(:ok, fn {_pos, station}, :ok ->
-      case transition(pid, station, target) do
-        :ok -> {:cont, :ok}
-        {:error, reason} -> {:halt, {:error, {station, reason}}}
-      end
-    end)
-    |> case do
-      :ok -> :ok
-      {:error, _} = err -> raise "AL transition failed: #{inspect(err)}"
-    end
-  end
-
-  defp transition(pid, station, target) when target in [:safeop, :op] do
-    request = if target == :safeop, do: 0x0004, else: 0x0008
-
-    with {:ok, _} <-
-           Transport.transact(
-             pid,
-             [Datagram.fpwr(station, 0x0120, <<request::16-little>>)],
-             200_000
-           ),
-         :ok <- wait_al(pid, station, request, 200) do
-      :ok
-    end
-  end
-
-  defp wait_al(_pid, _station, _request, 0), do: {:error, :al_timeout}
-
-  defp wait_al(pid, station, request, attempts) do
-    case Transport.transact(pid, [Datagram.fprd(station, 0x0130, 2)], 200_000) do
-      {:ok, [%{data: <<status::16-little>>}]} ->
-        if (status &&& 0x000F) == request do
-          :ok
-        else
-          :timer.sleep(5)
-          wait_al(pid, station, request, attempts - 1)
-        end
-
-      _ ->
-        :timer.sleep(5)
-        wait_al(pid, station, request, attempts - 1)
-    end
-  end
-
-  defp run_cycles(
-         pid,
-         stations,
-         cycles,
-         period_ms,
-         hold_cycles,
-         out0,
-         out1,
-         in0,
-         verbose,
-         physical?
-       ) do
-    in_station = Map.fetch!(stations, 1)
-    out_station = Map.fetch!(stations, 2)
-
-    IO.puts(
-      "Using in_station=#{in_station} out_station=#{out_station} out=#{Integer.to_string(out0, 16)}/#{Integer.to_string(out1, 16)} in=#{Integer.to_string(in0, 16)}"
-    )
-
-    IO.puts("Mode: #{if(physical?, do: "physical FPRW/FPRD", else: "logical LWR/LRD")}")
-
-    loop(
-      pid,
-      in_station,
-      out_station,
-      cycles,
-      period_ms,
-      hold_cycles,
-      out0,
-      out1,
-      in0,
-      verbose,
-      physical?,
-      0,
-      nil,
-      0
-    )
-  end
-
-  defp loop(
-         _pid,
-         _in_station,
-         _out_station,
-         cycles,
-         _period_ms,
-         _hold_cycles,
-         _out0,
-         _out1,
-         _in0,
-         _verbose,
-         _physical?,
-         step,
-         _last,
-         _timeouts
-       )
-       when step >= cycles do
-    IO.puts("Done")
-    :ok
-  end
-
-  defp loop(
-         pid,
-         in_station,
-         out_station,
-         cycles,
-         period_ms,
-         hold_cycles,
-         out0,
-         out1,
-         in0,
-         verbose,
-         physical?,
-         step,
-         last_inputs,
-         timeouts
-       ) do
-    phase = div(step, hold_cycles)
-    on? = rem(phase, 2) == 0
-
-    out_word = if on?, do: 0xFFFF, else: 0x0000
-    low = <<band(out_word, 0xFF)::8>>
-    high = <<band(out_word >>> 8, 0xFF)::8>>
-
-    result =
-      if physical? do
-        Transport.transact(
-          pid,
-          [
-            Datagram.fprw(out_station, out0, low),
-            Datagram.fprw(out_station, out1, high),
-            Datagram.fprd(in_station, in0, 2)
-          ],
-          50_000
-        )
-      else
-        Transport.transact(
-          pid,
-          [
-            Datagram.lwr(0x0000, 2, <<low::binary, high::binary>>),
-            Datagram.lrd(0x0010, 2)
-          ],
-          50_000
-        )
-      end
-
-    {last_inputs, timeouts} =
-      case result do
-        {:ok, resp} ->
-          {out0_resp, out1_resp, inputs} =
-            if physical? do
-              out0_resp = Enum.at(resp, 0)
-              out1_resp = Enum.at(resp, 1)
-              %{data: <<inputs::16-little>>} = Enum.at(resp, 2)
-              {out0_resp, out1_resp, inputs}
-            else
-              out_resp = Enum.at(resp, 0)
-              in_resp = Enum.at(resp, 1)
-              %{data: <<inputs::16-little>>} = in_resp
-              {out_resp, out_resp, inputs}
-            end
-
-          timeouts = 0
-
-          if verbose and step < 10 do
-            IO.puts(
-              "step=#{step} wkc=#{out0_resp.working_counter}/#{out1_resp.working_counter} out_rb=#{inspect(out0_resp.data)}/#{inspect(out1_resp.data)}"
-            )
-          end
-
-          if last_inputs != inputs or rem(step, 50) == 0 do
-            IO.puts(
-              "step=#{step} out=#{if(on?, do: "on", else: "off")} inputs=0x#{hex16(inputs)}"
-            )
-          end
-
-          {inputs, timeouts}
-
-        {:error, :timeout} ->
-          timeouts = timeouts + 1
-          IO.puts("step=#{step} timeout (#{timeouts})")
-          {last_inputs, timeouts}
-
-        {:error, reason} ->
-          IO.puts("step=#{step} error=#{inspect(reason)}")
-          {last_inputs, timeouts}
-      end
-
-    if timeouts >= 10 do
-      raise "too many timeouts"
-    end
-
-    :timer.sleep(period_ms)
-
-    loop(
-      pid,
-      in_station,
-      out_station,
-      cycles,
-      period_ms,
-      hold_cycles,
-      out0,
-      out1,
-      in0,
-      verbose,
-      physical?,
-      step + 1,
-      last_inputs,
-      timeouts
-    )
-  end
-
-  defp configure_known_fmmus(pid, stations) do
-    in_station = Map.fetch!(stations, 1)
-    out_station = Map.fetch!(stations, 2)
-
-    # Out slave: map logical 0x0000..0x0001 -> physical 0x0F00..0x0F01 (write)
-    out_fmmu0 = fmmu_page(0x0000, 2, 0x0F00, :write)
-    # In slave: map logical 0x0010..0x0011 -> physical 0x1000..0x1001 (read)
-    in_fmmu0 = fmmu_page(0x0010, 2, 0x1000, :read)
-
-    {:ok, _} = Transport.transact(pid, [Datagram.fpwr(out_station, 0x0600, out_fmmu0)], 200_000)
-    {:ok, _} = Transport.transact(pid, [Datagram.fpwr(in_station, 0x0600, in_fmmu0)], 200_000)
-
-    :ok
-  end
-
-  defp fmmu_page(logical_start, size_bytes, physical_start, dir) do
-    type =
-      case dir do
-        :read -> 0x01
-        :write -> 0x02
-        :read_write -> 0x03
-      end
-
-    <<
-      logical_start::32-little,
-      size_bytes::16-little,
-      0::8,
-      7::8,
-      physical_start::16-little,
-      0::8,
-      type::8,
-      0x01::8,
-      0::24
-    >>
-  end
-
-  defp hex16(int) do
-    int
-    |> Integer.to_string(16)
-    |> String.pad_leading(4, "0")
-  end
+  IO.puts("  0x#{Integer.to_string(station, 16)}: #{state}  #{id_str}")
 end
 
-Examples.IoQuick.main(System.argv())
+# ---------------------------------------------------------------------------
+# Advance all to :op
+# ---------------------------------------------------------------------------
+
+IO.puts("\nAdvancing all slaves to :op ...")
+:ok = Master.go_operational()
+Process.sleep(200)
+
+IO.puts("Slave states after go_operational:")
+
+for {station, _pid} <- slave_list do
+  IO.puts("  0x#{Integer.to_string(station, 16)}: #{Slave.state(station)}")
+end
+
+# ---------------------------------------------------------------------------
+# Configure SMs and FMMUs for the 3-slave layout seen on this hardware:
+#   0x1000 — coupler (no SM/FMMU needed)
+#   0x1001 — output module: SM0@0x0F00 len=1 ctrl=0x44, FMMU → logical 0x0000
+#   0x1002 — input  module: SM0@0x1000 len=2 ctrl=0x20, FMMU → logical 0x0010
+# ---------------------------------------------------------------------------
+
+link = Master.link()
+
+sm_out = fn start, len, ctrl ->
+  <<start::16-little, len::16-little, ctrl::8, 0::8, 0x01::8, 0::8>>
+end
+
+fmmu = fn log_start, size, phys_start, dir ->
+  type = if dir == :read, do: 0x01, else: 0x02
+  <<log_start::32-little, size::16-little, 0::8, 7::8,
+    phys_start::16-little, 0::8, type::8, 0x01::8, 0::24>>
+end
+
+out_station = 0x1001
+in_station  = 0x1002
+
+IO.puts("\nConfiguring SMs ...")
+{:ok, _} = Link.transact(link, [Command.fpwr(out_station, 0x0800, sm_out.(0x0F00, 1, 0x44))])
+{:ok, _} = Link.transact(link, [Command.fpwr(out_station, 0x0808, sm_out.(0x0F01, 1, 0x44))])
+{:ok, _} = Link.transact(link, [Command.fpwr(in_station,  0x0800, sm_out.(0x1000, 2, 0x20))])
+
+IO.puts("Configuring FMMUs ...")
+{:ok, _} = Link.transact(link, [Command.fpwr(out_station, 0x0600, fmmu.(0x0000, 2, 0x0F00, :write))])
+{:ok, _} = Link.transact(link, [Command.fpwr(in_station,  0x0600, fmmu.(0x0010, 2, 0x1000, :read))])
+
+# ---------------------------------------------------------------------------
+# Cycle loop: LWR outputs, LRD inputs
+# ---------------------------------------------------------------------------
+
+IO.puts("\nRunning #{cycles} cycles (#{period_ms} ms period) ...")
+IO.puts("Press Ctrl-C to stop early.\n")
+
+Enum.reduce(0..(cycles - 1), nil, fn step, last_inputs ->
+  phase   = div(step, 50)
+  on?     = rem(phase, 2) == 0
+  out_val = if on?, do: 0xFF, else: 0x00
+
+  {:ok, [_wr, %{data: <<inputs::16-little>>}]} =
+    Link.transact(link, [
+      Command.lwr(0x0000, <<out_val, out_val>>),
+      Command.lrd(0x0010, 2)
+    ])
+
+  if inputs != last_inputs or rem(step, 50) == 0 do
+    IO.puts(
+      "step=#{String.pad_leading(to_string(step), 4)} " <>
+        "out=#{if(on?, do: "ON ", else: "off")} " <>
+        "inputs=0x#{String.pad_leading(Integer.to_string(inputs, 16), 4, "0")}"
+    )
+  end
+
+  Process.sleep(period_ms)
+  inputs
+end)
+
+IO.puts("\nDone.")
+Master.stop()

@@ -7,7 +7,6 @@ defmodule EtherCAT.MasterSupervisor do
   def init(_arg) do
     children = [
       {DynamicSupervisor, name: EtherCAT.SlaveSupervisor, strategy: :one_for_one},
-      {DynamicSupervisor, name: EtherCAT.DomainSupervisor, strategy: :one_for_one},
       EtherCAT.Master
     ]
 

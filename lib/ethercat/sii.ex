@@ -45,7 +45,25 @@ defmodule EtherCAT.SII do
   @busy_poll_limit 1000
   @busy_poll_interval_ms 1
 
+  # Category headers start at word 0x0040
+  @category_start 0x0040
+
   # -- Public API -------------------------------------------------------------
+
+  @doc """
+  Read the valid SII contents by walking the category structure.
+
+  Reads the fixed header (words 0x00–0x3F), then follows category
+  headers starting at word 0x40 until the end marker (type 0xFFFF).
+
+  Returns `{:ok, binary}` or `{:error, reason}`.
+  """
+  @spec dump(pid(), non_neg_integer()) :: {:ok, binary()} | {:error, atom()}
+  def dump(link, station) do
+    with {:ok, end_word} <- find_end(link, station) do
+      read(link, station, 0x0000, end_word)
+    end
+  end
 
   @doc """
   Read `word_count` words from the EEPROM starting at `word_address`.
@@ -93,6 +111,25 @@ defmodule EtherCAT.SII do
   end
 
   # -- Read internals ---------------------------------------------------------
+
+  # Walk category headers from word 0x40 to find the end of valid SII data.
+  # Each category: [type::16-little, size::16-little, data::size*2 bytes]
+  # End marker: type == 0xFFFF
+  defp find_end(link, station), do: find_end(link, station, @category_start)
+
+  defp find_end(link, station, addr) do
+    case read(link, station, addr, 2) do
+      {:ok, <<0xFFFF::16-little, _::16>>} ->
+        # End marker — include it in the dump
+        {:ok, addr + 1}
+
+      {:ok, <<_type::16-little, size::16-little>>} ->
+        find_end(link, station, addr + 2 + size)
+
+      {:error, _} = err ->
+        err
+    end
+  end
 
   defp read_chunks(_link, _station, _addr, 0, _chunk_words, acc) do
     {:ok, IO.iodata_to_binary(Enum.reverse(acc))}

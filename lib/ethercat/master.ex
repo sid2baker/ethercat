@@ -1,162 +1,239 @@
 defmodule EtherCAT.Master do
-  @moduledoc false
+  @moduledoc """
+  EtherCAT master — singleton gen_statem registered as `EtherCAT.Master`.
+
+  Manages the link layer and slave discovery. Slaves are started under
+  `EtherCAT.SlaveSupervisor` and auto-advance to `:preop` on their own.
+
+  ## States
+
+    - `:idle` — not started, no link open
+    - `:scanning` — link open, discovering and assigning station addresses
+    - `:ready` — slaves started and advancing to preop
+
+  ## Example
+
+      EtherCAT.Master.start(interface: "enp0s31f6")
+      EtherCAT.Master.slaves()
+      #=> [{0x1000, #PID<...>}, {0x1001, #PID<...>}]
+
+      EtherCAT.Master.go_operational()
+  """
 
   @behaviour :gen_statem
 
   require Logger
 
-  alias EtherCAT.{Bus, Directory}
+  alias EtherCAT.{Command, Link, Slave}
 
-  defmodule State do
-    @moduledoc false
-    defstruct bus_ref: nil,
-              config: nil,
-              directory: nil,
-              status: :idle,
-              reason: nil
-  end
+  @base_station 0x1000
+  @station_reg 0x0010
+  @confirm_rounds 3
+
+  defstruct [:link, base_station: @base_station, slaves: []]
+
+  # -- Public API ------------------------------------------------------------
+
+  @doc """
+  Start the master: open a link to `interface` and scan for slaves.
+
+  Options:
+    - `:interface` (required) — e.g. `"eth0"`
+    - `:base_station` — starting station address (default `0x1000`)
+  """
+  @spec start(keyword()) :: :ok | {:error, term()}
+  def start(opts \\ []), do: :gen_statem.call(__MODULE__, {:start, opts})
+
+  @doc "Stop the master: shut down all slaves and close the link."
+  @spec stop() :: :ok
+  def stop, do: :gen_statem.call(__MODULE__, :stop)
+
+  @doc "Return `[{station, pid}]` for all discovered slaves."
+  @spec slaves() :: [{non_neg_integer(), pid()}]
+  def slaves, do: :gen_statem.call(__MODULE__, :slaves)
+
+  @doc "Return the pid for a single slave by station address, or nil."
+  @spec slave(non_neg_integer()) :: pid() | nil
+  def slave(station), do: :gen_statem.call(__MODULE__, {:slave, station})
+
+  @doc "Return the link pid."
+  @spec link() :: pid() | nil
+  def link, do: :gen_statem.call(__MODULE__, :link)
+
+  @doc "Request all slaves to transition to `:op`. Logs but does not abort on individual failures."
+  @spec go_operational() :: :ok
+  def go_operational, do: :gen_statem.call(__MODULE__, :go_operational)
+
+  # -- child_spec / start_link -----------------------------------------------
 
   @doc false
   def child_spec(arg) do
-    %{
-      id: __MODULE__,
-      start: {__MODULE__, :start_link, [arg]},
-      type: :worker,
-      restart: :permanent,
-      shutdown: 5000
-    }
+    %{id: __MODULE__, start: {__MODULE__, :start_link, [arg]}, restart: :permanent, shutdown: 5000}
   end
 
-  # -- Public API -----------------------------------------------------------
-
-  @spec start(map()) :: {:ok, reference()} | {:error, term()}
-  def start(config) do
-    :gen_statem.call(__MODULE__, {:start, config})
-  end
-
-  @spec stop(reference()) :: :ok | {:error, term()}
-  def stop(ref) do
-    :gen_statem.call(__MODULE__, {:stop, ref})
-  end
-
-  def read(ref, device, signal) do
-    :gen_statem.call(__MODULE__, {:read, ref, device, signal})
-  end
-
-  def write(ref, device, signal, value) do
-    :gen_statem.call(__MODULE__, {:write, ref, device, signal, value})
-  end
-
-  def subscribe(ref, device, signal) do
-    :gen_statem.call(__MODULE__, {:subscribe, ref, device, signal, self()})
-  end
-
-  def unsubscribe(_ref, device, signal) do
-    Registry.unregister(EtherCAT.SignalRegistry, {device, signal})
-    :ok
-  end
-
-  def status(ref) do
-    :gen_statem.call(__MODULE__, {:status, ref})
-  end
-
-  # -- :gen_statem ---------------------------------------------------------
-
+  @doc false
   def start_link(_arg) do
-    :gen_statem.start_link({:local, __MODULE__}, __MODULE__, %State{}, [])
+    :gen_statem.start_link({:local, __MODULE__}, __MODULE__, %__MODULE__{}, [])
   end
 
-  @impl true
-  def callback_mode, do: [:handle_event_function]
+  # -- :gen_statem callbacks -------------------------------------------------
 
   @impl true
-  def init(state) do
-    {:ok, :initializing, state}
-  end
-
-  # Initialising -----------------------------------------------------------
+  def callback_mode, do: [:handle_event_function, :state_enter]
 
   @impl true
-  def handle_event({:call, from}, {:start, config}, :initializing, state) do
-    case do_start(config) do
-      {:ok, new_state} ->
-        {:next_state, :operational, new_state, [{:reply, from, {:ok, new_state.bus_ref}}]}
+  def init(data), do: {:ok, :idle, data}
 
-      {:error, reason} ->
-        Logger.error("Failed to start EtherCAT bus: #{inspect(reason)}")
-        faulted = %{state | status: :fault, reason: reason}
-        {:next_state, :fault, faulted, [{:reply, from, {:error, reason}}]}
+  # :idle --------------------------------------------------------------------
+
+  @impl true
+  def handle_event(:enter, _old, :idle, _data), do: :keep_state_and_data
+
+  def handle_event({:call, from}, {:start, opts}, :idle, data) do
+    interface = Keyword.fetch!(opts, :interface)
+    base = Keyword.get(opts, :base_station, @base_station)
+
+    case Link.start_link(interface: interface) do
+      {:ok, link} ->
+        {:next_state, :scanning, %{data | link: link, base_station: base, slaves: []},
+         [{:reply, from, :ok}]}
+
+      {:error, _} = err ->
+        {:keep_state_and_data, [{:reply, from, err}]}
     end
   end
 
-  def handle_event({:call, from}, _event, :initializing, _state) do
-    {:keep_state_and_data, [{:reply, from, {:error, :not_started}}]}
-  end
-
-  # Operational ------------------------------------------------------------
-
-  def handle_event({:call, from}, {:stop, ref}, :operational, %{bus_ref: ref}) do
-    {:next_state, :initializing, %State{}, [{:reply, from, :ok}]}
-  end
-
-  def handle_event({:call, from}, {:stop, _}, :operational, _state) do
-    {:keep_state_and_data, [{:reply, from, {:error, :unknown_bus}}]}
-  end
-
-  def handle_event({:call, from}, {:status, ref}, :operational, %{bus_ref: ref}) do
-    report = %{state: :operational, reason: nil}
-    {:keep_state_and_data, [{:reply, from, {:ok, report}}]}
-  end
-
-  def handle_event(
-        {:call, from},
-        {:read, ref, device, signal},
-        :operational,
-        %{bus_ref: ref} = state
-      ) do
-    reply = Directory.fetch(state.directory, device, signal)
-    {:keep_state_and_data, [{:reply, from, reply}]}
-  end
-
-  def handle_event({:call, from}, {:write, ref, device, signal, value}, :operational, %{
-        bus_ref: ref
-      }) do
-    reply = Bus.enqueue_write(device, signal, value)
-    {:keep_state_and_data, [{:reply, from, reply}]}
-  end
-
-  def handle_event({:call, from}, {:subscribe, ref, device, signal, pid}, :operational, %{
-        bus_ref: ref
-      }) do
-    Registry.register(EtherCAT.SignalRegistry, {device, signal}, pid)
-    {:keep_state_and_data, [{:reply, from, :ok}]}
-  end
-
-  def handle_event({:call, from}, {:status, _ref}, :fault, state) do
-    {:keep_state_and_data, [{:reply, from, {:error, state.reason}}]}
-  end
-
-  def handle_event({:call, from}, {:start, _config}, :operational, _state) do
+  def handle_event({:call, from}, {:start, _}, _state, _data) do
     {:keep_state_and_data, [{:reply, from, {:error, :already_started}}]}
   end
 
-  def handle_event({:call, from}, _event, _state, _data) do
+  def handle_event({:call, from}, _event, :idle, _data) do
+    {:keep_state_and_data, [{:reply, from, {:error, :not_started}}]}
+  end
+
+  # :scanning ----------------------------------------------------------------
+
+  def handle_event(:enter, _old, :scanning, _data) do
+    {:keep_state_and_data, [{{:timeout, :scan}, 0, nil}]}
+  end
+
+  def handle_event({:timeout, :scan}, nil, :scanning, data) do
+    case do_scan(data) do
+      {:ok, slaves} ->
+        {:next_state, :ready, %{data | slaves: slaves}}
+
+      {:error, reason} ->
+        Logger.error("[Master] scan failed: #{inspect(reason)}")
+        :gen_statem.stop(data.link)
+        {:next_state, :idle, %__MODULE__{}}
+    end
+  end
+
+  def handle_event({:call, from}, :stop, :scanning, data) do
+    :gen_statem.stop(data.link)
+    {:next_state, :idle, %__MODULE__{}, [{:reply, from, :ok}]}
+  end
+
+  def handle_event({:call, from}, _event, :scanning, _data) do
+    {:keep_state_and_data, [{:reply, from, {:error, :scanning}}]}
+  end
+
+  # :ready -------------------------------------------------------------------
+
+  def handle_event(:enter, _old, :ready, data) do
+    Logger.info("[Master] ready — #{length(data.slaves)} slave(s) discovered")
+    :keep_state_and_data
+  end
+
+  def handle_event({:call, from}, :stop, :ready, data) do
+    Enum.each(data.slaves, fn {_s, pid} ->
+      DynamicSupervisor.terminate_child(EtherCAT.SlaveSupervisor, pid)
+    end)
+
+    :gen_statem.stop(data.link)
+    {:next_state, :idle, %__MODULE__{}, [{:reply, from, :ok}]}
+  end
+
+  def handle_event({:call, from}, :slaves, :ready, data) do
+    {:keep_state_and_data, [{:reply, from, data.slaves}]}
+  end
+
+  def handle_event({:call, from}, {:slave, station}, :ready, data) do
+    pid = case List.keyfind(data.slaves, station, 0) do
+      {^station, pid} -> pid
+      nil -> nil
+    end
+
+    {:keep_state_and_data, [{:reply, from, pid}]}
+  end
+
+  def handle_event({:call, from}, :link, :ready, data) do
+    {:keep_state_and_data, [{:reply, from, data.link}]}
+  end
+
+  def handle_event({:call, from}, :go_operational, :ready, data) do
+    Enum.each(data.slaves, fn {station, _pid} ->
+      case Slave.request(station, :op) do
+        :ok -> :ok
+        {:error, reason} ->
+          Logger.warning("[Master] slave 0x#{Integer.to_string(station, 16)} -> op failed: #{inspect(reason)}")
+      end
+    end)
+
+    {:keep_state_and_data, [{:reply, from, :ok}]}
+  end
+
+  def handle_event({:call, from}, _event, :ready, _data) do
     {:keep_state_and_data, [{:reply, from, {:error, :invalid_request}}]}
   end
 
-  # -- Helpers --------------------------------------------------------------
+  # -- Scan ------------------------------------------------------------------
 
-  defp do_start(config) do
-    with {:ok, devices} <- Bus.run_scanner(config),
-         {:ok, directory} <- Directory.build(devices) do
-      {:ok,
-       %State{
-         bus_ref: make_ref(),
-         config: config,
-         directory: directory,
-         status: :operational,
-         reason: nil
-       }}
+  defp do_scan(data) do
+    with {:ok, count} <- stable_count(data.link) do
+      Logger.info("[Master] found #{count} slave(s)")
+      assign_stations(data.link, data.base_station, count)
+      start_slaves(data.link, data.base_station, count)
     end
+  end
+
+  defp stable_count(link) do
+    counts =
+      for _ <- 1..@confirm_rounds do
+        case Link.transact(link, [Command.brd(0x0000, 1)]) do
+          {:ok, [%{wkc: n}]} -> n
+          _ -> -1
+        end
+      end
+
+    case Enum.uniq(counts) do
+      [n] when n >= 0 -> {:ok, n}
+      _ -> {:error, :unstable_slave_count}
+    end
+  end
+
+  defp assign_stations(link, base, count) do
+    Enum.each(0..(count - 1), fn pos ->
+      station = base + pos
+      Link.transact(link, [Command.apwr(pos, @station_reg, <<station::16-little>>)])
+    end)
+  end
+
+  defp start_slaves(link, base, count) do
+    slaves =
+      for pos <- 0..(count - 1) do
+        station = base + pos
+
+        case DynamicSupervisor.start_child(EtherCAT.SlaveSupervisor, {Slave, link: link, station: station}) do
+          {:ok, pid} ->
+            {station, pid}
+
+          {:error, reason} ->
+            Logger.error("[Master] failed to start slave 0x#{Integer.to_string(station, 16)}: #{inspect(reason)}")
+            nil
+        end
+      end
+
+    {:ok, Enum.reject(slaves, &is_nil/1)}
   end
 end
