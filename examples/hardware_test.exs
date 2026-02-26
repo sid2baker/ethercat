@@ -30,8 +30,8 @@ defmodule Example.EL1809 do
       domain:       :default,
       outputs_size: 0,
       inputs_size:  2,
-      sms:          [{3, 0x1000, 2, 0x20}],
-      fmmus:        [{1, 0x1000, 2, :read}]
+      sms:          [{0, 0x1000, 2, 0x20}],
+      fmmus:        [{0, 0x1000, 2, :read}]
     }]}
   end
 
@@ -53,8 +53,8 @@ defmodule Example.EL2809 do
       domain:       :default,
       outputs_size: 2,
       inputs_size:  0,
-      sms:          [{2, 0x0F00, 2, 0x44}],
-      fmmus:        [{0, 0x0F00, 2, :write}]
+      sms:          [{0, 0x0F00, 1, 0x44}, {1, 0x0F01, 1, 0x44}],
+      fmmus:        [{1, 0x0F00, 2, :write}]
     }]}
   end
 

@@ -72,6 +72,7 @@ defmodule EtherCAT.Domain do
     :logical_base,
     :next_cycle_at,
     :layout,
+    :pending_pdos,   # [{station, pdo, link}] — collected in :open, FMMUs written at start_cyclic
     :subscribers,
     :miss_count,
     :miss_threshold,
@@ -236,7 +237,8 @@ defmodule EtherCAT.Domain do
       period_us: period_ms * 1000,
       logical_base: logical_base,
       next_cycle_at: nil,
-      layout: %{image_size: 0, outputs: [], inputs: []},
+      layout: %{image_size: 0, out_watermark: 0, in_watermark: 0, outputs: [], inputs: []},
+      pending_pdos: [],
       subscribers: [],
       miss_count: 0,
       miss_threshold: miss_threshold,
@@ -265,14 +267,15 @@ defmodule EtherCAT.Domain do
   # -- :open — accept PDO registrations -------------------------------------
 
   def handle_event({:call, from}, {:register_pdo, station, pdo, link}, :open, data) do
-    {new_layout, out_offset, in_offset} = extend_layout(data.layout, pdo)
+    # Write SM registers immediately — they don't depend on logical address allocation.
+    # FMMU writes are deferred to start_cyclic so logical offsets are final.
+    case write_sms(link, station, pdo.sms) do
+      :ok ->
+        out_size = Map.get(pdo, :outputs_size, 0)
+        :ets.insert(data.table, {station, :binary.copy(<<0>>, out_size), <<>>, 0})
+        new_pending = [{station, pdo, link} | data.pending_pdos]
+        {:keep_state, %{data | pending_pdos: new_pending}, [{:reply, from, :ok}]}
 
-    with :ok <- write_sms(link, station, pdo.sms),
-         :ok <- write_fmmus(link, station, pdo.fmmus, out_offset, in_offset) do
-      out_size = Map.get(pdo, :outputs_size, 0)
-      :ets.insert(data.table, {station, :binary.copy(<<0>>, out_size), <<>>, 0})
-      {:keep_state, %{data | layout: new_layout}, [{:reply, from, :ok}]}
-    else
       {:error, _} = err ->
         {:keep_state_and_data, [{:reply, from, err}]}
     end
@@ -283,12 +286,20 @@ defmodule EtherCAT.Domain do
   end
 
   def handle_event({:call, from}, :start_cyclic, :open, data) do
-    if data.layout.image_size == 0 do
+    if data.pending_pdos == [] do
       {:keep_state_and_data, [{:reply, from, {:error, :no_pdos_registered}}]}
     else
-      now = System.monotonic_time(:microsecond)
-      new_data = %{data | next_cycle_at: now + data.period_us}
-      {:next_state, :cycling, new_data, [{:reply, from, :ok}]}
+      # Build final layout from all registrations (ordering: outputs first, then inputs)
+      # then write FMMUs with correct logical offsets
+      case build_final_layout_and_write_fmmus(data) do
+        {:ok, layout} ->
+          now = System.monotonic_time(:microsecond)
+          new_data = %{data | layout: layout, next_cycle_at: now + data.period_us}
+          {:next_state, :cycling, new_data, [{:reply, from, :ok}]}
+
+        {:error, _} = err ->
+          {:keep_state_and_data, [{:reply, from, err}]}
+      end
     end
   end
 
@@ -427,60 +438,119 @@ defmodule EtherCAT.Domain do
     Enum.each(data.subscribers, &send(&1, msg))
   end
 
+  # -- Final layout + FMMU writes --------------------------------------------
+
+  # Build the complete layout by processing all pending PDOs in two passes:
+  # pass 1 — outputs only (in registration order)
+  # pass 2 — inputs only (in registration order, placed after all outputs)
+  # Then write FMMU registers with the final logical offsets.
+  defp build_final_layout_and_write_fmmus(data) do
+    empty = %{image_size: 0, out_watermark: 0, in_watermark: 0, outputs: [], inputs: []}
+    # Reverse to restore registration order (pending_pdos is prepended)
+    pdos = Enum.reverse(data.pending_pdos)
+
+    # Pass 1: outputs
+    layout_after_outputs =
+      Enum.reduce(pdos, empty, fn {_station, pdo, _link}, layout ->
+        if Map.get(pdo, :outputs_size, 0) > 0 do
+          {new_layout, _out_off, _in_off} = extend_layout(layout, pdo)
+          new_layout
+        else
+          layout
+        end
+      end)
+
+    # Pass 2: inputs (starting from layout_after_outputs so offsets are correct)
+    final_layout =
+      Enum.reduce(pdos, layout_after_outputs, fn {_station, pdo, _link}, layout ->
+        if Map.get(pdo, :inputs_size, 0) > 0 do
+          {new_layout, _out_off, _in_off} = extend_layout(layout, pdo)
+          new_layout
+        else
+          layout
+        end
+      end)
+
+    # Write FMMUs with the correct final offsets
+    result =
+      Enum.reduce_while(pdos, :ok, fn {station, pdo, link}, :ok ->
+        out_offset = find_slice_offset(final_layout.outputs, station)
+        in_offset  = find_slice_offset(final_layout.inputs, station)
+
+        case write_fmmus(link, station, pdo.fmmus, out_offset, in_offset) do
+          :ok  -> {:cont, :ok}
+          err  -> {:halt, err}
+        end
+      end)
+
+    case result do
+      :ok   -> {:ok, final_layout}
+      error -> error
+    end
+  end
+
+  defp find_slice_offset(slices, station) do
+    case Enum.find(slices, fn s -> s.station == station end) do
+      %{log_offset: off} -> off
+      nil -> 0
+    end
+  end
+
   # -- Layout building -------------------------------------------------------
 
-  # Extend the layout with a new PDO group. Outputs occupy the lower addresses,
-  # inputs the upper — matching the ProcessImage convention.
+  # Extend the layout with a new PDO group.
+  #
+  # Outputs always occupy [0, out_watermark) in the logical image.
+  # Inputs always occupy [total_out_size, total_out_size + in_watermark).
+  #
+  # When a new output PDO is added after input PDOs are already placed,
+  # all existing input slices are shifted up by out_size to keep the invariant.
+  #
   # Returns {new_layout, output_logical_offset, input_logical_offset}.
-  defp extend_layout(%{outputs: outs, inputs: ins} = layout, pdo) do
+  defp extend_layout(layout, pdo) do
+    %{out_watermark: out_wm, in_watermark: in_wm, outputs: outs, inputs: ins} = layout
     out_size = Map.get(pdo, :outputs_size, 0)
     in_size  = Map.get(pdo, :inputs_size, 0)
+    station  = Map.get(pdo, :station)
 
-    # Count total output bytes already allocated to find where new outputs go.
-    # Outputs are always packed before inputs in the image.
-    current_out_total = Enum.sum(Enum.map(outs, & &1.size))
-    current_in_total  = Enum.sum(Enum.map(ins,  & &1.size))
+    # Output slice starts at current out_watermark
+    out_offset = out_wm
 
-    # Shift all existing input slices up if we are adding more outputs
-    # (new slave's outputs come before all inputs in the global image).
+    # If we are adding outputs, all existing input slices must shift up by out_size
+    # (inputs always live above all outputs in the flat image)
     shifted_ins =
-      if out_size > 0 do
+      if out_size > 0 and ins != [] do
         Enum.map(ins, fn s -> %{s | log_offset: s.log_offset + out_size} end)
       else
         ins
       end
 
-    out_offset = current_out_total
-    in_offset  = current_out_total + out_size + current_in_total
+    new_out_wm = out_wm + out_size
+
+    # Input slice starts at (all outputs + existing inputs)
+    in_offset = new_out_wm + in_wm
+    new_in_wm = in_wm + in_size
 
     new_outs =
       if out_size > 0,
-        do: outs ++ [%{station: nil, log_offset: out_offset, size: out_size}],
+        do: outs ++ [%{station: station, log_offset: out_offset, size: out_size}],
         else: outs
 
     new_ins =
       if in_size > 0,
-        do: shifted_ins ++ [%{station: nil, log_offset: in_offset, size: in_size}],
+        do: shifted_ins ++ [%{station: station, log_offset: in_offset, size: in_size}],
         else: shifted_ins
 
-    # We need station in the slices — will be filled in by caller
-    new_outs = fill_station(new_outs, pdo, :outputs_size, out_offset)
-    new_ins  = fill_station(new_ins,  pdo, :inputs_size,  in_offset)
-
-    new_size = current_out_total + out_size + current_in_total + in_size
-    new_layout = %{layout | image_size: new_size, outputs: new_outs, inputs: new_ins}
+    new_size = new_out_wm + new_in_wm
+    new_layout = %{layout |
+      image_size: new_size,
+      out_watermark: new_out_wm,
+      in_watermark: new_in_wm,
+      outputs: new_outs,
+      inputs: new_ins
+    }
 
     {new_layout, out_offset, in_offset}
-  end
-
-  defp fill_station(slices, pdo, size_key, offset) do
-    Enum.map(slices, fn s ->
-      if s.station == nil and s.log_offset == offset and s.size == Map.get(pdo, size_key, 0) do
-        %{s | station: Map.get(pdo, :station)}
-      else
-        s
-      end
-    end)
   end
 
   # -- SM / FMMU register writes ---------------------------------------------
