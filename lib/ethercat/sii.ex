@@ -20,7 +20,7 @@ defmodule EtherCAT.SII do
       :ok = SII.reload(link, 0x1000)
   """
 
-  alias EtherCAT.{Command, Link}
+  alias EtherCAT.Link
 
   # -- SII EEPROM registers ---------------------------------------------------
 
@@ -281,21 +281,6 @@ defmodule EtherCAT.SII do
     end
   end
 
-  # -- Register access wrappers -----------------------------------------------
-
-  defp read_reg(link, station, offset, length) do
-    case Link.transact(link, [Command.fprd(station, offset, length)]) do
-      {:ok, [%{wkc: 0}]} -> {:error, :no_response}
-      {:ok, [%{data: data}]} -> {:ok, data}
-      {:error, _} = err -> err
-    end
-  end
-
-  defp write_reg(link, station, offset, data) do
-    case Link.transact(link, [Command.fpwr(station, offset, data)]) do
-      {:ok, [%{wkc: 0}]} -> {:error, :no_response}
-      {:ok, [%{wkc: _}]} -> :ok
-      {:error, _} = err -> err
-    end
-  end
+  defp read_reg(link, station, offset, length), do: Link.fprd(link, station, offset, length)
+  defp write_reg(link, station, offset, data), do: Link.fpwr(link, station, offset, data)
 end

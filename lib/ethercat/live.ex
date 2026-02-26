@@ -32,13 +32,13 @@ defmodule EtherCAT.Live do
       :ok
   """
 
-  alias EtherCAT.{Command, Link, SII}
+  alias EtherCAT.{Link, SII}
 
   import Bitwise
 
   defmacro __using__(_opts) do
     quote do
-      alias EtherCAT.{Command, Datagram, Frame, Link}
+      alias EtherCAT.Link
       import EtherCAT.Live
       IO.puts("EtherCAT.Live loaded — open(\"eth0\") to start")
     end
@@ -73,7 +73,7 @@ defmodule EtherCAT.Live do
   @doc "Count slaves on the bus via broadcast read of address 0x0000."
   @spec slave_count(pid()) :: non_neg_integer()
   def slave_count(link) do
-    {:ok, [%{wkc: wkc}]} = Link.transact(link, [Command.brd(0x0000, 1)])
+    {:ok, _data, wkc} = Link.brd(link, 0x0000, 1)
     wkc
   end
 
@@ -89,13 +89,9 @@ defmodule EtherCAT.Live do
     for pos <- 0..(count - 1) do
       station = base_station + pos
 
-      {:ok, _} =
-        Link.transact(link, [
-          Command.apwr(pos, 0x0010, <<station::16-little>>)
-        ])
+      :ok = Link.apwr(link, pos, 0x0010, <<station::16-little>>)
 
-      {:ok, [%{data: <<status::16-little>>}]} =
-        Link.transact(link, [Command.fprd(station, 0x0130, 2)])
+      {:ok, <<status::16-little>>} = Link.fprd(link, station, 0x0130, 2)
 
       al = Map.get(@al_states, status &&& 0x0F, :unknown)
       %{position: pos, station: station, al_state: al}
@@ -105,36 +101,22 @@ defmodule EtherCAT.Live do
   @doc "Read a register from a slave by configured station address."
   @spec read_reg(pid(), non_neg_integer(), non_neg_integer(), pos_integer()) ::
           {:ok, binary()} | {:error, term()}
-  def read_reg(link, station, offset, length) do
-    case Link.transact(link, [Command.fprd(station, offset, length)]) do
-      {:ok, [%{wkc: 0}]} -> {:error, :no_response}
-      {:ok, [%{data: data}]} -> {:ok, data}
-      error -> error
-    end
-  end
+  def read_reg(link, station, offset, length), do: Link.fprd(link, station, offset, length)
 
   @doc "Write a register on a slave by configured station address."
   @spec write_reg(pid(), non_neg_integer(), non_neg_integer(), binary()) ::
           :ok | {:error, term()}
-  def write_reg(link, station, offset, data) do
-    case Link.transact(link, [Command.fpwr(station, offset, data)]) do
-      {:ok, [%{wkc: 0}]} -> {:error, :no_response}
-      {:ok, [%{wkc: _}]} -> :ok
-      error -> error
-    end
-  end
+  def write_reg(link, station, offset, data), do: Link.fpwr(link, station, offset, data)
 
-  @doc "Broadcast read."
-  @spec brd(pid(), non_neg_integer(), pos_integer()) :: {:ok, [EtherCAT.Datagram.t()]}
-  def brd(link, offset, length) do
-    Link.transact(link, [Command.brd(offset, length)])
-  end
+  @doc "Broadcast read. Returns `{:ok, data, wkc}`."
+  @spec brd(pid(), non_neg_integer(), pos_integer()) ::
+          {:ok, binary(), non_neg_integer()} | {:error, term()}
+  def brd(link, offset, length), do: Link.brd(link, offset, length)
 
-  @doc "Broadcast write."
-  @spec bwr(pid(), non_neg_integer(), binary()) :: {:ok, [EtherCAT.Datagram.t()]}
-  def bwr(link, offset, data) do
-    Link.transact(link, [Command.bwr(offset, data)])
-  end
+  @doc "Broadcast write. Returns `{:ok, wkc}`."
+  @spec bwr(pid(), non_neg_integer(), binary()) ::
+          {:ok, non_neg_integer()} | {:error, term()}
+  def bwr(link, offset, data), do: Link.bwr(link, offset, data)
 
   @doc """
   Transition a slave to the given AL state.

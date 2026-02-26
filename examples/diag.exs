@@ -1,12 +1,13 @@
 # Diagnose: is the frame getting sent and response received at all?
 # Usage: mix run examples/diag.exs --interface enp0s31f6
-alias EtherCAT.{Command, Frame, Link}
+alias EtherCAT.Link
+alias EtherCAT.Link.{Command, Frame, Socket}
 
 {opts, _, _} = OptionParser.parse(System.argv(), switches: [interface: :string])
 interface = opts[:interface] || raise "pass --interface"
 
 IO.puts("1. Opening socket on #{interface}...")
-{:ok, sock} = Link.Socket.open(interface)
+{:ok, sock} = Socket.open(interface)
 IO.puts("   OK: #{inspect(sock)}")
 
 # Build a BRD frame
@@ -17,7 +18,7 @@ IO.puts("3. Frame (#{byte_size(frame)} bytes): #{Base.encode16(frame)}")
 
 # Send
 IO.puts("4. Sending via sendto...")
-{:ok, tx_at} = Link.Socket.send(sock, frame)
+{:ok, tx_at} = Socket.send(sock, frame)
 IO.puts("   sent at: #{tx_at}")
 
 # Receive loop — try up to 10 packets over 3s
@@ -60,4 +61,4 @@ Enum.reduce_while(1..10, nil, fn i, _acc ->
   end
 end)
 
-Link.Socket.close(sock)
+Socket.close(sock)

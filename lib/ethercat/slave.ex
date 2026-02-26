@@ -29,7 +29,7 @@ defmodule EtherCAT.Slave do
 
   import Bitwise
 
-  alias EtherCAT.{Command, Link, SII}
+  alias EtherCAT.{Link, SII}
 
   @al_control 0x0120
   @al_status 0x0130
@@ -201,7 +201,7 @@ defmodule EtherCAT.Slave do
   defp do_transition(data, target) do
     code = Map.fetch!(@al_codes, target)
 
-    with :ok <- write_reg(data.link, data.station, @al_control, <<code::16-little>>) do
+    with :ok <- Link.fpwr(data.link, data.station, @al_control, <<code::16-little>>) do
       poll_al(data, code, @poll_limit)
     end
   end
@@ -209,7 +209,7 @@ defmodule EtherCAT.Slave do
   defp poll_al(data, _code, 0), do: {:error, :transition_timeout, data}
 
   defp poll_al(data, code, n) do
-    case read_reg(data.link, data.station, @al_status, 2) do
+    case Link.fprd(data.link, data.station, @al_status, 2) do
       {:ok, <<status::16-little>>} ->
         cond do
           (status &&& 0x0F) == code ->
@@ -231,18 +231,18 @@ defmodule EtherCAT.Slave do
 
   defp ack_error(data) do
     err_code =
-      case read_reg(data.link, data.station, @al_status_code, 2) do
+      case Link.fprd(data.link, data.station, @al_status_code, 2) do
         {:ok, <<c::16-little>>} -> c
         _ -> nil
       end
 
     state_code =
-      case read_reg(data.link, data.station, @al_status, 2) do
+      case Link.fprd(data.link, data.station, @al_status, 2) do
         {:ok, <<s::16-little>>} -> s &&& 0x0F
         _ -> 0x01
       end
 
-    write_reg(data.link, data.station, @al_control, <<(state_code ||| 0x10)::16-little>>)
+    Link.fpwr(data.link, data.station, @al_control, <<(state_code ||| 0x10)::16-little>>)
 
     {err_code, %{data | error_code: err_code}}
   end
@@ -269,24 +269,6 @@ defmodule EtherCAT.Slave do
   defp invoke_driver(data, cb) do
     if function_exported?(data.driver, cb, 2), do: apply(data.driver, cb, [data.station, data])
     :ok
-  end
-
-  # -- Register access -------------------------------------------------------
-
-  defp read_reg(link, station, offset, length) do
-    case Link.transact(link, [Command.fprd(station, offset, length)]) do
-      {:ok, [%{wkc: 0}]} -> {:error, :no_response}
-      {:ok, [%{data: data}]} -> {:ok, data}
-      {:error, _} = err -> err
-    end
-  end
-
-  defp write_reg(link, station, offset, data) do
-    case Link.transact(link, [Command.fpwr(station, offset, data)]) do
-      {:ok, [%{wkc: 0}]} -> {:error, :no_response}
-      {:ok, _} -> :ok
-      {:error, _} = err -> err
-    end
   end
 
   defp via(station), do: {:via, Registry, {EtherCAT.Registry, {:slave, station}}}

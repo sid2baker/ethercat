@@ -34,7 +34,7 @@ defmodule EtherCAT.IO do
   If no profile is found for a slave, it is skipped (e.g. couplers).
   """
 
-  alias EtherCAT.{Command, Link, Slave}
+  alias EtherCAT.{Link, Slave}
 
   @type layout :: %{
           image_size: non_neg_integer(),
@@ -100,10 +100,9 @@ defmodule EtherCAT.IO do
   def cycle(link, %{image_size: size, outputs: out_slices, inputs: in_slices}, outputs) do
     image = build_image(size, out_slices, outputs)
 
-    case Link.transact(link, [Command.lrw(0x0000, image)]) do
-      {:ok, [%{data: response}]} ->
-        inputs = extract_inputs(response, in_slices)
-        {:ok, inputs}
+    case Link.lrw(link, 0x0000, image) do
+      {:ok, response} ->
+        {:ok, extract_inputs(response, in_slices)}
 
       {:error, _} = err ->
         err
@@ -243,11 +242,5 @@ defmodule EtherCAT.IO do
       0::24>>
   end
 
-  defp write_reg(link, station, offset, data) do
-    case Link.transact(link, [Command.fpwr(station, offset, data)]) do
-      {:ok, [%{wkc: 0}]} -> {:error, :no_response}
-      {:ok, _} -> :ok
-      {:error, _} = err -> err
-    end
-  end
+  defp write_reg(link, station, offset, data), do: Link.fpwr(link, station, offset, data)
 end

@@ -1,27 +1,8 @@
-defmodule EtherCAT.Frame do
-  @moduledoc """
-  Encode and decode Ethernet frames carrying EtherCAT data.
+defmodule EtherCAT.Link.Frame do
+  @moduledoc false
+  # Internal Ethernet frame encoder/decoder — not part of the public API.
 
-  ## Wire layout
-
-      Destination MAC  (6 bytes)  — broadcast FF:FF:FF:FF:FF:FF
-      Source MAC       (6 bytes)  — default 00:00:00:00:00:00
-      EtherType        (2 bytes)  — 0x88A4
-      EtherCAT Header  (2 bytes)  — Length[10:0] | R[11]=0 | Type[15:12]=1
-      Datagrams        (variable)
-      Padding          (to 60 bytes minimum, FCS added by NIC)
-
-  EtherCAT header type must be 1 (spec §2.1, Table 2). The length field
-  is ignored by ESCs (they rely on individual datagram length fields), but
-  we set it correctly per spec.
-
-  VLAN-tagged frames (IEEE 802.1Q, EtherType 0x8100) are supported on
-  decode — the VLAN tag is skipped, matching ESC behavior (spec §3).
-
-  FCS is computed by NIC hardware and not included here.
-  """
-
-  alias EtherCAT.Datagram
+  alias EtherCAT.Link.Datagram
 
   @broadcast_mac <<0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF>>
   @zero_mac <<0, 0, 0, 0, 0, 0>>
@@ -29,15 +10,6 @@ defmodule EtherCAT.Frame do
   # EtherCAT header length field is 11 bits → max 2047 bytes of datagram payload.
   @max_payload 2047
 
-  @doc """
-  Encode datagrams into a complete Ethernet frame.
-
-  Returns `{:ok, frame}` or `{:error, :frame_too_large}` when the combined
-  datagram payload exceeds the 11-bit length field (2047 bytes).
-
-  `src_mac` is a 6-byte binary source MAC address (default all-zeros).
-  Destination is always broadcast.
-  """
   @spec encode([Datagram.t()], <<_::48>>) :: {:ok, binary()} | {:error, :frame_too_large}
   def encode(datagrams, src_mac \\ @zero_mac) do
     payload = Datagram.encode(datagrams)
@@ -63,11 +35,6 @@ defmodule EtherCAT.Frame do
     end
   end
 
-  @doc """
-  Decode a received Ethernet frame.
-
-  Returns `{:ok, datagrams, src_mac}` or `{:error, reason}`.
-  """
   @spec decode(binary()) :: {:ok, [Datagram.t()], <<_::48>>} | {:error, atom()}
 
   # Standard EtherCAT frame

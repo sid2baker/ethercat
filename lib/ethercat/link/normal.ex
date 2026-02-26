@@ -14,8 +14,8 @@ defmodule EtherCAT.Link.Normal do
 
   @behaviour :gen_statem
 
-  alias EtherCAT.{Frame, Telemetry}
-  alias EtherCAT.Link.Socket
+  alias EtherCAT.Link.{Frame, Socket}
+  alias EtherCAT.Telemetry
 
   @debounce_interval 200
 

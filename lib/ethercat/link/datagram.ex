@@ -1,4 +1,4 @@
-defmodule EtherCAT.Datagram do
+defmodule EtherCAT.Link.Datagram do
   @moduledoc """
   An EtherCAT datagram struct and wire-format codec.
 
