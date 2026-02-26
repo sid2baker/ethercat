@@ -306,6 +306,12 @@ defmodule EtherCAT.Domain do
     result = Link.transaction(data.link, &Transaction.lrw(&1, data.logical_base, image))
     next_at = data.next_cycle_at + data.period_us
 
+    # Compute next state_timeout regardless of result — drift-free re-arm
+    now_after = System.monotonic_time(:microsecond)
+    delay_us = max(0, next_at - now_after)
+    delay_ms = div(delay_us + 999, 1000)
+    next_timeout = [{:state_timeout, delay_ms, :tick}]
+
     case result do
       {:ok, [%{data: response, wkc: wkc}]} when wkc > 0 ->
         now = System.monotonic_time(:microsecond)
@@ -322,7 +328,7 @@ defmodule EtherCAT.Domain do
           miss_count: 0,
           next_cycle_at: next_at
         }
-        {:next_state, :cycling, new_data}
+        {:keep_state, new_data, next_timeout}
 
       other ->
         reason = if match?({:ok, _}, other), do: :no_response, else: elem(other, 1)
@@ -339,7 +345,7 @@ defmodule EtherCAT.Domain do
           )
           {:next_state, :stopped, new_data}
         else
-          {:next_state, :cycling, new_data}
+          {:keep_state, new_data, next_timeout}
         end
     end
   end

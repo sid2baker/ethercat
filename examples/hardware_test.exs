@@ -113,11 +113,22 @@ EtherCAT hardware test (Domain API)
   period    : #{period_ms} ms
 """)
 
+# Register drivers before Master.start — slaves look up drivers during :init→:preop
+# (SII EEPROM is read then find_driver/2 is called; must be in app env by then)
+Application.put_env(:ethercat, :drivers, %{
+  {0x00000002, 0x07113052} => Example.EL1809,
+  {0x00000002, 0x0AF93052} => Example.EL2809
+})
+
 # ---------------------------------------------------------------------------
 # 1. Start master + slave discovery
 # ---------------------------------------------------------------------------
 
 banner.("1. Master start + slave discovery")
+
+# Stop any leftover master from a previous run (idempotent)
+Master.stop()
+Process.sleep(200)
 
 check.("Master.start", Master.start(interface: interface))
 
@@ -171,16 +182,10 @@ link = Master.link()
 
 check.("DomainSupervisor.start_child", DynamicSupervisor.start_child(
   EtherCAT.DomainSupervisor,
-  {EtherCAT.Domain, id: :default_domain, link: link, period: period_ms}
+  {EtherCAT.Domain, id: :default_domain, link: link, period: period_ms, miss_threshold: 10_000}
 ))
 
 check.("Domain.set_default", Domain.set_default(:default_domain))
-
-# Register drivers in app config so slaves can look them up by {vendor_id, product_code}
-Application.put_env(:ethercat, :drivers, %{
-  {0x00000002, 0x07113052} => Example.EL1809,
-  {0x00000002, 0x0AF93052} => Example.EL2809
-})
 
 IO.puts("  Domain :default_domain armed at #{period_ms} ms period")
 IO.puts("  Slaves will self-register PDOs when they enter :safeop")
@@ -275,8 +280,9 @@ timings = :array.new(cycles, default: 0)
         t1 = System.monotonic_time(:microsecond)
         {:array.set(step, t1 - t0, timings), in_val}
 
-    after 2000 ->
-      IO.puts("  step=#{step}: timeout waiting for cycle_done")
+    after 500 ->
+      {:ok, s} = Domain.stats(:default_domain)
+      IO.puts("  step=#{step}: timeout  state=#{s.state} cycles=#{s.cycle_count} misses=#{s.miss_count}")
       {timings, last_in}
     end
   end)
