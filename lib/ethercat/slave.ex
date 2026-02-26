@@ -27,7 +27,7 @@ defmodule EtherCAT.Slave do
 
   require Logger
 
-  alias EtherCAT.{Link, Slave.SII}
+  alias EtherCAT.{Domain, Link, Slave.SII}
   alias EtherCAT.Link.Transaction
   alias EtherCAT.Slave.Registers
 
@@ -119,8 +119,14 @@ defmodule EtherCAT.Slave do
     {:keep_state_and_data, [{{:timeout, :auto_advance}, 0, nil}]}
   end
 
-  def handle_event(:enter, _old, state, data) when state in [:preop, :safeop, :op] do
+  def handle_event(:enter, _old, state, data) when state in [:preop, :op] do
     invoke_driver(data, :"on_#{state}")
+    :keep_state_and_data
+  end
+
+  def handle_event(:enter, _old, :safeop, data) do
+    invoke_driver(data, :on_safeop)
+    register_pdos_to_domains(data)
     :keep_state_and_data
   end
 
@@ -293,6 +299,58 @@ defmodule EtherCAT.Slave do
     if function_exported?(data.driver, cb, 2), do: apply(data.driver, cb, [data.station, data])
     :ok
   end
+
+  # -- Domain PDO registration -----------------------------------------------
+
+  # Called at :safeop entry. Reads the driver's PDO profile, normalises to the
+  # pdos-list format, then calls Domain.register_pdo/4 for each group.
+  # Silently no-ops if no driver or no domain is configured for a PDO group.
+  defp register_pdos_to_domains(%{driver: nil}), do: :ok
+
+  defp register_pdos_to_domains(data) do
+    profile = normalise_profile(data.driver.process_data_profile())
+
+    Enum.each(profile.pdos, fn pdo ->
+      domain_id = resolve_domain(pdo.domain)
+
+      if domain_id do
+        pdo_with_station = Map.put(pdo, :station, data.station)
+
+        case Domain.register_pdo(domain_id, data.station, pdo_with_station, data.link) do
+          :ok ->
+            :ok
+
+          {:error, reason} ->
+            Logger.warning(
+              "[Slave 0x#{Integer.to_string(data.station, 16)}] " <>
+                "PDO registration to domain #{inspect(domain_id)} failed: #{inspect(reason)}"
+            )
+        end
+      end
+    end)
+  end
+
+  # :default resolves to whichever domain called Domain.set_default/1
+  defp resolve_domain(:default) do
+    case Registry.lookup(EtherCAT.Registry, {:domain, :default}) do
+      [{_pid, domain_id}] -> domain_id
+      [] -> nil
+    end
+  end
+
+  # Named domain — verify it exists in the Registry before returning
+  defp resolve_domain(name) when is_atom(name) do
+    case Registry.lookup(EtherCAT.Registry, {:domain, name}) do
+      [{_pid, ^name}] -> name
+      [] -> nil
+    end
+  end
+
+  # Normalise old flat profile shape to the pdos-list format.
+  # Old: %{outputs_size, inputs_size, sms, fmmus}
+  # New: %{pdos: [%{domain: :default, outputs_size, inputs_size, sms, fmmus}]}
+  defp normalise_profile(%{pdos: _} = p), do: p
+  defp normalise_profile(p), do: %{pdos: [Map.put_new(p, :domain, :default)]}
 
   defp via(station), do: {:via, Registry, {EtherCAT.Registry, {:slave, station}}}
 end

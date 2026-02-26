@@ -1,32 +1,23 @@
 #!/usr/bin/env elixir
-# End-to-end hardware test for the EtherCAT stack.
+# End-to-end hardware test for the EtherCAT stack using the Domain API.
 #
-# Tests the full implementation: Master → Slave ESM → SII EEPROM → ProcessImage.
+# Tests: Master → Slave ESM → SII EEPROM → Domain self-timed cyclic I/O.
 #
 # Usage:
 #   mix run examples/hardware_test.exs --interface enp0s31f6
 #
 # Optional flags:
-#   --cycles N       number of cyclic I/O rounds (default 100)
-#   --period-ms N    cycle period in milliseconds (default 4)
+#   --cycles N       number of cyclic I/O rounds to wait for (default 100)
+#   --period-ms N    domain cycle period in milliseconds (default 4)
 #
 # Expected hardware setup:
 #   EL1809 (16-ch digital input)  at station 0x1001
 #   EL2809 (16-ch digital output) at station 0x1002
-#
-# What this tests:
-#   1. Link layer  — BRD detects slaves
-#   2. ESM         — all slaves reach :op
-#   3. SII EEPROM  — vendor/product IDs read correctly
-#   4. ProcessImage — SM/FMMU configured, LRW cycle runs at target period
-#   5. Driver contract — encode_outputs/decode_inputs boundary is honoured
-#   6. Timing      — measures actual cycle jitter over N rounds
 
-alias EtherCAT.{Master, Slave}
-alias EtherCAT.Slave.{ProcessImage, Registers}
+alias EtherCAT.{Domain, Master, Slave}
 
 # ---------------------------------------------------------------------------
-# Driver definitions (inline for self-contained example)
+# Driver definitions (inline — new pdos-list format)
 # ---------------------------------------------------------------------------
 
 defmodule Example.EL1809 do
@@ -35,12 +26,13 @@ defmodule Example.EL1809 do
 
   @impl true
   def process_data_profile do
-    %{
+    %{pdos: [%{
+      domain:       :default,
       outputs_size: 0,
-      inputs_size: 2,
-      sms:   [{3, 0x1000, 2, 0x20}],
-      fmmus: [{1, 0x1000, 2, :read}]
-    }
+      inputs_size:  2,
+      sms:          [{3, 0x1000, 2, 0x20}],
+      fmmus:        [{1, 0x1000, 2, :read}]
+    }]}
   end
 
   @impl true
@@ -57,12 +49,13 @@ defmodule Example.EL2809 do
 
   @impl true
   def process_data_profile do
-    %{
+    %{pdos: [%{
+      domain:       :default,
       outputs_size: 2,
-      inputs_size: 0,
-      sms:   [{2, 0x0F00, 2, 0x44}],
-      fmmus: [{0, 0x0F00, 2, :write}]
-    }
+      inputs_size:  0,
+      sms:          [{2, 0x0F00, 2, 0x44}],
+      fmmus:        [{0, 0x0F00, 2, :write}]
+    }]}
   end
 
   @impl true
@@ -114,19 +107,11 @@ cycles    = Keyword.get(opts, :cycles, 100)
 period_ms = Keyword.get(opts, :period_ms, 4)
 
 IO.puts("""
-EtherCAT hardware test
+EtherCAT hardware test (Domain API)
   interface : #{interface}
   cycles    : #{cycles}
   period    : #{period_ms} ms
 """)
-
-# Build profile map keyed by product code (from SII, resolved at configure time)
-# EL1809 product code: 0x07113052
-# EL2809 product code: 0x0AF93052
-profiles = %{
-  0x07113052 => Example.EL1809.process_data_profile(),
-  0x0AF93052 => Example.EL2809.process_data_profile()
-}
 
 # ---------------------------------------------------------------------------
 # 1. Start master + slave discovery
@@ -135,6 +120,8 @@ profiles = %{
 banner.("1. Master start + slave discovery")
 
 check.("Master.start", Master.start(interface: interface))
+
+# Wait for slaves to auto-advance to :preop (reads SII EEPROM)
 Process.sleep(500)
 
 slaves = Master.slaves()
@@ -168,20 +155,50 @@ for {station, _pid} <- slaves do
 
   if id do
     IO.puts("  #{hex.(station)}: vendor=#{hex8.(id.vendor_id)} product=#{hex8.(id.product_code)}")
-    driver = Application.get_env(:ethercat, :drivers, profiles) |> Map.get({id.vendor_id, id.product_code})
-    if driver, do: IO.puts("         driver : #{inspect(driver)}")
   else
-    IO.puts("  #{hex.(station)}: SII not read yet (still in :init?)")
+    IO.puts("  #{hex.(station)}: SII not read yet")
   end
 end
 
 # ---------------------------------------------------------------------------
-# 3. Advance to Op
+# 3. Configure domain BEFORE advancing to :safeop
+#    Slaves self-register their PDOs when they enter :safeop
 # ---------------------------------------------------------------------------
 
-banner.("3. ESM: preop → safeop → op")
+banner.("3. Domain setup")
 
-check.("go_operational", Master.go_operational())
+link = Master.link()
+
+check.("DomainSupervisor.start_child", DynamicSupervisor.start_child(
+  EtherCAT.DomainSupervisor,
+  {EtherCAT.Domain, id: :default_domain, link: link, period: period_ms}
+))
+
+check.("Domain.set_default", Domain.set_default(:default_domain))
+
+# Register drivers in app config so slaves can look them up by {vendor_id, product_code}
+Application.put_env(:ethercat, :drivers, %{
+  {0x00000002, 0x07113052} => Example.EL1809,
+  {0x00000002, 0x0AF93052} => Example.EL2809
+})
+
+IO.puts("  Domain :default_domain armed at #{period_ms} ms period")
+IO.puts("  Slaves will self-register PDOs when they enter :safeop")
+
+# ---------------------------------------------------------------------------
+# 4. Advance to SafeOp — triggers PDO self-registration
+# ---------------------------------------------------------------------------
+
+banner.("4. ESM: preop → safeop (PDO registration)")
+
+Enum.each(slaves, fn {station, _} ->
+  case Slave.request(station, :safeop) do
+    :ok -> :ok
+    {:error, reason} ->
+      IO.puts("  WARNING: #{hex.(station)} safeop failed: #{inspect(reason)}")
+  end
+end)
+
 Process.sleep(200)
 
 for {station, _} <- slaves do
@@ -191,31 +208,38 @@ for {station, _} <- slaves do
   IO.puts("  #{hex.(station)}: #{state}#{err_str}")
 end
 
-all_op = Enum.all?(slaves, fn {station, _} -> Slave.state(station) == :op end)
-unless all_op, do: IO.puts("  WARNING: not all slaves reached :op")
+{:ok, stats} = Domain.stats(:default_domain)
+IO.puts("  Domain image_size: #{stats.image_size} bytes")
 
 # ---------------------------------------------------------------------------
-# 4. Configure SM + FMMU (process image)
+# 5. Advance to Op + start cycling
 # ---------------------------------------------------------------------------
 
-banner.("4. ProcessImage.configure (SM + FMMU)")
+banner.("5. ESM: safeop → op + start cyclic")
 
-# Store profiles in app env so Master.configure() picks them up, then also
-# call ProcessImage.configure directly to inspect the layout.
-Application.put_env(:ethercat, :io_profiles, profiles)
-check.("Master.configure", Master.configure())
+Enum.each(slaves, fn {station, _} ->
+  case Slave.request(station, :op) do
+    :ok -> :ok
+    {:error, reason} ->
+      IO.puts("  WARNING: #{hex.(station)} op failed: #{inspect(reason)}")
+  end
+end)
 
-link = Master.link()
-{:ok, layout} = ProcessImage.configure(link, slaves, profiles)
-IO.puts("  image_size : #{layout.image_size} bytes")
-IO.puts("  outputs    : #{inspect(layout.outputs)}")
-IO.puts("  inputs     : #{inspect(layout.inputs)}")
+Process.sleep(100)
+
+for {station, _} <- slaves do
+  IO.puts("  #{hex.(station)}: #{Slave.state(station)}")
+end
+
+check.("Domain.start_cyclic", Domain.start_cyclic(:default_domain))
+Domain.subscribe(:default_domain)
+IO.puts("  Domain cycling at #{period_ms} ms period")
 
 # ---------------------------------------------------------------------------
-# 5. Cyclic I/O loop
+# 6. Cyclic I/O loop — react to cycle_done notifications
 # ---------------------------------------------------------------------------
 
-banner.("5. Cyclic I/O — #{cycles} cycles at #{period_ms} ms")
+banner.("6. Cyclic I/O — #{cycles} cycles at #{period_ms} ms")
 
 in_station  = 0x1001
 out_station = 0x1002
@@ -226,19 +250,19 @@ IO.puts("")
 
 timings = :array.new(cycles, default: 0)
 
-{timings, _last_in, _} =
-  Enum.reduce(0..(cycles - 1), {timings, nil, nil}, fn step, {timings, last_in, _last_out} ->
+{timings, _} =
+  Enum.reduce(0..(cycles - 1), {timings, nil}, fn step, {timings, last_in} ->
     t0 = System.monotonic_time(:microsecond)
 
-    # Blink pattern: alternate every 25 cycles
-    phase   = div(step, 25)
-    on?     = rem(phase, 2) == 0
-    out_raw = Example.EL2809.encode_outputs(if on?, do: 0xFFFF, else: 0x0000)
-
-    case Master.cycle(%{out_station => out_raw}) do
-      {:ok, inputs} ->
-        in_raw = Map.get(inputs, in_station, <<0, 0>>)
+    receive do
+      {:ethercat_domain, :default_domain, :cycle_done} ->
+        {:ok, in_raw, _ts} = Domain.get_inputs(:default_domain, in_station)
         in_val = Example.EL1809.decode_inputs(in_raw)
+
+        phase   = div(step, 25)
+        on?     = rem(phase, 2) == 0
+        out_raw = Example.EL2809.encode_outputs(if on?, do: 0xFFFF, else: 0x0000)
+        Domain.put_outputs(:default_domain, out_station, out_raw)
 
         if in_val != last_in or rem(step, 25) == 0 do
           IO.puts(
@@ -248,33 +272,31 @@ timings = :array.new(cycles, default: 0)
           )
         end
 
-        elapsed = System.monotonic_time(:microsecond) - t0
-        Process.sleep(max(0, period_ms - div(elapsed, 1000)))
-
         t1 = System.monotonic_time(:microsecond)
-        {:array.set(step, t1 - t0, timings), in_val, out_raw}
+        {:array.set(step, t1 - t0, timings), in_val}
 
-      {:error, reason} ->
-        IO.puts("  step=#{step} cycle error: #{inspect(reason)}")
-        Process.sleep(period_ms)
-        {timings, last_in, nil}
+    after 2000 ->
+      IO.puts("  step=#{step}: timeout waiting for cycle_done")
+      {timings, last_in}
     end
   end)
 
+Domain.stop_cyclic(:default_domain)
+
 # ---------------------------------------------------------------------------
-# 6. Timing report
+# 7. Timing report
 # ---------------------------------------------------------------------------
 
-banner.("6. Timing report")
+banner.("7. Timing report")
 
 all_times = for i <- 0..(cycles - 1), do: :array.get(i, timings)
 valid = Enum.filter(all_times, &(&1 > 0))
 
 if valid != [] do
-  min_us  = Enum.min(valid)
-  max_us  = Enum.max(valid)
-  avg_us  = div(Enum.sum(valid), length(valid))
-  target  = period_ms * 1000
+  min_us = Enum.min(valid)
+  max_us = Enum.max(valid)
+  avg_us = div(Enum.sum(valid), length(valid))
+  target = period_ms * 1000
 
   IO.puts("  cycles  : #{length(valid)}")
   IO.puts("  target  : #{target} µs  (#{period_ms} ms)")
@@ -287,13 +309,17 @@ if valid != [] do
   IO.puts("  overruns (>1.5× target): #{overruns}")
 end
 
+{:ok, final_stats} = Domain.stats(:default_domain)
+IO.puts("  domain cycle_count : #{final_stats.cycle_count}")
+IO.puts("  domain miss_count  : #{final_stats.miss_count}")
+
 # ---------------------------------------------------------------------------
-# 7. Error counter snapshot
+# 8. ESC error counters
 # ---------------------------------------------------------------------------
 
-banner.("7. ESC error counters")
+banner.("8. ESC error counters")
 
-{rx_addr, rx_size} = Registers.rx_error_counter()
+{rx_addr, rx_size} = EtherCAT.Slave.Registers.rx_error_counter()
 
 for {station, _} <- slaves do
   case EtherCAT.Link.transaction(link, &EtherCAT.Link.Transaction.fprd(&1, station, rx_addr, rx_size)) do

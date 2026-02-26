@@ -26,13 +26,12 @@ defmodule EtherCAT.Master do
 
   alias EtherCAT.{Link, Slave}
   alias EtherCAT.Link.Transaction
-  alias EtherCAT.Slave.ProcessImage
 
   @base_station 0x1000
   @station_reg 0x0010
   @confirm_rounds 3
 
-  defstruct [:link, :layout, base_station: @base_station, slaves: []]
+  defstruct [:link, base_station: @base_station, slaves: []]
 
   # -- Public API ------------------------------------------------------------
 
@@ -65,19 +64,6 @@ defmodule EtherCAT.Master do
   @doc "Request all slaves to transition to `:op`. Logs but does not abort on individual failures."
   @spec go_operational() :: :ok
   def go_operational, do: :gen_statem.call(__MODULE__, :go_operational)
-
-  @doc "Configure SM and FMMU registers for all slaves. Call once after `go_operational/0`."
-  @spec configure() :: :ok | {:error, term()}
-  def configure, do: :gen_statem.call(__MODULE__, :configure)
-
-  @doc """
-  Run one cyclic process image exchange.
-
-  `outputs` is `%{station => binary()}`. Returns `{:ok, %{station => binary()}}`.
-  """
-  @spec cycle(%{non_neg_integer() => binary()}) ::
-          {:ok, %{non_neg_integer() => binary()}} | {:error, term()}
-  def cycle(outputs), do: :gen_statem.call(__MODULE__, {:cycle, outputs})
 
   # -- child_spec / start_link -----------------------------------------------
 
@@ -208,32 +194,11 @@ defmodule EtherCAT.Master do
     {:keep_state_and_data, [{:reply, from, :ok}]}
   end
 
-  def handle_event({:call, from}, :configure, :ready, data) do
-    case ProcessImage.configure(data.link, data.slaves, load_profiles()) do
-      {:ok, layout} ->
-        {:keep_state, %{data | layout: layout}, [{:reply, from, :ok}]}
-
-      {:error, _} = err ->
-        {:keep_state_and_data, [{:reply, from, err}]}
-    end
-  end
-
-  def handle_event({:call, from}, {:cycle, _outputs}, :ready, %{layout: nil} = _data) do
-    {:keep_state_and_data, [{:reply, from, {:error, :not_configured}}]}
-  end
-
-  def handle_event({:call, from}, {:cycle, outputs}, :ready, data) do
-    reply = ProcessImage.cycle(data.link, data.layout, outputs)
-    {:keep_state_and_data, [{:reply, from, reply}]}
-  end
-
   def handle_event({:call, from}, _event, :ready, _data) do
     {:keep_state_and_data, [{:reply, from, {:error, :invalid_request}}]}
   end
 
   # -- Scan ------------------------------------------------------------------
-
-  defp load_profiles, do: Application.get_env(:ethercat, :io_profiles, %{})
 
   defp do_scan(data) do
     with {:ok, count} <- stable_count(data.link) do
