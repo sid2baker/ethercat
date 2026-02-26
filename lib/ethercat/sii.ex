@@ -21,6 +21,7 @@ defmodule EtherCAT.SII do
   """
 
   alias EtherCAT.Link
+  alias EtherCAT.Link.Transaction
 
   # -- SII EEPROM registers ---------------------------------------------------
 
@@ -281,6 +282,19 @@ defmodule EtherCAT.SII do
     end
   end
 
-  defp read_reg(link, station, offset, length), do: Link.fprd(link, station, offset, length)
-  defp write_reg(link, station, offset, data), do: Link.fpwr(link, station, offset, data)
+  defp read_reg(link, station, offset, length) do
+    case Link.transaction(link, &Transaction.fprd(&1, station, offset, length)) do
+      {:ok, [%{data: data, wkc: wkc}]} when wkc > 0 -> {:ok, data}
+      {:ok, [%{wkc: 0}]} -> {:error, :no_response}
+      {:error, _} = err -> err
+    end
+  end
+
+  defp write_reg(link, station, offset, data) do
+    case Link.transaction(link, &Transaction.fpwr(&1, station, offset, data)) do
+      {:ok, [%{wkc: wkc}]} when wkc > 0 -> :ok
+      {:ok, [%{wkc: 0}]} -> {:error, :no_response}
+      {:error, _} = err -> err
+    end
+  end
 end

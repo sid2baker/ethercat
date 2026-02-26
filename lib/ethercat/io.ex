@@ -35,6 +35,7 @@ defmodule EtherCAT.IO do
   """
 
   alias EtherCAT.{Link, Slave}
+  alias EtherCAT.Link.Transaction
 
   @type layout :: %{
           image_size: non_neg_integer(),
@@ -100,9 +101,12 @@ defmodule EtherCAT.IO do
   def cycle(link, %{image_size: size, outputs: out_slices, inputs: in_slices}, outputs) do
     image = build_image(size, out_slices, outputs)
 
-    case Link.lrw(link, 0x0000, image) do
-      {:ok, response} ->
+    case Link.transaction(link, &Transaction.lrw(&1, 0x0000, image)) do
+      {:ok, [%{data: response, wkc: wkc}]} when wkc > 0 ->
         {:ok, extract_inputs(response, in_slices)}
+
+      {:ok, [%{wkc: 0}]} ->
+        {:error, :no_response}
 
       {:error, _} = err ->
         err
@@ -242,5 +246,11 @@ defmodule EtherCAT.IO do
       0::24>>
   end
 
-  defp write_reg(link, station, offset, data), do: Link.fpwr(link, station, offset, data)
+  defp write_reg(link, station, offset, data) do
+    case Link.transaction(link, &Transaction.fpwr(&1, station, offset, data)) do
+      {:ok, [%{wkc: wkc}]} when wkc > 0 -> :ok
+      {:ok, [%{wkc: 0}]} -> {:error, :no_response}
+      {:error, _} = err -> err
+    end
+  end
 end

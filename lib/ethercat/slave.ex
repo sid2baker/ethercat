@@ -27,9 +27,8 @@ defmodule EtherCAT.Slave do
 
   require Logger
 
-  import Bitwise
-
   alias EtherCAT.{Link, SII}
+  alias EtherCAT.Link.Transaction
 
   @al_control 0x0120
   @al_status 0x0130
@@ -40,20 +39,20 @@ defmodule EtherCAT.Slave do
   # Direct transition path lookup — avoids BFS at runtime.
   # Key is {from, to}, value is the list of states to walk through.
   @paths %{
-    {:init, :preop}      => [:preop],
-    {:init, :bootstrap}  => [:bootstrap],
-    {:init, :safeop}     => [:preop, :safeop],
-    {:init, :op}         => [:preop, :safeop, :op],
-    {:bootstrap, :init}  => [:init],
-    {:preop, :safeop}    => [:safeop],
-    {:preop, :op}        => [:safeop, :op],
-    {:preop, :init}      => [:init],
-    {:safeop, :op}       => [:op],
-    {:safeop, :preop}    => [:preop],
-    {:safeop, :init}     => [:init],
-    {:op, :safeop}       => [:safeop],
-    {:op, :preop}        => [:safeop, :preop],
-    {:op, :init}         => [:safeop, :preop, :init]
+    {:init, :preop} => [:preop],
+    {:init, :bootstrap} => [:bootstrap],
+    {:init, :safeop} => [:preop, :safeop],
+    {:init, :op} => [:preop, :safeop, :op],
+    {:bootstrap, :init} => [:init],
+    {:preop, :safeop} => [:safeop],
+    {:preop, :op} => [:safeop, :op],
+    {:preop, :init} => [:init],
+    {:safeop, :op} => [:op],
+    {:safeop, :preop} => [:preop],
+    {:safeop, :init} => [:init],
+    {:op, :safeop} => [:safeop],
+    {:op, :preop} => [:safeop, :preop],
+    {:op, :init} => [:safeop, :preop, :init]
   }
 
   @poll_limit 200
@@ -143,12 +142,18 @@ defmodule EtherCAT.Slave do
             {:next_state, :preop, new_data2}
 
           {:error, reason, new_data2} ->
-            Logger.warning("[Slave 0x#{Integer.to_string(data.station, 16)}] preop failed: #{inspect(reason)}")
+            Logger.warning(
+              "[Slave 0x#{Integer.to_string(data.station, 16)}] preop failed: #{inspect(reason)}"
+            )
+
             {:keep_state, new_data2}
         end
 
       {:error, reason} ->
-        Logger.warning("[Slave 0x#{Integer.to_string(data.station, 16)}] SII read failed: #{inspect(reason)}")
+        Logger.warning(
+          "[Slave 0x#{Integer.to_string(data.station, 16)}] SII read failed: #{inspect(reason)}"
+        )
+
         :keep_state_and_data
     end
   end
@@ -201,28 +206,36 @@ defmodule EtherCAT.Slave do
   defp do_transition(data, target) do
     code = Map.fetch!(@al_codes, target)
 
-    with :ok <- Link.fpwr(data.link, data.station, @al_control, <<code::16-little>>) do
+    with {:ok, [%{wkc: wkc}]} when wkc > 0 <-
+           Link.transaction(
+             data.link,
+             &Transaction.fpwr(&1, data.station, @al_control, <<code::16-little>>)
+           ) do
       poll_al(data, code, @poll_limit)
+    else
+      {:ok, [%{wkc: 0}]} -> {:error, :no_response, data}
+      {:error, reason} -> {:error, reason, data}
     end
   end
 
   defp poll_al(data, _code, 0), do: {:error, :transition_timeout, data}
 
   defp poll_al(data, code, n) do
-    case Link.fprd(data.link, data.station, @al_status, 2) do
-      {:ok, <<status::16-little>>} ->
-        cond do
-          (status &&& 0x0F) == code ->
-            {:ok, data}
+    case Link.transaction(data.link, &Transaction.fprd(&1, data.station, @al_status, 2)) do
+      {:ok, [%{data: <<_::3, _err::1, state::4, _::8>>, wkc: wkc}]}
+      when wkc > 0 and state == code ->
+        {:ok, data}
 
-          (status &&& 0x10) != 0 ->
-            {err_code, new_data} = ack_error(data)
-            {:error, {:al_error, err_code}, new_data}
+      {:ok, [%{data: <<_::3, 1::1, _::4, _::8>>, wkc: wkc}]} when wkc > 0 ->
+        {err_code, new_data} = ack_error(data)
+        {:error, {:al_error, err_code}, new_data}
 
-          true ->
-            Process.sleep(@poll_interval_ms)
-            poll_al(data, code, n - 1)
-        end
+      {:ok, [%{data: <<_::16>>, wkc: wkc}]} when wkc > 0 ->
+        Process.sleep(@poll_interval_ms)
+        poll_al(data, code, n - 1)
+
+      {:ok, [%{wkc: 0}]} ->
+        {:error, :no_response, data}
 
       {:error, reason} ->
         {:error, reason, data}
@@ -231,18 +244,24 @@ defmodule EtherCAT.Slave do
 
   defp ack_error(data) do
     err_code =
-      case Link.fprd(data.link, data.station, @al_status_code, 2) do
-        {:ok, <<c::16-little>>} -> c
+      case Link.transaction(data.link, &Transaction.fprd(&1, data.station, @al_status_code, 2)) do
+        {:ok, [%{data: <<c::16-little>>, wkc: wkc}]} when wkc > 0 -> c
         _ -> nil
       end
 
     state_code =
-      case Link.fprd(data.link, data.station, @al_status, 2) do
-        {:ok, <<s::16-little>>} -> s &&& 0x0F
+      case Link.transaction(data.link, &Transaction.fprd(&1, data.station, @al_status, 2)) do
+        {:ok, [%{data: <<_::3, _err::1, state::4, _::8>>, wkc: wkc}]} when wkc > 0 -> state
         _ -> 0x01
       end
 
-    Link.fpwr(data.link, data.station, @al_control, <<(state_code ||| 0x10)::16-little>>)
+    # Set error ack bit (bit 4) alongside the current state code
+    ack_value = state_code + 0x10
+
+    Link.transaction(
+      data.link,
+      &Transaction.fpwr(&1, data.station, @al_control, <<ack_value::16-little>>)
+    )
 
     {err_code, %{data | error_code: err_code}}
   end
@@ -254,8 +273,7 @@ defmodule EtherCAT.Slave do
            SII.read(link, station, 0x08, 8),
          {:ok, <<ro::16-little, rs::16-little, so::16-little, ss::16-little>>} <-
            SII.read(link, station, 0x18, 4) do
-      {:ok,
-       %{vendor_id: vid, product_code: pc, revision: rev, serial_number: sn},
+      {:ok, %{vendor_id: vid, product_code: pc, revision: rev, serial_number: sn},
        %{recv_offset: ro, recv_size: rs, send_offset: so, send_size: ss}}
     end
   end

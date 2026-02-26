@@ -25,6 +25,7 @@ defmodule EtherCAT.Master do
   require Logger
 
   alias EtherCAT.{IO, Link, Slave}
+  alias EtherCAT.Link.Transaction
 
   @base_station 0x1000
   @station_reg 0x0010
@@ -81,7 +82,12 @@ defmodule EtherCAT.Master do
 
   @doc false
   def child_spec(arg) do
-    %{id: __MODULE__, start: {__MODULE__, :start_link, [arg]}, restart: :permanent, shutdown: 5000}
+    %{
+      id: __MODULE__,
+      start: {__MODULE__, :start_link, [arg]},
+      restart: :permanent,
+      shutdown: 5000
+    }
   end
 
   @doc false
@@ -172,10 +178,11 @@ defmodule EtherCAT.Master do
   end
 
   def handle_event({:call, from}, {:slave, station}, :ready, data) do
-    pid = case List.keyfind(data.slaves, station, 0) do
-      {^station, pid} -> pid
-      nil -> nil
-    end
+    pid =
+      case List.keyfind(data.slaves, station, 0) do
+        {^station, pid} -> pid
+        nil -> nil
+      end
 
     {:keep_state_and_data, [{:reply, from, pid}]}
   end
@@ -187,9 +194,13 @@ defmodule EtherCAT.Master do
   def handle_event({:call, from}, :go_operational, :ready, data) do
     Enum.each(data.slaves, fn {station, _pid} ->
       case Slave.request(station, :op) do
-        :ok -> :ok
+        :ok ->
+          :ok
+
         {:error, reason} ->
-          Logger.warning("[Master] slave 0x#{Integer.to_string(station, 16)} -> op failed: #{inspect(reason)}")
+          Logger.warning(
+            "[Master] slave 0x#{Integer.to_string(station, 16)} -> op failed: #{inspect(reason)}"
+          )
       end
     end)
 
@@ -232,8 +243,8 @@ defmodule EtherCAT.Master do
   defp stable_count(link) do
     counts =
       for _ <- 1..@confirm_rounds do
-        case Link.brd(link, 0x0000, 1) do
-          {:ok, _data, n} -> n
+        case Link.transaction(link, &Transaction.brd(&1, 0x0000, 1)) do
+          {:ok, [%{wkc: n}]} -> n
           _ -> -1
         end
       end
@@ -247,7 +258,7 @@ defmodule EtherCAT.Master do
   defp assign_stations(link, base, count) do
     Enum.each(0..(count - 1), fn pos ->
       station = base + pos
-      Link.apwr(link, pos, @station_reg, <<station::16-little>>)
+      Link.transaction(link, &Transaction.apwr(&1, pos, @station_reg, <<station::16-little>>))
     end)
   end
 
@@ -256,12 +267,18 @@ defmodule EtherCAT.Master do
       for pos <- 0..(count - 1) do
         station = base + pos
 
-        case DynamicSupervisor.start_child(EtherCAT.SlaveSupervisor, {Slave, link: link, station: station}) do
+        case DynamicSupervisor.start_child(
+               EtherCAT.SlaveSupervisor,
+               {Slave, link: link, station: station}
+             ) do
           {:ok, pid} ->
             {station, pid}
 
           {:error, reason} ->
-            Logger.error("[Master] failed to start slave 0x#{Integer.to_string(station, 16)}: #{inspect(reason)}")
+            Logger.error(
+              "[Master] failed to start slave 0x#{Integer.to_string(station, 16)}: #{inspect(reason)}"
+            )
+
             nil
         end
       end

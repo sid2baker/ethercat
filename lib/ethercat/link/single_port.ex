@@ -1,4 +1,4 @@
-defmodule EtherCAT.Link.Normal do
+defmodule EtherCAT.Link.SinglePort do
   @moduledoc """
   Single-port EtherCAT link.
 
@@ -19,7 +19,7 @@ defmodule EtherCAT.Link.Normal do
 
   @debounce_interval 200
 
-  defstruct [:sock, :idx, :from, :expected_idx, :tx_at]
+  defstruct [:sock, :idx, :from, :expected_idxs, :tx_at]
 
   @impl true
   def callback_mode, do: [:handle_event_function, :state_enter]
@@ -79,15 +79,20 @@ defmodule EtherCAT.Link.Normal do
   def handle_event(:enter, _old, :idle, _data), do: :keep_state_and_data
 
   def handle_event({:call, from}, {:transact, datagrams}, :idle, data) do
-    <<idx>> = <<data.idx::8>>
-    stamped = Enum.map(datagrams, &%{&1 | idx: idx})
+    {stamped, new_idx} =
+      Enum.map_reduce(datagrams, data.idx, fn dg, idx ->
+        <<byte_idx>> = <<idx::8>>
+        {%{dg | idx: byte_idx}, idx + 1}
+      end)
+
+    expected_idxs = Enum.map(stamped, & &1.idx)
 
     with {:ok, frame} <- Frame.encode(stamped, data.sock.src_mac),
          {:ok, tx_at} <- Socket.send(data.sock, frame) do
       Telemetry.frame_sent(data.sock.interface, :primary, byte_size(frame), tx_at)
       Socket.recv_async(data.sock)
 
-      new_data = %{data | idx: data.idx + 1, from: from, expected_idx: idx, tx_at: tx_at}
+      new_data = %{data | idx: new_idx, from: from, expected_idxs: expected_idxs, tx_at: tx_at}
       {:next_state, :awaiting, new_data, [{:state_timeout, 100, :timeout}]}
     else
       {:error, :frame_too_large} = err ->
@@ -167,14 +172,14 @@ defmodule EtherCAT.Link.Normal do
   defp handle_response(raw_frame, _rx_at, data) do
     case Frame.decode(raw_frame) do
       {:ok, datagrams, _src_mac} ->
-        matching = Enum.filter(datagrams, &(&1.idx == data.expected_idx))
+        case match_responses(datagrams, data.expected_idxs) do
+          {:ok, ordered} ->
+            reply_and_idle(data, {:ok, ordered})
 
-        if matching != [] do
-          reply_and_idle(data, {:ok, matching})
-        else
-          Telemetry.frame_dropped(data.sock.interface, byte_size(raw_frame), :idx_mismatch)
-          Socket.recv_async(data.sock)
-          :keep_state_and_data
+          :mismatch ->
+            Telemetry.frame_dropped(data.sock.interface, byte_size(raw_frame), :idx_mismatch)
+            Socket.recv_async(data.sock)
+            :keep_state_and_data
         end
 
       {:error, _} ->
@@ -184,8 +189,15 @@ defmodule EtherCAT.Link.Normal do
     end
   end
 
+  defp match_responses(received, expected_idxs) do
+    idx_map = Map.new(received, &{&1.idx, &1})
+    ordered = Enum.map(expected_idxs, &Map.get(idx_map, &1))
+
+    if Enum.any?(ordered, &is_nil/1), do: :mismatch, else: {:ok, ordered}
+  end
+
   defp reply_and_idle(data, reply) do
-    {:next_state, :idle, %{data | from: nil, expected_idx: nil, tx_at: nil},
+    {:next_state, :idle, %{data | from: nil, expected_idxs: nil, tx_at: nil},
      [{:reply, data.from, reply}]}
   end
 

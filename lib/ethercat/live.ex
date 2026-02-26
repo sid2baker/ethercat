@@ -33,8 +33,7 @@ defmodule EtherCAT.Live do
   """
 
   alias EtherCAT.{Link, SII}
-
-  import Bitwise
+  alias EtherCAT.Link.Transaction
 
   defmacro __using__(_opts) do
     quote do
@@ -73,7 +72,7 @@ defmodule EtherCAT.Live do
   @doc "Count slaves on the bus via broadcast read of address 0x0000."
   @spec slave_count(pid()) :: non_neg_integer()
   def slave_count(link) do
-    {:ok, _data, wkc} = Link.brd(link, 0x0000, 1)
+    {:ok, [%{wkc: wkc}]} = Link.transaction(link, &Transaction.brd(&1, 0x0000, 1))
     wkc
   end
 
@@ -89,11 +88,13 @@ defmodule EtherCAT.Live do
     for pos <- 0..(count - 1) do
       station = base_station + pos
 
-      :ok = Link.apwr(link, pos, 0x0010, <<station::16-little>>)
+      {:ok, [_]} =
+        Link.transaction(link, &Transaction.apwr(&1, pos, 0x0010, <<station::16-little>>))
 
-      {:ok, <<status::16-little>>} = Link.fprd(link, station, 0x0130, 2)
+      {:ok, [%{data: <<_::3, _::1, state::4, _::8>>}]} =
+        Link.transaction(link, &Transaction.fprd(&1, station, 0x0130, 2))
 
-      al = Map.get(@al_states, status &&& 0x0F, :unknown)
+      al = Map.get(@al_states, state, :unknown)
       %{position: pos, station: station, al_state: al}
     end
   end
@@ -101,22 +102,44 @@ defmodule EtherCAT.Live do
   @doc "Read a register from a slave by configured station address."
   @spec read_reg(pid(), non_neg_integer(), non_neg_integer(), pos_integer()) ::
           {:ok, binary()} | {:error, term()}
-  def read_reg(link, station, offset, length), do: Link.fprd(link, station, offset, length)
+  def read_reg(link, station, offset, length) do
+    case Link.transaction(link, &Transaction.fprd(&1, station, offset, length)) do
+      {:ok, [%{data: data, wkc: wkc}]} when wkc > 0 -> {:ok, data}
+      {:ok, [%{wkc: 0}]} -> {:error, :no_response}
+      {:error, _} = err -> err
+    end
+  end
 
   @doc "Write a register on a slave by configured station address."
   @spec write_reg(pid(), non_neg_integer(), non_neg_integer(), binary()) ::
           :ok | {:error, term()}
-  def write_reg(link, station, offset, data), do: Link.fpwr(link, station, offset, data)
+  def write_reg(link, station, offset, data) do
+    case Link.transaction(link, &Transaction.fpwr(&1, station, offset, data)) do
+      {:ok, [%{wkc: wkc}]} when wkc > 0 -> :ok
+      {:ok, [%{wkc: 0}]} -> {:error, :no_response}
+      {:error, _} = err -> err
+    end
+  end
 
   @doc "Broadcast read. Returns `{:ok, data, wkc}`."
   @spec brd(pid(), non_neg_integer(), pos_integer()) ::
           {:ok, binary(), non_neg_integer()} | {:error, term()}
-  def brd(link, offset, length), do: Link.brd(link, offset, length)
+  def brd(link, offset, length) do
+    case Link.transaction(link, &Transaction.brd(&1, offset, length)) do
+      {:ok, [%{data: data, wkc: wkc}]} -> {:ok, data, wkc}
+      {:error, _} = err -> err
+    end
+  end
 
   @doc "Broadcast write. Returns `{:ok, wkc}`."
   @spec bwr(pid(), non_neg_integer(), binary()) ::
           {:ok, non_neg_integer()} | {:error, term()}
-  def bwr(link, offset, data), do: Link.bwr(link, offset, data)
+  def bwr(link, offset, data) do
+    case Link.transaction(link, &Transaction.bwr(&1, offset, data)) do
+      {:ok, [%{wkc: wkc}]} -> {:ok, wkc}
+      {:error, _} = err -> err
+    end
+  end
 
   @doc """
   Transition a slave to the given AL state.
@@ -137,8 +160,8 @@ defmodule EtherCAT.Live do
   @spec al_state(pid(), non_neg_integer()) :: {:ok, atom()} | {:error, term()}
   def al_state(link, station) do
     case read_reg(link, station, 0x0130, 2) do
-      {:ok, <<status::16-little>>} ->
-        {:ok, Map.get(@al_states, status &&& 0x0F, :unknown)}
+      {:ok, <<_::3, _::1, state::4, _::8>>} ->
+        {:ok, Map.get(@al_states, state, :unknown)}
 
       error ->
         error
@@ -200,11 +223,11 @@ defmodule EtherCAT.Live do
 
   defp wait_al(link, station, request, attempts) do
     case read_reg(link, station, 0x0130, 2) do
-      {:ok, <<status::16-little>>} when (status &&& 0x0F) == request ->
+      {:ok, <<_::3, _::1, state::4, _::8>>} when state == request ->
         :ok
 
-      {:ok, <<status::16-little>>} when (status &&& 0x10) != 0 ->
-        {:error, {:al_error, status}}
+      {:ok, <<_::3, 1::1, _state::4, _::8>> = raw} ->
+        {:error, {:al_error, raw}}
 
       _ ->
         Process.sleep(5)
