@@ -24,8 +24,9 @@ defmodule EtherCAT.Master do
 
   require Logger
 
-  alias EtherCAT.{IO, Link, Slave}
+  alias EtherCAT.{Link, Slave}
   alias EtherCAT.Link.Transaction
+  alias EtherCAT.Slave.ProcessImage
 
   @base_station 0x1000
   @station_reg 0x0010
@@ -208,7 +209,7 @@ defmodule EtherCAT.Master do
   end
 
   def handle_event({:call, from}, :configure, :ready, data) do
-    case IO.configure(data.link, data.slaves) do
+    case ProcessImage.configure(data.link, data.slaves, load_profiles()) do
       {:ok, layout} ->
         {:keep_state, %{data | layout: layout}, [{:reply, from, :ok}]}
 
@@ -222,7 +223,7 @@ defmodule EtherCAT.Master do
   end
 
   def handle_event({:call, from}, {:cycle, outputs}, :ready, data) do
-    reply = IO.cycle(data.link, data.layout, outputs)
+    reply = ProcessImage.cycle(data.link, data.layout, outputs)
     {:keep_state_and_data, [{:reply, from, reply}]}
   end
 
@@ -231,6 +232,8 @@ defmodule EtherCAT.Master do
   end
 
   # -- Scan ------------------------------------------------------------------
+
+  defp load_profiles, do: Application.get_env(:ethercat, :io_profiles, %{})
 
   defp do_scan(data) do
     with {:ok, count} <- stable_count(data.link) do

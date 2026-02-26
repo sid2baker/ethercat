@@ -27,12 +27,9 @@ defmodule EtherCAT.Slave do
 
   require Logger
 
-  alias EtherCAT.{Link, SII}
+  alias EtherCAT.{Link, Slave.SII}
   alias EtherCAT.Link.Transaction
-
-  @al_control 0x0120
-  @al_status 0x0130
-  @al_status_code 0x0134
+  alias EtherCAT.Slave.Registers
 
   @al_codes %{init: 0x01, preop: 0x02, bootstrap: 0x03, safeop: 0x04, op: 0x08}
 
@@ -206,10 +203,12 @@ defmodule EtherCAT.Slave do
   defp do_transition(data, target) do
     code = Map.fetch!(@al_codes, target)
 
+    {al_control_addr, _} = Registers.al_control()
+
     with {:ok, [%{wkc: wkc}]} when wkc > 0 <-
            Link.transaction(
              data.link,
-             &Transaction.fpwr(&1, data.station, @al_control, <<code::16-little>>)
+             &Transaction.fpwr(&1, data.station, al_control_addr, <<code::16-little>>)
            ) do
       poll_al(data, code, @poll_limit)
     else
@@ -221,7 +220,9 @@ defmodule EtherCAT.Slave do
   defp poll_al(data, _code, 0), do: {:error, :transition_timeout, data}
 
   defp poll_al(data, code, n) do
-    case Link.transaction(data.link, &Transaction.fprd(&1, data.station, @al_status, 2)) do
+    {al_status_addr, al_status_size} = Registers.al_status()
+
+    case Link.transaction(data.link, &Transaction.fprd(&1, data.station, al_status_addr, al_status_size)) do
       {:ok, [%{data: <<_::3, _err::1, state::4, _::8>>, wkc: wkc}]}
       when wkc > 0 and state == code ->
         {:ok, data}
@@ -243,14 +244,18 @@ defmodule EtherCAT.Slave do
   end
 
   defp ack_error(data) do
+    {al_status_code_addr, al_status_code_size} = Registers.al_status_code()
+    {al_status_addr, al_status_size} = Registers.al_status()
+    {al_control_addr, _} = Registers.al_control()
+
     err_code =
-      case Link.transaction(data.link, &Transaction.fprd(&1, data.station, @al_status_code, 2)) do
+      case Link.transaction(data.link, &Transaction.fprd(&1, data.station, al_status_code_addr, al_status_code_size)) do
         {:ok, [%{data: <<c::16-little>>, wkc: wkc}]} when wkc > 0 -> c
         _ -> nil
       end
 
     state_code =
-      case Link.transaction(data.link, &Transaction.fprd(&1, data.station, @al_status, 2)) do
+      case Link.transaction(data.link, &Transaction.fprd(&1, data.station, al_status_addr, al_status_size)) do
         {:ok, [%{data: <<_::3, _err::1, state::4, _::8>>, wkc: wkc}]} when wkc > 0 -> state
         _ -> 0x01
       end
@@ -260,7 +265,7 @@ defmodule EtherCAT.Slave do
 
     Link.transaction(
       data.link,
-      &Transaction.fpwr(&1, data.station, @al_control, <<ack_value::16-little>>)
+      &Transaction.fpwr(&1, data.station, al_control_addr, <<ack_value::16-little>>)
     )
 
     {err_code, %{data | error_code: err_code}}

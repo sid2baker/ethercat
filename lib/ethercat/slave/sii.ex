@@ -1,4 +1,4 @@
-defmodule EtherCAT.SII do
+defmodule EtherCAT.Slave.SII do
   @moduledoc """
   SII EEPROM interface for EtherCAT slaves.
 
@@ -9,6 +9,8 @@ defmodule EtherCAT.SII do
   Word addressing is used throughout — the EEPROM uses 16-bit words.
 
   ## Examples
+
+      alias EtherCAT.Slave.SII
 
       # Read vendor ID (words 0x08–0x09)
       {:ok, <<vendor_id::32-little>>} = SII.read(link, 0x1000, 0x08, 2)
@@ -22,18 +24,13 @@ defmodule EtherCAT.SII do
 
   alias EtherCAT.Link
   alias EtherCAT.Link.Transaction
-
-  # -- SII EEPROM registers ---------------------------------------------------
-
-  @eeprom_control 0x0502
-  @eeprom_address 0x0504
-  @eeprom_data 0x0508
+  alias EtherCAT.Slave.Registers
 
   # -- Command values (written to bits [10:8] of control register) ------------
 
-  @cmd_nop <<0, 0>>
-  @cmd_read <<0, 1>>
-  @cmd_write <<1, 2>>
+  @cmd_nop    <<0, 0>>
+  @cmd_read   <<0, 1>>
+  @cmd_write  <<1, 2>>
   @cmd_reload <<0, 4>>
 
   # @cmd_read    = 0x0100 → <<0x00, 0x01>> little-endian
@@ -105,7 +102,7 @@ defmodule EtherCAT.SII do
   @spec reload(pid(), non_neg_integer()) :: :ok | {:error, atom()}
   def reload(link, station) do
     with :ok <- ensure_ready(link, station),
-         :ok <- write_reg(link, station, @eeprom_control, @cmd_reload),
+         :ok <- write_reg(link, station, Registers.eeprom_control(), @cmd_reload),
          :ok <- wait_busy(link, station) do
       check_errors(link, station)
     end
@@ -133,7 +130,7 @@ defmodule EtherCAT.SII do
   end
 
   defp read_chunks(_link, _station, _addr, 0, _chunk_words, acc) do
-    {:ok, IO.iodata_to_binary(Enum.reverse(acc))}
+    {:ok, :erlang.iolist_to_binary(Enum.reverse(acc))}
   end
 
   defp read_chunks(link, station, addr, remaining, chunk_words, acc) do
@@ -155,11 +152,11 @@ defmodule EtherCAT.SII do
   defp read_one(link, station, word_address, chunk_words) do
     retry_on_ack(@max_ack_retries, fn ->
       with :ok <- ensure_ready(link, station),
-           :ok <- write_reg(link, station, @eeprom_address, <<word_address::32-little>>),
-           :ok <- write_reg(link, station, @eeprom_control, @cmd_read),
+           :ok <- write_reg(link, station, Registers.eeprom_address(), <<word_address::32-little>>),
+           :ok <- write_reg(link, station, Registers.eeprom_control(), @cmd_read),
            :ok <- wait_busy(link, station),
            :ok <- check_errors(link, station) do
-        read_reg(link, station, @eeprom_data, chunk_words * 2)
+        read_reg(link, station, Registers.eeprom_data(), chunk_words * 2)
       end
     end)
   end
@@ -177,10 +174,10 @@ defmodule EtherCAT.SII do
   defp write_one(link, station, word_address, <<_::binary-size(2)>> = word) do
     retry_on_ack(@max_ack_retries, fn ->
       with :ok <- ensure_ready(link, station),
-           :ok <- write_reg(link, station, @eeprom_address, <<word_address::32-little>>),
-           :ok <- write_reg(link, station, @eeprom_data, word),
+           :ok <- write_reg(link, station, Registers.eeprom_address(), <<word_address::32-little>>),
+           :ok <- write_reg(link, station, Registers.eeprom_data(), word),
            # Write-enable (bit 0) + write command (bits 10:8) in the same frame
-           :ok <- write_reg(link, station, @eeprom_control, @cmd_write),
+           :ok <- write_reg(link, station, Registers.eeprom_control(), @cmd_write),
            :ok <- wait_busy(link, station) do
         check_errors(link, station)
       end
@@ -200,7 +197,7 @@ defmodule EtherCAT.SII do
   defp wait_busy(_link, _station, 0), do: {:error, :busy_timeout}
 
   defp wait_busy(link, station, remaining) do
-    case read_reg(link, station, @eeprom_control, 2) do
+    case read_reg(link, station, Registers.eeprom_control()) do
       {:ok, <<_lo, _hi_rest::5, busy::1, _::2>>} when busy == 0 ->
         :ok
 
@@ -214,10 +211,10 @@ defmodule EtherCAT.SII do
   end
 
   defp clear_errors_if_needed(link, station) do
-    case read_reg(link, station, @eeprom_control, 2) do
+    case read_reg(link, station, Registers.eeprom_control()) do
       {:ok, <<_lo, hi::binary-size(1)>>} ->
         if has_errors?(hi) do
-          write_reg(link, station, @eeprom_control, @cmd_nop)
+          write_reg(link, station, Registers.eeprom_control(), @cmd_nop)
         else
           :ok
         end
@@ -228,7 +225,7 @@ defmodule EtherCAT.SII do
   end
 
   defp check_errors(link, station) do
-    case read_reg(link, station, @eeprom_control, 2) do
+    case read_reg(link, station, Registers.eeprom_control()) do
       {:ok, <<_lo, hi::binary-size(1)>>} -> check_error_bits(hi)
       {:error, _} = err -> err
     end
@@ -273,7 +270,7 @@ defmodule EtherCAT.SII do
   # Data register size: bit 6 of control/status.
   # 0 = 4 bytes (2 words), 1 = 8 bytes (4 words)
   defp read_data_register_size(link, station) do
-    case read_reg(link, station, @eeprom_control, 2) do
+    case read_reg(link, station, Registers.eeprom_control()) do
       {:ok, <<_lo_rest::7, size_bit::1, _hi>>} ->
         if size_bit == 1, do: {:ok, 4}, else: {:ok, 2}
 
@@ -282,16 +279,36 @@ defmodule EtherCAT.SII do
     end
   end
 
-  defp read_reg(link, station, offset, length) do
-    case Link.transaction(link, &Transaction.fprd(&1, station, offset, length)) do
+  # -- Register I/O -----------------------------------------------------------
+
+  # Accepts a {addr, size} tuple from Registers for fixed-size registers,
+  # or a bare address + explicit size for runtime-sized registers (eeprom_data).
+  defp read_reg(link, station, {addr, size}) do
+    case Link.transaction(link, &Transaction.fprd(&1, station, addr, size)) do
       {:ok, [%{data: data, wkc: wkc}]} when wkc > 0 -> {:ok, data}
       {:ok, [%{wkc: 0}]} -> {:error, :no_response}
       {:error, _} = err -> err
     end
   end
 
-  defp write_reg(link, station, offset, data) do
-    case Link.transaction(link, &Transaction.fpwr(&1, station, offset, data)) do
+  defp read_reg(link, station, addr, size) when is_integer(addr) do
+    case Link.transaction(link, &Transaction.fprd(&1, station, addr, size)) do
+      {:ok, [%{data: data, wkc: wkc}]} when wkc > 0 -> {:ok, data}
+      {:ok, [%{wkc: 0}]} -> {:error, :no_response}
+      {:error, _} = err -> err
+    end
+  end
+
+  defp write_reg(link, station, {addr, _size}, data) do
+    case Link.transaction(link, &Transaction.fpwr(&1, station, addr, data)) do
+      {:ok, [%{wkc: wkc}]} when wkc > 0 -> :ok
+      {:ok, [%{wkc: 0}]} -> {:error, :no_response}
+      {:error, _} = err -> err
+    end
+  end
+
+  defp write_reg(link, station, addr, data) when is_integer(addr) do
+    case Link.transaction(link, &Transaction.fpwr(&1, station, addr, data)) do
       {:ok, [%{wkc: wkc}]} when wkc > 0 -> :ok
       {:ok, [%{wkc: 0}]} -> {:error, :no_response}
       {:error, _} = err -> err

@@ -1,14 +1,14 @@
-defmodule EtherCAT.IO do
+defmodule EtherCAT.Slave.ProcessImage do
   @moduledoc """
   Cyclic process data exchange for EtherCAT slaves.
 
   Two-step operation:
 
-  1. `configure/2` — write SM and FMMU registers to each slave (call once, in preop).
+  1. `configure/3` — write SM and FMMU registers to each slave (call once, in preop).
      Returns a `t:layout/0` describing the logical process image.
 
   2. `cycle/3` — send one LRW datagram covering the whole process image.
-     Outputs are written in; inputs are read back out.
+     Outputs are written in; inputs are read back out as raw binary.
 
   ## Layout
 
@@ -21,21 +21,40 @@ defmodule EtherCAT.IO do
         inputs:  [%{station: 0x1001, log_offset: 2, size: 2}]
       }
 
-  ## SM/FMMU profiles
+  ## Profiles
 
-  Slave-specific SM and FMMU configurations are keyed by `product_code` in the
-  application environment:
+  Caller supplies a `%{product_code => EtherCAT.Slave.Driver.profile()}` map.
+  Slaves whose product code is not present in the map are skipped (e.g. couplers).
 
-      config :ethercat, :io_profiles, %{
-        0x07113052 => %{...},   # EL1809
-        0x0AF93052 => %{...}    # EL2809
+  Each profile entry describes:
+    - `outputs_size` / `inputs_size` — process data sizes in bytes
+    - `sms`   — list of `{sm_index, phys_start, length, ctrl}` tuples
+    - `fmmus` — list of `{fmmu_index, phys_start, size, :read | :write}` tuples
+
+  ## Raw binary boundary
+
+  `cycle/3` returns raw binary slices keyed by station address. Callers are
+  responsible for encoding outputs and decoding inputs, typically via their
+  driver module's `encode_outputs/1` and `decode_inputs/1` callbacks.
+
+  ## Example
+
+      profiles = %{
+        0x07113052 => %{
+          outputs_size: 0, inputs_size: 2,
+          sms:   [{3, 0x1000, 2, 0x20}],
+          fmmus: [{1, 0x1000, 2, :read}]
+        }
       }
 
-  If no profile is found for a slave, it is skipped (e.g. couplers).
+      {:ok, layout} = ProcessImage.configure(link, slaves, profiles)
+      {:ok, inputs} = ProcessImage.cycle(link, layout, %{})
+      # inputs => %{0x1001 => <<0xFF, 0x00>>}
   """
 
   alias EtherCAT.{Link, Slave}
   alias EtherCAT.Link.Transaction
+  alias EtherCAT.Slave.Registers
 
   @type layout :: %{
           image_size: non_neg_integer(),
@@ -45,42 +64,20 @@ defmodule EtherCAT.IO do
 
   @type slice :: %{station: non_neg_integer(), log_offset: non_neg_integer(), size: pos_integer()}
 
-  # Built-in profiles for known Beckhoff I/O terminals.
-  # Each entry describes:
-  #   sms:   list of {sm_index, start_addr, len, ctrl} to write
-  #   fmmus: list of {fmmu_index, phys_addr, size, type} — log_offset assigned at configure time
-  #   role:  :input | :output  (determines where in the image this slave sits)
-  #   size:  process data size in bytes
-  @builtin_profiles %{
-    # EL1809 — 16-channel digital input
-    0x07113052 => %{
-      role: :input,
-      size: 2,
-      sms: [{0, 0x1000, 2, 0x20}],
-      fmmus: [{0, 0x1000, 2, :read}]
-    },
-    # EL2809 — 16-channel digital output
-    0x0AF93052 => %{
-      role: :output,
-      size: 2,
-      sms: [{0, 0x0F00, 1, 0x44}, {1, 0x0F01, 1, 0x44}],
-      fmmus: [{0, 0x0F00, 2, :write}]
-    }
-  }
-
   # -- Public API ------------------------------------------------------------
 
   @doc """
   Configure SM and FMMU registers for all slaves and build the process image layout.
 
   `slaves` is the `[{station, pid}]` list from `Master.slaves/0`.
-  Typically called after `go_operational/0`; SM/FMMU writes are accepted in any state.
-  """
-  @spec configure(pid(), [{non_neg_integer(), pid()}]) :: {:ok, layout()} | {:error, term()}
-  def configure(link, slaves) do
-    profiles = Map.merge(@builtin_profiles, Application.get_env(:ethercat, :io_profiles, %{}))
+  `profiles` is a map of `product_code => profile` — see module doc.
 
-    # Assign logical offsets: outputs first, then inputs
+  Typically called after slaves reach `:preop`; SM/FMMU writes are accepted in
+  any state but take effect for cyclic exchange once slaves reach `:op`.
+  """
+  @spec configure(pid(), [{non_neg_integer(), pid()}], %{non_neg_integer() => map()}) ::
+          {:ok, layout()} | {:error, term()}
+  def configure(link, slaves, profiles) do
     {outputs, inputs, image_size} = build_image_map(slaves, profiles)
 
     with :ok <- configure_all(link, slaves, profiles, outputs, inputs) do
@@ -91,7 +88,8 @@ defmodule EtherCAT.IO do
   @doc """
   Run one cyclic process image exchange.
 
-  Writes `outputs` into the image, sends a single LRW datagram, returns `inputs`.
+  Writes `outputs` into the image, sends a single LRW datagram, returns raw
+  input binary slices keyed by station address.
 
   `outputs` is `%{station => binary()}`. Stations not in the map get zeros.
   Returns `{:ok, %{station => binary()}}` with one entry per input slave.
@@ -122,7 +120,7 @@ defmodule EtherCAT.IO do
       Enum.flat_map_reduce(stations, 0, fn station, offset ->
         case profile_for(station, :output, profiles) do
           nil -> {[], offset}
-          p -> {[%{station: station, log_offset: offset, size: p.size}], offset + p.size}
+          p -> {[%{station: station, log_offset: offset, size: p.outputs_size}], offset + p.outputs_size}
         end
       end)
 
@@ -130,19 +128,26 @@ defmodule EtherCAT.IO do
       Enum.flat_map_reduce(stations, out_offset, fn station, offset ->
         case profile_for(station, :input, profiles) do
           nil -> {[], offset}
-          p -> {[%{station: station, log_offset: offset, size: p.size}], offset + p.size}
+          p -> {[%{station: station, log_offset: offset, size: p.inputs_size}], offset + p.inputs_size}
         end
       end)
 
     {outputs, inputs, total}
   end
 
-  defp profile_for(station, role, profiles) do
+  defp profile_for(station, direction, profiles) do
     case Slave.identity(station) do
       %{product_code: pc} ->
         case Map.get(profiles, pc) do
-          %{role: ^role} = p -> p
-          _ -> nil
+          %{outputs_size: os, inputs_size: is_} = p ->
+            cond do
+              direction == :output and os > 0 -> p
+              direction == :input and is_ > 0 -> p
+              true -> nil
+            end
+
+          _ ->
+            nil
         end
 
       _ ->
@@ -154,9 +159,7 @@ defmodule EtherCAT.IO do
     image = :binary.copy(<<0>>, size)
 
     Enum.reduce(out_slices, image, fn %{station: s, log_offset: off, size: n}, acc ->
-      data = Map.get(outputs, s, :binary.copy(<<0>>, n))
-      # Pad or truncate to expected size
-      data = binary_pad(data, n)
+      data = binary_pad(Map.get(outputs, s, :binary.copy(<<0>>, n)), n)
       <<before::binary-size(off), _::binary-size(n), rest::binary>> = acc
       <<before::binary, data::binary, rest::binary>>
     end)
@@ -210,9 +213,8 @@ defmodule EtherCAT.IO do
   defp write_sms(link, station, sms) do
     Enum.reduce_while(sms, :ok, fn {idx, start, len, ctrl}, :ok ->
       reg = sm_reg(start, len, ctrl)
-      offset = 0x0800 + idx * 8
 
-      case write_reg(link, station, offset, reg) do
+      case write_reg(link, station, {Registers.sm(idx), 8}, reg) do
         :ok -> {:cont, :ok}
         err -> {:halt, err}
       end
@@ -223,22 +225,21 @@ defmodule EtherCAT.IO do
     Enum.reduce_while(fmmus, :ok, fn {idx, phys, size, dir}, :ok ->
       type = if dir == :read, do: 0x01, else: 0x02
       reg = fmmu_reg(base_log_offset, size, phys, type)
-      offset = 0x0600 + idx * 16
 
-      case write_reg(link, station, offset, reg) do
+      case write_reg(link, station, {Registers.fmmu(idx), 16}, reg) do
         :ok -> {:cont, :ok}
         err -> {:halt, err}
       end
     end)
   end
 
-  # SM register: §8 Table 25
+  # SM register block (8 bytes) — §2.14 Table 18
   # <<start::16-le, len::16-le, ctrl::8, status=0::8, activate=1::8, pdi=0::8>>
   defp sm_reg(start, len, ctrl) do
     <<start::16-little, len::16-little, ctrl::8, 0::8, 0x01::8, 0::8>>
   end
 
-  # FMMU register: §7 Table 24
+  # FMMU register block (16 bytes) — §2.13 Table 17
   # <<log::32-le, size::16-le, log_start_bit=0::8, log_stop_bit=7::8,
   #   phys::16-le, phys_start_bit=0::8, type::8, activate=1::8, reserved::24>>
   defp fmmu_reg(log, size, phys, type) do
@@ -246,8 +247,8 @@ defmodule EtherCAT.IO do
       0::24>>
   end
 
-  defp write_reg(link, station, offset, data) do
-    case Link.transaction(link, &Transaction.fpwr(&1, station, offset, data)) do
+  defp write_reg(link, station, {addr, _size}, data) do
+    case Link.transaction(link, &Transaction.fpwr(&1, station, addr, data)) do
       {:ok, [%{wkc: wkc}]} when wkc > 0 -> :ok
       {:ok, [%{wkc: 0}]} -> {:error, :no_response}
       {:error, _} = err -> err
