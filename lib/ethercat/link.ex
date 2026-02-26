@@ -90,7 +90,13 @@ defmodule EtherCAT.Link do
     meta = %{datagram_count: length(datagrams)}
 
     Telemetry.span([:ethercat, :link, :transact], meta, fn ->
-      result = :gen_statem.call(link, {:transact, datagrams}, 50)
+      result =
+        try do
+          :gen_statem.call(link, {:transact, datagrams}, 50)
+        catch
+          :exit, {:timeout, _} -> {:error, :timeout}
+          :exit, reason -> {:error, reason}
+        end
 
       case result do
         {:ok, response_datagrams} ->
