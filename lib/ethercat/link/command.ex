@@ -24,7 +24,11 @@ defmodule EtherCAT.Link.Command do
 
   # Auto increment
   def aprd(position, offset, length),
-    do: %Datagram{cmd: @aprd, address: position_address(-position, offset), data: <<0::size(length)-unit(8)>>}
+    do: %Datagram{
+      cmd: @aprd,
+      address: position_address(-position, offset),
+      data: <<0::size(length)-unit(8)>>
+    }
 
   def apwr(position, offset, data),
     do: %Datagram{cmd: @apwr, address: position_address(-position, offset), data: data}
@@ -37,7 +41,11 @@ defmodule EtherCAT.Link.Command do
 
   # Configured station
   def fprd(address, offset, length),
-    do: %Datagram{cmd: @fprd, address: station_address(address, offset), data: <<0::size(length)-unit(8)>>}
+    do: %Datagram{
+      cmd: @fprd,
+      address: station_address(address, offset),
+      data: <<0::size(length)-unit(8)>>
+    }
 
   def fpwr(address, offset, data),
     do: %Datagram{cmd: @fpwr, address: station_address(address, offset), data: data}
@@ -50,7 +58,11 @@ defmodule EtherCAT.Link.Command do
 
   # Broadcast
   def brd(offset, length),
-    do: %Datagram{cmd: @brd, address: position_address(0, offset), data: <<0::size(length)-unit(8)>>}
+    do: %Datagram{
+      cmd: @brd,
+      address: position_address(0, offset),
+      data: <<0::size(length)-unit(8)>>
+    }
 
   def bwr(offset, data),
     do: %Datagram{cmd: @bwr, address: position_address(0, offset), data: data}
@@ -60,7 +72,11 @@ defmodule EtherCAT.Link.Command do
 
   # Logical
   def lrd(logical_address, length),
-    do: %Datagram{cmd: @lrd, address: <<logical_address::little-unsigned-32>>, data: <<0::size(length)-unit(8)>>}
+    do: %Datagram{
+      cmd: @lrd,
+      address: <<logical_address::little-unsigned-32>>,
+      data: <<0::size(length)-unit(8)>>
+    }
 
   def lwr(logical_address, data),
     do: %Datagram{cmd: @lwr, address: <<logical_address::little-unsigned-32>>, data: data}

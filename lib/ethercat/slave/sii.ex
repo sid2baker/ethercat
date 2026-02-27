@@ -28,9 +28,9 @@ defmodule EtherCAT.Slave.SII do
 
   # -- Command values (written to bits [10:8] of control register) ------------
 
-  @cmd_nop    <<0, 0>>
-  @cmd_read   <<0, 1>>
-  @cmd_write  <<1, 2>>
+  @cmd_nop <<0, 0>>
+  @cmd_read <<0, 1>>
+  @cmd_write <<1, 2>>
   @cmd_reload <<0, 4>>
 
   # @cmd_read    = 0x0100 → <<0x00, 0x01>> little-endian
@@ -152,7 +152,8 @@ defmodule EtherCAT.Slave.SII do
   defp read_one(link, station, word_address, chunk_words) do
     retry_on_ack(@max_ack_retries, fn ->
       with :ok <- ensure_ready(link, station),
-           :ok <- write_reg(link, station, Registers.eeprom_address(), <<word_address::32-little>>),
+           :ok <-
+             write_reg(link, station, Registers.eeprom_address(), <<word_address::32-little>>),
            :ok <- write_reg(link, station, Registers.eeprom_control(), @cmd_read),
            :ok <- wait_busy(link, station),
            :ok <- check_errors(link, station) do
@@ -174,7 +175,8 @@ defmodule EtherCAT.Slave.SII do
   defp write_one(link, station, word_address, <<_::binary-size(2)>> = word) do
     retry_on_ack(@max_ack_retries, fn ->
       with :ok <- ensure_ready(link, station),
-           :ok <- write_reg(link, station, Registers.eeprom_address(), <<word_address::32-little>>),
+           :ok <-
+             write_reg(link, station, Registers.eeprom_address(), <<word_address::32-little>>),
            :ok <- write_reg(link, station, Registers.eeprom_data(), word),
            # Write-enable (bit 0) + write command (bits 10:8) in the same frame
            :ok <- write_reg(link, station, Registers.eeprom_control(), @cmd_write),
