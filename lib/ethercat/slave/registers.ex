@@ -144,6 +144,10 @@ defmodule EtherCAT.Slave.Registers do
   @spec sm(non_neg_integer()) :: non_neg_integer()
   def sm(index), do: 0x0800 + index * 8
 
+  @doc "Full SM register write: `{addr, data}` tuple ready for `Transaction.fpwr`."
+  @spec sm(non_neg_integer(), binary()) :: {non_neg_integer(), binary()}
+  def sm(index, data), do: {sm(index), data}
+
   @doc "Physical start address field of SM `index`. Write the RAM address where the SM buffer begins."
   @spec sm_start(non_neg_integer()) :: reg()
   def sm_start(i), do: {sm(i) + 0, 2}
@@ -184,6 +188,10 @@ defmodule EtherCAT.Slave.Registers do
   @spec fmmu(non_neg_integer()) :: non_neg_integer()
   def fmmu(index), do: 0x0600 + index * 16
 
+  @doc "Full FMMU register write: `{addr, data}` tuple ready for `Transaction.fpwr`."
+  @spec fmmu(non_neg_integer(), binary()) :: {non_neg_integer(), binary()}
+  def fmmu(index, data), do: {fmmu(index), data}
+
   @doc "Logical start address of FMMU `index` (32-bit offset in master logical address space)."
   @spec fmmu_log_start(non_neg_integer()) :: reg()
   def fmmu_log_start(i), do: {fmmu(i) + 0, 4}
@@ -217,6 +225,10 @@ defmodule EtherCAT.Slave.Registers do
   def fmmu_activate(i), do: {fmmu(i) + 12, 1}
 
   # -- Distributed Clocks (§9) — base 0x0900 ---------------------------------
+
+  @doc "Trigger receive-time latch on all slaves simultaneously (BWR write)."
+  @spec dc_recv_time_latch() :: reg_write()
+  def dc_recv_time_latch, do: {0x0900, <<0::32>>}
 
   @doc "Receive time of port `n` (0–3). Latched on BWR to 0x0900. 32-bit local clock value."
   @spec dc_recv_time(non_neg_integer()) :: reg()

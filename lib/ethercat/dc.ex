@@ -180,8 +180,7 @@ defmodule EtherCAT.DC do
   # -- Init helpers ----------------------------------------------------------
 
   defp trigger_recv_latch(link) do
-    # BWR to 0x0900 — all slaves latch local time on all ports simultaneously
-    case Link.transaction(link, &Transaction.bwr(&1, {0x0900, <<0::32>>})) do
+    case Link.transaction(link, &Transaction.bwr(&1, Registers.dc_recv_time_latch())) do
       {:ok, _} -> :ok
       {:error, _} = err -> err
     end

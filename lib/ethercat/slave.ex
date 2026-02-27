@@ -497,9 +497,10 @@ defmodule EtherCAT.Slave do
     Enum.reduce_while(sms, :ok, fn {idx, start, len, ctrl}, :ok ->
       reg = <<start::16-little, len::16-little, ctrl::8, 0::8, 0x01::8, 0::8>>
 
-      case write_reg(link, station, {Registers.sm(idx), 8}, reg) do
-        :ok -> {:cont, :ok}
-        err -> {:halt, err}
+      case Link.transaction(link, &Transaction.fpwr(&1, station, Registers.sm(idx, reg))) do
+        {:ok, [%{wkc: wkc}]} when wkc > 0 -> {:cont, :ok}
+        {:ok, [%{wkc: 0}]} -> {:halt, {:error, :no_response}}
+        {:error, _} = err -> {:halt, err}
       end
     end)
   end
@@ -513,19 +514,12 @@ defmodule EtherCAT.Slave do
         <<log::32-little, size::16-little, 0::8, 7::8, phys::16-little, 0::8, type::8, 0x01::8,
           0::24>>
 
-      case write_reg(link, station, {Registers.fmmu(idx), 16}, reg) do
-        :ok -> {:cont, :ok}
-        err -> {:halt, err}
+      case Link.transaction(link, &Transaction.fpwr(&1, station, Registers.fmmu(idx, reg))) do
+        {:ok, [%{wkc: wkc}]} when wkc > 0 -> {:cont, :ok}
+        {:ok, [%{wkc: 0}]} -> {:halt, {:error, :no_response}}
+        {:error, _} = err -> {:halt, err}
       end
     end)
-  end
-
-  defp write_reg(link, station, {addr, _size}, data) do
-    case Link.transaction(link, &Transaction.fpwr(&1, station, {addr, data})) do
-      {:ok, [%{wkc: wkc}]} when wkc > 0 -> :ok
-      {:ok, [%{wkc: 0}]} -> {:error, :no_response}
-      {:error, _} = err -> err
-    end
   end
 
   # -- SYNC0 configuration ---------------------------------------------------
