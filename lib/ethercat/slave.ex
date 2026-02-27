@@ -334,8 +334,8 @@ defmodule EtherCAT.Slave do
       %{domain_id: domain_id, offset: offset} when offset != :pending ->
         key = {data.name, pdo_name}
         encoded = data.driver.encode_outputs(pdo_name, data.config, value)
-        Domain.write(domain_id, key, encoded)
-        {:keep_state_and_data, [{:reply, from, :ok}]}
+        result = Domain.write(domain_id, key, encoded)
+        {:keep_state_and_data, [{:reply, from, result}]}
 
       %{offset: :pending} ->
         {:keep_state_and_data, [{:reply, from, {:error, :domain_not_activated}}]}

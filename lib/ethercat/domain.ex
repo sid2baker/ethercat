@@ -22,8 +22,10 @@ defmodule EtherCAT.Domain do
   ## ETS table schema
 
       table  : domain_id  (:named_table, :public, :set)
-      key    : {slave_name, pdo_name}
-      value  : {current_binary, slave_pid | nil}
+      record : {key, value, slave_pid}
+               key        — {slave_name, pdo_name}
+               value      — binary | :unset  (:unset until first input cycle completes)
+               slave_pid  — pid for inputs, nil for outputs
   """
 
   @behaviour :gen_statem
@@ -42,10 +44,6 @@ defmodule EtherCAT.Domain do
     :period_us,
     :logical_base,
     :next_cycle_at,
-    # bytes allocated to outputs so far
-    :out_watermark,
-    # bytes allocated to inputs so far
-    :in_watermark,
     # total frame size (set at activate)
     :image_size,
     # [{offset, size, key}] sorted, set at activate
@@ -129,16 +127,19 @@ defmodule EtherCAT.Domain do
   end
 
   @doc "Write raw output bytes. Direct ETS — no gen_statem hop."
-  @spec write(domain_id(), pdo_key(), binary()) :: :ok
+  @spec write(domain_id(), pdo_key(), binary()) :: :ok | {:error, :not_found}
   def write(domain_id, key, binary) when is_atom(domain_id) and is_binary(binary) do
-    :ets.update_element(domain_id, key, {2, binary})
-    :ok
+    case :ets.update_element(domain_id, key, {2, binary}) do
+      true -> :ok
+      false -> {:error, :not_found}
+    end
   end
 
   @doc "Read current raw value (output or input). Direct ETS — no gen_statem hop."
-  @spec read(domain_id(), pdo_key()) :: {:ok, binary()} | {:error, :not_found}
+  @spec read(domain_id(), pdo_key()) :: {:ok, binary()} | {:error, :not_found | :not_ready}
   def read(domain_id, key) when is_atom(domain_id) do
     case :ets.lookup(domain_id, key) do
+      [{^key, :unset, _}] -> {:error, :not_ready}
       [{^key, value, _}] -> {:ok, value}
       [] -> {:error, :not_found}
     end
@@ -181,8 +182,6 @@ defmodule EtherCAT.Domain do
       period_us: period_ms * 1000,
       logical_base: logical_base,
       next_cycle_at: nil,
-      out_watermark: 0,
-      in_watermark: 0,
       image_size: 0,
       output_patches: [],
       input_slices: [],
@@ -286,8 +285,8 @@ defmodule EtherCAT.Domain do
   # -- :cycling — self-timed LRW exchange ------------------------------------
 
   def handle_event(:state_timeout, :tick, :cycling, data) do
-    image = build_frame(data.image_size, data.output_patches, data.table)
     t0 = System.monotonic_time(:microsecond)
+    image = build_frame(data.image_size, data.output_patches, data.table)
 
     result = Link.transaction(data.link, &Transaction.lrw(&1, data.logical_base, image))
     next_at = data.next_cycle_at + data.period_us
@@ -299,9 +298,8 @@ defmodule EtherCAT.Domain do
 
     case result do
       {:ok, [%{data: response, wkc: wkc}]} when wkc > 0 ->
-        now = System.monotonic_time(:microsecond)
         dispatch_inputs(response, data.input_slices, data.table, data.id)
-        duration_us = now - t0
+        duration_us = System.monotonic_time(:microsecond) - t0
 
         :telemetry.execute(
           [:ethercat, :domain, :cycle, :done],
