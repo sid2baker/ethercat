@@ -2,56 +2,28 @@ defmodule EtherCAT.Domain do
   @moduledoc """
   Self-timed cyclic process image exchange for EtherCAT slaves.
 
-  A Domain manages a contiguous logical process image (LRW address space) and
-  drives its own cycle period via `state_timeout` — no external `Process.sleep`
-  loop is needed. Multiple domains with independent periods can coexist on the
-  same Link.
+  A Domain owns one flat LRW frame shared across all registered slaves.
+  Slaves register their PDOs via `register_input/3` and `register_output/3`.
+  When `activate/1` is called, the Domain assigns logical offsets (outputs
+  first, then inputs), notifies each slave of its offset so the slave can
+  write its FMMU, then starts the self-timed LRW cycle.
 
-  ## Lifecycle
+  ## I/O hot path (direct ETS, no gen_statem hop)
 
-  1. Start the domain under `EtherCAT.DomainSupervisor`.
-  2. Optionally call `set_default/1` to make it the target for `:default` PDO groups.
-  3. Advance slaves to `:safeop` — each slave self-registers its PDOs with their
-     declared domain at `:safeop` entry.
-  4. Call `start_cyclic/1` to arm the period timer.
-  5. Read inputs and write outputs via `get_inputs/2` and `put_outputs/3` directly
-     against the ETS table — no gen_statem hop on the hot path.
+      Domain.write(:fast, {:valve, :outputs}, <<0xFF, 0xFF>>)
+      {:ok, raw} = Domain.read(:fast, {:sensor, :channels})
 
-  ## ETS table
+  ## Input change notifications
 
-  Each domain owns a public ETS table named after its `:id`. Rows:
+  The Domain sends `{:domain_input, domain_id, key, raw_binary}` to the
+  registered slave pid whenever an input value changes after a cycle.
+  Slaves decode and re-publish to application subscribers.
 
-      {station :: non_neg_integer(),
-       outputs :: binary(),
-       inputs  :: binary(),
-       updated_at :: integer()}   # monotonic_time(:microsecond)
+  ## ETS table schema
 
-  ## Logical address space
-
-  The LRW datagram covers `[logical_base, logical_base + image_size)`. All domains
-  sharing a link must have non-overlapping logical address ranges. The `:logical_base`
-  option (default `0`) is set by the application.
-
-  ## Example
-
-      # In application startup (after Master.start + go_operational):
-      link = EtherCAT.Master.link()
-
-      DynamicSupervisor.start_child(EtherCAT.DomainSupervisor,
-        {EtherCAT.Domain, id: :fast, link: link, period: 1})
-
-      EtherCAT.Domain.set_default(:fast)
-
-      # Slaves self-register at :safeop — no manual calls needed
-
-      EtherCAT.Domain.start_cyclic(:fast)
-      EtherCAT.Domain.subscribe(:fast)
-
-      receive do
-        {:ethercat_domain, :fast, :cycle_done} ->
-          {:ok, raw, _ts} = EtherCAT.Domain.get_inputs(:fast, 0x1001)
-          EtherCAT.Domain.put_outputs(:fast, 0x1002, MyDriver.encode_outputs(raw))
-      end
+      table  : domain_id  (:named_table, :public, :set)
+      key    : {slave_name, pdo_name}
+      value  : {current_binary, slave_pid | nil}
   """
 
   @behaviour :gen_statem
@@ -60,10 +32,9 @@ defmodule EtherCAT.Domain do
 
   alias EtherCAT.Link
   alias EtherCAT.Link.Transaction
-  alias EtherCAT.Slave.Registers
 
   @type domain_id :: atom()
-  @type station :: non_neg_integer()
+  @type pdo_key :: {slave_name :: atom(), pdo_name :: atom()}
 
   defstruct [
     :id,
@@ -71,9 +42,20 @@ defmodule EtherCAT.Domain do
     :period_us,
     :logical_base,
     :next_cycle_at,
-    :layout,
-    :pending_pdos,   # [{station, pdo, link}] — collected in :open, FMMUs written at start_cyclic
-    :subscribers,
+    # bytes allocated to outputs so far
+    :out_watermark,
+    # bytes allocated to inputs so far
+    :in_watermark,
+    # total frame size (set at activate)
+    :image_size,
+    # [{offset, size, key}] sorted, set at activate
+    :output_patches,
+    # [{offset, size, key, slave_pid}] sorted, set at activate
+    :input_slices,
+    # [{key, size}] collected in :open
+    :pending_outputs,
+    # [{key, size, slave_pid}] collected in :open
+    :pending_inputs,
     :miss_count,
     :miss_threshold,
     :cycle_count,
@@ -95,15 +77,14 @@ defmodule EtherCAT.Domain do
   end
 
   @doc """
-  Start a Domain process.
+  Start a Domain.
 
-  ## Options
-
-    - `:id` (required) — unique atom; also the ETS table name and Registry key
-    - `:link` (required) — pid of the Link process (from `EtherCAT.Master.link/0`)
+  Options:
+    - `:id` (required) — atom, also ETS table name and Registry key
+    - `:link` (required) — Link pid
     - `:period` (required) — cycle period in milliseconds
     - `:logical_base` — LRW logical address base, default `0`
-    - `:miss_threshold` — consecutive misses before stopping, default `100`
+    - `:miss_threshold` — stop after N consecutive misses, default `100`
   """
   @spec start_link(keyword()) :: :gen_statem.start_ret()
   def start_link(opts) do
@@ -112,97 +93,58 @@ defmodule EtherCAT.Domain do
 
   # -- Public API ------------------------------------------------------------
 
-  @doc """
-  Nominate `domain_id` as the target for `:default` PDO groups.
-
-  Slaves whose driver returns `domain: :default` in their PDO profile will
-  register with this domain when they enter `:safeop`.
-  """
-  @spec set_default(domain_id()) :: :ok
-  def set_default(domain_id) do
-    Registry.register(EtherCAT.Registry, {:domain, :default}, domain_id)
-    :ok
-  end
-
-  @doc """
-  Register a slave PDO group with this domain.
-
-  Called automatically by `EtherCAT.Slave` at `:safeop` entry. Writes the SM
-  and FMMU registers for the slave, then extends the domain's logical process
-  image layout.
-
-  `pdo` is one entry from the `pdos` list returned by `driver.process_data_profile/0`.
-  """
-  @spec register_pdo(domain_id(), station(), map(), pid()) :: :ok | {:error, term()}
-  def register_pdo(domain_id, station, pdo, link) do
+  @doc "Register an input PDO slice. Called by Slave.register_pdo/3 for input PDOs."
+  @spec register_input(domain_id(), pdo_key(), pos_integer()) :: :ok | {:error, term()}
+  def register_input(domain_id, key, size) do
     via = {:via, Registry, {EtherCAT.Registry, {:domain, domain_id}}}
-    :gen_statem.call(via, {:register_pdo, station, pdo, link})
+    slave_pid = self()
+    :gen_statem.call(via, {:register_input, key, size, slave_pid})
+  end
+
+  @doc "Register an output PDO slice. Called by Slave.register_pdo/3 for output PDOs."
+  @spec register_output(domain_id(), pdo_key(), pos_integer()) :: :ok | {:error, term()}
+  def register_output(domain_id, key, size) do
+    via = {:via, Registry, {EtherCAT.Registry, {:domain, domain_id}}}
+    :gen_statem.call(via, {:register_output, key, size})
   end
 
   @doc """
-  Arm the cyclic LRW timer. Call after all expected slaves have registered.
+  Finalise layout, notify slaves of their offsets, start cycling.
 
-  Transitions the domain from `:open` to `:cycling`. The first frame is sent
-  after one full period.
+  Assigns output offsets [0, total_out), input offsets [total_out, total_out+total_in).
+  Sends `{:domain_offset, key, logical_offset}` to each slave pid so the slave
+  can write its FMMU register. Cycling begins after the first full period.
   """
-  @spec start_cyclic(domain_id()) :: :ok | {:error, term()}
-  def start_cyclic(domain_id) do
+  @spec activate(domain_id()) :: :ok | {:error, term()}
+  def activate(domain_id) do
     via = {:via, Registry, {EtherCAT.Registry, {:domain, domain_id}}}
-    :gen_statem.call(via, :start_cyclic)
+    :gen_statem.call(via, :activate)
   end
 
-  @doc "Halt cyclic exchange. Domain stays alive; call `start_cyclic/1` to resume."
+  @doc "Halt cycling. Domain stays alive; call `activate/1` again to resume."
   @spec stop_cyclic(domain_id()) :: :ok
   def stop_cyclic(domain_id) do
     via = {:via, Registry, {EtherCAT.Registry, {:domain, domain_id}}}
     :gen_statem.call(via, :stop_cyclic)
   end
 
-  @doc """
-  Write raw output bytes for `station`. Takes effect on the next cycle.
-
-  Direct ETS write — no gen_statem hop. Safe to call from any process.
-  """
-  @spec put_outputs(domain_id(), station(), binary()) :: :ok
-  def put_outputs(domain_id, station, data) when is_atom(domain_id) and is_binary(data) do
-    :ets.update_element(domain_id, station, {2, data})
+  @doc "Write raw output bytes. Direct ETS — no gen_statem hop."
+  @spec write(domain_id(), pdo_key(), binary()) :: :ok
+  def write(domain_id, key, binary) when is_atom(domain_id) and is_binary(binary) do
+    :ets.update_element(domain_id, key, {2, binary})
     :ok
   end
 
-  @doc """
-  Read the last received raw input bytes for `station`.
-
-  Direct ETS read — no gen_statem hop. Returns `{:ok, binary, updated_at}` where
-  `updated_at` is `System.monotonic_time(:microsecond)` of the last cycle that
-  received data, or `{:error, :not_found}` if the station is not registered.
-  """
-  @spec get_inputs(domain_id(), station()) ::
-          {:ok, binary(), integer()} | {:error, :not_found}
-  def get_inputs(domain_id, station) when is_atom(domain_id) do
-    case :ets.lookup(domain_id, station) do
-      [{^station, _out, inputs, ts}] -> {:ok, inputs, ts}
+  @doc "Read current raw value (output or input). Direct ETS — no gen_statem hop."
+  @spec read(domain_id(), pdo_key()) :: {:ok, binary()} | {:error, :not_found}
+  def read(domain_id, key) when is_atom(domain_id) do
+    case :ets.lookup(domain_id, key) do
+      [{^key, value, _}] -> {:ok, value}
       [] -> {:error, :not_found}
     end
   end
 
-  @doc """
-  Subscribe the calling process to receive `{:ethercat_domain, domain_id, :cycle_done}`
-  after each successful cycle.
-  """
-  @spec subscribe(domain_id()) :: :ok
-  def subscribe(domain_id) do
-    via = {:via, Registry, {EtherCAT.Registry, {:domain, domain_id}}}
-    :gen_statem.call(via, {:subscribe, self()})
-  end
-
-  @doc "Unsubscribe from cycle notifications."
-  @spec unsubscribe(domain_id()) :: :ok
-  def unsubscribe(domain_id) do
-    via = {:via, Registry, {EtherCAT.Registry, {:domain, domain_id}}}
-    :gen_statem.call(via, {:unsubscribe, self()})
-  end
-
-  @doc "Return current stats for the domain."
+  @doc "Return current stats."
   @spec stats(domain_id()) :: {:ok, map()}
   def stats(domain_id) do
     via = {:via, Registry, {EtherCAT.Registry, {:domain, domain_id}}}
@@ -216,19 +158,21 @@ defmodule EtherCAT.Domain do
 
   @impl true
   def init(opts) do
-    id            = Keyword.fetch!(opts, :id)
-    link          = Keyword.fetch!(opts, :link)
-    period_ms     = Keyword.fetch!(opts, :period)
-    logical_base  = Keyword.get(opts, :logical_base, 0)
+    id = Keyword.fetch!(opts, :id)
+    link = Keyword.fetch!(opts, :link)
+    period_ms = Keyword.fetch!(opts, :period)
+    logical_base = Keyword.get(opts, :logical_base, 0)
     miss_threshold = Keyword.get(opts, :miss_threshold, 100)
 
-    table = :ets.new(id, [
-      :set, :public, :named_table,
-      {:write_concurrency, true},
-      {:read_concurrency, true}
-    ])
+    table =
+      :ets.new(id, [
+        :set,
+        :public,
+        :named_table,
+        {:write_concurrency, true},
+        {:read_concurrency, true}
+      ])
 
-    # Register in EtherCAT.Registry so slaves and callers can find this domain by name
     Registry.register(EtherCAT.Registry, {:domain, id}, id)
 
     data = %__MODULE__{
@@ -237,9 +181,13 @@ defmodule EtherCAT.Domain do
       period_us: period_ms * 1000,
       logical_base: logical_base,
       next_cycle_at: nil,
-      layout: %{image_size: 0, out_watermark: 0, in_watermark: 0, outputs: [], inputs: []},
-      pending_pdos: [],
-      subscribers: [],
+      out_watermark: 0,
+      in_watermark: 0,
+      image_size: 0,
+      output_patches: [],
+      input_slices: [],
+      pending_outputs: [],
+      pending_inputs: [],
       miss_count: 0,
       miss_threshold: miss_threshold,
       cycle_count: 0,
@@ -257,67 +205,93 @@ defmodule EtherCAT.Domain do
   def handle_event(:enter, _old, :cycling, data) do
     now = System.monotonic_time(:microsecond)
     delay_us = max(0, data.next_cycle_at - now)
-    # Ceiling division — never fire before the boundary
     delay_ms = div(delay_us + 999, 1000)
     {:keep_state_and_data, [{:state_timeout, delay_ms, :tick}]}
   end
 
   def handle_event(:enter, _old, :stopped, _data), do: :keep_state_and_data
 
-  # -- :open — accept PDO registrations -------------------------------------
+  # -- :open handlers --------------------------------------------------------
 
-  def handle_event({:call, from}, {:register_pdo, station, pdo, link}, :open, data) do
-    # Write SM registers immediately — they don't depend on logical address allocation.
-    # FMMU writes are deferred to start_cyclic so logical offsets are final.
-    case write_sms(link, station, pdo.sms) do
-      :ok ->
-        out_size = Map.get(pdo, :outputs_size, 0)
-        :ets.insert(data.table, {station, :binary.copy(<<0>>, out_size), <<>>, 0})
-        new_pending = [{station, pdo, link} | data.pending_pdos]
-        {:keep_state, %{data | pending_pdos: new_pending}, [{:reply, from, :ok}]}
-
-      {:error, _} = err ->
-        {:keep_state_and_data, [{:reply, from, err}]}
-    end
+  def handle_event({:call, from}, {:register_input, key, size, slave_pid}, :open, data) do
+    :ets.insert(data.table, {key, :unset, slave_pid})
+    new_pending = [{key, size, slave_pid} | data.pending_inputs]
+    {:keep_state, %{data | pending_inputs: new_pending}, [{:reply, from, :ok}]}
   end
 
-  def handle_event({:call, from}, {:register_pdo, _, _, _}, _state, _data) do
+  def handle_event({:call, from}, {:register_output, key, size}, :open, data) do
+    :ets.insert(data.table, {key, :binary.copy(<<0>>, size), nil})
+    new_pending = [{key, size} | data.pending_outputs]
+    {:keep_state, %{data | pending_outputs: new_pending}, [{:reply, from, :ok}]}
+  end
+
+  def handle_event({:call, from}, {:register_input, _, _, _}, _state, _data) do
     {:keep_state_and_data, [{:reply, from, {:error, :not_open}}]}
   end
 
-  def handle_event({:call, from}, :start_cyclic, :open, data) do
-    if data.pending_pdos == [] do
-      {:keep_state_and_data, [{:reply, from, {:error, :no_pdos_registered}}]}
-    else
-      # Build final layout from all registrations (ordering: outputs first, then inputs)
-      # then write FMMUs with correct logical offsets
-      case build_final_layout_and_write_fmmus(data) do
-        {:ok, layout} ->
-          now = System.monotonic_time(:microsecond)
-          new_data = %{data | layout: layout, next_cycle_at: now + data.period_us}
-          {:next_state, :cycling, new_data, [{:reply, from, :ok}]}
+  def handle_event({:call, from}, {:register_output, _, _}, _state, _data) do
+    {:keep_state_and_data, [{:reply, from, {:error, :not_open}}]}
+  end
 
-        {:error, _} = err ->
-          {:keep_state_and_data, [{:reply, from, err}]}
-      end
+  def handle_event({:call, from}, :activate, :open, data) do
+    if data.pending_outputs == [] and data.pending_inputs == [] do
+      {:keep_state_and_data, [{:reply, from, {:error, :nothing_registered}}]}
+    else
+      # Assign offsets — outputs first, then inputs
+      outputs = Enum.reverse(data.pending_outputs)
+      inputs = Enum.reverse(data.pending_inputs)
+
+      {output_patches, total_out} =
+        Enum.map_reduce(outputs, 0, fn {key, size}, offset ->
+          {{offset, size, key}, offset + size}
+        end)
+
+      {input_slices, total} =
+        Enum.map_reduce(inputs, total_out, fn {key, size, slave_pid}, offset ->
+          {{offset, size, key, slave_pid}, offset + size}
+        end)
+
+      # Notify each slave of its logical offset so it can write FMMUs
+      Enum.each(output_patches, fn {offset, _size, key} ->
+        {slave_name, _pdo} = key
+
+        case Registry.lookup(EtherCAT.Registry, {:slave, slave_name}) do
+          [{pid, _}] -> send(pid, {:domain_offset, key, offset})
+          _ -> :ok
+        end
+      end)
+
+      Enum.each(input_slices, fn {offset, _size, key, slave_pid} ->
+        send(slave_pid, {:domain_offset, key, offset})
+      end)
+
+      now = System.monotonic_time(:microsecond)
+
+      new_data = %{
+        data
+        | image_size: total,
+          output_patches: output_patches,
+          input_slices: input_slices,
+          next_cycle_at: now + data.period_us
+      }
+
+      {:next_state, :cycling, new_data, [{:reply, from, :ok}]}
     end
   end
 
-  def handle_event({:call, from}, :start_cyclic, :cycling, _data) do
-    {:keep_state_and_data, [{:reply, from, {:error, :already_cycling}}]}
+  def handle_event({:call, from}, :activate, :cycling, _data) do
+    {:keep_state_and_data, [{:reply, from, {:error, :already_active}}]}
   end
 
   # -- :cycling — self-timed LRW exchange ------------------------------------
 
   def handle_event(:state_timeout, :tick, :cycling, data) do
-    %{image_size: size, outputs: out_slices, inputs: in_slices} = data.layout
-    image = build_image(size, out_slices, data.table)
+    image = build_frame(data.image_size, data.output_patches, data.table)
     t0 = System.monotonic_time(:microsecond)
 
     result = Link.transaction(data.link, &Transaction.lrw(&1, data.logical_base, image))
     next_at = data.next_cycle_at + data.period_us
 
-    # Compute next state_timeout regardless of result — drift-free re-arm
     now_after = System.monotonic_time(:microsecond)
     delay_us = max(0, next_at - now_after)
     delay_ms = div(delay_us + 999, 1000)
@@ -326,34 +300,37 @@ defmodule EtherCAT.Domain do
     case result do
       {:ok, [%{data: response, wkc: wkc}]} when wkc > 0 ->
         now = System.monotonic_time(:microsecond)
-        extract_inputs(response, in_slices, data.table, now)
-        notify_subscribers(data)
+        dispatch_inputs(response, data.input_slices, data.table, data.id)
         duration_us = now - t0
+
         :telemetry.execute(
           [:ethercat, :domain, :cycle, :done],
           %{duration_us: duration_us, cycle_count: data.cycle_count + 1},
           %{domain: data.id}
         )
-        new_data = %{data |
-          cycle_count: data.cycle_count + 1,
-          miss_count: 0,
-          next_cycle_at: next_at
+
+        new_data = %{
+          data
+          | cycle_count: data.cycle_count + 1,
+            miss_count: 0,
+            next_cycle_at: next_at
         }
+
         {:keep_state, new_data, next_timeout}
 
       other ->
         reason = if match?({:ok, _}, other), do: :no_response, else: elem(other, 1)
+
         :telemetry.execute(
           [:ethercat, :domain, :cycle, :missed],
           %{miss_count: data.miss_count + 1},
           %{domain: data.id, reason: reason}
         )
+
         new_data = %{data | miss_count: data.miss_count + 1, next_cycle_at: next_at}
 
         if new_data.miss_count >= data.miss_threshold do
-          Logger.error(
-            "[Domain #{data.id}] #{data.miss_threshold} consecutive missed cycles — stopping"
-          )
+          Logger.error("[Domain #{data.id}] #{data.miss_threshold} consecutive misses — stopping")
           {:next_state, :stopped, new_data}
         else
           {:keep_state, new_data, next_timeout}
@@ -365,228 +342,77 @@ defmodule EtherCAT.Domain do
     {:next_state, :stopped, data, [{:reply, from, :ok}]}
   end
 
-  # -- :stopped --------------------------------------------------------------
-
-  def handle_event({:call, from}, :start_cyclic, :stopped, data) do
-    now = System.monotonic_time(:microsecond)
-    new_data = %{data | next_cycle_at: now + data.period_us, miss_count: 0}
-    {:next_state, :cycling, new_data, [{:reply, from, :ok}]}
-  end
-
   def handle_event({:call, from}, :stop_cyclic, :stopped, _data) do
     {:keep_state_and_data, [{:reply, from, :ok}]}
   end
 
-  # -- Subscribe / unsubscribe (any state) -----------------------------------
-
-  def handle_event({:call, from}, {:subscribe, pid}, _state, data) do
-    subs = if pid in data.subscribers, do: data.subscribers, else: [pid | data.subscribers]
-    {:keep_state, %{data | subscribers: subs}, [{:reply, from, :ok}]}
+  def handle_event({:call, from}, :activate, :stopped, data) do
+    now = System.monotonic_time(:microsecond)
+    new_data = %{data | next_cycle_at: now + data.period_us, miss_count: 0}
+    {:next_state, :cycling, new_data, [{:reply, from, :ok}]}
   end
-
-  def handle_event({:call, from}, {:unsubscribe, pid}, _state, data) do
-    {:keep_state, %{data | subscribers: List.delete(data.subscribers, pid)},
-     [{:reply, from, :ok}]}
-  end
-
-  # -- Stats (any state) -----------------------------------------------------
 
   def handle_event({:call, from}, :stats, state, data) do
     stats = %{
       state: state,
       cycle_count: data.cycle_count,
       miss_count: data.miss_count,
-      image_size: data.layout.image_size
+      image_size: data.image_size
     }
+
     {:keep_state_and_data, [{:reply, from, {:ok, stats}}]}
   end
 
-  # -- Catch-all -------------------------------------------------------------
-
   def handle_event(_type, _event, _state, _data), do: :keep_state_and_data
 
-  # -- Image assembly --------------------------------------------------------
+  # -- Frame assembly --------------------------------------------------------
 
-  defp build_image(size, out_slices, table) do
-    image = :binary.copy(<<0>>, size)
-
-    Enum.reduce(out_slices, image, fn %{station: s, log_offset: off, size: n}, acc ->
-      out =
-        case :ets.lookup(table, s) do
-          [{^s, outputs, _, _}] -> binary_pad(outputs, n)
-          [] -> :binary.copy(<<0>>, n)
-        end
-
-      <<pre::binary-size(off), _::binary-size(n), rest::binary>> = acc
-      <<pre::binary, out::binary, rest::binary>>
-    end)
+  # Build the LRW frame using iodata: splice output values from ETS into a
+  # zero-filled frame without allocating an intermediate flat binary.
+  defp build_frame(image_size, output_patches, table) do
+    zeros = :binary.copy(<<0>>, image_size)
+    iodata = build_iodata(zeros, output_patches, table, 0)
+    :erlang.iolist_to_binary(iodata)
   end
 
-  defp extract_inputs(response, in_slices, table, now) do
-    Enum.each(in_slices, fn %{station: s, log_offset: off, size: n} ->
-      <<_::binary-size(off), data::binary-size(n), _::binary>> = response
-      # update_element with a list is atomic — no partial read possible
-      :ets.update_element(table, s, [{3, data}, {4, now}])
+  defp build_iodata(frame, [], _table, cursor) do
+    [binary_part(frame, cursor, byte_size(frame) - cursor)]
+  end
+
+  defp build_iodata(frame, [{offset, size, key} | rest], table, cursor) do
+    prefix_len = offset - cursor
+
+    replacement =
+      case :ets.lookup(table, key) do
+        [{^key, value, _}] -> binary_pad(value, size)
+        [] -> :binary.copy(<<0>>, size)
+      end
+
+    [
+      binary_part(frame, cursor, prefix_len),
+      replacement
+      | build_iodata(frame, rest, table, offset + size)
+    ]
+  end
+
+  # Extract inputs from LRW response, compare with stored, notify slave on change.
+  defp dispatch_inputs(response, input_slices, table, domain_id) do
+    Enum.each(input_slices, fn {offset, size, key, slave_pid} ->
+      new_val = binary_part(response, offset, size)
+
+      old_val =
+        case :ets.lookup(table, key) do
+          [{^key, v, _}] -> v
+          [] -> nil
+        end
+
+      if new_val != old_val do
+        :ets.update_element(table, key, {2, new_val})
+        send(slave_pid, {:domain_input, domain_id, key, new_val})
+      end
     end)
   end
 
   defp binary_pad(data, size) when byte_size(data) >= size, do: binary_part(data, 0, size)
   defp binary_pad(data, size), do: data <> :binary.copy(<<0>>, size - byte_size(data))
-
-  defp notify_subscribers(data) do
-    msg = {:ethercat_domain, data.id, :cycle_done}
-    Enum.each(data.subscribers, &send(&1, msg))
-  end
-
-  # -- Final layout + FMMU writes --------------------------------------------
-
-  # Build the complete layout by processing all pending PDOs in two passes:
-  # pass 1 — outputs only (in registration order)
-  # pass 2 — inputs only (in registration order, placed after all outputs)
-  # Then write FMMU registers with the final logical offsets.
-  defp build_final_layout_and_write_fmmus(data) do
-    empty = %{image_size: 0, out_watermark: 0, in_watermark: 0, outputs: [], inputs: []}
-    # Reverse to restore registration order (pending_pdos is prepended)
-    pdos = Enum.reverse(data.pending_pdos)
-
-    # Pass 1: outputs
-    layout_after_outputs =
-      Enum.reduce(pdos, empty, fn {_station, pdo, _link}, layout ->
-        if Map.get(pdo, :outputs_size, 0) > 0 do
-          {new_layout, _out_off, _in_off} = extend_layout(layout, pdo)
-          new_layout
-        else
-          layout
-        end
-      end)
-
-    # Pass 2: inputs (starting from layout_after_outputs so offsets are correct)
-    final_layout =
-      Enum.reduce(pdos, layout_after_outputs, fn {_station, pdo, _link}, layout ->
-        if Map.get(pdo, :inputs_size, 0) > 0 do
-          {new_layout, _out_off, _in_off} = extend_layout(layout, pdo)
-          new_layout
-        else
-          layout
-        end
-      end)
-
-    # Write FMMUs with the correct final offsets
-    result =
-      Enum.reduce_while(pdos, :ok, fn {station, pdo, link}, :ok ->
-        out_offset = find_slice_offset(final_layout.outputs, station)
-        in_offset  = find_slice_offset(final_layout.inputs, station)
-
-        case write_fmmus(link, station, pdo.fmmus, out_offset, in_offset) do
-          :ok  -> {:cont, :ok}
-          err  -> {:halt, err}
-        end
-      end)
-
-    case result do
-      :ok   -> {:ok, final_layout}
-      error -> error
-    end
-  end
-
-  defp find_slice_offset(slices, station) do
-    case Enum.find(slices, fn s -> s.station == station end) do
-      %{log_offset: off} -> off
-      nil -> 0
-    end
-  end
-
-  # -- Layout building -------------------------------------------------------
-
-  # Extend the layout with a new PDO group.
-  #
-  # Outputs always occupy [0, out_watermark) in the logical image.
-  # Inputs always occupy [total_out_size, total_out_size + in_watermark).
-  #
-  # When a new output PDO is added after input PDOs are already placed,
-  # all existing input slices are shifted up by out_size to keep the invariant.
-  #
-  # Returns {new_layout, output_logical_offset, input_logical_offset}.
-  defp extend_layout(layout, pdo) do
-    %{out_watermark: out_wm, in_watermark: in_wm, outputs: outs, inputs: ins} = layout
-    out_size = Map.get(pdo, :outputs_size, 0)
-    in_size  = Map.get(pdo, :inputs_size, 0)
-    station  = Map.get(pdo, :station)
-
-    # Output slice starts at current out_watermark
-    out_offset = out_wm
-
-    # If we are adding outputs, all existing input slices must shift up by out_size
-    # (inputs always live above all outputs in the flat image)
-    shifted_ins =
-      if out_size > 0 and ins != [] do
-        Enum.map(ins, fn s -> %{s | log_offset: s.log_offset + out_size} end)
-      else
-        ins
-      end
-
-    new_out_wm = out_wm + out_size
-
-    # Input slice starts at (all outputs + existing inputs)
-    in_offset = new_out_wm + in_wm
-    new_in_wm = in_wm + in_size
-
-    new_outs =
-      if out_size > 0,
-        do: outs ++ [%{station: station, log_offset: out_offset, size: out_size}],
-        else: outs
-
-    new_ins =
-      if in_size > 0,
-        do: shifted_ins ++ [%{station: station, log_offset: in_offset, size: in_size}],
-        else: shifted_ins
-
-    new_size = new_out_wm + new_in_wm
-    new_layout = %{layout |
-      image_size: new_size,
-      out_watermark: new_out_wm,
-      in_watermark: new_in_wm,
-      outputs: new_outs,
-      inputs: new_ins
-    }
-
-    {new_layout, out_offset, in_offset}
-  end
-
-  # -- SM / FMMU register writes ---------------------------------------------
-
-  defp write_sms(link, station, sms) do
-    Enum.reduce_while(sms, :ok, fn {idx, start, len, ctrl}, :ok ->
-      reg = <<start::16-little, len::16-little, ctrl::8, 0::8, 0x01::8, 0::8>>
-
-      case write_reg(link, station, {Registers.sm(idx), 8}, reg) do
-        :ok -> {:cont, :ok}
-        err -> {:halt, err}
-      end
-    end)
-  end
-
-  defp write_fmmus(link, station, fmmus, out_offset, in_offset) do
-    Enum.reduce_while(fmmus, :ok, fn {idx, phys, size, dir}, :ok ->
-      type = if dir == :read, do: 0x01, else: 0x02
-      log  = if dir == :read, do: in_offset, else: out_offset
-
-      reg =
-        <<log::32-little, size::16-little, 0::8, 7::8,
-          phys::16-little, 0::8, type::8, 0x01::8, 0::24>>
-
-      case write_reg(link, station, {Registers.fmmu(idx), 16}, reg) do
-        :ok -> {:cont, :ok}
-        err -> {:halt, err}
-      end
-    end)
-  end
-
-  defp write_reg(link, station, {addr, _size}, data) do
-    case Link.transaction(link, &Transaction.fpwr(&1, station, addr, data)) do
-      {:ok, [%{wkc: wkc}]} when wkc > 0 -> :ok
-      {:ok, [%{wkc: 0}]} -> {:error, :no_response}
-      {:error, _} = err -> err
-    end
-  end
 end

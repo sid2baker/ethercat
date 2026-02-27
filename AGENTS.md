@@ -1,3 +1,21 @@
+# EtherCAT Project Rules
+
+## Bitwise Operations
+- **Never use `import Bitwise` or Bitwise operators (`&&&`, `|||`, `band`, `bor`, etc.)**
+- Always use binary pattern matching to extract or compose bit fields
+- Example — extract a 4-bit state and 1-bit error flag from a 16-bit LE register:
+  ```elixir
+  # Good: binary pattern matching
+  <<_::3, err_flag::1, state::4, _::8>> = register_bytes
+
+  # Bad: Bitwise
+  <<status::16-little>> = register_bytes
+  state = Bitwise.band(status, 0x0F)
+  err?  = Bitwise.band(status, 0x10) != 0
+  ```
+- To set a bit flag, use arithmetic (`state_code + 0x10`) when fields don't overlap,
+  or construct the byte directly with binary syntax (`<<flags::8>>`)
+
 <!-- usage-rules-start -->
 <!-- usage_rules-start -->
 ## usage_rules usage
