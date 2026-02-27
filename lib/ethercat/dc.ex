@@ -22,12 +22,6 @@ defmodule EtherCAT.DC do
   The EtherCAT frame passes through each slave in order — the reference clock's
   system time is read and written to every subsequent slave in a single pass,
   keeping all clocks aligned.
-
-  ## SYNC0 configuration
-
-  `configure_sync0/5` writes the SYNC0 start time, cycle time, pulse length,
-  and activation register to a single slave. Called by Master for each slave
-  whose driver profile includes a `dc:` key.
   """
 
   @behaviour :gen_statem
@@ -94,31 +88,6 @@ defmodule EtherCAT.DC do
 
   def init(_link, []), do: {:error, :no_slaves}
 
-  @doc """
-  Configure SYNC0 on a single slave. Called by Master for each slave whose
-  driver profile has a `dc:` key.
-
-  - `system_time_ns` — current DC system time in ns (master time - epoch offset)
-  - `cycle_ns` — SYNC0 period in ns (= domain period)
-  - `pulse_ns` — SYNC0 pulse width in ns (hardware-specific, from driver profile)
-  """
-  @spec configure_sync0(
-          Link.server(),
-          non_neg_integer(),
-          non_neg_integer(),
-          non_neg_integer(),
-          non_neg_integer()
-        ) :: :ok
-  def configure_sync0(link, station, system_time_ns, cycle_ns, pulse_ns) do
-    start_time = system_time_ns + 100_000
-
-    fpwr(link, station, Registers.dc_sync0_cycle_time(), <<cycle_ns::32-little>>)
-    fpwr(link, station, Registers.dc_pulse_length(), <<pulse_ns::16-little>>)
-    fpwr(link, station, Registers.dc_sync0_start_time(), <<start_time::64-little>>)
-    fpwr(link, station, Registers.dc_activation(), <<0x03>>)
-    :ok
-  end
-
   # -- child_spec / start_link -----------------------------------------------
 
   @doc false
@@ -175,7 +144,7 @@ defmodule EtherCAT.DC do
     result =
       Link.transaction(
         data.link,
-        &Transaction.armw(&1, data.ref_station, 0x0910, <<0::64>>)
+        &Transaction.armw(&1, data.ref_station, Registers.dc_system_time())
       )
 
     new_data =
@@ -212,7 +181,7 @@ defmodule EtherCAT.DC do
 
   defp trigger_recv_latch(link) do
     # BWR to 0x0900 — all slaves latch local time on all ports simultaneously
-    case Link.transaction(link, &Transaction.bwr(&1, 0x0900, <<0::32>>)) do
+    case Link.transaction(link, &Transaction.bwr(&1, {0x0900, <<0::32>>})) do
       {:ok, _} -> :ok
       {:error, _} = err -> err
     end
@@ -222,19 +191,22 @@ defmodule EtherCAT.DC do
     results =
       Enum.map(stations, fn station ->
         ecat =
-          case Link.transaction(link, &Transaction.fprd(&1, station, 0x0918, 8)) do
+          case Link.transaction(
+                 link,
+                 &Transaction.fprd(&1, station, Registers.dc_recv_time_ecat())
+               ) do
             {:ok, [%{data: <<t::64-little>>, wkc: 1}]} -> t
             _ -> nil
           end
 
         p0 =
-          case Link.transaction(link, &Transaction.fprd(&1, station, 0x0900, 4)) do
+          case Link.transaction(link, &Transaction.fprd(&1, station, Registers.dc_recv_time(0))) do
             {:ok, [%{data: <<t::32-little>>, wkc: 1}]} -> t
             _ -> nil
           end
 
         p1 =
-          case Link.transaction(link, &Transaction.fprd(&1, station, 0x0904, 4)) do
+          case Link.transaction(link, &Transaction.fprd(&1, station, Registers.dc_recv_time(1))) do
             {:ok, [%{data: <<t::32-little>>, wkc: 1}]} -> t
             _ -> nil
           end
@@ -278,7 +250,7 @@ defmodule EtherCAT.DC do
   defp write_delays(link, stations, delays) do
     Enum.zip(stations, delays)
     |> Enum.each(fn {station, delay} ->
-      fpwr(link, station, Registers.dc_system_time_delay(), <<delay::32-little>>)
+      link_tx(link, &Transaction.fpwr(&1, station, Registers.dc_system_time_delay(delay)))
     end)
   end
 
@@ -296,7 +268,7 @@ defmodule EtherCAT.DC do
             ref_ecat_ns - ecat_ns + ref_offset
           end
 
-        fpwr(link, station, Registers.dc_system_time_offset(), <<offset::64-signed-little>>)
+        link_tx(link, &Transaction.fpwr(&1, station, Registers.dc_system_time_offset(offset)))
       end
     end)
   end
@@ -306,12 +278,18 @@ defmodule EtherCAT.DC do
     |> Enum.each(fn {station, {ecat_ns, _, _}} ->
       if ecat_ns != nil do
         # Read current value and write it back — this resets the filter
-        case Link.transaction(link, &Transaction.fprd(&1, station, 0x0930, 2)) do
-          {:ok, [%{data: val, wkc: 1}]} ->
-            fpwr(link, station, Registers.dc_speed_counter_start(), val)
+        case Link.transaction(
+               link,
+               &Transaction.fprd(&1, station, Registers.dc_speed_counter_start())
+             ) do
+          {:ok, [%{data: <<v::16-little>>, wkc: 1}]} ->
+            link_tx(link, &Transaction.fpwr(&1, station, Registers.dc_speed_counter_start(v)))
 
           _ ->
-            fpwr(link, station, Registers.dc_speed_counter_start(), <<0x1000::16-little>>)
+            link_tx(
+              link,
+              &Transaction.fpwr(&1, station, Registers.dc_speed_counter_start(0x1000))
+            )
         end
       end
     end)
@@ -321,14 +299,14 @@ defmodule EtherCAT.DC do
     Logger.info("[DC] pre-compensating drift (#{@precomp_frames} frames)...")
 
     for _ <- 1..@precomp_frames do
-      Link.transaction(link, &Transaction.armw(&1, ref_station, 0x0910, <<0::64>>))
+      Link.transaction(link, &Transaction.armw(&1, ref_station, Registers.dc_system_time()))
     end
 
     Logger.info("[DC] pre-compensation done")
   end
 
-  # Thin wrapper — ignore wkc for init writes (slaves may not all respond)
-  defp fpwr(link, station, {addr, _size}, data) do
-    Link.transaction(link, &Transaction.fpwr(&1, station, addr, data))
+  # Thin wrapper — ignore result (init writes may get no wkc if slaves not yet ready)
+  defp link_tx(link, fun) do
+    Link.transaction(link, fun)
   end
 end

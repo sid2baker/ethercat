@@ -16,6 +16,7 @@ defmodule EtherCAT.Slave.Registers do
   """
 
   @type reg :: {non_neg_integer(), pos_integer()}
+  @type reg_write :: {non_neg_integer(), binary()}
 
   # -- ESC Information (§2.1) -----------------------------------------------
 
@@ -44,6 +45,8 @@ defmodule EtherCAT.Slave.Registers do
 
   @spec station_address() :: reg()
   def station_address, do: {0x0010, 2}
+  @spec station_address(non_neg_integer()) :: reg_write()
+  def station_address(addr), do: {0x0010, <<addr::16-little>>}
 
   @spec station_alias() :: reg()
   def station_alias, do: {0x0012, 2}
@@ -60,6 +63,10 @@ defmodule EtherCAT.Slave.Registers do
 
   @spec al_control() :: reg()
   def al_control, do: {0x0120, 2}
+
+  @doc "AL control write — encodes `code` as a 2-byte little-endian value."
+  @spec al_control(non_neg_integer()) :: reg_write()
+  def al_control(code), do: {0x0120, <<code::16-little>>}
 
   @spec al_status() :: reg()
   def al_status, do: {0x0130, 2}
@@ -227,9 +234,17 @@ defmodule EtherCAT.Slave.Registers do
   @spec dc_system_time_offset() :: reg()
   def dc_system_time_offset, do: {0x0920, 8}
 
+  @doc "System time offset write — encodes `offset_ns` as a signed 64-bit little-endian value."
+  @spec dc_system_time_offset(integer()) :: reg_write()
+  def dc_system_time_offset(offset_ns), do: {0x0920, <<offset_ns::64-signed-little>>}
+
   @doc "System time delay — propagation delay from reference clock to this slave. Written by master."
   @spec dc_system_time_delay() :: reg()
   def dc_system_time_delay, do: {0x0928, 4}
+
+  @doc "System time delay write — encodes `delay_ns` as a 32-bit little-endian value."
+  @spec dc_system_time_delay(non_neg_integer()) :: reg_write()
+  def dc_system_time_delay(delay_ns), do: {0x0928, <<delay_ns::32-little>>}
 
   @doc "System time difference — mean deviation between local copy and received system time. Converges to 0."
   @spec dc_system_time_diff() :: reg()
@@ -239,19 +254,39 @@ defmodule EtherCAT.Slave.Registers do
   @spec dc_speed_counter_start() :: reg()
   def dc_speed_counter_start, do: {0x0930, 2}
 
+  @doc "Speed counter start write — encodes `v` as a 16-bit little-endian value."
+  @spec dc_speed_counter_start(non_neg_integer()) :: reg_write()
+  def dc_speed_counter_start(v), do: {0x0930, <<v::16-little>>}
+
   @doc "DC Activation register. Write 0x03 to enable SYNC0+SYNC1 output."
   @spec dc_activation() :: reg()
   def dc_activation, do: {0x0981, 1}
+
+  @doc "DC Activation write — encodes `code` as a single byte."
+  @spec dc_activation(non_neg_integer()) :: reg_write()
+  def dc_activation(code), do: {0x0981, <<code::8>>}
 
   @doc "Pulse length of SYNC signals in ns. 0 = acknowledged mode."
   @spec dc_pulse_length() :: reg()
   def dc_pulse_length, do: {0x0982, 2}
 
+  @doc "Pulse length write — encodes `pulse_ns` as a 16-bit little-endian value."
+  @spec dc_pulse_length(non_neg_integer()) :: reg_write()
+  def dc_pulse_length(pulse_ns), do: {0x0982, <<pulse_ns::16-little>>}
+
   @doc "SYNC0 start time — system time of first SYNC0 pulse (64-bit, ns since 2000-01-01)."
   @spec dc_sync0_start_time() :: reg()
   def dc_sync0_start_time, do: {0x0990, 8}
 
+  @doc "SYNC0 start time write — encodes `start_ns` as a 64-bit little-endian value."
+  @spec dc_sync0_start_time(non_neg_integer()) :: reg_write()
+  def dc_sync0_start_time(start_ns), do: {0x0990, <<start_ns::64-little>>}
+
   @doc "SYNC0 cycle time in ns. 0 = single shot mode."
   @spec dc_sync0_cycle_time() :: reg()
   def dc_sync0_cycle_time, do: {0x09A0, 4}
+
+  @doc "SYNC0 cycle time write — encodes `cycle_ns` as a 32-bit little-endian value."
+  @spec dc_sync0_cycle_time(non_neg_integer()) :: reg_write()
+  def dc_sync0_cycle_time(cycle_ns), do: {0x09A0, <<cycle_ns::32-little>>}
 end

@@ -291,7 +291,7 @@ defmodule EtherCAT.Domain do
     t0 = System.monotonic_time(:microsecond)
     image = build_frame(data.image_size, data.output_patches, data.table)
 
-    result = Link.transaction(data.link, &Transaction.lrw(&1, data.logical_base, image))
+    result = Link.transaction(data.link, &Transaction.lrw(&1, {data.logical_base, image}))
     next_at = data.next_cycle_at + data.period_us
 
     now_after = System.monotonic_time(:microsecond)

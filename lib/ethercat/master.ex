@@ -36,15 +36,12 @@ defmodule EtherCAT.Master do
 
   alias EtherCAT.{DC, Domain, Link, Slave}
   alias EtherCAT.Link.Transaction
+  alias EtherCAT.Slave.Registers
 
   @base_station 0x1000
-  @station_reg 0x0010
   @confirm_rounds 3
   @scan_max_attempts 10
   @scan_retry_ms 200
-
-  # ns between Unix epoch (1970) and EtherCAT epoch (2000-01-01 00:00:00)
-  @ethercat_epoch_offset_ns 946_684_800_000_000_000
 
   defstruct [
     :link_pid,
@@ -303,7 +300,7 @@ defmodule EtherCAT.Master do
   defp stable_count(link) do
     counts =
       for _ <- 1..@confirm_rounds do
-        case Link.transaction(link, &Transaction.brd(&1, 0x0000, 1)) do
+        case Link.transaction(link, &Transaction.brd(&1, {0x0000, 1})) do
           {:ok, [%{wkc: n}]} -> n
           _ -> -1
         end
@@ -318,7 +315,7 @@ defmodule EtherCAT.Master do
   defp assign_stations(link, base, count) do
     Enum.each(0..(count - 1), fn pos ->
       station = base + pos
-      Link.transaction(link, &Transaction.apwr(&1, pos, @station_reg, <<station::16-little>>))
+      Link.transaction(link, &Transaction.apwr(&1, pos, Registers.station_address(station)))
     end)
   end
 
@@ -350,21 +347,20 @@ defmodule EtherCAT.Master do
             driver = Keyword.get(slave_opts, :driver)
             config = Keyword.get(slave_opts, :config, %{})
 
+            # Pass dc_cycle_ns only when DC is running — slave uses it to configure SYNC0
+            slave_dc_cycle_ns = if dc_pid != nil, do: dc_cycle_ns, else: nil
+
             opts = [
               link: link,
               station: station,
               name: name,
               driver: driver,
-              config: config
+              config: config,
+              dc_cycle_ns: slave_dc_cycle_ns
             ]
 
             case DynamicSupervisor.start_child(EtherCAT.SlaveSupervisor, {Slave, opts}) do
               {:ok, pid} ->
-                # Configure SYNC0 if DC is running and driver has a dc: profile key
-                if dc_pid != nil and driver != nil do
-                  configure_sync0_if_needed(link, station, driver, config, dc_cycle_ns)
-                end
-
                 [{name, station, pid}]
 
               {:error, reason} ->
@@ -380,32 +376,11 @@ defmodule EtherCAT.Master do
     {:ok, slaves}
   end
 
-  defp configure_sync0_if_needed(link, station, driver, config, dc_cycle_ns) do
-    profile = driver.process_data_profile(config)
-
-    has_dc =
-      profile
-      |> Map.values()
-      |> Enum.any?(fn pdo_spec -> Map.has_key?(pdo_spec, :dc) end)
-
-    if has_dc do
-      pulse_ns =
-        profile
-        |> Map.values()
-        |> Enum.find_value(fn pdo_spec -> pdo_spec[:dc] end)
-        |> Map.fetch!(:sync0_pulse_ns)
-
-      system_time_ns = System.os_time(:nanosecond) - @ethercat_epoch_offset_ns
-      DC.configure_sync0(link, station, system_time_ns, dc_cycle_ns, pulse_ns)
-      Logger.debug("[Master] SYNC0 configured for station 0x#{Integer.to_string(station, 16)}")
-    end
-  end
-
   defp read_dl_status_all(link, base, count) do
     Enum.map(0..(count - 1), fn pos ->
       station = base + pos
 
-      case Link.transaction(link, &Transaction.fprd(&1, station, 0x0110, 2)) do
+      case Link.transaction(link, &Transaction.fprd(&1, station, Registers.dl_status())) do
         {:ok, [%{data: status, wkc: 1}]} -> {station, status}
         _ -> {station, <<0, 0>>}
       end

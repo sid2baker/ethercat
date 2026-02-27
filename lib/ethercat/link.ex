@@ -20,14 +20,14 @@ defmodule EtherCAT.Link do
 
       # Single read
       {:ok, [%{data: <<status::16-little>>, wkc: 1}]} =
-        Link.transaction(link, &Transaction.fprd(&1, 0x1001, 0x0130, 2))
+        Link.transaction(link, &Transaction.fprd(&1, 0x1001, Registers.al_status()))
 
       # Batched — read AL status + exchange process image
       {:ok, [al, io]} =
         Link.transaction(link, fn tx ->
           tx
-          |> Transaction.fprd(0x1001, 0x0130, 2)
-          |> Transaction.lrw(0x0000, <<0, 0, 0, 0>>)
+          |> Transaction.fprd(0x1001, Registers.al_status())
+          |> Transaction.lrw({0x0000, <<0, 0, 0, 0>>})
         end)
   """
 
@@ -82,14 +82,14 @@ defmodule EtherCAT.Link do
 
       # Single command
       {:ok, [%{data: data, wkc: 1}]} =
-        Link.transaction(link, &Transaction.fprd(&1, 0x1001, 0x0130, 2))
+        Link.transaction(link, &Transaction.fprd(&1, 0x1001, Registers.al_status()))
 
       # Batched commands
       {:ok, [res1, res2]} =
         Link.transaction(link, fn tx ->
           tx
-          |> Transaction.fprd(0x1001, 0x0130, 2)
-          |> Transaction.lrw(0x0000, <<0, 0, 0, 0>>)
+          |> Transaction.fprd(0x1001, Registers.al_status())
+          |> Transaction.lrw({0x0000, <<0, 0, 0, 0>>})
         end)
   """
   @spec transaction(server(), (Transaction.t() -> Transaction.t())) ::

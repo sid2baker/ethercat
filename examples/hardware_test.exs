@@ -365,11 +365,10 @@ all_ok =
 IO.puts("")
 
 IO.puts("  RX error counters (per slave port):")
-{rx_addr, rx_size} = Registers.rx_error_counter()
 link = EtherCAT.link()
 
 for {name, station, _} <- slaves do
-  case Link.transaction(link, &Transaction.fprd(&1, station, rx_addr, rx_size)) do
+  case Link.transaction(link, &Transaction.fprd(&1, station, Registers.rx_error_counter())) do
     {:ok, [%{data: <<p0::16-little, p1::16-little, p2::16-little, p3::16-little>>, wkc: wkc}]}
     when wkc > 0 ->
       IO.puts("    #{inspect(name)} @ #{hex.(station)}: port0=#{p0} port1=#{p1} port2=#{p2} port3=#{p3}")

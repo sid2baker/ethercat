@@ -47,6 +47,9 @@ defmodule EtherCAT.Slave do
   alias EtherCAT.Link.Transaction
   alias EtherCAT.Slave.Registers
 
+  # ns between Unix epoch (1970) and EtherCAT epoch (2000-01-01 00:00:00)
+  @ethercat_epoch_offset_ns 946_684_800_000_000_000
+
   @al_codes %{init: 0x01, preop: 0x02, bootstrap: 0x03, safeop: 0x04, op: 0x08}
 
   @paths %{
@@ -78,6 +81,8 @@ defmodule EtherCAT.Slave do
     :error_code,
     :identity,
     :mailbox_config,
+    # SYNC0 cycle time in ns — set from start_link opts; nil = no DC
+    :dc_cycle_ns,
     # %{pdo_name => %{domain_id, fmmu_config, offset}}
     :pdo_registrations,
     # %{pdo_name => [pid]}
@@ -172,6 +177,7 @@ defmodule EtherCAT.Slave do
     name = Keyword.fetch!(opts, :name)
     driver = Keyword.get(opts, :driver)
     config = Keyword.get(opts, :config, %{})
+    dc_cycle_ns = Keyword.get(opts, :dc_cycle_ns)
 
     # Also register by station address for internal lookups
     Registry.register(EtherCAT.Registry, {:slave_station, station}, name)
@@ -182,6 +188,7 @@ defmodule EtherCAT.Slave do
       name: name,
       driver: driver,
       config: config,
+      dc_cycle_ns: dc_cycle_ns,
       pdo_registrations: %{},
       pdo_subscriptions: %{}
     }
@@ -200,7 +207,15 @@ defmodule EtherCAT.Slave do
     {:keep_state_and_data, [{{:timeout, :auto_advance}, 0, nil}]}
   end
 
-  def handle_event(:enter, _old, state, data) when state in [:preop, :safeop, :op] do
+  def handle_event(:enter, _old, :safeop, data) do
+    invoke_driver(data, :on_safeop)
+    # ETG.1020 §6.3.2: configure DC SYNC after the slave confirms SAFEOP —
+    # FMMUs are written (domain_offset arrived in PREOP), cycle time is canonical.
+    configure_sync0_if_needed(data)
+    :keep_state_and_data
+  end
+
+  def handle_event(:enter, _old, state, data) when state in [:preop, :op] do
     invoke_driver(data, :"on_#{state}")
     :keep_state_and_data
   end
@@ -401,12 +416,11 @@ defmodule EtherCAT.Slave do
 
   defp do_transition(data, target) do
     code = Map.fetch!(@al_codes, target)
-    {al_control_addr, _} = Registers.al_control()
 
     with {:ok, [%{wkc: wkc}]} when wkc > 0 <-
            Link.transaction(
              data.link,
-             &Transaction.fpwr(&1, data.station, al_control_addr, <<code::16-little>>)
+             &Transaction.fpwr(&1, data.station, Registers.al_control(code))
            ) do
       poll_al(data, code, @poll_limit)
     else
@@ -418,11 +432,9 @@ defmodule EtherCAT.Slave do
   defp poll_al(data, _code, 0), do: {:error, :transition_timeout, data}
 
   defp poll_al(data, code, n) do
-    {al_status_addr, al_status_size} = Registers.al_status()
-
     case Link.transaction(
            data.link,
-           &Transaction.fprd(&1, data.station, al_status_addr, al_status_size)
+           &Transaction.fprd(&1, data.station, Registers.al_status())
          ) do
       {:ok, [%{data: <<_::3, _err::1, state::4, _::8>>, wkc: wkc}]}
       when wkc > 0 and state == code ->
@@ -445,14 +457,10 @@ defmodule EtherCAT.Slave do
   end
 
   defp ack_error(data) do
-    {al_status_code_addr, al_status_code_size} = Registers.al_status_code()
-    {al_status_addr, al_status_size} = Registers.al_status()
-    {al_control_addr, _} = Registers.al_control()
-
     err_code =
       case Link.transaction(
              data.link,
-             &Transaction.fprd(&1, data.station, al_status_code_addr, al_status_code_size)
+             &Transaction.fprd(&1, data.station, Registers.al_status_code())
            ) do
         {:ok, [%{data: <<c::16-little>>, wkc: wkc}]} when wkc > 0 -> c
         _ -> nil
@@ -461,7 +469,7 @@ defmodule EtherCAT.Slave do
     state_code =
       case Link.transaction(
              data.link,
-             &Transaction.fprd(&1, data.station, al_status_addr, al_status_size)
+             &Transaction.fprd(&1, data.station, Registers.al_status())
            ) do
         {:ok, [%{data: <<_::3, _err::1, state::4, _::8>>, wkc: wkc}]} when wkc > 0 -> state
         _ -> 0x01
@@ -471,7 +479,7 @@ defmodule EtherCAT.Slave do
 
     Link.transaction(
       data.link,
-      &Transaction.fpwr(&1, data.station, al_control_addr, <<ack_value::16-little>>)
+      &Transaction.fpwr(&1, data.station, Registers.al_control(ack_value))
     )
 
     {err_code, %{data | error_code: err_code}}
@@ -531,11 +539,56 @@ defmodule EtherCAT.Slave do
   end
 
   defp write_reg(link, station, {addr, _size}, data) do
-    case Link.transaction(link, &Transaction.fpwr(&1, station, addr, data)) do
+    case Link.transaction(link, &Transaction.fpwr(&1, station, {addr, data})) do
       {:ok, [%{wkc: wkc}]} when wkc > 0 -> :ok
       {:ok, [%{wkc: 0}]} -> {:error, :no_response}
       {:error, _} = err -> err
     end
+  end
+
+  # -- SYNC0 configuration ---------------------------------------------------
+
+  # Configure SYNC0 on this slave if its driver profile has a `dc:` key and
+  # dc_cycle_ns is set. Called from the :safeop enter handler — FMMUs are
+  # already written (domain_offset arrived in PREOP) and the ESC has just
+  # confirmed SAFEOP, so the PDI is synchronized from the first OP cycle.
+  defp configure_sync0_if_needed(%{driver: nil}), do: :ok
+
+  defp configure_sync0_if_needed(%{dc_cycle_ns: nil}), do: :ok
+
+  defp configure_sync0_if_needed(data) do
+    profile = data.driver.process_data_profile(data.config)
+
+    dc_spec =
+      profile
+      |> Map.values()
+      |> Enum.find_value(fn pdo_spec -> Map.get(pdo_spec, :dc) end)
+
+    if dc_spec != nil do
+      pulse_ns = Map.fetch!(dc_spec, :sync0_pulse_ns)
+      cycle_ns = data.dc_cycle_ns
+      system_time_ns = System.os_time(:nanosecond) - @ethercat_epoch_offset_ns
+      # start_time must be in the future relative to when the activation datagram
+      # is processed by the slave (§9.2.3.6 step 6).  100 µs is ample headroom
+      # for a single frame round-trip.
+      start_time = system_time_ns + 100_000
+
+      # All four writes go in one frame so the activation datagram sees the
+      # already-written cycle/pulse/start values in the same processing pass.
+      Link.transaction(data.link, fn tx ->
+        tx
+        |> Transaction.fpwr(data.station, Registers.dc_sync0_cycle_time(cycle_ns))
+        |> Transaction.fpwr(data.station, Registers.dc_pulse_length(pulse_ns))
+        |> Transaction.fpwr(data.station, Registers.dc_sync0_start_time(start_time))
+        |> Transaction.fpwr(data.station, Registers.dc_activation(0x03))
+      end)
+
+      Logger.debug(
+        "[Slave #{data.name}] SYNC0 configured: cycle=#{cycle_ns}ns pulse=#{pulse_ns}ns"
+      )
+    end
+
+    :ok
   end
 
   # -- Registry helpers ------------------------------------------------------

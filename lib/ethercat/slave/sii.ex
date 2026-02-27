@@ -157,7 +157,7 @@ defmodule EtherCAT.Slave.SII do
            :ok <- write_reg(link, station, Registers.eeprom_control(), @cmd_read),
            :ok <- wait_busy(link, station),
            :ok <- check_errors(link, station) do
-        read_reg(link, station, Registers.eeprom_data(), chunk_words * 2)
+        read_reg(link, station, {Registers.eeprom_data(), chunk_words * 2})
       end
     end)
   end
@@ -177,7 +177,7 @@ defmodule EtherCAT.Slave.SII do
       with :ok <- ensure_ready(link, station),
            :ok <-
              write_reg(link, station, Registers.eeprom_address(), <<word_address::32-little>>),
-           :ok <- write_reg(link, station, Registers.eeprom_data(), word),
+           :ok <- write_reg(link, station, {Registers.eeprom_data(), 2}, word),
            # Write-enable (bit 0) + write command (bits 10:8) in the same frame
            :ok <- write_reg(link, station, Registers.eeprom_control(), @cmd_write),
            :ok <- wait_busy(link, station) do
@@ -283,18 +283,8 @@ defmodule EtherCAT.Slave.SII do
 
   # -- Register I/O -----------------------------------------------------------
 
-  # Accepts a {addr, size} tuple from Registers for fixed-size registers,
-  # or a bare address + explicit size for runtime-sized registers (eeprom_data).
-  defp read_reg(link, station, {addr, size}) do
-    case Link.transaction(link, &Transaction.fprd(&1, station, addr, size)) do
-      {:ok, [%{data: data, wkc: wkc}]} when wkc > 0 -> {:ok, data}
-      {:ok, [%{wkc: 0}]} -> {:error, :no_response}
-      {:error, _} = err -> err
-    end
-  end
-
-  defp read_reg(link, station, addr, size) when is_integer(addr) do
-    case Link.transaction(link, &Transaction.fprd(&1, station, addr, size)) do
+  defp read_reg(link, station, {_addr, _size} = reg) do
+    case Link.transaction(link, &Transaction.fprd(&1, station, reg)) do
       {:ok, [%{data: data, wkc: wkc}]} when wkc > 0 -> {:ok, data}
       {:ok, [%{wkc: 0}]} -> {:error, :no_response}
       {:error, _} = err -> err
@@ -302,15 +292,7 @@ defmodule EtherCAT.Slave.SII do
   end
 
   defp write_reg(link, station, {addr, _size}, data) do
-    case Link.transaction(link, &Transaction.fpwr(&1, station, addr, data)) do
-      {:ok, [%{wkc: wkc}]} when wkc > 0 -> :ok
-      {:ok, [%{wkc: 0}]} -> {:error, :no_response}
-      {:error, _} = err -> err
-    end
-  end
-
-  defp write_reg(link, station, addr, data) when is_integer(addr) do
-    case Link.transaction(link, &Transaction.fpwr(&1, station, addr, data)) do
+    case Link.transaction(link, &Transaction.fpwr(&1, station, {addr, data})) do
       {:ok, [%{wkc: wkc}]} when wkc > 0 -> :ok
       {:ok, [%{wkc: 0}]} -> {:error, :no_response}
       {:error, _} = err -> err
