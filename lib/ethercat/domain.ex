@@ -3,10 +3,10 @@ defmodule EtherCAT.Domain do
   Self-timed cyclic process image exchange for EtherCAT slaves.
 
   A Domain owns one flat LRW frame shared across all registered slaves.
-  Slaves register their PDOs via `register_input/3` and `register_output/3`.
-  When `activate/1` is called, the Domain assigns logical offsets (outputs
-  first, then inputs), notifies each slave of its offset so the slave can
-  write its FMMU, then starts the self-timed LRW cycle.
+  Slaves register their PDOs via `register_pdo/4`, which assigns the logical
+  offset immediately and returns it. The slave can then write its FMMU without
+  any further coordination. Once all slaves are configured, `start_cycling/1`
+  arms the self-timed LRW cycle.
 
   ## I/O hot path (direct ETS, no gen_statem hop)
 
@@ -44,22 +44,18 @@ defmodule EtherCAT.Domain do
     :period_us,
     :logical_base,
     :next_cycle_at,
-    # total frame size (set at activate)
-    :image_size,
-    # [{offset, size, key}] sorted, set at activate
-    :output_patches,
-    # [{offset, size, key, slave_pid}] sorted, set at activate
-    :input_slices,
-    # [{key, size}] collected in :open
-    :pending_outputs,
-    # [{key, size, slave_pid}] collected in :open
-    :pending_inputs,
-    :miss_count,
-    :miss_threshold,
-    :cycle_count,
+    # total frame size — grows as PDOs are registered
+    image_size: 0,
+    # [{offset, size, key}] in registration order
+    output_patches: [],
+    # [{offset, size, key, slave_pid}] in registration order
+    input_slices: [],
+    miss_count: 0,
+    miss_threshold: 100,
+    cycle_count: 0,
     # total accumulated misses since domain started (never resets)
-    :total_miss_count,
-    :table
+    total_miss_count: 0,
+    table: nil
   ]
 
   # -- child_spec / start_link -----------------------------------------------
@@ -93,35 +89,38 @@ defmodule EtherCAT.Domain do
 
   # -- Public API ------------------------------------------------------------
 
-  @doc "Register an input PDO slice. Called by Slave.register_pdo/3 for input PDOs."
-  @spec register_input(domain_id(), pdo_key(), pos_integer()) :: :ok | {:error, term()}
-  def register_input(domain_id, key, size) do
-    via = {:via, Registry, {EtherCAT.Registry, {:domain, domain_id}}}
-    slave_pid = self()
-    :gen_statem.call(via, {:register_input, key, size, slave_pid})
-  end
+  @doc """
+  Register a PDO slice. Returns `{:ok, logical_offset}` immediately.
 
-  @doc "Register an output PDO slice. Called by Slave.register_pdo/3 for output PDOs."
-  @spec register_output(domain_id(), pdo_key(), pos_integer()) :: :ok | {:error, term()}
-  def register_output(domain_id, key, size) do
+  Called by Slave in its `:preop` enter handler. The returned offset is
+  used to write the FMMU register in the same enter callback — no async
+  coordination required.
+
+  Direction:
+    - `:input`  — slave reads from bus; domain tracks the slave pid for change notifications
+    - `:output` — slave writes to bus; no pid tracking
+  """
+  @spec register_pdo(domain_id(), pdo_key(), pos_integer(), :input | :output) ::
+          {:ok, non_neg_integer()} | {:error, term()}
+  def register_pdo(domain_id, key, size, direction) do
     via = {:via, Registry, {EtherCAT.Registry, {:domain, domain_id}}}
-    :gen_statem.call(via, {:register_output, key, size})
+    slave_pid = if direction == :input, do: self(), else: nil
+    :gen_statem.call(via, {:register_pdo, key, size, direction, slave_pid})
   end
 
   @doc """
-  Finalise layout, notify slaves of their offsets, start cycling.
+  Start the self-timed LRW cycle. Call once after all slaves have registered
+  their PDOs and written their FMMUs.
 
-  Assigns output offsets [0, total_out), input offsets [total_out, total_out+total_in).
-  Sends `{:domain_offset, key, logical_offset}` to each slave pid so the slave
-  can write its FMMU register. Cycling begins after the first full period.
+  Transitions domain from `:open` to `:cycling`.
   """
-  @spec activate(domain_id()) :: :ok | {:error, term()}
-  def activate(domain_id) do
+  @spec start_cycling(domain_id()) :: :ok | {:error, term()}
+  def start_cycling(domain_id) do
     via = {:via, Registry, {EtherCAT.Registry, {:domain, domain_id}}}
-    :gen_statem.call(via, :activate)
+    :gen_statem.call(via, :start_cycling)
   end
 
-  @doc "Halt cycling. Domain stays alive; call `activate/1` again to resume."
+  @doc "Halt cycling. Domain stays alive; call `start_cycling/1` again to resume."
   @spec stop_cyclic(domain_id()) :: :ok
   def stop_cyclic(domain_id) do
     via = {:via, Registry, {EtherCAT.Registry, {:domain, domain_id}}}
@@ -187,8 +186,6 @@ defmodule EtherCAT.Domain do
       image_size: 0,
       output_patches: [],
       input_slices: [],
-      pending_outputs: [],
-      pending_inputs: [],
       miss_count: 0,
       miss_threshold: miss_threshold,
       cycle_count: 0,
@@ -215,74 +212,54 @@ defmodule EtherCAT.Domain do
 
   # -- :open handlers --------------------------------------------------------
 
-  def handle_event({:call, from}, {:register_input, key, size, slave_pid}, :open, data) do
-    :ets.insert(data.table, {key, :unset, slave_pid})
-    new_pending = [{key, size, slave_pid} | data.pending_inputs]
-    {:keep_state, %{data | pending_inputs: new_pending}, [{:reply, from, :ok}]}
+  def handle_event({:call, from}, {:register_pdo, key, size, direction, slave_pid}, :open, data) do
+    offset = data.image_size
+
+    ets_value = if direction == :input, do: :unset, else: :binary.copy(<<0>>, size)
+    :ets.insert(data.table, {key, ets_value, slave_pid})
+
+    new_data =
+      case direction do
+        :output ->
+          %{
+            data
+            | image_size: offset + size,
+              output_patches: data.output_patches ++ [{offset, size, key}]
+          }
+
+        :input ->
+          %{
+            data
+            | image_size: offset + size,
+              input_slices: data.input_slices ++ [{offset, size, key, slave_pid}]
+          }
+      end
+
+    {:keep_state, new_data, [{:reply, from, {:ok, offset}}]}
   end
 
-  def handle_event({:call, from}, {:register_output, key, size}, :open, data) do
-    :ets.insert(data.table, {key, :binary.copy(<<0>>, size), nil})
-    new_pending = [{key, size} | data.pending_outputs]
-    {:keep_state, %{data | pending_outputs: new_pending}, [{:reply, from, :ok}]}
-  end
-
-  def handle_event({:call, from}, {:register_input, _, _, _}, _state, _data) do
+  def handle_event({:call, from}, {:register_pdo, _, _, _, _}, _state, _data) do
     {:keep_state_and_data, [{:reply, from, {:error, :not_open}}]}
   end
 
-  def handle_event({:call, from}, {:register_output, _, _}, _state, _data) do
-    {:keep_state_and_data, [{:reply, from, {:error, :not_open}}]}
-  end
-
-  def handle_event({:call, from}, :activate, :open, data) do
-    if data.pending_outputs == [] and data.pending_inputs == [] do
+  def handle_event({:call, from}, :start_cycling, :open, data) do
+    if data.image_size == 0 do
       {:keep_state_and_data, [{:reply, from, {:error, :nothing_registered}}]}
     else
-      # Assign offsets — outputs first, then inputs
-      outputs = Enum.reverse(data.pending_outputs)
-      inputs = Enum.reverse(data.pending_inputs)
-
-      {output_patches, total_out} =
-        Enum.map_reduce(outputs, 0, fn {key, size}, offset ->
-          {{offset, size, key}, offset + size}
-        end)
-
-      {input_slices, total} =
-        Enum.map_reduce(inputs, total_out, fn {key, size, slave_pid}, offset ->
-          {{offset, size, key, slave_pid}, offset + size}
-        end)
-
-      # Notify each slave of its logical offset so it can write FMMUs
-      Enum.each(output_patches, fn {offset, _size, key} ->
-        {slave_name, _pdo} = key
-
-        case Registry.lookup(EtherCAT.Registry, {:slave, slave_name}) do
-          [{pid, _}] -> send(pid, {:domain_offset, key, offset})
-          _ -> :ok
-        end
-      end)
-
-      Enum.each(input_slices, fn {offset, _size, key, slave_pid} ->
-        send(slave_pid, {:domain_offset, key, offset})
-      end)
-
       now = System.monotonic_time(:microsecond)
-
-      new_data = %{
-        data
-        | image_size: total,
-          output_patches: output_patches,
-          input_slices: input_slices,
-          next_cycle_at: now + data.period_us
-      }
-
+      new_data = %{data | next_cycle_at: now + data.period_us}
       {:next_state, :cycling, new_data, [{:reply, from, :ok}]}
     end
   end
 
-  def handle_event({:call, from}, :activate, :cycling, _data) do
-    {:keep_state_and_data, [{:reply, from, {:error, :already_active}}]}
+  def handle_event({:call, from}, :start_cycling, :cycling, _data) do
+    {:keep_state_and_data, [{:reply, from, {:error, :already_cycling}}]}
+  end
+
+  def handle_event({:call, from}, :start_cycling, :stopped, data) do
+    now = System.monotonic_time(:microsecond)
+    new_data = %{data | next_cycle_at: now + data.period_us, miss_count: 0}
+    {:next_state, :cycling, new_data, [{:reply, from, :ok}]}
   end
 
   # -- :cycling — self-timed LRW exchange ------------------------------------
@@ -350,12 +327,6 @@ defmodule EtherCAT.Domain do
 
   def handle_event({:call, from}, :stop_cyclic, :stopped, _data) do
     {:keep_state_and_data, [{:reply, from, :ok}]}
-  end
-
-  def handle_event({:call, from}, :activate, :stopped, data) do
-    now = System.monotonic_time(:microsecond)
-    new_data = %{data | next_cycle_at: now + data.period_us, miss_count: 0}
-    {:next_state, :cycling, new_data, [{:reply, from, :ok}]}
   end
 
   def handle_event({:call, from}, :stats, state, data) do

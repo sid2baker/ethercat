@@ -4,7 +4,9 @@ defmodule EtherCAT do
 
   ## Typical usage
 
-      # 1. Configure and start — scans bus, assigns stations, initialises DC
+      # 1. Configure and start — scans bus, assigns stations, initialises DC,
+      #    starts slaves. Slaves self-register their PDOs in :preop and the
+      #    master automatically drives them to :op.
       :ok = EtherCAT.start(
         interface: "eth0",
         domains: [
@@ -19,11 +21,11 @@ defmodule EtherCAT do
         ]
       )
 
-      # 2. Subscribe to input change notifications (optional, before run)
-      EtherCAT.subscribe(:sensor, :channels, self())
+      # 2. Wait for the bus to be fully operational
+      :ok = EtherCAT.await_running(10_000)
 
-      # 3. Start domains, wire PDOs, activate cycling, advance slaves to :op
-      :ok = EtherCAT.run()
+      # 3. Subscribe to input change notifications (optional)
+      EtherCAT.subscribe(:sensor, :channels, self())
 
       # 4. I/O
       EtherCAT.set_output(:valve, :outputs, 0xFFFF)
@@ -48,7 +50,10 @@ defmodule EtherCAT do
   # -- Bus lifecycle ---------------------------------------------------------
 
   @doc """
-  Start the master: open `interface`, scan for slaves, initialise DC.
+  Start the master: open `interface`, scan for slaves, and begin self-driving
+  configuration. Returns `:ok` once the link is open and scanning has started.
+
+  Use `await_running/1` to block until the bus is fully operational.
 
   Options:
     - `:interface` (required) — e.g. `"eth0"`
@@ -56,7 +61,8 @@ defmodule EtherCAT do
       (atom) and `:period` (ms), plus optional `EtherCAT.Domain` options
     - `:slaves` — list of slave config entries. Each is either `nil` (station
       assigned, no driver) or a keyword list with `:name`, `:driver`, `:config`,
-      and `:pdos` (`[pdo_name: domain_id]` pairs wired automatically on `run/0`)
+      and `:pdos` (`[pdo_name: domain_id]` pairs registered by the slave itself
+      in its `:preop` enter handler)
     - `:base_station` — starting station address, default `0x1000`
     - `:dc_cycle_ns` — SYNC0 cycle time in ns for DC-capable slaves, default `1_000_000`
   """
@@ -75,17 +81,21 @@ defmodule EtherCAT do
   @spec link() :: pid() | nil
   def link, do: Master.link()
 
-  # -- One-shot activation ---------------------------------------------------
+  @doc "Return the current master state atom (`:idle`, `:scanning`, `:configuring`, or `:running`)."
+  @spec state() :: atom()
+  def state, do: Master.state()
+
+  # -- Activation ------------------------------------------------------------
 
   @doc """
-  Start all configured domains, wire declared PDOs, activate domain cycling,
-  then advance all slaves to `:op`.
+  Block until the master reaches `:running`, then return `:ok`.
 
-  Call this once after `start/1` and any `subscribe/3` calls. It is
-  idempotent for already-running domains.
+  Returns immediately if already `:running`. Returns `{:error, :timeout}` if
+  the bus does not become operational within `timeout_ms` milliseconds.
+  Returns `{:error, :not_started}` if `start/1` has not been called.
   """
-  @spec run() :: :ok | {:error, term()}
-  def run, do: Master.run()
+  @spec await_running(timeout_ms :: pos_integer()) :: :ok | {:error, term()}
+  def await_running(timeout_ms \\ 10_000), do: Master.await_running(timeout_ms)
 
   # -- Subscriptions ---------------------------------------------------------
 
@@ -93,7 +103,7 @@ defmodule EtherCAT do
   Subscribe `pid` to decoded input change notifications from a slave PDO.
 
   Messages arrive as `{:slave_input, slave_name, pdo_name, decoded_value}`.
-  Must be called before `run/0` to guarantee no events are missed.
+  Can be called any time after `await_running/1` returns.
   """
   @spec subscribe(atom(), atom(), pid()) :: :ok
   def subscribe(slave_name, pdo_name, pid),

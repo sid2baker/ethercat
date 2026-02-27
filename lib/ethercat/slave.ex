@@ -7,26 +7,16 @@ defmodule EtherCAT.Slave do
 
   ## Lifecycle
 
-  Master starts a Slave with `{name, driver, config, station}` from the `slaves:`
-  config list. The slave auto-advances to `:preop` (reads SII EEPROM for identity
-  verification). It then waits for the lib user to call `register_pdo/3` and
-  `subscribe/3` before requesting `:safeop`.
+  Master starts a Slave with `{name, driver, config, station, pdos}` from the `slaves:`
+  config list. The slave auto-advances to `:preop`: reads SII EEPROM, then self-registers
+  its PDOs against the configured domains (getting logical offsets back immediately),
+  writes SM and FMMU registers, then notifies the Master. The master drives the slave
+  to `:safeop` and `:op` once all slaves have reached `:preop`.
 
   ## Usage
 
-      # Wire a PDO to a domain (writes SM registers, queues FMMU for later)
-      Slave.register_pdo(:sensor, :channels, :fast_domain)
-
       # Subscribe to decoded input changes
       Slave.subscribe(:sensor, :channels, self())
-
-      # Advance to safeop (writes FMMUs using offsets from Domain.activate)
-      Slave.request(:sensor, :safeop)
-
-      # After Domain.activate(:fast_domain):
-      receive do
-        {:slave_input, :sensor, :channels, decoded_value} -> ...
-      end
 
       # Write outputs
       Slave.set_output(:valve, :outputs, 0xFFFF)
@@ -34,7 +24,7 @@ defmodule EtherCAT.Slave do
   ## States
 
       :init → :preop  (auto)
-      :preop → :safeop → :op  (explicit)
+      :preop → :safeop → :op  (master-driven)
       any → :init, :preop, :safeop  (backward)
       :init ↔ :bootstrap
   """
@@ -83,7 +73,9 @@ defmodule EtherCAT.Slave do
     :mailbox_config,
     # SYNC0 cycle time in ns — set from start_link opts; nil = no DC
     :dc_cycle_ns,
-    # %{pdo_name => %{domain_id, fmmu_config, offset}}
+    # [{pdo_name, domain_id}] — PDOs to register in :preop enter
+    :pdos,
+    # %{pdo_name => %{domain_id, offset}}
     :pdo_registrations,
     # %{pdo_name => [pid]}
     :pdo_subscriptions
@@ -114,20 +106,6 @@ defmodule EtherCAT.Slave do
   end
 
   # -- Public API ------------------------------------------------------------
-
-  @doc """
-  Wire a PDO to a domain.
-
-  Must be called while the slave is in `:preop`. Writes SM registers immediately
-  (physical addresses are known from the driver profile). FMMU registers are
-  written later when `Domain.activate/1` sends the logical offset.
-
-  Returns `:ok` or `{:error, reason}`.
-  """
-  @spec register_pdo(atom(), atom(), atom()) :: :ok | {:error, term()}
-  def register_pdo(slave_name, pdo_name, domain_id) do
-    :gen_statem.call(via(slave_name), {:register_pdo, pdo_name, domain_id})
-  end
 
   @doc """
   Subscribe `pid` to receive `{:slave_input, slave_name, pdo_name, decoded_value}`
@@ -178,6 +156,7 @@ defmodule EtherCAT.Slave do
     driver = Keyword.get(opts, :driver)
     config = Keyword.get(opts, :config, %{})
     dc_cycle_ns = Keyword.get(opts, :dc_cycle_ns)
+    pdos = Keyword.get(opts, :pdos, [])
 
     # Also register by station address for internal lookups
     Registry.register(EtherCAT.Registry, {:slave_station, station}, name)
@@ -189,12 +168,13 @@ defmodule EtherCAT.Slave do
       driver: driver,
       config: config,
       dc_cycle_ns: dc_cycle_ns,
+      pdos: pdos,
       pdo_registrations: %{},
       pdo_subscriptions: %{}
     }
 
     with {:ok, data2} <- do_transition(data, :init) do
-      {:ok, :init, data2}
+      do_auto_advance(data2)
     else
       {:error, reason, _data} -> {:stop, reason}
     end
@@ -203,20 +183,25 @@ defmodule EtherCAT.Slave do
   # -- State enter -----------------------------------------------------------
 
   @impl true
-  def handle_event(:enter, _old, :init, _data) do
-    {:keep_state_and_data, [{{:timeout, :auto_advance}, 0, nil}]}
+  def handle_event(:enter, _old, :init, _data), do: :keep_state_and_data
+
+  def handle_event(:enter, _old, :preop, data) do
+    invoke_driver(data, :on_preop)
+    new_data = register_pdos_and_fmmus(data)
+    send(EtherCAT.Master, {:slave_ready, data.name, :preop})
+    {:keep_state, new_data}
   end
 
   def handle_event(:enter, _old, :safeop, data) do
     invoke_driver(data, :on_safeop)
     # ETG.1020 §6.3.2: configure DC SYNC after the slave confirms SAFEOP —
-    # FMMUs are written (domain_offset arrived in PREOP), cycle time is canonical.
+    # FMMUs are already written (done in :preop enter), cycle time is canonical.
     configure_sync0_if_needed(data)
     :keep_state_and_data
   end
 
-  def handle_event(:enter, _old, state, data) when state in [:preop, :op] do
-    invoke_driver(data, :"on_#{state}")
+  def handle_event(:enter, _old, :op, data) do
+    invoke_driver(data, :on_op)
     :keep_state_and_data
   end
 
@@ -224,23 +209,12 @@ defmodule EtherCAT.Slave do
 
   # -- Auto-advance :init → :preop ------------------------------------------
 
+  @auto_advance_retry_ms 200
+
   def handle_event({:timeout, :auto_advance}, nil, :init, data) do
-    case read_sii(data.link, data.station) do
-      {:ok, identity, mailbox_config} ->
-        new_data = %{data | identity: identity, mailbox_config: mailbox_config}
-
-        case do_transition(new_data, :preop) do
-          {:ok, new_data2} ->
-            {:next_state, :preop, new_data2}
-
-          {:error, reason, new_data2} ->
-            Logger.warning("[Slave #{data.name}] preop failed: #{inspect(reason)}")
-            {:keep_state, new_data2}
-        end
-
-      {:error, reason} ->
-        Logger.warning("[Slave #{data.name}] SII read failed: #{inspect(reason)}")
-        :keep_state_and_data
+    case do_auto_advance(data) do
+      {:ok, :preop, new_data} -> {:next_state, :preop, new_data}
+      {:ok, :init, new_data, actions} -> {:keep_state, new_data, actions}
     end
   end
 
@@ -278,59 +252,6 @@ defmodule EtherCAT.Slave do
     end
   end
 
-  # -- PDO registration (must be in :preop) ----------------------------------
-
-  def handle_event({:call, from}, {:register_pdo, pdo_name, domain_id}, :preop, data) do
-    if data.driver == nil do
-      {:keep_state_and_data, [{:reply, from, {:error, :no_driver}}]}
-    else
-      profile = data.driver.process_data_profile(data.config)
-
-      case Map.get(profile, pdo_name) do
-        nil ->
-          {:keep_state_and_data, [{:reply, from, {:error, {:unknown_pdo, pdo_name}}}]}
-
-        pdo_spec ->
-          key = {data.name, pdo_name}
-
-          result =
-            if pdo_spec.inputs_size > 0 do
-              Domain.register_input(domain_id, key, pdo_spec.inputs_size)
-            else
-              Domain.register_output(domain_id, key, pdo_spec.outputs_size)
-            end
-
-          case result do
-            :ok ->
-              # Write SM registers immediately — physical addresses known now
-              case write_sms(data.link, data.station, pdo_spec.sms) do
-                :ok ->
-                  reg = %{
-                    domain_id: domain_id,
-                    fmmu_config: pdo_spec.fmmus,
-                    inputs_size: pdo_spec.inputs_size,
-                    outputs_size: pdo_spec.outputs_size,
-                    offset: :pending
-                  }
-
-                  new_regs = Map.put(data.pdo_registrations, pdo_name, reg)
-                  {:keep_state, %{data | pdo_registrations: new_regs}, [{:reply, from, :ok}]}
-
-                {:error, _} = err ->
-                  {:keep_state_and_data, [{:reply, from, err}]}
-              end
-
-            {:error, _} = err ->
-              {:keep_state_and_data, [{:reply, from, err}]}
-          end
-      end
-    end
-  end
-
-  def handle_event({:call, from}, {:register_pdo, _, _}, _state, _data) do
-    {:keep_state_and_data, [{:reply, from, {:error, :must_be_in_preop}}]}
-  end
-
   # -- Subscribe -------------------------------------------------------------
 
   def handle_event({:call, from}, {:subscribe, pdo_name, pid}, _state, data) do
@@ -346,40 +267,11 @@ defmodule EtherCAT.Slave do
       nil ->
         {:keep_state_and_data, [{:reply, from, {:error, {:not_registered, pdo_name}}}]}
 
-      %{domain_id: domain_id, offset: offset} when offset != :pending ->
+      %{domain_id: domain_id} ->
         key = {data.name, pdo_name}
         encoded = data.driver.encode_outputs(pdo_name, data.config, value)
         result = Domain.write(domain_id, key, encoded)
         {:keep_state_and_data, [{:reply, from, result}]}
-
-      %{offset: :pending} ->
-        {:keep_state_and_data, [{:reply, from, {:error, :domain_not_activated}}]}
-    end
-  end
-
-  # -- Domain offset notification (sent by Domain.activate) ------------------
-
-  def handle_event(
-        :info,
-        {:domain_offset, {_slave_name, pdo_name} = key, logical_offset},
-        _state,
-        data
-      ) do
-    case Map.get(data.pdo_registrations, pdo_name) do
-      nil ->
-        :keep_state_and_data
-
-      reg ->
-        # Write FMMU register with the now-known logical offset
-        in_offset = if reg.inputs_size > 0, do: logical_offset, else: 0
-        out_offset = if reg.outputs_size > 0, do: logical_offset, else: 0
-        write_fmmus(data.link, data.station, reg.fmmu_config, out_offset, in_offset)
-
-        # already pattern-matched above
-        _ = key
-        new_reg = %{reg | offset: logical_offset}
-        new_regs = Map.put(data.pdo_registrations, pdo_name, new_reg)
-        {:keep_state, %{data | pdo_registrations: new_regs}}
     end
   end
 
@@ -402,6 +294,96 @@ defmodule EtherCAT.Slave do
   # -- Catch-all -------------------------------------------------------------
 
   def handle_event(_type, _event, _state, _data), do: :keep_state_and_data
+
+  # -- Auto-advance helper (called from gen_statem init/1 and retry handler) -
+
+  # Returns a gen_statem init tuple: {:ok, state, data} or {:ok, state, data, actions}.
+  defp do_auto_advance(data) do
+    case read_sii(data.link, data.station) do
+      {:ok, identity, mailbox_config} ->
+        new_data = %{data | identity: identity, mailbox_config: mailbox_config}
+
+        case do_transition(new_data, :preop) do
+          {:ok, new_data2} ->
+            {:ok, :preop, new_data2}
+
+          {:error, reason, new_data2} ->
+            Logger.warning(
+              "[Slave #{data.name}] preop failed: #{inspect(reason)} — retrying in #{@auto_advance_retry_ms} ms"
+            )
+
+            {:ok, :init, new_data2, [{{:timeout, :auto_advance}, @auto_advance_retry_ms, nil}]}
+        end
+
+      {:error, reason} ->
+        Logger.warning(
+          "[Slave #{data.name}] SII read failed: #{inspect(reason)} — retrying in #{@auto_advance_retry_ms} ms"
+        )
+
+        {:ok, :init, data, [{{:timeout, :auto_advance}, @auto_advance_retry_ms, nil}]}
+    end
+  end
+
+  # -- PDO self-registration (called from :preop enter) ----------------------
+
+  defp register_pdos_and_fmmus(data) when data.driver == nil or data.pdos == [] do
+    data
+  end
+
+  defp register_pdos_and_fmmus(data) do
+    profile = data.driver.process_data_profile(data.config)
+
+    new_regs =
+      Enum.reduce(data.pdos, data.pdo_registrations, fn {pdo_name, domain_id}, regs ->
+        case Map.get(profile, pdo_name) do
+          nil ->
+            Logger.warning(
+              "[Slave #{data.name}] unknown PDO #{inspect(pdo_name)} in profile — skipping"
+            )
+
+            regs
+
+          pdo_spec ->
+            key = {data.name, pdo_name}
+
+            {size, direction} =
+              if pdo_spec.inputs_size > 0 do
+                {pdo_spec.inputs_size, :input}
+              else
+                {pdo_spec.outputs_size, :output}
+              end
+
+            case Domain.register_pdo(domain_id, key, size, direction) do
+              {:ok, offset} ->
+                # Write SMs first — physical addresses are known from the profile
+                case write_sms(data.link, data.station, pdo_spec.sms) do
+                  :ok ->
+                    in_offset = if direction == :input, do: offset, else: 0
+                    out_offset = if direction == :output, do: offset, else: 0
+                    write_fmmus(data.link, data.station, pdo_spec.fmmus, out_offset, in_offset)
+
+                    Map.put(regs, pdo_name, %{domain_id: domain_id, offset: offset})
+
+                  {:error, reason} ->
+                    Logger.warning(
+                      "[Slave #{data.name}] SM write for #{inspect(pdo_name)} failed: #{inspect(reason)}"
+                    )
+
+                    regs
+                end
+
+              {:error, reason} ->
+                Logger.warning(
+                  "[Slave #{data.name}] Domain.register_pdo #{inspect(pdo_name)} failed: #{inspect(reason)}"
+                )
+
+                regs
+            end
+        end
+      end)
+
+    %{data | pdo_registrations: new_regs}
+  end
 
   # -- Transition helpers ----------------------------------------------------
 
@@ -550,8 +532,8 @@ defmodule EtherCAT.Slave do
 
   # Configure SYNC0 on this slave if its driver profile has a `dc:` key and
   # dc_cycle_ns is set. Called from the :safeop enter handler — FMMUs are
-  # already written (domain_offset arrived in PREOP) and the ESC has just
-  # confirmed SAFEOP, so the PDI is synchronized from the first OP cycle.
+  # already written (done in :preop enter) and the ESC has just confirmed
+  # SAFEOP, so the PDI is synchronized from the first OP cycle.
   defp configure_sync0_if_needed(%{driver: nil}), do: :ok
 
   defp configure_sync0_if_needed(%{dc_cycle_ns: nil}), do: :ok

@@ -241,13 +241,11 @@ check.("EtherCAT.start", EtherCAT.start(
   ]
 ))
 
-Process.sleep(600)
+check.("EtherCAT.await_running", EtherCAT.await_running(10_000))
 
-slaves =
-  case EtherCAT.slaves() do
-    list when is_list(list) -> list
-    {:error, reason} -> raise "EtherCAT.slaves failed: #{inspect(reason)} — check cabling and retry"
-  end
+EtherCAT.subscribe(:sensor, :channels, self())
+
+slaves = EtherCAT.slaves()
 
 IO.puts("  #{length(slaves)} named slave(s):")
 
@@ -259,16 +257,6 @@ for {name, station, _pid} <- slaves do
 end
 
 if slaves == [], do: raise("No named slaves — check cabling and slave config")
-
-EtherCAT.subscribe(:sensor, :channels, self())
-
-check.("EtherCAT.run", EtherCAT.run())
-
-Process.sleep(100)
-
-for {name, station, _} <- slaves do
-  IO.puts("  #{inspect(name)} @ #{hex.(station)}: #{Slave.state(name)}")
-end
 
 {:ok, s0} = Domain.stats(:main)
 IO.puts("  image_size=#{s0.image_size} bytes  state=#{s0.state}")

@@ -16,6 +16,38 @@
 - To set a bit flag, use arithmetic (`state_code + 0x10`) when fields don't overlap,
   or construct the byte directly with binary syntax (`<<flags::8>>`)
 
+## gen_statem Enter Callbacks
+
+- **Enter callbacks may not transition state.** Returning `{:next_state, ...}` or
+  including `{:next_event, ...}` / `{:state_timeout, 0, ...}` in the actions list from
+  an enter callback is either illegal or a hack. OTP will crash the process.
+- **Work that causes a state transition belongs in the event handler that decides to
+  transition, not in the enter callback of the destination state.**
+- Enter callbacks are for side-effects that are unconditionally true on every entry:
+  arming a recurring timer, emitting telemetry, logging. Nothing else.
+- If you find yourself wanting to transition out of a state from its own enter callback,
+  extract the work into a `defp do_something(data)` and call it from the handler(s) that
+  return `{:next_state, :that_state, ...}`:
+  ```elixir
+  # Bad — enter callback trying to decide where to go next
+  def handle_event(:enter, _old, :configuring, data) do
+    new_data = do_configure(data)
+    if done?(new_data),
+      do: {:keep_state, new_data, [{:next_event, :internal, :done}]},  # illegal in enter
+      else: {:keep_state, new_data}
+  end
+
+  # Good — caller does the work and picks the destination
+  def handle_event({:timeout, :scan_poll}, nil, :scanning, data) do
+    configured = do_configure(data)
+    if done?(configured),
+      do: {:next_state, :running, configured},
+      else: {:next_state, :configuring, configured}
+  end
+  ```
+- The same applies to `gen_statem.init/1`: start in the correct initial state directly
+  rather than starting in a placeholder state and using a `timeout 0` to immediately leave it.
+
 <!-- usage-rules-start -->
 <!-- usage_rules-start -->
 ## usage_rules usage
