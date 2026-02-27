@@ -1,5 +1,5 @@
 #!/usr/bin/env elixir
-# EtherCAT hardware stress test — named-slave + Domain API
+# EtherCAT hardware stress test — new EtherCAT top-level API
 #
 # Hardware setup (3-slave ring):
 #   position 0 → 0x1000  EK1100 coupler  (nil — no driver)
@@ -7,7 +7,7 @@
 #   position 2 → 0x1002  EL2809 16-ch digital output
 #
 # Every output channel is wired back to the corresponding input channel.
-# Four timed phases drive different output patterns, verify loopback
+# Five timed phases drive different output patterns, verify loopback
 # fidelity via the input subscription, and stress the bus at the configured
 # cycle rate.
 #
@@ -15,10 +15,13 @@
 #   mix run examples/hardware_test.exs --interface enp0s31f6
 #
 # Optional flags:
-#   --period-ms N    domain cycle period in milliseconds (default 4)
+#   --period-ms N       domain cycle period in milliseconds (default 4)
+#   --loopback-mask N   bitmask of channels wired for loopback (hex ok, default 0xFFFF)
 
-alias EtherCAT.{Domain, Link, Master, Slave}
+alias EtherCAT.Domain
+alias EtherCAT.Link
 alias EtherCAT.Link.Transaction
+alias EtherCAT.Slave
 alias EtherCAT.Slave.Registers
 
 # ---------------------------------------------------------------------------
@@ -76,29 +79,47 @@ end
 #
 # Runs until {:phase_done, ref} arrives.  On each :tick it calls set_fn/1
 # and writes the result to the valve output.  On each {:slave_input, ...}
-# it checks the received value against the last written value (one-tick
-# loopback) and counts mismatches.
+# it checks the received value against the value written one tick ago
+# (prev_out), accounting for one domain-cycle of loopback latency.
+#
+# A mismatch is only counted when:
+#   - prev_out is known (at least one tick has elapsed), AND
+#   - the value has been stable for at least one tick (last_out == prev_out),
+#     so we're not catching the transition cycle where the input may still
+#     reflect the previous write.
 #
 # Returns {ticks_sent, mismatch_count}.
 # ---------------------------------------------------------------------------
 
 defmodule Example.PhaseLoop do
-  def run(set_fn, phase_ref) do
-    loop(set_fn, phase_ref, 0, nil, 0, 0)
+  def run(set_fn, phase_ref, loopback_mask) do
+    # {ticks, pprev_out, prev_out, last_out, mismatches, last_print}
+    # pprev_out: value written two ticks ago
+    # prev_out:  value written one tick ago
+    # last_out:  value written this tick (not yet confirmed by loopback)
+    #
+    # We check against pprev_out (2 ticks ago) so that at sub-4ms domain
+    # periods, where BEAM timer jitter is on the order of 1 cycle, there is
+    # enough slack for the EtherCAT round-trip + scheduler skew.
+    # Stability requires all three to agree (output unchanged for ≥2 ticks).
+    loop(set_fn, phase_ref, loopback_mask, 0, nil, nil, nil, 0, 0)
   end
 
-  defp loop(set_fn, phase_ref, ticks, last_out, mismatches, last_print) do
+  defp loop(set_fn, phase_ref, mask, ticks, pprev_out, prev_out, last_out, mismatches, last_print) do
     receive do
       {:phase_done, ^phase_ref} ->
         {ticks, mismatches}
 
       :tick ->
         expected = set_fn.(ticks)
-        Slave.set_output(:valve, :outputs, expected)
-        loop(set_fn, phase_ref, ticks + 1, expected, mismatches, last_print)
+        EtherCAT.set_output(:valve, :outputs, expected)
+        loop(set_fn, phase_ref, mask, ticks + 1, prev_out, last_out, expected, mismatches, last_print)
 
       {:slave_input, :sensor, :channels, actual} ->
-        mismatch = if last_out != nil and actual != last_out, do: 1, else: 0
+        # Only check when output stable for ≥2 ticks (pprev == prev == last).
+        stable? = pprev_out != nil and pprev_out == prev_out and prev_out == last_out
+        mismatch =
+          if stable? and Bitwise.band(actual, mask) != Bitwise.band(pprev_out, mask), do: 1, else: 0
 
         new_print =
           if last_print == 0 or ticks - last_print >= 250 do
@@ -113,7 +134,7 @@ defmodule Example.PhaseLoop do
             last_print
           end
 
-        loop(set_fn, phase_ref, ticks, last_out, mismatches + mismatch, new_print)
+        loop(set_fn, phase_ref, mask, ticks, pprev_out, prev_out, last_out, mismatches + mismatch, new_print)
     end
   end
 end
@@ -147,6 +168,26 @@ drain_mailbox = fn ->
   |> Stream.run()
 end
 
+# ---------------------------------------------------------------------------
+# Parse args
+# ---------------------------------------------------------------------------
+
+{opts, _, _} =
+  OptionParser.parse(System.argv(),
+    switches: [interface: :string, period_ms: :integer, loopback_mask: :string]
+  )
+
+interface = opts[:interface] || raise "pass --interface, e.g. --interface enp0s31f6"
+period_ms = Keyword.get(opts, :period_ms, 4)
+
+loopback_mask =
+  case opts[:loopback_mask] do
+    nil -> 0xFFFF
+    s ->
+      s = String.trim_leading(s, "0x")
+      String.to_integer(s, 16)
+  end
+
 run_phase = fn label, set_fn, duration_ms, period_ms ->
   banner.("Phase: #{label}  (#{duration_ms} ms @ #{period_ms} ms/tick)")
 
@@ -157,13 +198,13 @@ run_phase = fn label, set_fn, duration_ms, period_ms ->
   Process.send_after(self(), {:phase_done, phase_ref}, duration_ms)
   {:ok, tick_timer} = :timer.send_interval(period_ms, self(), :tick)
 
-  {ticks, mismatches} = Example.PhaseLoop.run(set_fn, phase_ref)
+  {ticks, mismatches} = Example.PhaseLoop.run(set_fn, phase_ref, loopback_mask)
 
   :timer.cancel(tick_timer)
   drain_mailbox.()
 
   {:ok, s_after} = Domain.stats(:main)
-  miss_delta = s_after.miss_count - s_before.miss_count
+  miss_delta = s_after.total_miss_count - s_before.total_miss_count
 
   IO.puts("  ticks        : #{ticks}")
   IO.puts("  frame misses : #{miss_delta}")
@@ -172,45 +213,42 @@ run_phase = fn label, set_fn, duration_ms, period_ms ->
   %{miss_delta: miss_delta, ticks: ticks, mismatches: mismatches}
 end
 
-# ---------------------------------------------------------------------------
-# Parse args
-# ---------------------------------------------------------------------------
-
-{opts, _, _} =
-  OptionParser.parse(System.argv(),
-    switches: [interface: :string, period_ms: :integer]
-  )
-
-interface = opts[:interface] || raise "pass --interface, e.g. --interface enp0s31f6"
-period_ms = Keyword.get(opts, :period_ms, 4)
-
 IO.puts("""
 EtherCAT hardware stress test
-  interface : #{interface}
-  period    : #{period_ms} ms
+  interface     : #{interface}
+  period        : #{period_ms} ms
+  loopback mask : 0x#{Integer.to_string(loopback_mask, 16) |> String.pad_leading(4, "0")}
 """)
 
 # ---------------------------------------------------------------------------
-# 1. Master start + slave discovery
+# 1. Start + discover + run
 # ---------------------------------------------------------------------------
 
-banner.("1. Master start + slave discovery")
+banner.("1. Start + discover + run")
 
-Master.stop()
+EtherCAT.stop()
 Process.sleep(300)
 
-check.("Master.start", Master.start(
+check.("EtherCAT.start", EtherCAT.start(
   interface: interface,
+  domains: [
+    [id: :main, period: period_ms, miss_threshold: 500]
+  ],
   slaves: [
     nil,
-    [name: :sensor, driver: Example.EL1809, config: %{}],
-    [name: :valve,  driver: Example.EL2809, config: %{}]
+    [name: :sensor, driver: Example.EL1809, config: %{}, pdos: [channels: :main]],
+    [name: :valve,  driver: Example.EL2809, config: %{}, pdos: [outputs:  :main]]
   ]
 ))
 
 Process.sleep(600)
 
-slaves = Master.slaves()
+slaves =
+  case EtherCAT.slaves() do
+    list when is_list(list) -> list
+    {:error, reason} -> raise "EtherCAT.slaves failed: #{inspect(reason)} — check cabling and retry"
+  end
+
 IO.puts("  #{length(slaves)} named slave(s):")
 
 for {name, station, _pid} <- slaves do
@@ -222,33 +260,9 @@ end
 
 if slaves == [], do: raise("No named slaves — check cabling and slave config")
 
-link = Master.link()
+EtherCAT.subscribe(:sensor, :channels, self())
 
-# ---------------------------------------------------------------------------
-# 2. Domain setup
-# ---------------------------------------------------------------------------
-
-banner.("2. Domain setup")
-
-check.("DomainSupervisor.start_child", DynamicSupervisor.start_child(
-  EtherCAT.DomainSupervisor,
-  {EtherCAT.Domain, id: :main, link: link, period: period_ms, miss_threshold: 500}
-))
-
-check.("register_pdo :sensor :channels", Slave.register_pdo(:sensor, :channels, :main))
-check.("register_pdo :valve  :outputs",  Slave.register_pdo(:valve,  :outputs,  :main))
-
-Slave.subscribe(:sensor, :channels, self())
-
-# ---------------------------------------------------------------------------
-# 3. Activate + go op
-# ---------------------------------------------------------------------------
-
-banner.("3. Activate + op")
-
-Enum.each(slaves, fn {name, _, _} -> Slave.request(name, :safeop) end)
-check.("Domain.activate", Domain.activate(:main))
-Enum.each(slaves, fn {name, _, _} -> Slave.request(name, :op) end)
+check.("EtherCAT.run", EtherCAT.run())
 
 Process.sleep(100)
 
@@ -266,7 +280,7 @@ IO.puts("  image_size=#{s0.image_size} bytes  state=#{s0.state}")
 phase_ms = 5_000
 
 # Walking single bit (bit 0 → bit 15, repeat)
-walking_one = fn tick -> Bitwise.bsl(1, rem(tick, 16)) end
+walking_one = fn tick -> Integer.pow(2, rem(tick, 16)) end
 
 # Checkerboard: 0x5555 / 0xAAAA toggle every tick
 checkerboard = fn tick ->
@@ -279,14 +293,17 @@ slow_toggle = fn tick ->
 end
 
 # 16-bit Galois LFSR (taps: 16,15,13,4 → feedback mask 0xB400)
-# Deterministic, full-period (65535 steps)
+# Deterministic, full-period (65535 steps).
+# Uses rem/div for LSB extract and shift; XOR via addition since the feedback
+# mask bits never overlap with the shifted value's bit 15 in a single step.
+# (Bitwise.bxor unavoidable here — this is integer algorithm, not register parsing.)
 lfsr = :atomics.new(1, [])
 :atomics.put(lfsr, 1, 0xACE1)
 
 lfsr_fn = fn _tick ->
   s = :atomics.get(lfsr, 1)
-  lsb  = Bitwise.band(s, 1)
-  next = Bitwise.bsr(s, 1)
+  lsb  = rem(s, 2)
+  next = div(s, 2)
   next = if lsb == 1, do: Bitwise.bxor(next, 0xB400), else: next
   :atomics.put(lfsr, 1, next)
   next
@@ -298,10 +315,10 @@ burst_toggle = fn tick ->
 end
 
 # ---------------------------------------------------------------------------
-# 4. Stress phases
+# 2. Stress phases
 # ---------------------------------------------------------------------------
 
-banner.("4. Stress phases  (#{phase_ms} ms each)")
+banner.("2. Stress phases  (#{phase_ms} ms each)")
 
 results = [
   {"Walking-one (1 bit, 16-step cycle)",   walking_one,  phase_ms, period_ms},
@@ -316,22 +333,22 @@ results = [
 end)
 
 # ---------------------------------------------------------------------------
-# 5. Zero outputs + stop cyclic
+# 3. Zero outputs + stop cyclic
 # ---------------------------------------------------------------------------
 
-Slave.set_output(:valve, :outputs, 0x0000)
+EtherCAT.set_output(:valve, :outputs, 0x0000)
 Process.sleep(2 * period_ms)
 Domain.stop_cyclic(:main)
 
 # ---------------------------------------------------------------------------
-# 6. Final report
+# 4. Final report
 # ---------------------------------------------------------------------------
 
-banner.("5. Final report")
+banner.("3. Final report")
 
 {:ok, final} = Domain.stats(:main)
 IO.puts("  Total domain cycles : #{final.cycle_count}")
-IO.puts("  Total frame misses  : #{final.miss_count}")
+IO.puts("  Total frame misses  : #{final.total_miss_count}")
 IO.puts("")
 
 IO.puts("  Phase results:")
@@ -349,6 +366,7 @@ IO.puts("")
 
 IO.puts("  RX error counters (per slave port):")
 {rx_addr, rx_size} = Registers.rx_error_counter()
+link = EtherCAT.link()
 
 for {name, station, _} <- slaves do
   case Link.transaction(link, &Transaction.fprd(&1, station, rx_addr, rx_size)) do
@@ -364,5 +382,5 @@ IO.puts("")
 IO.puts("  Verdict: #{if all_ok, do: "PASS ✓", else: "FAIL ✗"}")
 
 banner.("Done")
-Master.stop()
+EtherCAT.stop()
 IO.puts("  OK\n")

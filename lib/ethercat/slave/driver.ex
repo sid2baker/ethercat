@@ -82,11 +82,14 @@ defmodule EtherCAT.Slave.Driver do
           type :: :read | :write
         }
 
+  @type dc_config :: %{sync0_pulse_ns: pos_integer()}
+
   @type pdo_spec :: %{
-          inputs_size: non_neg_integer(),
-          outputs_size: non_neg_integer(),
-          sms: [sm_config()],
-          fmmus: [fmmu_config()]
+          required(:inputs_size) => non_neg_integer(),
+          required(:outputs_size) => non_neg_integer(),
+          required(:sms) => [sm_config()],
+          required(:fmmus) => [fmmu_config()],
+          optional(:dc) => dc_config()
         }
 
   @doc "Return the SM/FMMU hardware profile for each PDO, keyed by PDO name."

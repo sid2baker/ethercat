@@ -36,6 +36,16 @@ defmodule EtherCAT.Link do
 
   @type server :: :gen_statem.server_ref()
 
+  @doc false
+  def child_spec(opts) do
+    %{
+      id: __MODULE__,
+      start: {__MODULE__, :start_link, [opts]},
+      restart: :temporary,
+      shutdown: 5000
+    }
+  end
+
   @doc """
   Start a link process.
 
@@ -92,7 +102,7 @@ defmodule EtherCAT.Link do
     Telemetry.span([:ethercat, :link, :transact], meta, fn ->
       result =
         try do
-          :gen_statem.call(link, {:transact, datagrams}, 50)
+          :gen_statem.call(link, {:transact, datagrams}, 200)
         catch
           :exit, {:timeout, _} -> {:error, :timeout}
           :exit, reason -> {:error, reason}

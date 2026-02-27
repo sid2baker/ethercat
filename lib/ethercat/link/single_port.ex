@@ -141,7 +141,15 @@ defmodule EtherCAT.Link.SinglePort do
 
   def handle_event(:enter, _old, :down, data) do
     sock = Socket.close(data.sock)
-    {:keep_state, %{data | sock: sock}}
+    # If carrier is already up, the VintageNet lower_up=true event won't fire
+    # (it only fires on *change*). Schedule reconnect immediately so we don't
+    # wait forever for an event that has already happened.
+    actions =
+      if carrier_up?(sock.interface),
+        do: [{:state_timeout, @debounce_interval, :reconnect}],
+        else: []
+
+    {:keep_state, %{data | sock: sock}, actions}
   end
 
   def handle_event(:state_timeout, :reconnect, :down, data) do
@@ -152,7 +160,8 @@ defmodule EtherCAT.Link.SinglePort do
           {:next_state, :idle, %{data | sock: sock}}
 
         {:error, _} ->
-          :keep_state_and_data
+          # Socket open failed even though carrier is up — retry after debounce
+          {:keep_state_and_data, [{:state_timeout, @debounce_interval, :reconnect}]}
       end
     else
       :keep_state_and_data

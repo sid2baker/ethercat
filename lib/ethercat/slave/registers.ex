@@ -208,4 +208,50 @@ defmodule EtherCAT.Slave.Registers do
   @doc "Activate field of FMMU `index`. Write 0x01 to enable."
   @spec fmmu_activate(non_neg_integer()) :: reg()
   def fmmu_activate(i), do: {fmmu(i) + 12, 1}
+
+  # -- Distributed Clocks (§9) — base 0x0900 ---------------------------------
+
+  @doc "Receive time of port `n` (0–3). Latched on BWR to 0x0900. 32-bit local clock value."
+  @spec dc_recv_time(non_neg_integer()) :: reg()
+  def dc_recv_time(port), do: {0x0900 + port * 4, 4}
+
+  @doc "Receive time at ECAT processing unit (64-bit local time). Used for offset calculation."
+  @spec dc_recv_time_ecat() :: reg()
+  def dc_recv_time_ecat, do: {0x0918, 8}
+
+  @doc "System time — local copy of DC system time (ns since 2000-01-01). ARMW target for drift."
+  @spec dc_system_time() :: reg()
+  def dc_system_time, do: {0x0910, 8}
+
+  @doc "System time offset — difference between local time and system time. Written by master."
+  @spec dc_system_time_offset() :: reg()
+  def dc_system_time_offset, do: {0x0920, 8}
+
+  @doc "System time delay — propagation delay from reference clock to this slave. Written by master."
+  @spec dc_system_time_delay() :: reg()
+  def dc_system_time_delay, do: {0x0928, 4}
+
+  @doc "System time difference — mean deviation between local copy and received system time. Converges to 0."
+  @spec dc_system_time_diff() :: reg()
+  def dc_system_time_diff, do: {0x092C, 4}
+
+  @doc "Speed counter start — PLL bandwidth. Writing any value resets the drift filter."
+  @spec dc_speed_counter_start() :: reg()
+  def dc_speed_counter_start, do: {0x0930, 2}
+
+  @doc "DC Activation register. Write 0x03 to enable SYNC0+SYNC1 output."
+  @spec dc_activation() :: reg()
+  def dc_activation, do: {0x0981, 1}
+
+  @doc "Pulse length of SYNC signals in ns. 0 = acknowledged mode."
+  @spec dc_pulse_length() :: reg()
+  def dc_pulse_length, do: {0x0982, 2}
+
+  @doc "SYNC0 start time — system time of first SYNC0 pulse (64-bit, ns since 2000-01-01)."
+  @spec dc_sync0_start_time() :: reg()
+  def dc_sync0_start_time, do: {0x0990, 8}
+
+  @doc "SYNC0 cycle time in ns. 0 = single shot mode."
+  @spec dc_sync0_cycle_time() :: reg()
+  def dc_sync0_cycle_time, do: {0x09A0, 4}
 end

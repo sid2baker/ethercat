@@ -57,6 +57,8 @@ defmodule EtherCAT.Domain do
     :miss_count,
     :miss_threshold,
     :cycle_count,
+    # total accumulated misses since domain started (never resets)
+    :total_miss_count,
     :table
   ]
 
@@ -190,6 +192,7 @@ defmodule EtherCAT.Domain do
       miss_count: 0,
       miss_threshold: miss_threshold,
       cycle_count: 0,
+      total_miss_count: 0,
       table: table
     }
 
@@ -325,7 +328,12 @@ defmodule EtherCAT.Domain do
           %{domain: data.id, reason: reason}
         )
 
-        new_data = %{data | miss_count: data.miss_count + 1, next_cycle_at: next_at}
+        new_data = %{
+          data
+          | miss_count: data.miss_count + 1,
+            total_miss_count: data.total_miss_count + 1,
+            next_cycle_at: next_at
+        }
 
         if new_data.miss_count >= data.miss_threshold do
           Logger.error("[Domain #{data.id}] #{data.miss_threshold} consecutive misses — stopping")
@@ -355,6 +363,7 @@ defmodule EtherCAT.Domain do
       state: state,
       cycle_count: data.cycle_count,
       miss_count: data.miss_count,
+      total_miss_count: data.total_miss_count,
       image_size: data.image_size
     }
 
