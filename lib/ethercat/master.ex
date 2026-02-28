@@ -390,8 +390,26 @@ defmodule EtherCAT.Master do
     end)
   end
 
+  defp normalize_domain_config(%EtherCAT.Domain.Config{} = cfg) do
+    [
+      id: cfg.id,
+      period: cfg.period,
+      miss_threshold: cfg.miss_threshold,
+      logical_base: cfg.logical_base
+    ]
+  end
+
+  defp normalize_domain_config(opts) when is_list(opts), do: opts
+
+  defp normalize_slave_config(%EtherCAT.Slave.Config{} = cfg) do
+    [name: cfg.name, driver: cfg.driver, config: cfg.config, domain: cfg.domain, pdos: cfg.pdos]
+  end
+
+  defp normalize_slave_config(opts) when is_list(opts), do: opts
+
   defp start_domains(link, domain_config) do
-    Enum.each(domain_config, fn domain_opts ->
+    Enum.each(domain_config, fn entry ->
+      domain_opts = normalize_domain_config(entry)
       id = Keyword.fetch!(domain_opts, :id)
 
       case DynamicSupervisor.start_child(
@@ -433,11 +451,13 @@ defmodule EtherCAT.Master do
           nil ->
             {slave_acc, names_acc}
 
-          slave_opts when is_list(slave_opts) ->
+          entry when is_list(entry) or is_struct(entry, EtherCAT.Slave.Config) ->
+            slave_opts = normalize_slave_config(entry)
             name = Keyword.fetch!(slave_opts, :name)
             driver = Keyword.get(slave_opts, :driver)
             config = Keyword.get(slave_opts, :config, %{})
             pdos = Keyword.get(slave_opts, :pdos, [])
+            domain = Keyword.get(slave_opts, :domain)
 
             slave_dc_cycle_ns = if dc_pid != nil, do: dc_cycle_ns, else: nil
 
@@ -448,6 +468,7 @@ defmodule EtherCAT.Master do
               driver: driver,
               config: config,
               pdos: pdos,
+              domain: domain,
               dc_cycle_ns: slave_dc_cycle_ns
             ]
 
@@ -469,7 +490,10 @@ defmodule EtherCAT.Master do
   end
 
   defp get_domain_ids(domain_config) do
-    Enum.map(domain_config, fn opts -> Keyword.fetch!(opts, :id) end)
+    Enum.map(domain_config, fn
+      %EtherCAT.Domain.Config{id: id} -> id
+      opts when is_list(opts) -> Keyword.fetch!(opts, :id)
+    end)
   end
 
   # Runs synchronously in the scan handler before transitioning to :configuring/:running.

@@ -287,20 +287,16 @@ banner.("1. Start + discover + run")
 EtherCAT.stop()
 Process.sleep(300)
 
-sensor_pdos  = Enum.map(1..16, fn i -> {:"ch#{i}", :main} end)
-valve_pdos   = Enum.map(1..16, fn i -> {:"ch#{i}", :main} end)
-thermo_pdos  = [channel1: :main, channel2: :main]
-
 check.("EtherCAT.start", EtherCAT.start(
   interface: interface,
   domains: [
-    [id: :main, period: period_ms, miss_threshold: 500]
+    %EtherCAT.Domain.Config{id: :main, period: period_ms, miss_threshold: 500}
   ],
   slaves: [
     nil,
-    [name: :sensor, driver: Example.EL1809, config: %{}, pdos: sensor_pdos],
-    [name: :valve,  driver: Example.EL2809, config: %{}, pdos: valve_pdos],
-    [name: :thermo, driver: Example.EL3202, config: %{}, pdos: thermo_pdos]
+    %EtherCAT.Slave.Config{name: :sensor, driver: Example.EL1809, domain: :main},
+    %EtherCAT.Slave.Config{name: :valve,  driver: Example.EL2809, domain: :main},
+    %EtherCAT.Slave.Config{name: :thermo, driver: Example.EL3202, domain: :main}
   ]
 ))
 

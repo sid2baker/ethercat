@@ -1,3 +1,26 @@
+defmodule EtherCAT.Slave.Config do
+  @moduledoc """
+  Declarative configuration struct for a Slave.
+
+  Fields:
+    - `:name` (required) — atom identifying this slave
+    - `:driver` (required) — module implementing `EtherCAT.Slave.Driver`
+    - `:config` — driver-specific configuration map, default `%{}`
+    - `:domain` — when set (and `:pdos` is empty), all PDO names from the
+      driver's `process_data_profile/1` are auto-registered against this domain id
+    - `:pdos` — explicit `[{pdo_name, domain_id}]` override list; when non-empty,
+      `:domain` is ignored and this list is used verbatim
+  """
+  @enforce_keys [:name, :driver]
+  defstruct [
+    :name,
+    :driver,
+    :domain,
+    config: %{},
+    pdos: []
+  ]
+end
+
 defmodule EtherCAT.Slave do
   @moduledoc """
   gen_statem managing the ESM (EtherCAT State Machine) lifecycle for one physical slave.
@@ -68,6 +91,7 @@ defmodule EtherCAT.Slave do
     :name,
     :driver,
     :config,
+    :domain,
     :error_code,
     :identity,
     :mailbox_config,
@@ -161,6 +185,7 @@ defmodule EtherCAT.Slave do
     config = Keyword.get(opts, :config, %{})
     dc_cycle_ns = Keyword.get(opts, :dc_cycle_ns)
     pdos = Keyword.get(opts, :pdos, [])
+    domain = Keyword.get(opts, :domain)
 
     # Also register by station address for internal lookups
     Registry.register(EtherCAT.Registry, {:slave_station, station}, name)
@@ -171,6 +196,7 @@ defmodule EtherCAT.Slave do
       name: name,
       driver: driver,
       config: config,
+      domain: domain,
       dc_cycle_ns: dc_cycle_ns,
       sii_sm_configs: [],
       sii_pdo_configs: [],
@@ -364,10 +390,20 @@ defmodule EtherCAT.Slave do
 
   # -- PDO self-registration (called from :preop enter) ----------------------
 
-  defp register_pdos_and_fmmus(data) when data.driver == nil or data.pdos == [] do
-    data
+  # Case 1: no driver — skip unconditionally
+  defp register_pdos_and_fmmus(%{driver: nil} = data), do: data
+
+  # Case 3: no explicit pdos, but domain is set — auto-enumerate all profile keys
+  defp register_pdos_and_fmmus(%{pdos: [], domain: domain_id} = data) when domain_id != nil do
+    profile = data.driver.process_data_profile(data.config)
+    auto_pdos = Enum.map(profile, fn {pdo_name, _index} -> {pdo_name, domain_id} end)
+    register_pdos_and_fmmus(%{data | pdos: auto_pdos})
   end
 
+  # Case 4: no explicit pdos, no domain — skip
+  defp register_pdos_and_fmmus(%{pdos: []} = data), do: data
+
+  # Case 2: explicit pdos list provided — resolve and register
   defp register_pdos_and_fmmus(data) do
     profile = data.driver.process_data_profile(data.config)
 
