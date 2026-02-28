@@ -261,7 +261,9 @@ defmodule EtherCAT.Master do
 
     if MapSet.size(new_pending) == 0 do
       Logger.info("[Master] all slaves in :preop — activating")
-      {:next_state, :running, do_activate(%{data | pending_preop: new_pending})}
+
+      {:next_state, :running, do_activate(%{data | pending_preop: new_pending}),
+       [{{:timeout, :configuring}, :cancel}]}
     else
       {:keep_state, %{data | pending_preop: new_pending}}
     end
@@ -354,6 +356,9 @@ defmodule EtherCAT.Master do
   def handle_event(:info, {:slave_ready, _name, _ready_state}, _state, _data) do
     :keep_state_and_data
   end
+
+  # Catch-all — discard stale timeouts and unexpected messages
+  def handle_event(_type, _event, _state, _data), do: :keep_state_and_data
 
   # -- Scan stability --------------------------------------------------------
 

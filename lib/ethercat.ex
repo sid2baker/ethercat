@@ -2,69 +2,49 @@ defmodule EtherCAT do
   @moduledoc """
   Public API for the EtherCAT master runtime.
 
-  ## Typical usage
+  ## Usage
 
-      # 1. Configure and start — scans bus, assigns stations, initialises DC,
-      #    starts slaves. Slaves self-register their PDOs in :preop and the
-      #    master automatically drives them to :op.
-      :ok = EtherCAT.start(
+      EtherCAT.start(
         interface: "eth0",
         domains: [
-          [id: :fast, period: 1]
+          %EtherCAT.Domain.Config{id: :main, period: 1}
         ],
         slaves: [
-          nil,                                              # position 0 — no driver
-          [name: :sensor, driver: MyApp.EL1809, config: %{},
-           pdos: [channels: :fast]],                       # position 1
-          [name: :valve,  driver: MyApp.EL2809, config: %{},
-           pdos: [outputs: :fast]]                         # position 2
+          nil,
+          %EtherCAT.Slave.Config{name: :sensor, driver: MyApp.EL1809, domain: :main},
+          %EtherCAT.Slave.Config{name: :valve,  driver: MyApp.EL2809, domain: :main}
         ]
       )
 
-      # 2. Wait for the bus to be fully operational
-      :ok = EtherCAT.await_running(10_000)
+      :ok = EtherCAT.await_running()
 
-      # 3. Subscribe to input change notifications (optional)
-      EtherCAT.subscribe(:sensor, :channels, self())
-
-      # 4. I/O
-      EtherCAT.set_output(:valve, :outputs, 0xFFFF)
-
-      receive do
-        {:slave_input, :sensor, :channels, value} -> IO.inspect(value)
-      end
-
-  ## Shutdown
+      EtherCAT.subscribe(:sensor, :ch1)   # receive {:slave_input, :sensor, :ch1, value}
+      EtherCAT.set_output(:valve, :ch1, 1)
 
       EtherCAT.stop()
 
-  ## Advanced
+  ## Sub-modules
 
-  Raw domain reads, SII identity, per-slave error codes, and domain stats are
-  available on the sub-modules: `EtherCAT.Slave`, `EtherCAT.Domain`,
-  `EtherCAT.Link`.
+  `EtherCAT.Slave`, `EtherCAT.Domain`, `EtherCAT.Link` — raw slave control,
+  domain stats, and direct frame transactions.
   """
 
-  alias EtherCAT.{Domain, Master, Slave}
-
-  # -- Bus lifecycle ---------------------------------------------------------
+  alias EtherCAT.{Master, Slave}
 
   @doc """
-  Start the master: open `interface`, scan for slaves, and begin self-driving
-  configuration. Returns `:ok` once the link is open and scanning has started.
+  Start the master: open the interface, scan for slaves, and begin
+  self-driving configuration.
 
-  Use `await_running/1` to block until the bus is fully operational.
+  Returns `:ok` once scanning has started. Call `await_running/1` to block
+  until the bus is fully operational.
 
   Options:
-    - `:interface` (required) — e.g. `"eth0"`
-    - `:domains` — list of domain specs. Each is a keyword list with `:id`
-      (atom) and `:period` (ms), plus optional `EtherCAT.Domain` options
-    - `:slaves` — list of slave config entries. Each is either `nil` (station
-      assigned, no driver) or a keyword list with `:name`, `:driver`, `:config`,
-      and `:pdos` (`[pdo_name: domain_id]` pairs registered by the slave itself
-      in its `:preop` enter handler)
-    - `:base_station` — starting station address, default `0x1000`
-    - `:dc_cycle_ns` — SYNC0 cycle time in ns for DC-capable slaves, default `1_000_000`
+    - `:interface` (required) — network interface, e.g. `"eth0"`
+    - `:domains` — list of `%EtherCAT.Domain.Config{}` structs
+    - `:slaves` — list of `%EtherCAT.Slave.Config{}` structs or `nil`
+      (position matters — station address = `base_station + index`)
+    - `:base_station` — first station address, default `0x1000`
+    - `:dc_cycle_ns` — SYNC0 cycle time in ns, default `1_000_000`
   """
   @spec start(keyword()) :: :ok | {:error, term()}
   def start(opts \\ []), do: Master.start(opts)
@@ -73,63 +53,48 @@ defmodule EtherCAT do
   @spec stop() :: :ok
   def stop, do: Master.stop()
 
-  @doc "Return `[{name, station, pid}]` for all started slaves."
-  @spec slaves() :: list()
-  def slaves, do: Master.slaves()
-
-  @doc "Return the link pid (escape hatch for raw `Link.transaction/2` calls)."
-  @spec link() :: pid() | nil
-  def link, do: Master.link()
-
-  @doc "Return the current master state atom (`:idle`, `:scanning`, `:configuring`, or `:running`)."
-  @spec state() :: atom()
-  def state, do: Master.state()
-
-  # -- Activation ------------------------------------------------------------
-
   @doc """
   Block until the master reaches `:running`, then return `:ok`.
 
-  Returns immediately if already `:running`. Returns `{:error, :timeout}` if
-  the bus does not become operational within `timeout_ms` milliseconds.
+  Returns `{:error, :timeout}` if not operational within `timeout_ms` ms.
   Returns `{:error, :not_started}` if `start/1` has not been called.
   """
   @spec await_running(timeout_ms :: pos_integer()) :: :ok | {:error, term()}
   def await_running(timeout_ms \\ 10_000), do: Master.await_running(timeout_ms)
 
-  # -- Subscriptions ---------------------------------------------------------
+  @doc "Return the current master state: `:idle | :scanning | :configuring | :running`."
+  @spec state() :: atom()
+  def state, do: Master.state()
+
+  @doc "Return `[{name, station, pid}]` for all running slaves."
+  @spec slaves() :: list()
+  def slaves, do: Master.slaves()
 
   @doc """
-  Subscribe `pid` to decoded input change notifications from a slave PDO.
+  Subscribe to decoded input change notifications from a slave PDO.
 
-  Messages arrive as `{:slave_input, slave_name, pdo_name, decoded_value}`.
-  Can be called any time after `await_running/1` returns.
+  Messages arrive as `{:slave_input, slave_name, pdo_name, value}`.
+  Defaults to `self()`.
   """
   @spec subscribe(atom(), atom(), pid()) :: :ok
-  def subscribe(slave_name, pdo_name, pid),
+  def subscribe(slave_name, pdo_name, pid \\ self()),
     do: Slave.subscribe(slave_name, pdo_name, pid)
 
-  # -- Cyclic I/O ------------------------------------------------------------
-
   @doc """
-  Encode `value` via the driver and write it to the domain output slot.
-
-  Direct ETS write — no gen_statem hop.
+  Write `value` to a slave output PDO. Encodes via the driver and writes
+  to the domain output buffer directly (no gen_statem hop).
   """
   @spec set_output(atom(), atom(), term()) :: :ok | {:error, term()}
   def set_output(slave_name, pdo_name, value),
     do: Slave.set_output(slave_name, pdo_name, value)
 
   @doc """
-  Read the current raw input binary for a PDO directly from ETS.
+  Read the decoded input value for a slave PDO. Equivalent to the value
+  delivered by `subscribe/2`, but as a one-shot synchronous call.
 
   Returns `{:error, :not_ready}` until the first domain cycle completes.
-  For decoded values, subscribe via `subscribe/3` instead.
-
-  Direct ETS read — no gen_statem hop.
   """
-  @spec read_input(Domain.domain_id(), atom(), atom()) ::
-          {:ok, binary()} | {:error, :not_found | :not_ready}
-  def read_input(domain_id, slave_name, pdo_name),
-    do: Domain.read(domain_id, {slave_name, pdo_name})
+  @spec read_input(atom(), atom()) :: {:ok, term()} | {:error, term()}
+  def read_input(slave_name, pdo_name),
+    do: Slave.read_input(slave_name, pdo_name)
 end

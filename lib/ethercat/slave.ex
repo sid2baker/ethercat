@@ -171,6 +171,17 @@ defmodule EtherCAT.Slave do
   @spec error(atom()) :: non_neg_integer() | nil
   def error(slave_name), do: :gen_statem.call(via(slave_name), :error)
 
+  @doc """
+  Read the decoded input value for a PDO. Equivalent to the value delivered
+  via `subscribe/3`.
+
+  Returns `{:error, :not_ready}` until the first domain cycle completes.
+  """
+  @spec read_input(atom(), atom()) :: {:ok, term()} | {:error, term()}
+  def read_input(slave_name, pdo_name) do
+    :gen_statem.call(via(slave_name), {:read_input, pdo_name})
+  end
+
   # -- :gen_statem callbacks -------------------------------------------------
 
   @impl true
@@ -315,6 +326,28 @@ defmodule EtherCAT.Slave do
 
         {:keep_state_and_data, [{:reply, from, result}]}
     end
+  end
+
+  # -- Read input ------------------------------------------------------------
+
+  def handle_event({:call, from}, {:read_input, pdo_name}, _state, data) do
+    result =
+      case Map.get(data.pdo_registrations, pdo_name) do
+        nil ->
+          {:error, {:not_registered, pdo_name}}
+
+        %{domain_id: domain_id, sm_key: sm_key, bit_offset: bit_offset, bit_size: bit_size} ->
+          case Domain.read(domain_id, {data.name, sm_key}) do
+            {:ok, sm_bytes} ->
+              raw = extract_sm_bits(sm_bytes, bit_offset, bit_size)
+              {:ok, data.driver.decode_inputs(pdo_name, data.config, raw)}
+
+            {:error, _} = err ->
+              err
+          end
+      end
+
+    {:keep_state_and_data, [{:reply, from, result}]}
   end
 
   # -- Domain input change notification (sent by Domain on cycle) ------------
