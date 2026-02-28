@@ -5,6 +5,7 @@
 #   position 0 → 0x1000  EK1100 coupler  (nil — no driver)
 #   position 1 → 0x1001  EL1809 16-ch digital input
 #   position 2 → 0x1002  EL2809 16-ch digital output
+#   position 3 → 0x1003  EL3202 2-ch PT100 resistance input
 #
 # Every output channel is wired back to the corresponding input channel.
 # Five timed phases drive different output patterns, verify loopback
@@ -33,14 +34,20 @@ defmodule Example.EL1809 do
 
   @impl true
   def process_data_profile(_config) do
-    %{channels: %{sm_index: 0}}
+    %{
+      ch1:  0x1A00, ch2:  0x1A01, ch3:  0x1A02, ch4:  0x1A03,
+      ch5:  0x1A04, ch6:  0x1A05, ch7:  0x1A06, ch8:  0x1A07,
+      ch9:  0x1A08, ch10: 0x1A09, ch11: 0x1A0A, ch12: 0x1A0B,
+      ch13: 0x1A0C, ch14: 0x1A0D, ch15: 0x1A0E, ch16: 0x1A0F
+    }
   end
 
   @impl true
   def encode_outputs(_pdo, _config, _), do: <<>>
 
   @impl true
-  def decode_inputs(:channels, _config, <<v::16-little>>), do: v
+  # 1-bit TxPDO: FMMU places the physical SM bit into logical bit 0 (LSB).
+  def decode_inputs(_ch, _config, <<_::7, bit::1>>), do: bit
   def decode_inputs(_pdo, _config, _), do: 0
 end
 
@@ -49,14 +56,19 @@ defmodule Example.EL2809 do
 
   @impl true
   def process_data_profile(_config) do
-    # SII DefaultSize=1 per SM (digital I/O WDT). Override to 2 so SM0
-    # covers both output bytes 0x0F00–0x0F01 → all 16 channels.
-    %{outputs: %{sm_index: 0, size: 2}}
+    # SM0 (0x0F00): channels 1–8, SM1 (0x0F01): channels 9–16.
+    # Each is a 1-bit RxPDO; master uses bit-level FMMUs to pack into SM bytes.
+    %{
+      ch1:  0x1600, ch2:  0x1601, ch3:  0x1602, ch4:  0x1603,
+      ch5:  0x1604, ch6:  0x1605, ch7:  0x1606, ch8:  0x1607,
+      ch9:  0x1608, ch10: 0x1609, ch11: 0x160A, ch12: 0x160B,
+      ch13: 0x160C, ch14: 0x160D, ch15: 0x160E, ch16: 0x160F
+    }
   end
 
   @impl true
-  def encode_outputs(:outputs, _config, v) when is_integer(v), do: <<v::16-little>>
-  def encode_outputs(_pdo, _config, _), do: <<0, 0>>
+  # 1-bit RxPDO: return 1 byte; the FMMU places bit 0 (LSB) into the SM bit.
+  def encode_outputs(_ch, _config, v), do: <<v::8>>
 
   @impl true
   def decode_inputs(_pdo, _config, _), do: nil
@@ -67,8 +79,8 @@ defmodule Example.EL3202 do
 
   @impl true
   def process_data_profile(_config) do
-    # SM3 = TxPDO; physical address and size come from SII EEPROM
-    %{temperatures: %{sm_index: 3}}
+    # Two 32-bit TxPDOs on SM3: 0x1A00 = channel 1 (bytes 0–3), 0x1A01 = channel 2 (bytes 4–7)
+    %{channel1: 0x1A00, channel2: 0x1A01}
   end
 
   @impl true
@@ -83,19 +95,17 @@ defmodule Example.EL3202 do
   def encode_outputs(_pdo, _config, _value), do: <<>>
 
   @impl true
-  def decode_inputs(:temperatures, _config, <<
-        _::1, error1::1, limit2_1::2, limit1_1::2, overrange1::1, underrange1::1,
-        toggle1::1, state1::1, _::6, ch1::16-little,
-        _::1, error2::1, limit2_2::2, limit1_2::2, overrange2::1, underrange2::1,
-        toggle2::1, state2::1, _::6, ch2::16-little>>) do
-    {
-      %{ohms: ch1 / 16.0, underrange: underrange1 == 1, overrange: overrange1 == 1,
-        limit1: limit1_1, limit2: limit2_1, error: error1 == 1,
-        invalid: state1 == 1, toggle: toggle1},
-      %{ohms: ch2 / 16.0, underrange: underrange2 == 1, overrange: overrange2 == 1,
-        limit1: limit1_2, limit2: limit2_2, error: error2 == 1,
-        invalid: state2 == 1, toggle: toggle2}
-    }
+  def decode_inputs(:channel1, _config, <<
+        _::1, error::1, _::2, _::2, overrange::1, underrange::1,
+        toggle::1, state::1, _::6, value::16-little>>) do
+    %{ohms: value / 16.0, overrange: overrange == 1, underrange: underrange == 1,
+      error: error == 1, invalid: state == 1, toggle: toggle}
+  end
+  def decode_inputs(:channel2, _config, <<
+        _::1, error::1, _::2, _::2, overrange::1, underrange::1,
+        toggle::1, state::1, _::6, value::16-little>>) do
+    %{ohms: value / 16.0, overrange: overrange == 1, underrange: underrange == 1,
+      error: error == 1, invalid: state == 1, toggle: toggle}
   end
   def decode_inputs(_pdo, _config, _), do: nil
 end
@@ -104,70 +114,86 @@ end
 # Phase loop
 #
 # Runs until {:phase_done, ref} arrives.  On each :tick it calls set_fn/1
-# and writes the result to the valve output.  On each {:slave_input, ...}
-# it checks the received value against the value written one tick ago
-# (prev_out), accounting for one domain-cycle of loopback latency.
+# and writes the result to the valve output — one set_output per bit.
 #
-# A mismatch is only counted when:
-#   - prev_out is known (at least one tick has elapsed), AND
-#   - the value has been stable for at least one tick (last_out == prev_out),
-#     so we're not catching the transition cycle where the input may still
-#     reflect the previous write.
+# On each {:slave_input, :sensor, ch_N, bit} it accumulates the 16 bits into
+# a 16-bit integer and checks against pprev_out (2 ticks ago) for loopback
+# fidelity.
+#
+# The stability check (pprev == prev == last for ≥2 ticks) prevents false
+# positives on transition cycles and partial-accumulation cycles.
 #
 # Returns {ticks_sent, mismatch_count}.
 # ---------------------------------------------------------------------------
 
 defmodule Example.PhaseLoop do
+  # Map from channel atom to bit position (0-based)
+  @ch_bits Enum.into(1..16, %{}, fn i -> {:"ch#{i}", i - 1} end)
+
   def run(set_fn, phase_ref, loopback_mask) do
-    # {ticks, pprev_out, prev_out, last_out, mismatches, last_print}
-    # pprev_out: value written two ticks ago
-    # prev_out:  value written one tick ago
-    # last_out:  value written this tick (not yet confirmed by loopback)
-    #
-    # We check against pprev_out (2 ticks ago) so that at sub-4ms domain
-    # periods, where BEAM timer jitter is on the order of 1 cycle, there is
-    # enough slack for the EtherCAT round-trip + scheduler skew.
-    # Stability requires all three to agree (output unchanged for ≥2 ticks).
-    loop(set_fn, phase_ref, loopback_mask, 0, nil, nil, nil, 0, 0)
+    loop(set_fn, phase_ref, loopback_mask, 0, nil, nil, nil, 0, 0, %{}, nil, nil)
   end
 
-  defp loop(set_fn, phase_ref, mask, ticks, pprev_out, prev_out, last_out, mismatches, last_print) do
+  # State: ticks, pprev_out, prev_out, last_out, mismatches, last_print, sensor_ch, thermo1, thermo2
+  defp loop(set_fn, phase_ref, mask, ticks, pprev_out, prev_out, last_out, mismatches, last_print, sensor_ch, thermo1, thermo2) do
     receive do
       {:phase_done, ^phase_ref} ->
         {ticks, mismatches}
 
       :tick ->
         expected = set_fn.(ticks)
-        EtherCAT.set_output(:valve, :outputs, expected)
-        loop(set_fn, phase_ref, mask, ticks + 1, prev_out, last_out, expected, mismatches, last_print)
-
-      {:slave_input, :sensor, :channels, actual} ->
-        # Only check when output stable for ≥2 ticks (pprev == prev == last).
-        stable? = pprev_out != nil and pprev_out == prev_out and prev_out == last_out
-        mismatch =
-          if stable? and Bitwise.band(actual, mask) != Bitwise.band(pprev_out, mask), do: 1, else: 0
+        # Write each channel bit individually; master FMMUs pack into SM bytes
+        Enum.each(0..15, fn bit ->
+          v = Bitwise.band(Bitwise.bsr(expected, bit), 1)
+          EtherCAT.set_output(:valve, :"ch#{bit + 1}", v)
+        end)
 
         new_print =
           if last_print == 0 or ticks - last_print >= 250 do
-            mark = if mismatch == 0, do: "ok", else: "MISMATCH"
+            actual = rebuild_channels(sensor_ch)
+            mark = if loopback_ok?(actual, pprev_out, prev_out, last_out, mask), do: "ok", else: "MISMATCH"
             IO.puts(
               "    tick=#{String.pad_leading(to_string(ticks), 5)}  " <>
-              "out=0x#{Integer.to_string(last_out || 0, 16) |> String.pad_leading(4, "0")}  " <>
+              "out=0x#{Integer.to_string(expected, 16) |> String.pad_leading(4, "0")}  " <>
               "in=0x#{Integer.to_string(actual, 16) |> String.pad_leading(4, "0")}  #{mark}"
             )
+            if thermo1 != nil or thermo2 != nil do
+              v1_str = if thermo1, do: "#{:erlang.float_to_binary(thermo1.ohms, decimals: 2)}Ω#{if thermo1.error, do: " ERR", else: ""}", else: "?"
+              v2_str = if thermo2, do: "#{:erlang.float_to_binary(thermo2.ohms, decimals: 2)}Ω#{if thermo2.error, do: " ERR", else: ""}", else: "?"
+              IO.puts("    thermo: ch1=#{v1_str}  ch2=#{v2_str}")
+            end
             ticks
           else
             last_print
           end
 
-        loop(set_fn, phase_ref, mask, ticks, pprev_out, prev_out, last_out, mismatches + mismatch, new_print)
+        loop(set_fn, phase_ref, mask, ticks + 1, prev_out, last_out, expected, mismatches, new_print, sensor_ch, thermo1, thermo2)
 
-      {:slave_input, :thermo, :temperatures, {%{ohms: v1} = ch1, %{ohms: v2} = ch2}} ->
-        err1 = if ch1.error, do: " ERR", else: ""
-        err2 = if ch2.error, do: " ERR", else: ""
-        IO.puts("    thermo: ch1=#{:erlang.float_to_binary(v1, decimals: 2)}Ω#{err1}  ch2=#{:erlang.float_to_binary(v2, decimals: 2)}Ω#{err2}")
-        loop(set_fn, phase_ref, mask, ticks, pprev_out, prev_out, last_out, mismatches, last_print)
+      {:slave_input, :sensor, ch, bit_val} when is_map_key(@ch_bits, ch) ->
+        new_sensor_ch = Map.put(sensor_ch, ch, bit_val)
+        actual = rebuild_channels(new_sensor_ch)
+        stable? = pprev_out != nil and pprev_out == prev_out and prev_out == last_out
+        mismatch =
+          if stable? and Bitwise.band(actual, mask) != Bitwise.band(pprev_out, mask), do: 1, else: 0
+        loop(set_fn, phase_ref, mask, ticks, pprev_out, prev_out, last_out, mismatches + mismatch, last_print, new_sensor_ch, thermo1, thermo2)
+
+      {:slave_input, :thermo, :channel1, ch} ->
+        loop(set_fn, phase_ref, mask, ticks, pprev_out, prev_out, last_out, mismatches, last_print, sensor_ch, ch, thermo2)
+
+      {:slave_input, :thermo, :channel2, ch} ->
+        loop(set_fn, phase_ref, mask, ticks, pprev_out, prev_out, last_out, mismatches, last_print, sensor_ch, thermo1, ch)
     end
+  end
+
+  defp rebuild_channels(ch_map) do
+    Enum.reduce(@ch_bits, 0, fn {ch, bit_pos}, acc ->
+      Bitwise.bor(acc, Bitwise.bsl(Map.get(ch_map, ch, 0), bit_pos))
+    end)
+  end
+
+  defp loopback_ok?(actual, pprev_out, prev_out, last_out, mask) do
+    stable? = pprev_out != nil and pprev_out == prev_out and prev_out == last_out
+    not stable? or Bitwise.band(actual, mask) == Bitwise.band(pprev_out, mask)
   end
 end
 
@@ -261,6 +287,10 @@ banner.("1. Start + discover + run")
 EtherCAT.stop()
 Process.sleep(300)
 
+sensor_pdos  = Enum.map(1..16, fn i -> {:"ch#{i}", :main} end)
+valve_pdos   = Enum.map(1..16, fn i -> {:"ch#{i}", :main} end)
+thermo_pdos  = [channel1: :main, channel2: :main]
+
 check.("EtherCAT.start", EtherCAT.start(
   interface: interface,
   domains: [
@@ -268,16 +298,17 @@ check.("EtherCAT.start", EtherCAT.start(
   ],
   slaves: [
     nil,
-    [name: :sensor, driver: Example.EL1809, config: %{}, pdos: [channels: :main]],
-    [name: :valve,  driver: Example.EL2809, config: %{}, pdos: [outputs:  :main]],
-    [name: :thermo, driver: Example.EL3202, config: %{}, pdos: [temperatures: :main]]
+    [name: :sensor, driver: Example.EL1809, config: %{}, pdos: sensor_pdos],
+    [name: :valve,  driver: Example.EL2809, config: %{}, pdos: valve_pdos],
+    [name: :thermo, driver: Example.EL3202, config: %{}, pdos: thermo_pdos]
   ]
 ))
 
 check.("EtherCAT.await_running", EtherCAT.await_running(10_000))
 
-EtherCAT.subscribe(:sensor, :channels, self())
-EtherCAT.subscribe(:thermo, :temperatures, self())
+Enum.each(1..16, fn i -> EtherCAT.subscribe(:sensor, :"ch#{i}", self()) end)
+EtherCAT.subscribe(:thermo, :channel1, self())
+EtherCAT.subscribe(:thermo, :channel2, self())
 
 slaves = EtherCAT.slaves()
 
@@ -316,9 +347,6 @@ end
 
 # 16-bit Galois LFSR (taps: 16,15,13,4 → feedback mask 0xB400)
 # Deterministic, full-period (65535 steps).
-# Uses rem/div for LSB extract and shift; XOR via addition since the feedback
-# mask bits never overlap with the shifted value's bit 15 in a single step.
-# (Bitwise.bxor unavoidable here — this is integer algorithm, not register parsing.)
 lfsr = :atomics.new(1, [])
 :atomics.put(lfsr, 1, 0xACE1)
 
@@ -358,7 +386,7 @@ end)
 # 3. Zero outputs + stop cyclic
 # ---------------------------------------------------------------------------
 
-EtherCAT.set_output(:valve, :outputs, 0x0000)
+Enum.each(1..16, fn i -> EtherCAT.set_output(:valve, :"ch#{i}", 0) end)
 Process.sleep(2 * period_ms)
 Domain.stop_cyclic(:main)
 

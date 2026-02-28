@@ -55,7 +55,13 @@ defmodule EtherCAT.Slave.SII do
   `:vendor_id`, `:product_code`, `:revision`, `:serial_number`.
   """
   @spec read_identity(pid(), non_neg_integer()) ::
-          {:ok, %{vendor_id: integer(), product_code: integer(), revision: integer(), serial_number: integer()}}
+          {:ok,
+           %{
+             vendor_id: integer(),
+             product_code: integer(),
+             revision: integer(),
+             serial_number: integer()
+           }}
           | {:error, atom()}
   def read_identity(link, station) do
     with {:ok, <<vid::32-little, pc::32-little, rev::32-little, sn::32-little>>} <-
@@ -74,7 +80,13 @@ defmodule EtherCAT.Slave.SII do
   See also the bootstrap mailbox at words 0x14–0x17 (BOOT state only).
   """
   @spec read_mailbox_config(pid(), non_neg_integer()) ::
-          {:ok, %{recv_offset: integer(), recv_size: integer(), send_offset: integer(), send_size: integer()}}
+          {:ok,
+           %{
+             recv_offset: integer(),
+             recv_size: integer(),
+             send_offset: integer(),
+             send_size: integer()
+           }}
           | {:error, atom()}
   def read_mailbox_config(link, station) do
     with {:ok, <<ro::16-little, rs::16-little, so::16-little, ss::16-little>>} <-
@@ -90,6 +102,14 @@ defmodule EtherCAT.Slave.SII do
           ctrl :: non_neg_integer()
         }
 
+  @type pdo_config :: %{
+          index: non_neg_integer(),
+          direction: :input | :output,
+          sm_index: non_neg_integer(),
+          bit_size: non_neg_integer(),
+          bit_offset: non_neg_integer()
+        }
+
   @doc """
   Read SyncManager configurations from SII category 0x0029.
 
@@ -102,6 +122,19 @@ defmodule EtherCAT.Slave.SII do
   """
   @spec read_sm_configs(pid(), non_neg_integer()) :: {:ok, [sm_entry()]} | {:error, atom()}
   def read_sm_configs(link, station), do: find_sm_category(link, station, @category_start)
+
+  @doc """
+  Read TxPDO (0x0032) and RxPDO (0x0033) category data from SII EEPROM.
+
+  Returns `{:ok, [pdo_config()]}` where each entry describes one PDO object with its
+  SM assignment, direction, total bit size, and cumulative bit offset within the SM.
+
+  Bit offsets are computed in EEPROM order within each SM group.
+  Returns `{:ok, []}` if no PDO categories are present.
+  """
+  @spec read_pdo_configs(pid(), non_neg_integer()) :: {:ok, [pdo_config()]} | {:error, atom()}
+  def read_pdo_configs(link, station),
+    do: find_pdo_categories(link, station, @category_start, [])
 
   @doc """
   Read the valid SII contents by walking the category structure.
@@ -196,6 +229,66 @@ defmodule EtherCAT.Slave.SII do
          acc
        ) do
     parse_sm_entries(rest, idx + 1, [{idx, phys, len, ctrl} | acc])
+  end
+
+  # -- PDO category reading (0x0032 TxPDO=input, 0x0033 RxPDO=output) --------
+
+  # Walk all categories; collect 0x0032 and 0x0033 entries.
+  defp find_pdo_categories(link, station, addr, acc) do
+    case read(link, station, addr, 2) do
+      {:ok, <<0xFFFF::16-little, _::16>>} ->
+        {:ok, assign_bit_offsets(acc)}
+
+      {:ok, <<cat::16-little, size::16-little>>} when cat in [0x0032, 0x0033] ->
+        dir = if cat == 0x0032, do: :input, else: :output
+
+        with {:ok, data} <- read(link, station, addr + 2, size) do
+          pdos = parse_pdo_category(data, dir, [])
+          find_pdo_categories(link, station, addr + 2 + size, acc ++ pdos)
+        end
+
+      {:ok, <<_::16, size::16-little>>} ->
+        find_pdo_categories(link, station, addr + 2 + size, acc)
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  # Parse one PDO category block.
+  # PDO header: pdo_index(2) entry_count(1) sm_index(1) dc_sync(1) name_idx(1) flags(2)
+  # Entry:      obj_index(2) subindex(1) bit_length(1) flags(2) name_idx(1) data_type_idx(1)
+  defp parse_pdo_category(<<>>, _dir, acc), do: Enum.reverse(acc)
+
+  defp parse_pdo_category(
+         <<pdo_idx::16-little, n::8, sm_idx::8, _::8, _::8, _::16, rest::binary>>,
+         dir,
+         acc
+       ) do
+    <<entry_data::binary-size(n * 8), tail::binary>> = rest
+    bits = sum_entry_bits(entry_data, 0)
+    pdo = %{index: pdo_idx, direction: dir, sm_index: sm_idx, bit_size: bits, bit_offset: 0}
+    parse_pdo_category(tail, dir, [pdo | acc])
+  end
+
+  defp sum_entry_bits(<<>>, acc), do: acc
+
+  # Entry layout (ETG.2010 Table 15): index(2) subindex(1) name(1) datatype(1) bitlen(1) flags(2)
+  defp sum_entry_bits(<<_::16, _::8, _::8, _::8, bits::8, _::16, rest::binary>>, acc),
+    do: sum_entry_bits(rest, acc + bits)
+
+  # Compute cumulative bit_offset per SM, preserving EEPROM order within each SM group.
+  defp assign_bit_offsets(pdos) do
+    pdos
+    |> Enum.group_by(& &1.sm_index)
+    |> Enum.flat_map(fn {_sm, group} ->
+      {result, _} =
+        Enum.map_reduce(group, 0, fn pdo, offset ->
+          {%{pdo | bit_offset: offset}, offset + pdo.bit_size}
+        end)
+
+      result
+    end)
   end
 
   # Walk category headers from word 0x40 to find the end of valid SII data.

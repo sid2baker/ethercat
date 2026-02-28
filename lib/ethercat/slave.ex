@@ -75,6 +75,8 @@ defmodule EtherCAT.Slave do
     :dc_cycle_ns,
     # [{sm_index, phys_start, length, ctrl}] from SII category 0x0029
     :sii_sm_configs,
+    # [%{index, direction, sm_index, bit_size, bit_offset}] from SII categories 0x0032/0x0033
+    :sii_pdo_configs,
     # [{pdo_name, domain_id}] — PDOs to register in :preop enter
     :pdos,
     # %{pdo_name => %{domain_id, offset}}
@@ -171,6 +173,7 @@ defmodule EtherCAT.Slave do
       config: config,
       dc_cycle_ns: dc_cycle_ns,
       sii_sm_configs: [],
+      sii_pdo_configs: [],
       pdos: pdos,
       pdo_registrations: %{},
       pdo_subscriptions: %{}
@@ -271,27 +274,48 @@ defmodule EtherCAT.Slave do
       nil ->
         {:keep_state_and_data, [{:reply, from, {:error, {:not_registered, pdo_name}}}]}
 
-      %{domain_id: domain_id} ->
-        key = {data.name, pdo_name}
+      %{domain_id: domain_id, sm_key: sm_key, bit_offset: bit_offset, bit_size: bit_size} ->
+        key = {data.name, sm_key}
         encoded = data.driver.encode_outputs(pdo_name, data.config, value)
-        result = Domain.write(domain_id, key, encoded)
+
+        result =
+          case Domain.read(domain_id, key) do
+            {:ok, current} ->
+              Domain.write(domain_id, key, set_sm_bits(current, bit_offset, bit_size, encoded))
+
+            {:error, _} = err ->
+              err
+          end
+
         {:keep_state_and_data, [{:reply, from, result}]}
     end
   end
 
   # -- Domain input change notification (sent by Domain on cycle) ------------
 
-  def handle_event(:info, {:domain_input, _domain_id, {_slave_name, pdo_name}, raw}, _state, data) do
-    decoded =
-      if data.driver != nil do
-        data.driver.decode_inputs(pdo_name, data.config, raw)
-      else
-        raw
-      end
+  # SM-grouped key: {slave_name, {:sm, idx}} — unpack per-PDO bits and dispatch.
+  def handle_event(
+        :info,
+        {:domain_input, _domain_id, {_slave_name, {:sm, _} = sm_key}, sm_bytes},
+        _state,
+        data
+      ) do
+    data.pdo_registrations
+    |> Enum.filter(fn {_pdo_name, reg} -> reg.sm_key == sm_key end)
+    |> Enum.each(fn {pdo_name, %{bit_offset: bit_offset, bit_size: bit_size}} ->
+      raw = extract_sm_bits(sm_bytes, bit_offset, bit_size)
 
-    subs = Map.get(data.pdo_subscriptions, pdo_name, [])
-    msg = {:slave_input, data.name, pdo_name, decoded}
-    Enum.each(subs, &send(&1, msg))
+      decoded =
+        if data.driver != nil do
+          data.driver.decode_inputs(pdo_name, data.config, raw)
+        else
+          raw
+        end
+
+      subs = Map.get(data.pdo_subscriptions, pdo_name, [])
+      Enum.each(subs, &send(&1, {:slave_input, data.name, pdo_name, decoded}))
+    end)
+
     :keep_state_and_data
   end
 
@@ -304,8 +328,14 @@ defmodule EtherCAT.Slave do
   # Returns a gen_statem init tuple: {:ok, state, data} or {:ok, state, data, actions}.
   defp do_auto_advance(data) do
     case read_sii(data.link, data.station) do
-      {:ok, identity, mailbox_config, sm_configs} ->
-        new_data = %{data | identity: identity, mailbox_config: mailbox_config, sii_sm_configs: sm_configs}
+      {:ok, identity, mailbox_config, sm_configs, pdo_configs} ->
+        new_data = %{
+          data
+          | identity: identity,
+            mailbox_config: mailbox_config,
+            sii_sm_configs: sm_configs,
+            sii_pdo_configs: pdo_configs
+        }
 
         # Configure mailbox SMs (SM0 recv + SM1 send) while still in INIT so that
         # the slave's PDI finds them armed when it enters PREOP.
@@ -341,90 +371,118 @@ defmodule EtherCAT.Slave do
   defp register_pdos_and_fmmus(data) do
     profile = data.driver.process_data_profile(data.config)
 
-    {new_regs, _fmmu_idx} =
-      Enum.reduce(data.pdos, {data.pdo_registrations, 0}, fn
-        {pdo_name, domain_id}, {regs, fmmu_idx} ->
-          spec = Map.get(profile, pdo_name)
+    # Resolve each requested PDO name to its SII PDO config entry.
+    resolved =
+      Enum.flat_map(data.pdos, fn {pdo_name, domain_id} ->
+        case Map.get(profile, pdo_name) do
+          nil ->
+            Logger.warning(
+              "[Slave #{data.name}] #{inspect(pdo_name)} not in driver profile — skipping"
+            )
 
-          if spec == nil do
-            Logger.warning("[Slave #{data.name}] unknown PDO #{inspect(pdo_name)} in profile — skipping")
-            {regs, fmmu_idx}
-          else
-            sm_idx = spec.sm_index
+            []
 
-            case Enum.find(data.sii_sm_configs, fn {i, _, _, _} -> i == sm_idx end) do
+          pdo_index ->
+            case Enum.find(data.sii_pdo_configs, fn p -> p.index == pdo_index end) do
               nil ->
-                Logger.warning("[Slave #{data.name}] SM#{sm_idx} not found in SII — skipping #{inspect(pdo_name)}")
-                {regs, fmmu_idx}
+                Logger.warning(
+                  "[Slave #{data.name}] PDO 0x#{Integer.to_string(pdo_index, 16)} not in SII — skipping #{inspect(pdo_name)}"
+                )
 
-              {^sm_idx, phys, sii_len, ctrl} ->
-                # PDO data size: split-SM uses spec.size; whole-SM uses spec.size override or SII DefaultSize
-                size =
-                  if Map.has_key?(spec, :fmmu_offset),
-                    do: Map.fetch!(spec, :size),
-                    else: Map.get(spec, :size, sii_len)
+                []
 
-                # Direction from SM ctrl byte bits[3:2] via binary pattern
-                direction =
-                  case <<ctrl::8>> do
-                    <<_::4, 0::1, 0::1, _::2>> -> :input
-                    _ -> :output
-                  end
-
-                key = {data.name, pdo_name}
-
-                case Domain.register_pdo(domain_id, key, size, direction) do
-                  {:ok, offset} ->
-                    # SM register: always the full SII length for split-SM, otherwise use PDO size
-                    sm_len = if Map.has_key?(spec, :fmmu_offset), do: sii_len, else: size
-                    sm_reg = <<phys::16-little, sm_len::16-little, ctrl::8, 0::8, 0x01::8, 0::8>>
-
-                    Link.transaction(
-                      data.link,
-                      &Transaction.fpwr(&1, data.station, Registers.sm(sm_idx, sm_reg))
-                    )
-
-                    # FMMU physical range: sub-region for split-SM, full SM for whole-SM
-                    {fmmu_phys, fmmu_len} =
-                      case Map.get(spec, :fmmu_offset) do
-                        nil -> {phys, size}
-                        fmmu_off -> {phys + fmmu_off, Map.fetch!(spec, :size)}
-                      end
-
-                    # FMMU type from SM ctrl byte bits[3:2] via binary pattern
-                    fmmu_type =
-                      case <<ctrl::8>> do
-                        <<_::4, 0::1, 0::1, _::2>> -> 0x01
-                        _ -> 0x02
-                      end
-
-                    fmmu_reg =
-                      <<offset::32-little, fmmu_len::16-little,
-                        0::8, 7::8,
-                        fmmu_phys::16-little, 0::8,
-                        fmmu_type::8, 0x01::8, 0::24>>
-
-                    case Link.transaction(
-                           data.link,
-                           &Transaction.fpwr(&1, data.station, Registers.fmmu(fmmu_idx, fmmu_reg))
-                         ) do
-                      {:ok, [%{wkc: wkc}]} when wkc > 0 ->
-                        {Map.put(regs, pdo_name, %{domain_id: domain_id, offset: offset}), fmmu_idx + 1}
-
-                      _ ->
-                        Logger.warning("[Slave #{data.name}] FMMU write for #{inspect(pdo_name)} failed")
-                        {regs, fmmu_idx}
-                    end
-
-                  {:error, reason} ->
-                    Logger.warning("[Slave #{data.name}] Domain.register_pdo #{inspect(pdo_name)} failed: #{inspect(reason)}")
-                    {regs, fmmu_idx}
-                end
+              pdo_cfg ->
+                [{pdo_name, domain_id, pdo_cfg}]
             end
-          end
+        end
+      end)
+
+    # Group by SM index — all PDOs on the same SM share one domain region and one FMMU.
+    by_sm = Enum.group_by(resolved, fn {_, _, pdo_cfg} -> pdo_cfg.sm_index end)
+
+    {new_regs, _fmmu_idx} =
+      Enum.reduce(by_sm, {data.pdo_registrations, 0}, fn
+        {sm_idx, sm_pdos}, {regs, fmmu_idx} ->
+          register_sm_group(data, sm_idx, sm_pdos, regs, fmmu_idx)
       end)
 
     %{data | pdo_registrations: new_regs}
+  end
+
+  # Register all PDOs that share SM `sm_idx` as one domain region with one FMMU.
+  # Bit-level packing/unpacking is done in software; the FMMU covers the whole SM byte-aligned.
+  defp register_sm_group(data, sm_idx, sm_pdos, regs, fmmu_idx) do
+    {_pdo_name, domain_id, first_cfg} = hd(sm_pdos)
+    direction = first_cfg.direction
+
+    case Enum.find(data.sii_sm_configs, fn {i, _, _, _} -> i == sm_idx end) do
+      nil ->
+        names = Enum.map(sm_pdos, &elem(&1, 0))
+
+        Logger.warning(
+          "[Slave #{data.name}] SM#{sm_idx} not found in SII — skipping #{inspect(names)}"
+        )
+
+        {regs, fmmu_idx}
+
+      {^sm_idx, phys, _sii_len, ctrl} ->
+        # Total SM byte size from all SII PDOs on this SM (driver may only request a subset)
+        total_sm_bits =
+          Enum.reduce(data.sii_pdo_configs, 0, fn
+            %{sm_index: ^sm_idx, bit_size: b}, acc -> acc + b
+            _, acc -> acc
+          end)
+
+        total_sm_size = div(total_sm_bits + 7, 8)
+        fmmu_type = if direction == :input, do: 0x01, else: 0x02
+        sm_key = {:sm, sm_idx}
+
+        case Domain.register_pdo(domain_id, {data.name, sm_key}, total_sm_size, direction) do
+          {:ok, offset} ->
+            # SM register: full SM size, byte-aligned
+            sm_reg = <<phys::16-little, total_sm_size::16-little, ctrl::8, 0::8, 0x01::8, 0::8>>
+
+            Link.transaction(
+              data.link,
+              &Transaction.fpwr(&1, data.station, Registers.sm(sm_idx, sm_reg))
+            )
+
+            # One FMMU covers the entire SM, byte-aligned (start_bit=0, stop_bit=7)
+            fmmu_reg =
+              <<offset::32-little, total_sm_size::16-little, 0::8, 7::8, phys::16-little, 0::8,
+                fmmu_type::8, 0x01::8, 0::24>>
+
+            case Link.transaction(
+                   data.link,
+                   &Transaction.fpwr(&1, data.station, Registers.fmmu(fmmu_idx, fmmu_reg))
+                 ) do
+              {:ok, [%{wkc: wkc}]} when wkc > 0 ->
+                # Record bit position metadata for each PDO in this SM group
+                new_regs =
+                  Enum.reduce(sm_pdos, regs, fn {pdo_name, _domain_id, pdo_cfg}, acc ->
+                    Map.put(acc, pdo_name, %{
+                      domain_id: domain_id,
+                      sm_key: sm_key,
+                      bit_offset: pdo_cfg.bit_offset,
+                      bit_size: pdo_cfg.bit_size
+                    })
+                  end)
+
+                {new_regs, fmmu_idx + 1}
+
+              _ ->
+                Logger.warning("[Slave #{data.name}] FMMU write for SM#{sm_idx} failed")
+                {regs, fmmu_idx}
+            end
+
+          {:error, reason} ->
+            Logger.warning(
+              "[Slave #{data.name}] Domain.register_pdo SM#{sm_idx} failed: #{inspect(reason)}"
+            )
+
+            {regs, fmmu_idx}
+        end
+    end
   end
 
   # -- Transition helpers ----------------------------------------------------
@@ -514,8 +572,9 @@ defmodule EtherCAT.Slave do
   defp read_sii(link, station) do
     with {:ok, identity} <- SII.read_identity(link, station),
          {:ok, mailbox_config} <- SII.read_mailbox_config(link, station),
-         {:ok, sm_configs} <- SII.read_sm_configs(link, station) do
-      {:ok, identity, mailbox_config, sm_configs}
+         {:ok, sm_configs} <- SII.read_sm_configs(link, station),
+         {:ok, pdo_configs} <- SII.read_pdo_configs(link, station) do
+      {:ok, identity, mailbox_config, sm_configs, pdo_configs}
     end
   end
 
@@ -538,7 +597,15 @@ defmodule EtherCAT.Slave do
   defp run_sdo_config(data) do
     if function_exported?(data.driver, :sdo_config, 1) do
       Enum.each(data.driver.sdo_config(data.config), fn {index, subindex, value, size} ->
-        case CoE.write_sdo(data.link, data.station, data.mailbox_config, index, subindex, value, size) do
+        case CoE.write_sdo(
+               data.link,
+               data.station,
+               data.mailbox_config,
+               index,
+               subindex,
+               value,
+               size
+             ) do
           :ok ->
             :ok
 
@@ -564,12 +631,10 @@ defmodule EtherCAT.Slave do
   defp configure_sync0_if_needed(%{dc_cycle_ns: nil}), do: :ok
 
   defp configure_sync0_if_needed(data) do
-    profile = data.driver.process_data_profile(data.config)
-
     dc_spec =
-      profile
-      |> Map.values()
-      |> Enum.find_value(fn pdo_spec -> Map.get(pdo_spec, :dc) end)
+      if function_exported?(data.driver, :dc_config, 1) do
+        data.driver.dc_config(data.config)
+      end
 
     if dc_spec != nil do
       pulse_ns = Map.fetch!(dc_spec, :sync0_pulse_ns)
@@ -617,6 +682,57 @@ defmodule EtherCAT.Slave do
       |> Transaction.fpwr(data.station, Registers.sm(0, sm0))
       |> Transaction.fpwr(data.station, Registers.sm(1, sm1))
     end)
+  end
+
+  # -- Bit-level SM packing helpers ------------------------------------------
+
+  # Extract `bit_size` bits starting at `bit_offset` from `sm_bytes`.
+  # Returns a binary of ceil(bit_size / 8) bytes with the value in the LSB.
+  # Bit numbering is little-endian: bit 0 is the LSB of byte 0.
+  defp extract_sm_bits(sm_bytes, bit_offset, bit_size) do
+    if rem(bit_offset, 8) == 0 and rem(bit_size, 8) == 0 do
+      # Byte-aligned fast path
+      binary_part(sm_bytes, div(bit_offset, 8), div(bit_size, 8))
+    else
+      # Sub-byte: extract bit_size consecutive bits from within one byte.
+      # skip_high = number of MSBs above our field in the byte.
+      byte_idx = div(bit_offset, 8)
+      bit_in_byte = rem(bit_offset, 8)
+      skip_high = 8 - bit_in_byte - bit_size
+      <<_::binary-size(byte_idx), byte::8, _::binary>> = sm_bytes
+      <<_::size(skip_high), val::size(bit_size), _::size(bit_in_byte)>> = <<byte>>
+      <<val::size(div(bit_size + 7, 8) * 8)>>
+    end
+  end
+
+  # Write `bit_size` bits from `encoded` into `sm_bytes` at `bit_offset`.
+  # `encoded` is the driver's output binary; its LSB-aligned value is packed in.
+  defp set_sm_bits(sm_bytes, _bit_offset, _bit_size, <<>>), do: sm_bytes
+
+  defp set_sm_bits(sm_bytes, bit_offset, bit_size, encoded) do
+    if rem(bit_offset, 8) == 0 and rem(bit_size, 8) == 0 do
+      # Byte-aligned fast path
+      byte_off = div(bit_offset, 8)
+      byte_sz = div(bit_size, 8)
+      total = byte_size(sm_bytes)
+      padded = encoded <> :binary.copy(<<0>>, max(0, byte_sz - byte_size(encoded)))
+
+      binary_part(sm_bytes, 0, byte_off) <>
+        binary_part(padded, 0, byte_sz) <>
+        binary_part(sm_bytes, byte_off + byte_sz, total - byte_off - byte_sz)
+    else
+      # Sub-byte: patch bit_size bits within one SM byte.
+      byte_idx = div(bit_offset, 8)
+      bit_in_byte = rem(bit_offset, 8)
+      skip_high = 8 - bit_in_byte - bit_size
+      <<prefix::binary-size(byte_idx), old_byte::8, suffix::binary>> = sm_bytes
+      <<high::size(skip_high), _::size(bit_size), low::size(bit_in_byte)>> = <<old_byte>>
+      # Take the bit_size LSBs of the first encoded byte as the new value
+      <<_::size(8 - bit_size), new_val::size(bit_size)>> = binary_part(encoded, 0, 1)
+
+      prefix <>
+        <<high::size(skip_high), new_val::size(bit_size), low::size(bit_in_byte)>> <> suffix
+    end
   end
 
   # -- Registry helpers -------------------------------------------------------

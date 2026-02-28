@@ -7,93 +7,99 @@ defmodule EtherCAT.Slave.Driver do
 
   ## Profile format
 
-  `process_data_profile/1` returns a map keyed by PDO name (atom). Each value
-  names the SM index to use; the master reads physical params (address, size,
-  ctrl byte) from the slave's own SII EEPROM category 0x0029.
+  `process_data_profile/1` returns a map keyed by PDO name (atom) with values
+  being the SII PDO object index (integer). The master reads SII EEPROM categories
+  0x0032 (TxPDO) and 0x0033 (RxPDO) to auto-derive: SM assignment, direction,
+  total SM size, and per-PDO bit offset within the SM.
 
       %{
-        channels: %{sm_index: 0}
+        channels: 0x1A00
       }
 
-  The SM ctrl byte from SII determines direction automatically:
-  - bits[3:2] = `00` → ECAT reads → TxPDO (`:input`)
-  - bits[3:2] = `01` → ECAT writes → RxPDO (`:output`)
+  Each named PDO gets its own FMMU (with bit-level precision for sub-byte PDOs).
+  `decode_inputs`/`encode_outputs` are called once per named PDO with that PDO's
+  exact bytes. Sub-byte PDOs (e.g. 1-bit channels) receive/return 1 padded byte
+  with the value in bit 0 (LSB).
 
-  ## Optional keys
-
-  ### `:size` — override SM DefaultSize (dynamic PDO remapping)
-
-  When a slave supports dynamic PDO remapping via CoE (SII DefaultSize = 0),
-  specify the expected size after the `sdo_config/1` SDO writes complete:
-
-      %{custom_pdo: %{sm_index: 2, size: 6}}
-
-  ### `:fmmu_offset` + `:size` — split-SM pattern
-
-  Map two independent PDO names to sub-regions of one SM buffer. Useful when
-  different processes subscribe to different channels independently:
-
-      %{
-        ch1: %{sm_index: 3, fmmu_offset: 0, size: 4},
-        ch2: %{sm_index: 3, fmmu_offset: 4, size: 4}
-      }
-
-  When `fmmu_offset` is present, the SM register always uses the full SII DefaultSize.
-  Only the FMMU is narrowed to the `{offset, size}` sub-region.
-
-  ## Encode / decode
-
-  Callbacks receive the PDO name and config for context:
-
-      def encode_outputs(:outputs, _config, channels), do: <<channels::16-little>>
-      def decode_inputs(:channels, _config, <<v::16-little>>), do: v
-
-  ## Example — EL1809 (16-ch digital input)
+  ## Example — EL1809 (16-ch digital input, 16 × 1-bit TxPDOs)
 
       defmodule MyApp.EL1809 do
         @behaviour EtherCAT.Slave.Driver
 
         @impl true
         def process_data_profile(_config) do
-          %{channels: %{sm_index: 0}}
+          %{
+            ch1:  0x1A00, ch2:  0x1A01, ch3:  0x1A02, ch4:  0x1A03,
+            ch5:  0x1A04, ch6:  0x1A05, ch7:  0x1A06, ch8:  0x1A07,
+            ch9:  0x1A08, ch10: 0x1A09, ch11: 0x1A0A, ch12: 0x1A0B,
+            ch13: 0x1A0C, ch14: 0x1A0D, ch15: 0x1A0E, ch16: 0x1A0F
+          }
         end
 
         @impl true
         def encode_outputs(_pdo, _config, _value), do: <<>>
 
         @impl true
-        def decode_inputs(:channels, _config, <<v::16-little>>), do: v
+        # 1-bit PDO: FMMU maps the physical SM bit to logical bit 0.
+        # decode_inputs receives 1 byte; bit 0 (LSB) is the channel value.
+        def decode_inputs(_ch, _config, <<_::7, bit::1>>), do: bit
+        def decode_inputs(_pdo, _config, _), do: 0
+      end
+
+  ## Example — EL2809 (16-ch digital output, 16 × 1-bit RxPDOs)
+
+      defmodule MyApp.EL2809 do
+        @behaviour EtherCAT.Slave.Driver
+
+        @impl true
+        def process_data_profile(_config) do
+          %{
+            ch1:  0x1600, ch2:  0x1601, ch3:  0x1602, ch4:  0x1603,
+            ch5:  0x1604, ch6:  0x1605, ch7:  0x1606, ch8:  0x1607,
+            ch9:  0x1608, ch10: 0x1609, ch11: 0x160A, ch12: 0x160B,
+            ch13: 0x160C, ch14: 0x160D, ch15: 0x160E, ch16: 0x160F
+          }
+        end
+
+        @impl true
+        # 1-bit PDO: return 1 byte; the FMMU places bit 0 into the correct SM bit.
+        def encode_outputs(_ch, _config, v), do: <<v::8>>
+
+        @impl true
         def decode_inputs(_pdo, _config, _), do: nil
       end
 
-  ## Example — EL3202 (2-ch PT100 input, CoE slave)
+  ## Example — EL3202 (2-ch PT100 input, 2 × 32-bit TxPDOs)
 
       defmodule MyApp.EL3202 do
         @behaviour EtherCAT.Slave.Driver
 
         @impl true
         def process_data_profile(_config) do
-          # SM3 = TxPDO; physical address and size come from SII EEPROM
-          %{temperatures: %{sm_index: 3}}
+          # 0x1A00 = channel 1 (SM3, bytes 0–3), 0x1A01 = channel 2 (SM3, bytes 4–7)
+          %{channel1: 0x1A00, channel2: 0x1A01}
+        end
+
+        @impl true
+        def sdo_config(_config) do
+          [{0x8000, 0x19, 8, 2}, {0x8010, 0x19, 8, 2}]
         end
 
         @impl true
         def encode_outputs(_pdo, _config, _value), do: <<>>
 
         @impl true
-        def decode_inputs(:temperatures, _config, <<
-              _::1, error1::1, limit2_1::2, limit1_1::2, overrange1::1, underrange1::1,
-              toggle1::1, state1::1, _::6, ch1::16-little-signed,
-              _::1, error2::1, limit2_2::2, limit1_2::2, overrange2::1, underrange2::1,
-              toggle2::1, state2::1, _::6, ch2::16-little-signed>>) do
-          {
-            %{value: ch1 / 10.0, underrange: underrange1 == 1, overrange: overrange1 == 1,
-              limit1: limit1_1, limit2: limit2_1, error: error1 == 1,
-              invalid: state1 == 1, toggle: toggle1},
-            %{value: ch2 / 10.0, underrange: underrange2 == 1, overrange: overrange2 == 1,
-              limit1: limit1_2, limit2: limit2_2, error: error2 == 1,
-              invalid: state2 == 1, toggle: toggle2}
-          }
+        def decode_inputs(:channel1, _config, <<
+              _::1, error::1, _::2, _::2, overrange::1, underrange::1,
+              toggle::1, state::1, _::6, value::16-little>>) do
+          %{ohms: value / 16.0, overrange: overrange == 1, underrange: underrange == 1,
+            error: error == 1, invalid: state == 1, toggle: toggle}
+        end
+        def decode_inputs(:channel2, _config, <<
+              _::1, error::1, _::2, _::2, overrange::1, underrange::1,
+              toggle::1, state::1, _::6, value::16-little>>) do
+          %{ohms: value / 16.0, overrange: overrange == 1, underrange: underrange == 1,
+            error: error == 1, invalid: state == 1, toggle: toggle}
         end
         def decode_inputs(_pdo, _config, _), do: nil
       end
@@ -104,22 +110,8 @@ defmodule EtherCAT.Slave.Driver do
 
   @type dc_config :: %{sync0_pulse_ns: pos_integer()}
 
-  @type pdo_spec :: %{
-          required(:sm_index) => non_neg_integer(),
-          # Override SM register length — for dynamic PDO remapping (SII DefaultSize = 0).
-          # Also used as FMMU length when :fmmu_offset is absent.
-          # Use case: digital I/O slaves whose SII DefaultSize is 1 per SM byte but the
-          # PDO spans multiple bytes (e.g. EL2809 16-ch output: sm_index: 0, size: 2).
-          optional(:size) => pos_integer(),
-          # Byte offset into SM buffer for this PDO's FMMU — split-SM pattern.
-          # When present, SM register always uses SII DefaultSize; only FMMU is narrowed.
-          # :size is required when :fmmu_offset is set.
-          optional(:fmmu_offset) => non_neg_integer(),
-          optional(:dc) => dc_config()
-        }
-
-  @doc "Return the SM hardware profile for each PDO, keyed by PDO name."
-  @callback process_data_profile(config()) :: %{pdo_name() => pdo_spec()}
+  @doc "Return a map of PDO name → SII PDO object index (e.g. 0x1A00)."
+  @callback process_data_profile(config()) :: %{pdo_name() => non_neg_integer()}
 
   @doc "Encode a domain value into raw output bytes for the process image."
   @callback encode_outputs(pdo_name(), config(), term()) :: binary()
@@ -150,5 +142,12 @@ defmodule EtherCAT.Slave.Driver do
   @callback sdo_config(config()) ::
               [{index :: integer(), subindex :: integer(), value :: integer(), size :: 1 | 2 | 4}]
 
-  @optional_callbacks [on_preop: 2, on_safeop: 2, on_op: 2, sdo_config: 1]
+  @doc """
+  Return Distributed Clocks SYNC0 parameters, or `nil` to disable DC on this slave.
+
+  Called during SafeOp entry when `dc_cycle_ns` is configured on the master.
+  """
+  @callback dc_config(config()) :: dc_config() | nil
+
+  @optional_callbacks [on_preop: 2, on_safeop: 2, on_op: 2, sdo_config: 1, dc_config: 1]
 end

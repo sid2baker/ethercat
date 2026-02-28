@@ -58,7 +58,8 @@ defmodule EtherCAT.Slave.CoE do
 
     with :ok <- write_mailbox(link, station, mailbox_config.recv_offset, padded),
          :ok <- wait_response(link, station),
-         {:ok, response} <- read_mailbox(link, station, mailbox_config.send_offset, mailbox_config.send_size) do
+         {:ok, response} <-
+           read_mailbox(link, station, mailbox_config.send_offset, mailbox_config.send_size) do
       validate_response(response, index, subindex)
     end
   end
@@ -79,9 +80,8 @@ defmodule EtherCAT.Slave.CoE do
 
     # Mailbox header: length=10 (CoE hdr 2 + SDO 8), address=0, channel/prio=0, type=CoE(3)
     # CoE header: number=0, service=2 (SDO request) in bits [15:12]
-    <<10::16-little, 0::16, 0::8, 0x03::8,
-      0x00, 0x20,
-      cmd::8, index::16-little, subindex::8, value::32-little>>
+    <<10::16-little, 0::16, 0::8, 0x03::8, 0x00, 0x20, cmd::8, index::16-little, subindex::8,
+      value::32-little>>
   end
 
   # -- Transport helpers -------------------------------------------------------
@@ -133,7 +133,11 @@ defmodule EtherCAT.Slave.CoE do
   # SDO download response command = 0x60 (success).
   # SDO abort transfer command    = 0x80 (abort code at bytes 12–15).
 
-  defp validate_response(<<_mbox_hdr::binary-size(6), _coe_hdr::binary-size(2), 0x60::8, _::binary>>, _idx, _sub) do
+  defp validate_response(
+         <<_mbox_hdr::binary-size(6), _coe_hdr::binary-size(2), 0x60::8, _::binary>>,
+         _idx,
+         _sub
+       ) do
     :ok
   end
 
