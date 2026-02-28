@@ -33,7 +33,7 @@ defmodule EtherCAT.Slave do
 
   require Logger
 
-  alias EtherCAT.{Domain, Link, Slave.SII}
+  alias EtherCAT.{Domain, Link, Slave.CoE, Slave.SII}
   alias EtherCAT.Link.Transaction
   alias EtherCAT.Slave.Registers
 
@@ -73,6 +73,8 @@ defmodule EtherCAT.Slave do
     :mailbox_config,
     # SYNC0 cycle time in ns — set from start_link opts; nil = no DC
     :dc_cycle_ns,
+    # [{sm_index, phys_start, length, ctrl}] from SII category 0x0029
+    :sii_sm_configs,
     # [{pdo_name, domain_id}] — PDOs to register in :preop enter
     :pdos,
     # %{pdo_name => %{domain_id, offset}}
@@ -168,6 +170,7 @@ defmodule EtherCAT.Slave do
       driver: driver,
       config: config,
       dc_cycle_ns: dc_cycle_ns,
+      sii_sm_configs: [],
       pdos: pdos,
       pdo_registrations: %{},
       pdo_subscriptions: %{}
@@ -187,6 +190,7 @@ defmodule EtherCAT.Slave do
 
   def handle_event(:enter, _old, :preop, data) do
     invoke_driver(data, :on_preop)
+    run_sdo_config(data)
     new_data = register_pdos_and_fmmus(data)
     send(EtherCAT.Master, {:slave_ready, data.name, :preop})
     {:keep_state, new_data}
@@ -300,8 +304,12 @@ defmodule EtherCAT.Slave do
   # Returns a gen_statem init tuple: {:ok, state, data} or {:ok, state, data, actions}.
   defp do_auto_advance(data) do
     case read_sii(data.link, data.station) do
-      {:ok, identity, mailbox_config} ->
-        new_data = %{data | identity: identity, mailbox_config: mailbox_config}
+      {:ok, identity, mailbox_config, sm_configs} ->
+        new_data = %{data | identity: identity, mailbox_config: mailbox_config, sii_sm_configs: sm_configs}
+
+        # Configure mailbox SMs (SM0 recv + SM1 send) while still in INIT so that
+        # the slave's PDI finds them armed when it enters PREOP.
+        setup_mailbox_sms(new_data)
 
         case do_transition(new_data, :preop) do
           {:ok, new_data2} ->
@@ -333,53 +341,87 @@ defmodule EtherCAT.Slave do
   defp register_pdos_and_fmmus(data) do
     profile = data.driver.process_data_profile(data.config)
 
-    new_regs =
-      Enum.reduce(data.pdos, data.pdo_registrations, fn {pdo_name, domain_id}, regs ->
-        case Map.get(profile, pdo_name) do
-          nil ->
-            Logger.warning(
-              "[Slave #{data.name}] unknown PDO #{inspect(pdo_name)} in profile — skipping"
-            )
+    {new_regs, _fmmu_idx} =
+      Enum.reduce(data.pdos, {data.pdo_registrations, 0}, fn
+        {pdo_name, domain_id}, {regs, fmmu_idx} ->
+          spec = Map.get(profile, pdo_name)
 
-            regs
+          if spec == nil do
+            Logger.warning("[Slave #{data.name}] unknown PDO #{inspect(pdo_name)} in profile — skipping")
+            {regs, fmmu_idx}
+          else
+            sm_idx = spec.sm_index
 
-          pdo_spec ->
-            key = {data.name, pdo_name}
+            case Enum.find(data.sii_sm_configs, fn {i, _, _, _} -> i == sm_idx end) do
+              nil ->
+                Logger.warning("[Slave #{data.name}] SM#{sm_idx} not found in SII — skipping #{inspect(pdo_name)}")
+                {regs, fmmu_idx}
 
-            {size, direction} =
-              if pdo_spec.inputs_size > 0 do
-                {pdo_spec.inputs_size, :input}
-              else
-                {pdo_spec.outputs_size, :output}
-              end
+              {^sm_idx, phys, sii_len, ctrl} ->
+                # PDO data size: split-SM uses spec.size; whole-SM uses spec.size override or SII DefaultSize
+                size =
+                  if Map.has_key?(spec, :fmmu_offset),
+                    do: Map.fetch!(spec, :size),
+                    else: Map.get(spec, :size, sii_len)
 
-            case Domain.register_pdo(domain_id, key, size, direction) do
-              {:ok, offset} ->
-                # Write SMs first — physical addresses are known from the profile
-                case write_sms(data.link, data.station, pdo_spec.sms) do
-                  :ok ->
-                    in_offset = if direction == :input, do: offset, else: 0
-                    out_offset = if direction == :output, do: offset, else: 0
-                    write_fmmus(data.link, data.station, pdo_spec.fmmus, out_offset, in_offset)
+                # Direction from SM ctrl byte bits[3:2] via binary pattern
+                direction =
+                  case <<ctrl::8>> do
+                    <<_::4, 0::1, 0::1, _::2>> -> :input
+                    _ -> :output
+                  end
 
-                    Map.put(regs, pdo_name, %{domain_id: domain_id, offset: offset})
+                key = {data.name, pdo_name}
 
-                  {:error, reason} ->
-                    Logger.warning(
-                      "[Slave #{data.name}] SM write for #{inspect(pdo_name)} failed: #{inspect(reason)}"
+                case Domain.register_pdo(domain_id, key, size, direction) do
+                  {:ok, offset} ->
+                    # SM register: always the full SII length for split-SM, otherwise use PDO size
+                    sm_len = if Map.has_key?(spec, :fmmu_offset), do: sii_len, else: size
+                    sm_reg = <<phys::16-little, sm_len::16-little, ctrl::8, 0::8, 0x01::8, 0::8>>
+
+                    Link.transaction(
+                      data.link,
+                      &Transaction.fpwr(&1, data.station, Registers.sm(sm_idx, sm_reg))
                     )
 
-                    regs
+                    # FMMU physical range: sub-region for split-SM, full SM for whole-SM
+                    {fmmu_phys, fmmu_len} =
+                      case Map.get(spec, :fmmu_offset) do
+                        nil -> {phys, size}
+                        fmmu_off -> {phys + fmmu_off, Map.fetch!(spec, :size)}
+                      end
+
+                    # FMMU type from SM ctrl byte bits[3:2] via binary pattern
+                    fmmu_type =
+                      case <<ctrl::8>> do
+                        <<_::4, 0::1, 0::1, _::2>> -> 0x01
+                        _ -> 0x02
+                      end
+
+                    fmmu_reg =
+                      <<offset::32-little, fmmu_len::16-little,
+                        0::8, 7::8,
+                        fmmu_phys::16-little, 0::8,
+                        fmmu_type::8, 0x01::8, 0::24>>
+
+                    case Link.transaction(
+                           data.link,
+                           &Transaction.fpwr(&1, data.station, Registers.fmmu(fmmu_idx, fmmu_reg))
+                         ) do
+                      {:ok, [%{wkc: wkc}]} when wkc > 0 ->
+                        {Map.put(regs, pdo_name, %{domain_id: domain_id, offset: offset}), fmmu_idx + 1}
+
+                      _ ->
+                        Logger.warning("[Slave #{data.name}] FMMU write for #{inspect(pdo_name)} failed")
+                        {regs, fmmu_idx}
+                    end
+
+                  {:error, reason} ->
+                    Logger.warning("[Slave #{data.name}] Domain.register_pdo #{inspect(pdo_name)} failed: #{inspect(reason)}")
+                    {regs, fmmu_idx}
                 end
-
-              {:error, reason} ->
-                Logger.warning(
-                  "[Slave #{data.name}] Domain.register_pdo #{inspect(pdo_name)} failed: #{inspect(reason)}"
-                )
-
-                regs
             end
-        end
+          end
       end)
 
     %{data | pdo_registrations: new_regs}
@@ -470,12 +512,10 @@ defmodule EtherCAT.Slave do
   # -- SII -------------------------------------------------------------------
 
   defp read_sii(link, station) do
-    with {:ok, <<vid::32-little, pc::32-little, rev::32-little, sn::32-little>>} <-
-           SII.read(link, station, 0x08, 8),
-         {:ok, <<ro::16-little, rs::16-little, so::16-little, ss::16-little>>} <-
-           SII.read(link, station, 0x18, 4) do
-      {:ok, %{vendor_id: vid, product_code: pc, revision: rev, serial_number: sn},
-       %{recv_offset: ro, recv_size: rs, send_offset: so, send_size: ss}}
+    with {:ok, identity} <- SII.read_identity(link, station),
+         {:ok, mailbox_config} <- SII.read_mailbox_config(link, station),
+         {:ok, sm_configs} <- SII.read_sm_configs(link, station) do
+      {:ok, identity, mailbox_config, sm_configs}
     end
   end
 
@@ -491,35 +531,26 @@ defmodule EtherCAT.Slave do
     :ok
   end
 
-  # -- SM / FMMU register writes ---------------------------------------------
+  # -- CoE SDO configuration (called from :preop enter) ----------------------
 
-  defp write_sms(link, station, sms) do
-    Enum.reduce_while(sms, :ok, fn {idx, start, len, ctrl}, :ok ->
-      reg = <<start::16-little, len::16-little, ctrl::8, 0::8, 0x01::8, 0::8>>
+  defp run_sdo_config(%{driver: nil}), do: :ok
 
-      case Link.transaction(link, &Transaction.fpwr(&1, station, Registers.sm(idx, reg))) do
-        {:ok, [%{wkc: wkc}]} when wkc > 0 -> {:cont, :ok}
-        {:ok, [%{wkc: 0}]} -> {:halt, {:error, :no_response}}
-        {:error, _} = err -> {:halt, err}
-      end
-    end)
-  end
+  defp run_sdo_config(data) do
+    if function_exported?(data.driver, :sdo_config, 1) do
+      Enum.each(data.driver.sdo_config(data.config), fn {index, subindex, value, size} ->
+        case CoE.write_sdo(data.link, data.station, data.mailbox_config, index, subindex, value, size) do
+          :ok ->
+            :ok
 
-  defp write_fmmus(link, station, fmmus, out_offset, in_offset) do
-    Enum.reduce_while(fmmus, :ok, fn {idx, phys, size, dir}, :ok ->
-      type = if dir == :read, do: 0x01, else: 0x02
-      log = if dir == :read, do: in_offset, else: out_offset
+          {:error, reason} ->
+            Logger.warning(
+              "[Slave #{data.name}] SDO write 0x#{Integer.to_string(index, 16)}:0x#{Integer.to_string(subindex, 16)} failed: #{inspect(reason)}"
+            )
+        end
+      end)
+    end
 
-      reg =
-        <<log::32-little, size::16-little, 0::8, 7::8, phys::16-little, 0::8, type::8, 0x01::8,
-          0::24>>
-
-      case Link.transaction(link, &Transaction.fpwr(&1, station, Registers.fmmu(idx, reg))) do
-        {:ok, [%{wkc: wkc}]} when wkc > 0 -> {:cont, :ok}
-        {:ok, [%{wkc: 0}]} -> {:halt, {:error, :no_response}}
-        {:error, _} = err -> {:halt, err}
-      end
-    end)
+    :ok
   end
 
   # -- SYNC0 configuration ---------------------------------------------------
@@ -567,7 +598,28 @@ defmodule EtherCAT.Slave do
     :ok
   end
 
-  # -- Registry helpers ------------------------------------------------------
+  # -- Mailbox SM setup -------------------------------------------------------
+
+  # Configure SM0 (recv, master→slave) and SM1 (send, slave→master) for
+  # mailbox communication using addresses from SII EEPROM. Called while still
+  # in INIT so the slave's PDI firmware finds them armed on PREOP entry.
+  # No-op for slaves without a mailbox (recv_size == 0).
+  defp setup_mailbox_sms(%{mailbox_config: %{recv_size: 0}}), do: :ok
+
+  defp setup_mailbox_sms(data) do
+    %{recv_offset: ro, recv_size: rs, send_offset: so, send_size: ss} = data.mailbox_config
+
+    sm0 = <<ro::16-little, rs::16-little, 0x26::8, 0::8, 0x01::8, 0::8>>
+    sm1 = <<so::16-little, ss::16-little, 0x22::8, 0::8, 0x01::8, 0::8>>
+
+    Link.transaction(data.link, fn tx ->
+      tx
+      |> Transaction.fpwr(data.station, Registers.sm(0, sm0))
+      |> Transaction.fpwr(data.station, Registers.sm(1, sm1))
+    end)
+  end
+
+  # -- Registry helpers -------------------------------------------------------
 
   defp via(slave_name), do: {:via, Registry, {EtherCAT.Registry, {:slave, slave_name}}}
 end

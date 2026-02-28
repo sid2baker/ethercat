@@ -33,14 +33,7 @@ defmodule Example.EL1809 do
 
   @impl true
   def process_data_profile(_config) do
-    %{
-      channels: %{
-        inputs_size:  2,
-        outputs_size: 0,
-        sms:   [{0, 0x1000, 2, 0x20}],
-        fmmus: [{0, 0x1000, 2, :read}]
-      }
-    }
+    %{channels: %{sm_index: 0}}
   end
 
   @impl true
@@ -56,14 +49,9 @@ defmodule Example.EL2809 do
 
   @impl true
   def process_data_profile(_config) do
-    %{
-      outputs: %{
-        inputs_size:  0,
-        outputs_size: 2,
-        sms:   [{0, 0x0F00, 1, 0x44}, {1, 0x0F01, 1, 0x44}],
-        fmmus: [{0, 0x0F00, 2, :write}]
-      }
-    }
+    # SII DefaultSize=1 per SM (digital I/O WDT). Override to 2 so SM0
+    # covers both output bytes 0x0F00–0x0F01 → all 16 channels.
+    %{outputs: %{sm_index: 0, size: 2}}
   end
 
   @impl true
@@ -71,6 +59,44 @@ defmodule Example.EL2809 do
   def encode_outputs(_pdo, _config, _), do: <<0, 0>>
 
   @impl true
+  def decode_inputs(_pdo, _config, _), do: nil
+end
+
+defmodule Example.EL3202 do
+  @behaviour EtherCAT.Slave.Driver
+
+  @impl true
+  def process_data_profile(_config) do
+    # SM3 = TxPDO; physical address and size come from SII EEPROM
+    %{temperatures: %{sm_index: 3}}
+  end
+
+  @impl true
+  def sdo_config(_config) do
+    [
+      {0x8000, 0x19, 8, 2},   # ch1 RTD element = ohm_1_16 (resistance, 1/16 Ω/bit)
+      {0x8010, 0x19, 8, 2}    # ch2 RTD element = ohm_1_16
+    ]
+  end
+
+  @impl true
+  def encode_outputs(_pdo, _config, _value), do: <<>>
+
+  @impl true
+  def decode_inputs(:temperatures, _config, <<
+        _::1, error1::1, limit2_1::2, limit1_1::2, overrange1::1, underrange1::1,
+        toggle1::1, state1::1, _::6, ch1::16-little,
+        _::1, error2::1, limit2_2::2, limit1_2::2, overrange2::1, underrange2::1,
+        toggle2::1, state2::1, _::6, ch2::16-little>>) do
+    {
+      %{ohms: ch1 / 16.0, underrange: underrange1 == 1, overrange: overrange1 == 1,
+        limit1: limit1_1, limit2: limit2_1, error: error1 == 1,
+        invalid: state1 == 1, toggle: toggle1},
+      %{ohms: ch2 / 16.0, underrange: underrange2 == 1, overrange: overrange2 == 1,
+        limit1: limit1_2, limit2: limit2_2, error: error2 == 1,
+        invalid: state2 == 1, toggle: toggle2}
+    }
+  end
   def decode_inputs(_pdo, _config, _), do: nil
 end
 
@@ -135,6 +161,12 @@ defmodule Example.PhaseLoop do
           end
 
         loop(set_fn, phase_ref, mask, ticks, pprev_out, prev_out, last_out, mismatches + mismatch, new_print)
+
+      {:slave_input, :thermo, :temperatures, {%{ohms: v1} = ch1, %{ohms: v2} = ch2}} ->
+        err1 = if ch1.error, do: " ERR", else: ""
+        err2 = if ch2.error, do: " ERR", else: ""
+        IO.puts("    thermo: ch1=#{:erlang.float_to_binary(v1, decimals: 2)}Ω#{err1}  ch2=#{:erlang.float_to_binary(v2, decimals: 2)}Ω#{err2}")
+        loop(set_fn, phase_ref, mask, ticks, pprev_out, prev_out, last_out, mismatches, last_print)
     end
   end
 end
@@ -237,13 +269,15 @@ check.("EtherCAT.start", EtherCAT.start(
   slaves: [
     nil,
     [name: :sensor, driver: Example.EL1809, config: %{}, pdos: [channels: :main]],
-    [name: :valve,  driver: Example.EL2809, config: %{}, pdos: [outputs:  :main]]
+    [name: :valve,  driver: Example.EL2809, config: %{}, pdos: [outputs:  :main]],
+    [name: :thermo, driver: Example.EL3202, config: %{}, pdos: [temperatures: :main]]
   ]
 ))
 
 check.("EtherCAT.await_running", EtherCAT.await_running(10_000))
 
 EtherCAT.subscribe(:sensor, :channels, self())
+EtherCAT.subscribe(:thermo, :temperatures, self())
 
 slaves = EtherCAT.slaves()
 

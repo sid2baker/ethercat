@@ -49,6 +49,61 @@ defmodule EtherCAT.Slave.SII do
   # -- Public API -------------------------------------------------------------
 
   @doc """
+  Read the identity fields from SII EEPROM words 0x08–0x0F.
+
+  Returns `{:ok, identity}` where identity is a map with keys:
+  `:vendor_id`, `:product_code`, `:revision`, `:serial_number`.
+  """
+  @spec read_identity(pid(), non_neg_integer()) ::
+          {:ok, %{vendor_id: integer(), product_code: integer(), revision: integer(), serial_number: integer()}}
+          | {:error, atom()}
+  def read_identity(link, station) do
+    with {:ok, <<vid::32-little, pc::32-little, rev::32-little, sn::32-little>>} <-
+           read(link, station, 0x08, 8) do
+      {:ok, %{vendor_id: vid, product_code: pc, revision: rev, serial_number: sn}}
+    end
+  end
+
+  @doc """
+  Read the standard mailbox parameters from SII EEPROM words 0x18–0x1B.
+
+  Returns `{:ok, mailbox_config}` where mailbox_config is a map with keys:
+  `:recv_offset`, `:recv_size`, `:send_offset`, `:send_size`.
+
+  These are the PREOP/SAFEOP/OP mailbox parameters used for CoE, FoE, and EoE.
+  See also the bootstrap mailbox at words 0x14–0x17 (BOOT state only).
+  """
+  @spec read_mailbox_config(pid(), non_neg_integer()) ::
+          {:ok, %{recv_offset: integer(), recv_size: integer(), send_offset: integer(), send_size: integer()}}
+          | {:error, atom()}
+  def read_mailbox_config(link, station) do
+    with {:ok, <<ro::16-little, rs::16-little, so::16-little, ss::16-little>>} <-
+           read(link, station, 0x18, 4) do
+      {:ok, %{recv_offset: ro, recv_size: rs, send_offset: so, send_size: ss}}
+    end
+  end
+
+  @type sm_entry :: {
+          index :: non_neg_integer(),
+          phys_start :: non_neg_integer(),
+          length :: non_neg_integer(),
+          ctrl :: non_neg_integer()
+        }
+
+  @doc """
+  Read SyncManager configurations from SII category 0x0029.
+
+  Returns `{:ok, entries}` where each entry is `{index, phys_start, length, ctrl}`.
+  Returns `{:ok, []}` if the slave has no SII SM category (uses ESC reset defaults).
+
+  Category 0x0029 entries are 8 bytes each — identical to the SM register layout.
+  This is the authoritative source for SM physical addresses, sizes, and ctrl bytes,
+  matching the `DefaultSize` and `ControlRegister` shown by `ethercat pdos`.
+  """
+  @spec read_sm_configs(pid(), non_neg_integer()) :: {:ok, [sm_entry()]} | {:error, atom()}
+  def read_sm_configs(link, station), do: find_sm_category(link, station, @category_start)
+
+  @doc """
   Read the valid SII contents by walking the category structure.
 
   Reads the fixed header (words 0x00–0x3F), then follows category
@@ -109,6 +164,39 @@ defmodule EtherCAT.Slave.SII do
   end
 
   # -- Read internals ---------------------------------------------------------
+
+  # Walk SII categories from @category_start to find type 0x0029 (SyncManager).
+  # Category header: [type::16-little, size::16-little] (size in WORDS = size*2 bytes of data)
+  defp find_sm_category(link, station, addr) do
+    case read(link, station, addr, 2) do
+      {:ok, <<0xFFFF::16-little, _::16>>} ->
+        {:ok, []}
+
+      {:ok, <<0x0029::16-little, size::16-little>>} ->
+        with {:ok, data} <- read(link, station, addr + 2, size) do
+          {:ok, parse_sm_entries(data, 0, [])}
+        end
+
+      {:ok, <<_type::16-little, size::16-little>>} ->
+        find_sm_category(link, station, addr + 2 + size)
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  # Each SM entry in category 0x0029: 8 bytes = phys_start (2B LE), length (2B LE),
+  # ctrl (1B), status (1B reserved), activate (1B), pdi_ctrl (1B reserved).
+  defp parse_sm_entries(<<>>, _idx, acc), do: Enum.reverse(acc)
+
+  defp parse_sm_entries(
+         <<phys::16-little, len::16-little, ctrl::8, _status::8, _activate::8, _pdi::8,
+           rest::binary>>,
+         idx,
+         acc
+       ) do
+    parse_sm_entries(rest, idx + 1, [{idx, phys, len, ctrl} | acc])
+  end
 
   # Walk category headers from word 0x40 to find the end of valid SII data.
   # Each category: [type::16-little, size::16-little, data::size*2 bytes]
