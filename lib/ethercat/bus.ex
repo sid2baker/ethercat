@@ -148,7 +148,7 @@ defmodule EtherCAT.Bus do
     Telemetry.span([:ethercat, :bus, :transact], meta, fn ->
       result =
         try do
-          :gen_statem.call(bus, msg, 150)
+          :gen_statem.call(bus, msg, 5_000)
         catch
           :exit, {:timeout, _} -> {:error, :timeout}
           :exit, reason -> {:error, reason}

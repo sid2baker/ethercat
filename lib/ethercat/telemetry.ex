@@ -35,6 +35,10 @@ defmodule EtherCAT.Telemetry do
         measurements: %{size: integer()}
         metadata:     %{transport: String.t(), reason: atom()}
 
+      [:ethercat, :bus, :frame, :ignored]
+        measurements: %{}
+        metadata:     %{transport: String.t()}
+
   ### Transaction queueing
 
       [:ethercat, :bus, :transact, :discarded]
@@ -112,6 +116,11 @@ defmodule EtherCAT.Telemetry do
   end
 
   @doc false
+  def frame_ignored(transport) do
+    execute([:ethercat, :bus, :frame, :ignored], %{}, %{transport: transport})
+  end
+
+  @doc false
   def transact_discarded(transport) do
     execute(
       [:ethercat, :bus, :transact, :discarded],
@@ -180,6 +189,7 @@ defmodule EtherCAT.Telemetry do
     [:ethercat, :bus, :frame, :sent],
     [:ethercat, :bus, :frame, :received],
     [:ethercat, :bus, :frame, :dropped],
+    [:ethercat, :bus, :frame, :ignored],
     [:ethercat, :bus, :transport, :down],
     [:ethercat, :bus, :transport, :reconnected]
   ]

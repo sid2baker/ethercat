@@ -36,6 +36,7 @@ defmodule EtherCAT.Bus.Redundant do
     :awaiting_callers,
     primary_result: nil,
     secondary_result: nil,
+    frame_timeout_ms: 25,
     pending: []
   ]
 
@@ -48,6 +49,8 @@ defmodule EtherCAT.Bus.Redundant do
     pri_opts = Keyword.put(opts, :interface, Keyword.fetch!(opts, :interface))
     sec_opts = Keyword.put(opts, :interface, Keyword.fetch!(opts, :backup_interface))
 
+    frame_timeout_ms = Keyword.get(opts, :frame_timeout_ms, 25)
+
     with {:ok, pri} <- transport_mod.open(pri_opts),
          {:ok, sec} <- transport_mod.open(sec_opts) do
       if iface = transport_mod.interface(pri),
@@ -57,7 +60,13 @@ defmodule EtherCAT.Bus.Redundant do
         do: VintageNet.subscribe(["interface", iface, "lower_up"])
 
       {:ok, :idle,
-       %__MODULE__{primary: pri, secondary: sec, transport_mod: transport_mod, idx: 0}}
+       %__MODULE__{
+         primary: pri,
+         secondary: sec,
+         transport_mod: transport_mod,
+         idx: 0,
+         frame_timeout_ms: frame_timeout_ms
+       }}
     else
       {:error, reason} -> {:stop, reason}
     end
@@ -305,6 +314,8 @@ defmodule EtherCAT.Bus.Redundant do
 
       {:ok, payload} ->
         size = byte_size(payload)
+        data.transport_mod.set_active_once(data.primary)
+        data.transport_mod.set_active_once(data.secondary)
         pri_res = data.transport_mod.send(data.primary, payload)
         sec_res = data.transport_mod.send(data.secondary, payload)
 
@@ -312,14 +323,11 @@ defmodule EtherCAT.Bus.Redundant do
           {{:ok, tx}, {:ok, tx2}} ->
             Telemetry.frame_sent(data.transport_mod.name(data.primary), :primary, size, tx)
             Telemetry.frame_sent(data.transport_mod.name(data.secondary), :secondary, size, tx2)
-            data.transport_mod.set_active_once(data.primary)
-            data.transport_mod.set_active_once(data.secondary)
             await(data, awaiting_callers, idx, :both)
 
           {{:ok, tx}, {:error, reason}} ->
             Telemetry.frame_sent(data.transport_mod.name(data.primary), :primary, size, tx)
             Telemetry.socket_down(data.transport_mod.name(data.secondary), reason)
-            data.transport_mod.set_active_once(data.primary)
 
             await(
               %{data | secondary: data.transport_mod.close(data.secondary)},
@@ -331,7 +339,6 @@ defmodule EtherCAT.Bus.Redundant do
           {{:error, reason}, {:ok, tx}} ->
             Telemetry.frame_sent(data.transport_mod.name(data.secondary), :secondary, size, tx)
             Telemetry.socket_down(data.transport_mod.name(data.primary), reason)
-            data.transport_mod.set_active_once(data.secondary)
 
             await(
               %{data | primary: data.transport_mod.close(data.primary)},
@@ -363,10 +370,11 @@ defmodule EtherCAT.Bus.Redundant do
         {:keep_state_and_data, [{:reply, from, err}]}
 
       {:ok, payload} ->
+        data.transport_mod.set_active_once(transport)
+
         case data.transport_mod.send(transport, payload) do
           {:ok, tx} ->
             Telemetry.frame_sent(data.transport_mod.name(transport), port, byte_size(payload), tx)
-            data.transport_mod.set_active_once(transport)
             mode = if port == :primary, do: :primary_only, else: :secondary_only
             await(data, awaiting_callers, idx, mode)
 
@@ -386,7 +394,8 @@ defmodule EtherCAT.Bus.Redundant do
         secondary_result: if(mode == :primary_only, do: [], else: nil)
     }
 
-    {:next_state, {:awaiting, mode}, new_data, [{:state_timeout, 25, :timeout}]}
+    {:next_state, {:awaiting, mode}, new_data,
+     [{:state_timeout, data.frame_timeout_ms, :timeout}]}
   end
 
   # -- receiving --------------------------------------------------------------
@@ -506,6 +515,8 @@ defmodule EtherCAT.Bus.Redundant do
 
     cond do
       pri_up and sec_up ->
+        data.transport_mod.set_active_once(data.primary)
+        data.transport_mod.set_active_once(data.secondary)
         pri_res = data.transport_mod.send(data.primary, payload)
         sec_res = data.transport_mod.send(data.secondary, payload)
 
@@ -521,11 +532,12 @@ defmodule EtherCAT.Bus.Redundant do
         )
 
       pri_up ->
+        data.transport_mod.set_active_once(data.primary)
+
         case data.transport_mod.send(data.primary, payload) do
           {:ok, tx} ->
             Telemetry.frame_sent(data.transport_mod.name(data.primary), :primary, size, tx)
             Telemetry.batch_sent(data.transport_mod.name(data.primary), length(awaiting_callers))
-            data.transport_mod.set_active_once(data.primary)
 
             new_data = %{
               data
@@ -536,7 +548,8 @@ defmodule EtherCAT.Bus.Redundant do
                 secondary_result: []
             }
 
-            {:next_state, {:awaiting, :primary_only}, new_data, [{:state_timeout, 25, :timeout}]}
+            {:next_state, {:awaiting, :primary_only}, new_data,
+             [{:state_timeout, data.frame_timeout_ms, :timeout}]}
 
           {:error, reason} ->
             Telemetry.socket_down(data.transport_mod.name(data.primary), reason)
@@ -546,6 +559,8 @@ defmodule EtherCAT.Bus.Redundant do
         end
 
       sec_up ->
+        data.transport_mod.set_active_once(data.secondary)
+
         case data.transport_mod.send(data.secondary, payload) do
           {:ok, tx} ->
             Telemetry.frame_sent(data.transport_mod.name(data.secondary), :secondary, size, tx)
@@ -554,8 +569,6 @@ defmodule EtherCAT.Bus.Redundant do
               data.transport_mod.name(data.secondary),
               length(awaiting_callers)
             )
-
-            data.transport_mod.set_active_once(data.secondary)
 
             new_data = %{
               data
@@ -567,7 +580,7 @@ defmodule EtherCAT.Bus.Redundant do
             }
 
             {:next_state, {:awaiting, :secondary_only}, new_data,
-             [{:state_timeout, 25, :timeout}]}
+             [{:state_timeout, data.frame_timeout_ms, :timeout}]}
 
           {:error, reason} ->
             Telemetry.socket_down(data.transport_mod.name(data.secondary), reason)
@@ -598,8 +611,6 @@ defmodule EtherCAT.Bus.Redundant do
         Telemetry.frame_sent(data.transport_mod.name(data.primary), :primary, size, tx)
         Telemetry.frame_sent(data.transport_mod.name(data.secondary), :secondary, size, tx2)
         Telemetry.batch_sent(data.transport_mod.name(data.primary), length(awaiting_callers))
-        data.transport_mod.set_active_once(data.primary)
-        data.transport_mod.set_active_once(data.secondary)
 
         new_data = %{
           data
@@ -610,12 +621,12 @@ defmodule EtherCAT.Bus.Redundant do
             secondary_result: nil
         }
 
-        {:next_state, {:awaiting, :both}, new_data, [{:state_timeout, 25, :timeout}]}
+        {:next_state, {:awaiting, :both}, new_data,
+         [{:state_timeout, data.frame_timeout_ms, :timeout}]}
 
       {{:ok, tx}, {:error, reason}} ->
         Telemetry.frame_sent(data.transport_mod.name(data.primary), :primary, size, tx)
         Telemetry.socket_down(data.transport_mod.name(data.secondary), reason)
-        data.transport_mod.set_active_once(data.primary)
 
         new_data = %{
           data
@@ -627,12 +638,12 @@ defmodule EtherCAT.Bus.Redundant do
             secondary_result: []
         }
 
-        {:next_state, {:awaiting, :primary_only}, new_data, [{:state_timeout, 25, :timeout}]}
+        {:next_state, {:awaiting, :primary_only}, new_data,
+         [{:state_timeout, data.frame_timeout_ms, :timeout}]}
 
       {{:error, reason}, {:ok, tx}} ->
         Telemetry.frame_sent(data.transport_mod.name(data.secondary), :secondary, size, tx)
         Telemetry.socket_down(data.transport_mod.name(data.primary), reason)
-        data.transport_mod.set_active_once(data.secondary)
 
         new_data = %{
           data
@@ -644,7 +655,8 @@ defmodule EtherCAT.Bus.Redundant do
             primary_result: []
         }
 
-        {:next_state, {:awaiting, :secondary_only}, new_data, [{:state_timeout, 25, :timeout}]}
+        {:next_state, {:awaiting, :secondary_only}, new_data,
+         [{:state_timeout, data.frame_timeout_ms, :timeout}]}
 
       {{:error, r1}, {:error, r2}} ->
         Telemetry.socket_down(data.transport_mod.name(data.primary), r1)

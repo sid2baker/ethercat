@@ -40,6 +40,7 @@ defmodule EtherCAT.Bus.Transport.RawSocket do
          {:ok, raw} <- :socket.open(@af_packet, :raw, {:raw, @ethertype}),
          :ok <- :socket.bind(raw, sockaddr_ll(idx)) do
       enable_rx_timestamping(raw)
+      enable_busy_poll(raw)
 
       {:ok,
        %__MODULE__{
@@ -215,6 +216,16 @@ defmodule EtherCAT.Bus.Transport.RawSocket do
   # Flags: SOF_TIMESTAMPING_RX_SOFTWARE(0x08) | SOF_TIMESTAMPING_SOFTWARE(0x10) = 0x18
   defp enable_rx_timestamping(raw) do
     :socket.setopt(raw, {1, 37}, <<0x18::native-32>>)
+  catch
+    _, _ -> :ok
+  end
+
+  # SOL_SOCKET=1, SO_BUSY_POLL=46 — spin-poll the socket for up to 100 µs before
+  # sleeping on interrupt. Eliminates coalescing latency on NICs that support it
+  # (e.g. Intel). Silently ignored on NICs without NAPI busy-poll support (e.g.
+  # bcmgenet on RPi 4) — harmless either way.
+  defp enable_busy_poll(raw) do
+    :socket.setopt(raw, {1, 46}, <<100::native-32>>)
   catch
     _, _ -> :ok
   end

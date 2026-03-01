@@ -234,7 +234,11 @@ defmodule EtherCAT.Slave do
     run_sdo_config(data)
     Logger.debug("[Slave #{data.name}] preop: registering PDOs/FMMUs")
     new_data = register_pdos_and_fmmus(data)
-    Logger.debug("[Slave #{data.name}] preop: ready (#{map_size(new_data.pdo_registrations)} PDO(s) registered)")
+
+    Logger.debug(
+      "[Slave #{data.name}] preop: ready (#{map_size(new_data.pdo_registrations)} PDO(s) registered)"
+    )
+
     send(EtherCAT.Master, {:slave_ready, data.name, :preop})
     {:keep_state, new_data}
   end
@@ -393,16 +397,20 @@ defmodule EtherCAT.Slave do
   # asynchronously in the :preop enter handler — slaves init concurrently.
   defp do_auto_advance(data) do
     t0 = System.monotonic_time(:millisecond)
-    Logger.debug("[Slave #{data.name}] init: reading SII (station=0x#{Integer.to_string(data.station, 16)})")
+
+    Logger.debug(
+      "[Slave #{data.name}] init: reading SII (station=0x#{Integer.to_string(data.station, 16)})"
+    )
 
     case read_sii(data.link, data.station) do
       {:ok, identity, mailbox_config, sm_configs, pdo_configs} ->
         sii_ms = System.monotonic_time(:millisecond) - t0
+
         Logger.debug(
           "[Slave #{data.name}] SII ok in #{sii_ms}ms — " <>
-          "vendor=0x#{Integer.to_string(identity.vendor_id, 16)} " <>
-          "product=0x#{Integer.to_string(identity.product_code, 16)} " <>
-          "mbx_recv=#{mailbox_config.recv_size} pdos=#{length(pdo_configs)}"
+            "vendor=0x#{Integer.to_string(identity.vendor_id, 16)} " <>
+            "product=0x#{Integer.to_string(identity.product_code, 16)} " <>
+            "mbx_recv=#{mailbox_config.recv_size} pdos=#{length(pdo_configs)}"
         )
 
         new_data = %{
@@ -419,6 +427,7 @@ defmodule EtherCAT.Slave do
         setup_mailbox_sms(new_data)
 
         Logger.debug("[Slave #{data.name}] init: transitioning to PREOP")
+
         case do_transition(new_data, :preop) do
           {:ok, new_data2} ->
             preop_ms = System.monotonic_time(:millisecond) - t0

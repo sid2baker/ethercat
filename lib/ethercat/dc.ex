@@ -187,13 +187,19 @@ defmodule EtherCAT.DC do
           end
 
         p0 =
-          case Bus.transaction_queue(link, &Transaction.fprd(&1, station, Registers.dc_recv_time(0))) do
+          case Bus.transaction_queue(
+                 link,
+                 &Transaction.fprd(&1, station, Registers.dc_recv_time(0))
+               ) do
             {:ok, [%{data: <<t::32-little>>, wkc: 1}]} -> t
             _ -> nil
           end
 
         p1 =
-          case Bus.transaction_queue(link, &Transaction.fprd(&1, station, Registers.dc_recv_time(1))) do
+          case Bus.transaction_queue(
+                 link,
+                 &Transaction.fprd(&1, station, Registers.dc_recv_time(1))
+               ) do
             {:ok, [%{data: <<t::32-little>>, wkc: 1}]} -> t
             _ -> nil
           end

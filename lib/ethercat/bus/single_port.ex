@@ -44,6 +44,7 @@ defmodule EtherCAT.Bus.SinglePort do
     :idx,
     :awaiting_callers,
     :tx_at,
+    frame_timeout_ms: 25,
     pending: []
   ]
 
@@ -54,12 +55,20 @@ defmodule EtherCAT.Bus.SinglePort do
   def init(opts) do
     transport_mod = Keyword.fetch!(opts, :transport_mod)
 
+    frame_timeout_ms = Keyword.get(opts, :frame_timeout_ms, 25)
+
     with {:ok, transport} <- transport_mod.open(opts),
          :ok <- transport_mod.warmup(transport) do
       iface = transport_mod.interface(transport)
       if iface, do: VintageNet.subscribe(["interface", iface, "lower_up"])
 
-      {:ok, :idle, %__MODULE__{transport: transport, transport_mod: transport_mod, idx: 0}}
+      {:ok, :idle,
+       %__MODULE__{
+         transport: transport,
+         transport_mod: transport_mod,
+         idx: 0,
+         frame_timeout_ms: frame_timeout_ms
+       }}
     else
       {:error, reason} -> {:stop, reason}
     end
@@ -155,6 +164,7 @@ defmodule EtherCAT.Bus.SinglePort do
         handle_response(ecat_payload, data)
 
       :ignore ->
+        Telemetry.frame_ignored(data.transport_mod.name(data.transport))
         :keep_state_and_data
     end
   end
@@ -305,6 +315,8 @@ defmodule EtherCAT.Bus.SinglePort do
 
     case Frame.encode(all_dgs) do
       {:ok, payload} ->
+        data.transport_mod.set_active_once(data.transport)
+
         case data.transport_mod.send(data.transport, payload) do
           {:ok, tx_at} ->
             Telemetry.frame_sent(
@@ -315,7 +327,6 @@ defmodule EtherCAT.Bus.SinglePort do
             )
 
             Telemetry.batch_sent(data.transport_mod.name(data.transport), length(batch))
-            data.transport_mod.set_active_once(data.transport)
 
             {:next_state, :awaiting,
              %{
@@ -324,7 +335,7 @@ defmodule EtherCAT.Bus.SinglePort do
                  awaiting_callers: awaiting_callers,
                  pending: overflow,
                  tx_at: tx_at
-             }, [{:state_timeout, 25, :timeout}]}
+             }, [{:state_timeout, data.frame_timeout_ms, :timeout}]}
 
           {:error, reason} ->
             Telemetry.socket_down(data.transport_mod.name(data.transport), reason)
@@ -357,26 +368,31 @@ defmodule EtherCAT.Bus.SinglePort do
     {stamped, new_idx} = stamp_indices(datagrams, data.idx)
     awaiting_callers = [{from, Enum.map(stamped, & &1.idx)}]
 
-    with {:ok, payload} <- Frame.encode(stamped),
-         {:ok, tx_at} <- data.transport_mod.send(data.transport, payload) do
-      Telemetry.frame_sent(
-        data.transport_mod.name(data.transport),
-        :primary,
-        byte_size(payload),
-        tx_at
-      )
+    case Frame.encode(stamped) do
+      {:error, :frame_too_large} ->
+        {:keep_state_and_data, [{:reply, from, {:error, :frame_too_large}}]}
 
-      data.transport_mod.set_active_once(data.transport)
+      {:ok, payload} ->
+        data.transport_mod.set_active_once(data.transport)
 
-      new_data = %{data | idx: new_idx, awaiting_callers: awaiting_callers, tx_at: tx_at}
-      {:next_state, :awaiting, new_data, [{:state_timeout, 25, :timeout}]}
-    else
-      {:error, :frame_too_large} = err ->
-        {:keep_state_and_data, [{:reply, from, err}]}
+        case data.transport_mod.send(data.transport, payload) do
+          {:ok, tx_at} ->
+            Telemetry.frame_sent(
+              data.transport_mod.name(data.transport),
+              :primary,
+              byte_size(payload),
+              tx_at
+            )
 
-      {:error, reason} ->
-        Telemetry.socket_down(data.transport_mod.name(data.transport), reason)
-        {:next_state, :down, data, [{:reply, from, {:error, :down}}]}
+            new_data = %{data | idx: new_idx, awaiting_callers: awaiting_callers, tx_at: tx_at}
+
+            {:next_state, :awaiting, new_data,
+             [{:state_timeout, data.frame_timeout_ms, :timeout}]}
+
+          {:error, reason} ->
+            Telemetry.socket_down(data.transport_mod.name(data.transport), reason)
+            {:next_state, :down, data, [{:reply, from, {:error, :down}}]}
+        end
     end
   end
 

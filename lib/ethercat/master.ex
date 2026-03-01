@@ -358,7 +358,10 @@ defmodule EtherCAT.Master do
     Enum.each(0..(count - 1), fn pos ->
       station = base + pos
 
-      case Bus.transaction_queue(link, &Transaction.apwr(&1, pos, Registers.station_address(station))) do
+      case Bus.transaction_queue(
+             link,
+             &Transaction.apwr(&1, pos, Registers.station_address(station))
+           ) do
         {:ok, [%{wkc: 1}]} ->
           :ok
 
