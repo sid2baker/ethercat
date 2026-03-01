@@ -102,7 +102,7 @@ defmodule EtherCAT.Link do
     Telemetry.span([:ethercat, :link, :transact], meta, fn ->
       result =
         try do
-          :gen_statem.call(link, {:transact, datagrams}, 200)
+          :gen_statem.call(link, {:transact, datagrams}, 1_000)
         catch
           :exit, {:timeout, _} -> {:error, :timeout}
           :exit, reason -> {:error, reason}

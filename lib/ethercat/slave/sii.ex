@@ -265,7 +265,13 @@ defmodule EtherCAT.Slave.SII do
          dir,
          acc
        ) do
-    <<entry_data::binary-size(n * 8), tail::binary>> = rest
+    # Guard against truncated SII data: some slaves (e.g. EL1809) have a category
+    # whose `size` field does not cover all declared entry bytes.  Take only the
+    # complete 8-byte entries that are actually present rather than hard-matching.
+    complete = min(n, div(byte_size(rest), 8))
+    entry_bytes = complete * 8
+    entry_data = binary_part(rest, 0, entry_bytes)
+    tail = binary_part(rest, entry_bytes, byte_size(rest) - entry_bytes)
     bits = sum_entry_bits(entry_data, 0)
     pdo = %{index: pdo_idx, direction: dir, sm_index: sm_idx, bit_size: bits, bit_offset: 0}
     parse_pdo_category(tail, dir, [pdo | acc])

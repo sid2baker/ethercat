@@ -69,15 +69,66 @@ defmodule EtherCAT.Link.Socket do
   @doc """
   Arm the socket for the next `$socket` select message.
 
+  If a stale frame is already in the buffer (e.g. a late response from a
+  previous timed-out transaction), it is drained recursively until the buffer
+  is empty and a select is registered. This prevents stale frames from
+  shadowing the next response.
+
   Must use `recvmsg` (not `recv`) to match `recv/1` — the select
   notification is tied to the specific recv variant that registered it.
   """
   @spec recv_async(t()) :: :ok
-  def recv_async(%__MODULE__{raw: raw}) do
+  def recv_async(%__MODULE__{raw: raw} = sock) do
     case :socket.recvmsg(raw, 0, 0, :nowait) do
       {:select, _} -> :ok
-      {:ok, _} -> :ok
+      {:ok, _} -> recv_async(sock)
       {:error, _} -> :ok
+    end
+  end
+
+  @doc "Drain all frames currently in the socket buffer; cancel any lingering select."
+  @spec drain(t()) :: :ok
+  def drain(%__MODULE__{raw: raw} = sock) do
+    case :socket.recvmsg(raw, 0, 0, :nowait) do
+      {:ok, _} -> drain(sock)
+      {:select, si} -> :socket.cancel(raw, si)
+      _ -> :ok
+    end
+  end
+
+  @doc """
+  Warm up the NIC's transmit path by sending one dummy EtherCAT frame and
+  draining the response.
+
+  On some NICs (e.g. bcmgenet on Raspberry Pi 4) the very first `sendto` call
+  after `open/1` takes ~105 ms due to DMA descriptor initialization. Calling
+  `warmup/1` right after `open/1` pays that cost eagerly so that real
+  transactions see sub-millisecond latency from the start.
+  """
+  @spec warmup(t()) :: :ok | {:error, term()}
+  def warmup(%__MODULE__{} = sock) do
+    # Minimum-size Ethernet frame with EtherCAT ethertype and zeroed payload.
+    # Slaves will not recognize this as a valid EtherCAT datagram, so no WKC
+    # update occurs — it's a NIC TX-path health check and cold-start probe.
+    src = sock.src_mac
+
+    frame =
+      <<0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, src::binary, 0x88, 0xA4>> <>
+        :binary.copy(<<0>>, 46)
+
+    case __MODULE__.send(sock, frame) do
+      {:ok, _tx_at} ->
+        # Sleep 150 ms to absorb bcmgenet cold-start latency.
+        # Do NOT drain here — calling :socket.cancel on an empty buffer corrupts
+        # the socket's internal select state on kernel 6.12 / bcmgenet, causing
+        # subsequent recvmsg(:nowait) calls to return {:error, …} instead of
+        # {:select, si}.  The warmup response simply sits in the buffer until
+        # recv_async drains it as part of the first real transaction.
+        :timer.sleep(150)
+        :ok
+
+      {:error, _} = err ->
+        err
     end
   end
 

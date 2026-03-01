@@ -385,6 +385,9 @@ defmodule EtherCAT.Slave do
   # -- Auto-advance helper (called from gen_statem init/1 and retry handler) -
 
   # Returns a gen_statem init tuple: {:ok, state, data} or {:ok, state, data, actions}.
+  # Reads SII EEPROM, arms mailbox SMs, and requests PREOP from the ESC.
+  # Full PREOP setup (SDO config, FMMU registration, :slave_ready) runs
+  # asynchronously in the :preop enter handler — slaves init concurrently.
   defp do_auto_advance(data) do
     case read_sii(data.link, data.station) do
       {:ok, identity, mailbox_config, sm_configs, pdo_configs} ->

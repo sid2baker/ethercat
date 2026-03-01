@@ -13,7 +13,6 @@ defmodule EtherCAT.DC do
   4. Calculate propagation delays and write to each slave.
   5. Write system time offset to align each slave to master time.
   6. Reset PLL filters (write speed counter start).
-  7. Pre-compensate static drift with 1,000 ARMW frames.
 
   ## Drift maintenance
 
@@ -34,12 +33,6 @@ defmodule EtherCAT.DC do
 
   # ns between Unix epoch (1970) and EtherCAT epoch (2000-01-01 00:00:00)
   @ethercat_epoch_offset_ns 946_684_800_000_000_000
-
-  # Number of ARMW frames sent during static pre-compensation.
-  # Each frame is a sequential Link.transaction call (~BEAM scheduling overhead),
-  # so 1_000 is a practical ceiling. The ESC PLL filter converges any remaining
-  # drift within the first second of cyclic ARMW maintenance.
-  @precomp_frames 1_000
 
   # -- Public API ------------------------------------------------------------
 
@@ -125,11 +118,6 @@ defmodule EtherCAT.DC do
     period_ms = Keyword.get(opts, :period_ms, 10)
 
     data = %{link: link, ref_station: ref_station, period_ms: period_ms, fail_count: 0}
-
-    # Pre-compensation runs in this process so it doesn't block Master
-    # (and therefore doesn't block slave SII reads running concurrently).
-    precompensate(link, ref_station)
-
     {:ok, :running, data}
   end
 
@@ -292,16 +280,6 @@ defmodule EtherCAT.DC do
         end
       end
     end)
-  end
-
-  defp precompensate(link, ref_station) do
-    Logger.info("[DC] pre-compensating drift (#{@precomp_frames} frames)...")
-
-    for _ <- 1..@precomp_frames do
-      Link.transaction(link, &Transaction.armw(&1, ref_station, Registers.dc_system_time()))
-    end
-
-    Logger.info("[DC] pre-compensation done")
   end
 
   # Thin wrapper — ignore result (init writes may get no wkc if slaves not yet ready)

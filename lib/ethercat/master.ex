@@ -15,19 +15,16 @@ defmodule EtherCAT.Master do
 
   ## Example
 
-      EtherCAT.Master.start(
+      EtherCAT.start(
         interface: "eth0",
+        domains: [%EtherCAT.Domain.Config{id: :main, period: 1}],
         slaves: [
           nil,
-          [name: :sensor, driver: MyApp.EL1809, config: %{},
-           pdos: [channels: :fast]],
-          [name: :valve,  driver: MyApp.EL2809, config: %{},
-           pdos: [outputs: :fast]]
-        ],
-        domains: [
-          [id: :fast, period: 1]
+          %EtherCAT.Slave.Config{name: :sensor, driver: MyApp.EL1809, domain: :main},
+          %EtherCAT.Slave.Config{name: :valve,  driver: MyApp.EL2809, domain: :main}
         ]
       )
+      :ok = EtherCAT.await_running()
 
   Station addresses are assigned from list position: `base_station + index`.
   `nil` entries get a station address but no Slave gen_statem is started.
@@ -54,6 +51,8 @@ defmodule EtherCAT.Master do
     :link_pid,
     :link_ref,
     :dc_pid,
+    # station address of the DC reference clock slave (nil if no DC)
+    :dc_ref_station,
     :slave_config,
     :domain_config,
     :dc_cycle_ns,
@@ -237,16 +236,8 @@ defmodule EtherCAT.Master do
     {:next_state, :idle, %__MODULE__{}, [{:reply, from, :ok}]}
   end
 
-  def handle_event({:call, from}, :state, :scanning, _data) do
-    {:keep_state_and_data, [{:reply, from, :scanning}]}
-  end
-
   def handle_event({:call, from}, :await_running, :scanning, data) do
     {:keep_state, %{data | await_callers: [from | data.await_callers]}}
-  end
-
-  def handle_event({:call, from}, _event, :scanning, _data) do
-    {:keep_state_and_data, [{:reply, from, {:error, :scanning}}]}
   end
 
   # :configuring -------------------------------------------------------------
@@ -283,24 +274,8 @@ defmodule EtherCAT.Master do
     {:next_state, :idle, %__MODULE__{}, [{:reply, from, :ok}]}
   end
 
-  def handle_event({:call, from}, :state, :configuring, _data) do
-    {:keep_state_and_data, [{:reply, from, :configuring}]}
-  end
-
-  def handle_event({:call, from}, :slaves, :configuring, data) do
-    {:keep_state_and_data, [{:reply, from, data.slaves}]}
-  end
-
-  def handle_event({:call, from}, :link, :configuring, data) do
-    {:keep_state_and_data, [{:reply, from, data.link_pid}]}
-  end
-
   def handle_event({:call, from}, :await_running, :configuring, data) do
     {:keep_state, %{data | await_callers: [from | data.await_callers]}}
-  end
-
-  def handle_event({:call, from}, _event, :configuring, _data) do
-    {:keep_state_and_data, [{:reply, from, {:error, :configuring}}]}
   end
 
   # :running -----------------------------------------------------------------
@@ -316,27 +291,29 @@ defmodule EtherCAT.Master do
     {:next_state, :idle, %__MODULE__{}, [{:reply, from, :ok}]}
   end
 
-  def handle_event({:call, from}, :state, :running, _data) do
-    {:keep_state_and_data, [{:reply, from, :running}]}
-  end
-
   def handle_event({:call, from}, :await_running, :running, _data) do
     {:keep_state_and_data, [{:reply, from, :ok}]}
   end
 
-  def handle_event({:call, from}, :slaves, :running, data) do
+  # -- Shared handlers (all non-idle states) ---------------------------------
+
+  # Query handlers — work in all active states
+  def handle_event({:call, from}, :state, state, _data) do
+    {:keep_state_and_data, [{:reply, from, state}]}
+  end
+
+  def handle_event({:call, from}, :slaves, _state, data) do
     {:keep_state_and_data, [{:reply, from, data.slaves}]}
   end
 
-  def handle_event({:call, from}, :link, :running, data) do
+  def handle_event({:call, from}, :link, _state, data) do
     {:keep_state_and_data, [{:reply, from, data.link_pid}]}
   end
 
-  def handle_event({:call, from}, _event, :running, _data) do
-    {:keep_state_and_data, [{:reply, from, {:error, :invalid_request}}]}
+  # Catch-all for unrecognized calls in any active state
+  def handle_event({:call, from}, _event, state, _data) do
+    {:keep_state_and_data, [{:reply, from, {:error, state}}]}
   end
-
-  # -- Shared handlers (all non-idle states) ---------------------------------
 
   # Link crashed — clean up and return to idle
   def handle_event(:info, {:DOWN, ref, :process, _pid, reason}, _state, data)
@@ -380,7 +357,17 @@ defmodule EtherCAT.Master do
   defp assign_stations(link, base, count) do
     Enum.each(0..(count - 1), fn pos ->
       station = base + pos
-      Link.transaction(link, &Transaction.apwr(&1, pos, Registers.station_address(station)))
+
+      case Link.transaction(link, &Transaction.apwr(&1, pos, Registers.station_address(station))) do
+        {:ok, [%{wkc: 1}]} ->
+          :ok
+
+        {:ok, [%{wkc: wkc}]} ->
+          Logger.warning("[Master] station assign pos=#{pos} wkc=#{wkc} (expected 1)")
+
+        _ ->
+          :ok
+      end
     end)
   end
 
@@ -437,8 +424,7 @@ defmodule EtherCAT.Master do
   # slaves_list: [{name, station, pid}] for named slaves
   # named_slave_names: [name] — names to track in pending_preop
   defp start_slaves(link, base, bus_count, slave_config, extra_opts) do
-    dc_pid = Keyword.get(extra_opts, :dc_pid)
-    dc_cycle_ns = Keyword.get(extra_opts, :dc_cycle_ns, 1_000_000)
+    dc_cycle_ns = Keyword.get(extra_opts, :dc_cycle_ns)
 
     # Pad or trim config to match bus_count
     config_padded =
@@ -464,8 +450,6 @@ defmodule EtherCAT.Master do
             pdos = Keyword.get(slave_opts, :pdos, [])
             domain = Keyword.get(slave_opts, :domain)
 
-            slave_dc_cycle_ns = if dc_pid != nil, do: dc_cycle_ns, else: nil
-
             opts = [
               link: link,
               station: station,
@@ -474,7 +458,7 @@ defmodule EtherCAT.Master do
               config: config,
               pdos: pdos,
               domain: domain,
-              dc_cycle_ns: slave_dc_cycle_ns
+              dc_cycle_ns: dc_cycle_ns
             ]
 
             case DynamicSupervisor.start_child(EtherCAT.SlaveSupervisor, {Slave, opts}) do
@@ -511,22 +495,14 @@ defmodule EtherCAT.Master do
     assign_stations(link, data.base_station, count)
     slave_stations = read_dl_status_all(link, data.base_station, count)
 
-    dc_pid =
+    # DC hardware init (delays, offsets, PLL filter reset) before INIT→PREOP.
+    # The DC gen_statem (cyclic ARMW) is started later in do_activate, after
+    # all slaves reach PREOP, so its ticks don't compete with slave init.
+    dc_ref_station =
       case DC.init(link, slave_stations) do
         {:ok, ref_station} ->
           Logger.info("[Master] DC initialized, ref=0x#{Integer.to_string(ref_station, 16)}")
-
-          case DynamicSupervisor.start_child(
-                 EtherCAT.SessionSupervisor,
-                 {DC, link: link, ref_station: ref_station, period_ms: 10}
-               ) do
-            {:ok, pid} ->
-              pid
-
-            {:error, reason} ->
-              Logger.warning("[Master] DC gen_statem failed to start: #{inspect(reason)}")
-              nil
-          end
+          ref_station
 
         {:error, reason} ->
           Logger.warning("[Master] DC init failed (#{inspect(reason)}) — running without DC")
@@ -539,16 +515,37 @@ defmodule EtherCAT.Master do
 
     {:ok, slaves, named_slaves} =
       start_slaves(link, data.base_station, count, data.slave_config || [],
-        dc_pid: dc_pid,
-        dc_cycle_ns: data.dc_cycle_ns
+        dc_cycle_ns: if(dc_ref_station, do: data.dc_cycle_ns, else: nil)
       )
 
-    %{data | dc_pid: dc_pid, slaves: slaves, pending_preop: MapSet.new(named_slaves)}
+    %{
+      data
+      | dc_ref_station: dc_ref_station,
+        slaves: slaves,
+        pending_preop: MapSet.new(named_slaves)
+    }
   end
 
   # Runs synchronously in the scan/configuring handler before transitioning to :running.
   defp do_activate(data) do
-    Logger.info("[Master] activating — starting domains and advancing slaves to :op")
+    Logger.info("[Master] activating — starting DC, domains, and advancing slaves to :op")
+
+    # Start DC cyclic ARMW now — all slaves are in PREOP so the socket is clean
+    # and DC ticks won't compete with slave state transitions.
+    dc_pid =
+      if data.dc_ref_station do
+        case DynamicSupervisor.start_child(
+               EtherCAT.SessionSupervisor,
+               {DC, link: data.link_pid, ref_station: data.dc_ref_station, period_ms: 10}
+             ) do
+          {:ok, pid} ->
+            pid
+
+          {:error, reason} ->
+            Logger.warning("[Master] DC gen_statem failed to start: #{inspect(reason)}")
+            nil
+        end
+      end
 
     domain_ids = get_domain_ids(data.domain_config || [])
 
@@ -584,7 +581,7 @@ defmodule EtherCAT.Master do
       end
     end)
 
-    data
+    %{data | dc_pid: dc_pid}
   end
 
   # -- Session teardown ------------------------------------------------------

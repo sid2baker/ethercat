@@ -29,12 +29,11 @@ defmodule EtherCAT.Link.SinglePort do
     interface = Keyword.fetch!(opts, :interface)
     VintageNet.subscribe(["interface", interface, "lower_up"])
 
-    case Socket.open(interface) do
-      {:ok, sock} ->
-        {:ok, :idle, %__MODULE__{sock: sock, idx: 0}}
-
-      {:error, reason} ->
-        {:stop, reason}
+    with {:ok, sock} <- Socket.open(interface),
+         :ok <- Socket.warmup(sock) do
+      {:ok, :idle, %__MODULE__{sock: sock, idx: 0}}
+    else
+      {:error, reason} -> {:stop, reason}
     end
   end
 
@@ -134,6 +133,7 @@ defmodule EtherCAT.Link.SinglePort do
   end
 
   def handle_event(:state_timeout, :timeout, :awaiting, data) do
+    Socket.drain(data.sock)
     reply_and_idle(data, {:error, :timeout})
   end
 
@@ -156,8 +156,15 @@ defmodule EtherCAT.Link.SinglePort do
     if carrier_up?(data.sock.interface) do
       case Socket.open(data.sock.interface) do
         {:ok, sock} ->
-          Telemetry.socket_reconnected(sock.interface)
-          {:next_state, :idle, %{data | sock: sock}}
+          case Socket.warmup(sock) do
+            :ok ->
+              Telemetry.socket_reconnected(sock.interface)
+              {:next_state, :idle, %{data | sock: sock}}
+
+            {:error, _} ->
+              Socket.close(sock)
+              {:keep_state_and_data, [{:state_timeout, @debounce_interval, :reconnect}]}
+          end
 
         {:error, _} ->
           # Socket open failed even though carrier is up — retry after debounce

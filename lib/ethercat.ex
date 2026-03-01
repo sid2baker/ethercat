@@ -31,6 +31,10 @@ defmodule EtherCAT do
 
   alias EtherCAT.{Master, Slave}
 
+  @doc "Return the link pid for direct frame transactions."
+  @spec link() :: pid()
+  def link, do: Master.link()
+
   @doc """
   Start the master: open the interface, scan for slaves, and begin
   self-driving configuration.
