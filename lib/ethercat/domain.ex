@@ -51,8 +51,8 @@ defmodule EtherCAT.Domain do
 
   require Logger
 
-  alias EtherCAT.Link
-  alias EtherCAT.Link.Transaction
+  alias EtherCAT.Bus
+  alias EtherCAT.Bus.Transaction
 
   @type domain_id :: atom()
   @type pdo_key :: {slave_name :: atom(), pdo_name :: atom()}
@@ -287,7 +287,7 @@ defmodule EtherCAT.Domain do
     t0 = System.monotonic_time(:microsecond)
     image = build_frame(data.image_size, data.output_patches, data.table)
 
-    result = Link.transaction(data.link, &Transaction.lrw(&1, {data.logical_base, image}))
+    result = Bus.transaction(data.link, &Transaction.lrw(&1, {data.logical_base, image}))
     next_at = data.next_cycle_at + data.period_us
 
     now_after = System.monotonic_time(:microsecond)

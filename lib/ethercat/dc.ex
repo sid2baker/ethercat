@@ -27,8 +27,8 @@ defmodule EtherCAT.DC do
 
   require Logger
 
-  alias EtherCAT.Link
-  alias EtherCAT.Link.Transaction
+  alias EtherCAT.Bus
+  alias EtherCAT.Bus.Transaction
   alias EtherCAT.Slave.Registers
 
   # ns between Unix epoch (1970) and EtherCAT epoch (2000-01-01 00:00:00)
@@ -47,7 +47,7 @@ defmodule EtherCAT.DC do
   Returns `{:ok, ref_station}` where `ref_station` is the station address of
   the reference clock slave, or `{:error, reason}`.
   """
-  @spec init(Link.server(), [{non_neg_integer(), binary()}]) ::
+  @spec init(Bus.server(), [{non_neg_integer(), binary()}]) ::
           {:ok, non_neg_integer()} | {:error, term()}
   def init(link, slave_stations) when slave_stations != [] do
     stations = Enum.map(slave_stations, &elem(&1, 0))
@@ -130,7 +130,7 @@ defmodule EtherCAT.DC do
 
   def handle_event(:state_timeout, :tick, :running, data) do
     result =
-      Link.transaction(
+      Bus.transaction(
         data.link,
         &Transaction.armw(&1, data.ref_station, Registers.dc_system_time())
       )
@@ -168,7 +168,7 @@ defmodule EtherCAT.DC do
   # -- Init helpers ----------------------------------------------------------
 
   defp trigger_recv_latch(link) do
-    case Link.transaction(link, &Transaction.bwr(&1, Registers.dc_recv_time_latch())) do
+    case Bus.transaction(link, &Transaction.bwr(&1, Registers.dc_recv_time_latch())) do
       {:ok, _} -> :ok
       {:error, _} = err -> err
     end
@@ -178,7 +178,7 @@ defmodule EtherCAT.DC do
     results =
       Enum.map(stations, fn station ->
         ecat =
-          case Link.transaction(
+          case Bus.transaction(
                  link,
                  &Transaction.fprd(&1, station, Registers.dc_recv_time_ecat())
                ) do
@@ -187,13 +187,13 @@ defmodule EtherCAT.DC do
           end
 
         p0 =
-          case Link.transaction(link, &Transaction.fprd(&1, station, Registers.dc_recv_time(0))) do
+          case Bus.transaction(link, &Transaction.fprd(&1, station, Registers.dc_recv_time(0))) do
             {:ok, [%{data: <<t::32-little>>, wkc: 1}]} -> t
             _ -> nil
           end
 
         p1 =
-          case Link.transaction(link, &Transaction.fprd(&1, station, Registers.dc_recv_time(1))) do
+          case Bus.transaction(link, &Transaction.fprd(&1, station, Registers.dc_recv_time(1))) do
             {:ok, [%{data: <<t::32-little>>, wkc: 1}]} -> t
             _ -> nil
           end
@@ -265,7 +265,7 @@ defmodule EtherCAT.DC do
     |> Enum.each(fn {station, {ecat_ns, _, _}} ->
       if ecat_ns != nil do
         # Read current value and write it back — this resets the filter
-        case Link.transaction(
+        case Bus.transaction(
                link,
                &Transaction.fprd(&1, station, Registers.dc_speed_counter_start())
              ) do
@@ -284,6 +284,6 @@ defmodule EtherCAT.DC do
 
   # Thin wrapper — ignore result (init writes may get no wkc if slaves not yet ready)
   defp link_tx(link, fun) do
-    Link.transaction(link, fun)
+    Bus.transaction(link, fun)
   end
 end

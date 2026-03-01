@@ -1,11 +1,11 @@
-defmodule EtherCAT.Link.Command do
+defmodule EtherCAT.Bus.Command do
   @moduledoc false
   # Internal datagram builder — not part of the public API.
-  # Callers should use EtherCAT.Link.fprd/fpwr/lrw/brd/... directly.
+  # Callers should use EtherCAT.Bus.Transaction directly.
 
-  alias EtherCAT.Link.Datagram
+  alias EtherCAT.Bus.Datagram
 
-  # CMD codes from spec Table 6
+  # CMD codes from spec §2.5 Table 6
   @nop 0
   @aprd 1
   @apwr 2

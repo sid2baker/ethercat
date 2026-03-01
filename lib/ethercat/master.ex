@@ -34,8 +34,8 @@ defmodule EtherCAT.Master do
 
   require Logger
 
-  alias EtherCAT.{DC, Domain, Link, Slave}
-  alias EtherCAT.Link.Transaction
+  alias EtherCAT.{DC, Domain, Bus, Slave}
+  alias EtherCAT.Bus.Transaction
   alias EtherCAT.Slave.Registers
 
   @base_station 0x1000
@@ -153,7 +153,7 @@ defmodule EtherCAT.Master do
 
     case DynamicSupervisor.start_child(
            EtherCAT.SessionSupervisor,
-           {Link, interface: interface, name: EtherCAT.Link}
+           {Bus, interface: interface, name: EtherCAT.Bus}
          ) do
       {:ok, link_pid} ->
         link_ref = Process.monitor(link_pid)
@@ -203,7 +203,7 @@ defmodule EtherCAT.Master do
     now_ms = System.monotonic_time(:millisecond)
 
     new_window =
-      case Link.transaction(data.link_pid, &Transaction.brd(&1, {0x0000, 1})) do
+      case Bus.transaction(data.link_pid, &Transaction.brd(&1, {0x0000, 1})) do
         {:ok, [%{wkc: n}]} ->
           # Prepend new reading; keep enough history to measure a full stable span
           window = [{now_ms, n} | data.scan_window]
@@ -358,7 +358,7 @@ defmodule EtherCAT.Master do
     Enum.each(0..(count - 1), fn pos ->
       station = base + pos
 
-      case Link.transaction(link, &Transaction.apwr(&1, pos, Registers.station_address(station))) do
+      case Bus.transaction(link, &Transaction.apwr(&1, pos, Registers.station_address(station))) do
         {:ok, [%{wkc: 1}]} ->
           :ok
 
@@ -375,7 +375,7 @@ defmodule EtherCAT.Master do
     Enum.map(0..(count - 1), fn pos ->
       station = base + pos
 
-      case Link.transaction(link, &Transaction.fprd(&1, station, Registers.dl_status())) do
+      case Bus.transaction(link, &Transaction.fprd(&1, station, Registers.dl_status())) do
         {:ok, [%{data: status, wkc: 1}]} -> {station, status}
         _ -> {station, <<0, 0>>}
       end

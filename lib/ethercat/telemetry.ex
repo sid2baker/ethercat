@@ -7,49 +7,53 @@ defmodule EtherCAT.Telemetry do
 
   ## Events
 
-  ### Transaction span (emitted by `Link.transact/3`)
+  ### Transaction span (emitted by `Bus.transaction/2`)
 
-      [:ethercat, :link, :transact, :start]
+      [:ethercat, :bus, :transact, :start]
         measurements: %{system_time: integer(), monotonic_time: integer()}
         metadata:     %{datagram_count: integer()}
 
-      [:ethercat, :link, :transact, :stop]
+      [:ethercat, :bus, :transact, :stop]
         measurements: %{duration: integer()}
         metadata:     %{datagram_count: integer(), total_wkc: integer()}
 
-      [:ethercat, :link, :transact, :exception]
+      [:ethercat, :bus, :transact, :exception]
         measurements: %{duration: integer()}
         metadata:     %{kind: atom(), reason: term(), stacktrace: list()}
 
   ### Frame-level events
 
-      [:ethercat, :link, :frame, :sent]
+      [:ethercat, :bus, :frame, :sent]
         measurements: %{size: integer(), tx_timestamp: integer() | nil}
-        metadata:     %{interface: String.t(), port: :primary | :secondary}
+        metadata:     %{transport: String.t(), port: :primary | :secondary}
 
-      [:ethercat, :link, :frame, :received]
+      [:ethercat, :bus, :frame, :received]
         measurements: %{size: integer(), rx_timestamp: integer() | nil}
-        metadata:     %{interface: String.t(), port: :primary | :secondary}
+        metadata:     %{transport: String.t(), port: :primary | :secondary}
 
-      [:ethercat, :link, :frame, :dropped]
+      [:ethercat, :bus, :frame, :dropped]
         measurements: %{size: integer()}
-        metadata:     %{interface: String.t(), reason: atom()}
+        metadata:     %{transport: String.t(), reason: atom()}
 
   ### Transaction queueing
 
-      [:ethercat, :link, :transact, :postponed]
+      [:ethercat, :bus, :transact, :discarded]
         measurements: %{}
-        metadata:     %{interface: String.t()}
+        metadata:     %{transport: String.t()}
 
-  ### Socket lifecycle events
+      [:ethercat, :bus, :transact, :batch_sent]
+        measurements: %{transaction_count: integer()}
+        metadata:     %{transport: String.t()}
 
-      [:ethercat, :link, :socket, :down]
+  ### Transport lifecycle events
+
+      [:ethercat, :bus, :transport, :down]
         measurements: %{}
-        metadata:     %{interface: String.t(), reason: term()}
+        metadata:     %{transport: String.t(), reason: term()}
 
-      [:ethercat, :link, :socket, :reconnected]
+      [:ethercat, :bus, :transport, :reconnected]
         measurements: %{}
-        metadata:     %{interface: String.t()}
+        metadata:     %{transport: String.t()}
 
   ## Timestamps
 
@@ -61,8 +65,8 @@ defmodule EtherCAT.Telemetry do
   ## Example
 
       :telemetry.attach_many("ethercat-log", [
-        [:ethercat, :link, :transact, :stop],
-        [:ethercat, :link, :socket, :down]
+        [:ethercat, :bus, :transact, :stop],
+        [:ethercat, :bus, :transport, :down]
       ], &MyHandler.handle_event/4, nil)
   """
 
@@ -77,60 +81,69 @@ defmodule EtherCAT.Telemetry do
   end
 
   # ---------------------------------------------------------------------------
-  # Convenience emitters — called from Link.Normal and Link.Redundant
+  # Convenience emitters — called from Bus.SinglePort and Bus.Redundant
   # ---------------------------------------------------------------------------
 
   @doc false
-  def frame_sent(interface, port, size, tx_timestamp \\ nil) do
+  def frame_sent(transport, port, size, tx_timestamp \\ nil) do
     execute(
-      [:ethercat, :link, :frame, :sent],
+      [:ethercat, :bus, :frame, :sent],
       %{size: size, tx_timestamp: tx_timestamp},
-      %{interface: interface, port: port}
+      %{transport: transport, port: port}
     )
   end
 
   @doc false
-  def frame_received(interface, port, size, rx_timestamp \\ nil) do
+  def frame_received(transport, port, size, rx_timestamp \\ nil) do
     execute(
-      [:ethercat, :link, :frame, :received],
+      [:ethercat, :bus, :frame, :received],
       %{size: size, rx_timestamp: rx_timestamp},
-      %{interface: interface, port: port}
+      %{transport: transport, port: port}
     )
   end
 
   @doc false
-  def frame_dropped(interface, size, reason) do
+  def frame_dropped(transport, size, reason) do
     execute(
-      [:ethercat, :link, :frame, :dropped],
+      [:ethercat, :bus, :frame, :dropped],
       %{size: size},
-      %{interface: interface, reason: reason}
+      %{transport: transport, reason: reason}
     )
   end
 
   @doc false
-  def transact_postponed(interface) do
+  def transact_discarded(transport) do
     execute(
-      [:ethercat, :link, :transact, :postponed],
+      [:ethercat, :bus, :transact, :discarded],
       %{},
-      %{interface: interface}
+      %{transport: transport}
     )
   end
 
   @doc false
-  def socket_down(interface, reason) do
+  def batch_sent(transport, transaction_count) do
     execute(
-      [:ethercat, :link, :socket, :down],
-      %{},
-      %{interface: interface, reason: reason}
+      [:ethercat, :bus, :transact, :batch_sent],
+      %{transaction_count: transaction_count},
+      %{transport: transport}
     )
   end
 
   @doc false
-  def socket_reconnected(interface) do
+  def socket_down(transport, reason) do
     execute(
-      [:ethercat, :link, :socket, :reconnected],
+      [:ethercat, :bus, :transport, :down],
       %{},
-      %{interface: interface}
+      %{transport: transport, reason: reason}
+    )
+  end
+
+  @doc false
+  def socket_reconnected(transport) do
+    execute(
+      [:ethercat, :bus, :transport, :reconnected],
+      %{},
+      %{transport: transport}
     )
   end
 
@@ -141,15 +154,16 @@ defmodule EtherCAT.Telemetry do
   @handler_id "ethercat-counters"
 
   @all_events [
-    [:ethercat, :link, :transact, :start],
-    [:ethercat, :link, :transact, :stop],
-    [:ethercat, :link, :transact, :exception],
-    [:ethercat, :link, :transact, :postponed],
-    [:ethercat, :link, :frame, :sent],
-    [:ethercat, :link, :frame, :received],
-    [:ethercat, :link, :frame, :dropped],
-    [:ethercat, :link, :socket, :down],
-    [:ethercat, :link, :socket, :reconnected]
+    [:ethercat, :bus, :transact, :start],
+    [:ethercat, :bus, :transact, :stop],
+    [:ethercat, :bus, :transact, :exception],
+    [:ethercat, :bus, :transact, :discarded],
+    [:ethercat, :bus, :transact, :batch_sent],
+    [:ethercat, :bus, :frame, :sent],
+    [:ethercat, :bus, :frame, :received],
+    [:ethercat, :bus, :frame, :dropped],
+    [:ethercat, :bus, :transport, :down],
+    [:ethercat, :bus, :transport, :reconnected]
   ]
 
   @event_index @all_events |> Enum.with_index() |> Map.new()

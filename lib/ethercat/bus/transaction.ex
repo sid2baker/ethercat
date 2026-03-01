@@ -1,10 +1,10 @@
-defmodule EtherCAT.Link.Transaction do
+defmodule EtherCAT.Bus.Transaction do
   @moduledoc """
   Builder for batched EtherCAT commands.
 
-  Used inside `EtherCAT.Link.transaction/2`:
+  Used inside `EtherCAT.Bus.transaction/2`:
 
-      Link.transaction(link, fn tx ->
+      Bus.transaction(bus, fn tx ->
         tx
         |> Transaction.fprd(0x1001, Registers.al_status())
         |> Transaction.lrw(0x0000, <<0, 0, 0, 0>>)
@@ -31,9 +31,9 @@ defmodule EtherCAT.Link.Transaction do
   | `lrd/2`, `lwr/2`, `lrw/2`              | Logical (FMMU)      | 32-bit address    |
   """
 
-  alias EtherCAT.Link.Command
+  alias EtherCAT.Bus.Command
 
-  @opaque t :: %__MODULE__{datagrams: [EtherCAT.Link.Datagram.t()]}
+  @opaque t :: %__MODULE__{datagrams: [EtherCAT.Bus.Datagram.t()]}
 
   defstruct datagrams: []
 

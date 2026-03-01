@@ -1,8 +1,8 @@
-defmodule EtherCAT.Link.TransactionTest do
+defmodule EtherCAT.Bus.TransactionTest do
   use ExUnit.Case, async: true
 
-  alias EtherCAT.Link.Transaction
-  alias EtherCAT.Link.Datagram
+  alias EtherCAT.Bus.Transaction
+  alias EtherCAT.Bus.Datagram
 
   describe "new/0" do
     test "returns empty transaction" do

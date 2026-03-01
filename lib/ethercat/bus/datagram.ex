@@ -1,6 +1,6 @@
-defmodule EtherCAT.Link.Datagram do
+defmodule EtherCAT.Bus.Datagram do
   @moduledoc """
-  An EtherCAT datagram struct and wire-format codec.
+  An EtherCAT datagram struct and wire-format codec (spec §2.2).
 
   ## Wire layout (all little-endian, LSB first)
 

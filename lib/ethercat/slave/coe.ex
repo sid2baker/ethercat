@@ -28,8 +28,8 @@ defmodule EtherCAT.Slave.CoE do
     - bit[5]    = 1     AL event IRQ
   """
 
-  alias EtherCAT.Link
-  alias EtherCAT.Link.Transaction
+  alias EtherCAT.Bus
+  alias EtherCAT.Bus.Transaction
   alias EtherCAT.Slave.Registers
 
   @poll_limit 1000
@@ -87,7 +87,7 @@ defmodule EtherCAT.Slave.CoE do
   # -- Transport helpers -------------------------------------------------------
 
   defp write_mailbox(link, station, recv_offset, frame) do
-    case Link.transaction(link, &Transaction.fpwr(&1, station, {recv_offset, frame})) do
+    case Bus.transaction(link, &Transaction.fpwr(&1, station, {recv_offset, frame})) do
       {:ok, [%{wkc: wkc}]} when wkc > 0 -> :ok
       {:ok, [%{wkc: 0}]} -> {:error, :no_response}
       {:error, _} = err -> err
@@ -99,7 +99,7 @@ defmodule EtherCAT.Slave.CoE do
   defp wait_response(_link, _station, 0), do: {:error, :response_timeout}
 
   defp wait_response(link, station, remaining) do
-    case Link.transaction(link, &Transaction.fprd(&1, station, Registers.sm_status(1))) do
+    case Bus.transaction(link, &Transaction.fprd(&1, station, Registers.sm_status(1))) do
       {:ok, [%{data: <<status::8>>, wkc: wkc}]} when wkc > 0 ->
         case <<status::8>> do
           <<_::4, 1::1, _::3>> ->
@@ -120,7 +120,7 @@ defmodule EtherCAT.Slave.CoE do
   end
 
   defp read_mailbox(link, station, send_offset, send_size) do
-    case Link.transaction(link, &Transaction.fprd(&1, station, {send_offset, send_size})) do
+    case Bus.transaction(link, &Transaction.fprd(&1, station, {send_offset, send_size})) do
       {:ok, [%{data: data, wkc: wkc}]} when wkc > 0 -> {:ok, data}
       {:ok, [%{wkc: 0}]} -> {:error, :no_response}
       {:error, _} = err -> err

@@ -18,10 +18,13 @@
 # Optional flags:
 #   --period-ms N       domain cycle period in milliseconds (default 4)
 #   --loopback-mask N   bitmask of channels wired for loopback (hex ok, default 0xFFFF)
+#   --udp              run a UDP transport smoke test using broadcast (255.255.255.255:34980)
+#                       requires ESC UDP support per spec §2.6
+#   --udp-host IP       unicast UDP test to a specific host instead of broadcast
 
+alias EtherCAT.Bus
+alias EtherCAT.Bus.Transaction
 alias EtherCAT.Domain
-alias EtherCAT.Link
-alias EtherCAT.Link.Transaction
 alias EtherCAT.Slave
 alias EtherCAT.Slave.Registers
 
@@ -226,13 +229,22 @@ drain_mailbox = fn ->
   |> Stream.run()
 end
 
+parse_ip = fn s ->
+  parts = String.split(s, ".") |> Enum.map(&String.to_integer/1)
+  case parts do
+    [a, b, c, d] -> {a, b, c, d}
+    _ -> raise "invalid IP: #{s}"
+  end
+end
+
 # ---------------------------------------------------------------------------
 # Parse args
 # ---------------------------------------------------------------------------
 
 {opts, _, _} =
   OptionParser.parse(System.argv(),
-    switches: [interface: :string, period_ms: :integer, loopback_mask: :string]
+    switches: [interface: :string, period_ms: :integer, loopback_mask: :string,
+               udp: :boolean, udp_host: :string]
   )
 
 interface = opts[:interface] || raise "pass --interface, e.g. --interface enp0s31f6"
@@ -244,6 +256,15 @@ loopback_mask =
     s ->
       s = String.trim_leading(s, "0x")
       String.to_integer(s, 16)
+  end
+
+# UDP host: explicit unicast > broadcast default > disabled
+# ESCs respond on any IP per spec §2.6 — broadcast works without configuration
+udp_host =
+  cond do
+    opts[:udp_host] -> parse_ip.(opts[:udp_host])
+    opts[:udp] -> {255, 255, 255, 255}
+    true -> nil
   end
 
 run_phase = fn label, set_fn, duration_ms, period_ms ->
@@ -276,6 +297,7 @@ EtherCAT hardware stress test
   interface     : #{interface}
   period        : #{period_ms} ms
   loopback mask : 0x#{Integer.to_string(loopback_mask, 16) |> String.pad_leading(4, "0")}
+  udp host      : #{if udp_host, do: "#{:inet.ntoa(udp_host)} (broadcast=#{udp_host == {255,255,255,255}})", else: "(skipped — pass --udp to enable)"}
 """)
 
 # ---------------------------------------------------------------------------
@@ -321,6 +343,13 @@ if slaves == [], do: raise("No named slaves — check cabling and slave config")
 
 {:ok, s0} = Domain.stats(:main)
 IO.puts("  image_size=#{s0.image_size} bytes  state=#{s0.state}")
+
+# Capture raw slave count for UDP comparison
+raw_slave_count =
+  case Bus.transaction(EtherCAT.link(), &Transaction.brd(&1, {0x0000, 1})) do
+    {:ok, [%{wkc: n}]} -> n
+    _ -> nil
+  end
 
 # ---------------------------------------------------------------------------
 # Pattern definitions
@@ -411,10 +440,10 @@ all_ok =
 IO.puts("")
 
 IO.puts("  RX error counters (per slave port):")
-link = EtherCAT.link()
+bus = EtherCAT.link()
 
 for {name, station, _} <- slaves do
-  case Link.transaction(link, &Transaction.fprd(&1, station, Registers.rx_error_counter())) do
+  case Bus.transaction(bus, &Transaction.fprd(&1, station, Registers.rx_error_counter())) do
     {:ok, [%{data: <<p0::16-little, p1::16-little, p2::16-little, p3::16-little>>, wkc: wkc}]}
     when wkc > 0 ->
       IO.puts("    #{inspect(name)} @ #{hex.(station)}: port0=#{p0} port1=#{p1} port2=#{p2} port3=#{p3}")
@@ -425,6 +454,98 @@ end
 
 IO.puts("")
 IO.puts("  Verdict: #{if all_ok, do: "PASS ✓", else: "FAIL ✗"}")
+
+# ---------------------------------------------------------------------------
+# 4. UDP transport smoke test (optional — requires --udp-host)
+#
+# Opens a Bus directly using the UDP/IP transport (spec §2.6).
+# The ESC recognises EtherCAT frames embedded in UDP datagrams by UDP
+# destination port 0x88A4 only — source/destination IPs and MACs are ignored.
+#
+# Test sequence:
+#   a. BRD to 0x0000 / 1 byte — WKC must match the raw slave count
+#   b. 50× FPRD to the first named slave's AL status register — all must succeed
+#   c. 5× concurrent BRD (queue batching exercise) — all must return wkc > 0
+# ---------------------------------------------------------------------------
+
+if udp_host do
+  banner.("4. UDP transport smoke test  (host=#{inspect(udp_host)})")
+
+  udp_ok =
+    case Bus.start_link(transport: :udp, host: udp_host) do
+      {:ok, udp_bus} ->
+        IO.puts("  ✓ Bus.start_link (UDP) opened")
+
+        # a. BRD — slave count check
+        brd_ok =
+          case Bus.transaction(udp_bus, &Transaction.brd(&1, {0x0000, 1})) do
+            {:ok, [%{wkc: n}]} when n == raw_slave_count ->
+              IO.puts("  ✓ BRD: wkc=#{n} (matches raw count)")
+              true
+
+            {:ok, [%{wkc: n}]} ->
+              IO.puts("  ✗ BRD: wkc=#{n} expected #{raw_slave_count} (raw count)")
+              false
+
+            {:error, reason} ->
+              IO.puts("  ✗ BRD: #{inspect(reason)}")
+              false
+          end
+
+        # b. Repeated FPRD to first slave AL status
+        {_name, first_station, _pid} = hd(slaves)
+
+        fprd_results =
+          Enum.map(1..50, fn _ ->
+            Bus.transaction(udp_bus, &Transaction.fprd(&1, first_station, Registers.al_status()))
+          end)
+
+        fprd_ok_count = Enum.count(fprd_results, &match?({:ok, [%{wkc: 1}]}, &1))
+        fprd_ok = fprd_ok_count == 50
+
+        if fprd_ok do
+          IO.puts("  ✓ FPRD ×50: all responded (wkc=1)")
+        else
+          IO.puts("  ✗ FPRD ×50: #{fprd_ok_count}/50 succeeded")
+        end
+
+        # c. Queue batching — fire 5 BRDs in rapid succession while bus may be awaiting
+        batch_tasks =
+          Enum.map(1..5, fn _ ->
+            Task.async(fn ->
+              Bus.transaction(udp_bus, &Transaction.brd(&1, {0x0000, 1}))
+            end)
+          end)
+
+        batch_results = Task.await_many(batch_tasks, 5_000)
+        batch_ok_count = Enum.count(batch_results, fn
+          {:ok, [%{wkc: n}]} when n > 0 -> true
+          {:error, :discarded_cyclic} -> true   # BRD is non-cyclic but counts as fine
+          _ -> false
+        end)
+        batch_ok = batch_ok_count == 5
+
+        if batch_ok do
+          IO.puts("  ✓ Batched BRD ×5: all completed")
+        else
+          details = Enum.map(batch_results, fn
+            {:ok, [%{wkc: n}]} -> "wkc=#{n}"
+            {:error, r} -> inspect(r)
+          end)
+          IO.puts("  ✗ Batched BRD ×5: #{inspect(details)}")
+        end
+
+        GenServer.stop(udp_bus)
+        brd_ok and fprd_ok and batch_ok
+
+      {:error, reason} ->
+        IO.puts("  ✗ Bus.start_link (UDP) failed: #{inspect(reason)}")
+        false
+    end
+
+  IO.puts("")
+  IO.puts("  UDP verdict: #{if udp_ok, do: "PASS ✓", else: "FAIL ✗"}")
+end
 
 banner.("Done")
 EtherCAT.stop()

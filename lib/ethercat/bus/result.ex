@@ -1,4 +1,4 @@
-defmodule EtherCAT.Link.Result do
+defmodule EtherCAT.Bus.Result do
   @moduledoc """
   Result of a single EtherCAT datagram round-trip.
 
@@ -16,7 +16,7 @@ defmodule EtherCAT.Link.Result do
   ## Example
 
       {:ok, [%Result{data: <<status::16-little>>, wkc: 1}]} =
-        Link.transaction(link, &Transaction.fprd(&1, 0x1001, 0x0130, 2))
+        Bus.transaction(bus, &Transaction.fprd(&1, 0x1001, Registers.al_status()))
   """
 
   @type t :: %__MODULE__{
