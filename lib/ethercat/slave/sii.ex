@@ -387,7 +387,7 @@ defmodule EtherCAT.Slave.SII do
 
   defp wait_busy(link, station, remaining) do
     case read_reg(link, station, Registers.eeprom_control()) do
-      {:ok, <<_lo, _hi_rest::5, busy::1, _::2>>} when busy == 0 ->
+      {:ok, <<_lo, busy::1, _::7>>} when busy == 0 ->
         :ok
 
       {:ok, _} ->
