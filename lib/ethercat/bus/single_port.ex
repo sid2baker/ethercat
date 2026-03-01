@@ -27,6 +27,8 @@ defmodule EtherCAT.Bus.SinglePort do
 
   @behaviour :gen_statem
 
+  require Logger
+
   alias EtherCAT.Bus.{Datagram, Frame}
   alias EtherCAT.Telemetry
 
@@ -158,6 +160,15 @@ defmodule EtherCAT.Bus.SinglePort do
   end
 
   def handle_event(:state_timeout, :timeout, :awaiting, data) do
+    elapsed_ms =
+      System.convert_time_unit(System.monotonic_time() - (data.tx_at || 0), :native, :millisecond)
+
+    n = length(data.awaiting_callers || [])
+
+    Logger.warning(
+      "[Bus.SinglePort] frame timeout after #{elapsed_ms}ms — #{n} caller(s) lost (transport=#{data.transport_mod.name(data.transport)})"
+    )
+
     data.transport_mod.drain(data.transport)
 
     Enum.each(data.awaiting_callers, fn {from, _} ->

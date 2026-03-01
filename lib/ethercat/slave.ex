@@ -230,8 +230,11 @@ defmodule EtherCAT.Slave do
 
   def handle_event(:enter, _old, :preop, data) do
     invoke_driver(data, :on_preop)
+    Logger.debug("[Slave #{data.name}] preop: running SDO config")
     run_sdo_config(data)
+    Logger.debug("[Slave #{data.name}] preop: registering PDOs/FMMUs")
     new_data = register_pdos_and_fmmus(data)
+    Logger.debug("[Slave #{data.name}] preop: ready (#{map_size(new_data.pdo_registrations)} PDO(s) registered)")
     send(EtherCAT.Master, {:slave_ready, data.name, :preop})
     {:keep_state, new_data}
   end
@@ -389,8 +392,19 @@ defmodule EtherCAT.Slave do
   # Full PREOP setup (SDO config, FMMU registration, :slave_ready) runs
   # asynchronously in the :preop enter handler — slaves init concurrently.
   defp do_auto_advance(data) do
+    t0 = System.monotonic_time(:millisecond)
+    Logger.debug("[Slave #{data.name}] init: reading SII (station=0x#{Integer.to_string(data.station, 16)})")
+
     case read_sii(data.link, data.station) do
       {:ok, identity, mailbox_config, sm_configs, pdo_configs} ->
+        sii_ms = System.monotonic_time(:millisecond) - t0
+        Logger.debug(
+          "[Slave #{data.name}] SII ok in #{sii_ms}ms — " <>
+          "vendor=0x#{Integer.to_string(identity.vendor_id, 16)} " <>
+          "product=0x#{Integer.to_string(identity.product_code, 16)} " <>
+          "mbx_recv=#{mailbox_config.recv_size} pdos=#{length(pdo_configs)}"
+        )
+
         new_data = %{
           data
           | identity: identity,
@@ -401,10 +415,14 @@ defmodule EtherCAT.Slave do
 
         # Configure mailbox SMs (SM0 recv + SM1 send) while still in INIT so that
         # the slave's PDI finds them armed when it enters PREOP.
+        Logger.debug("[Slave #{data.name}] init: setting up mailbox SMs")
         setup_mailbox_sms(new_data)
 
+        Logger.debug("[Slave #{data.name}] init: transitioning to PREOP")
         case do_transition(new_data, :preop) do
           {:ok, new_data2} ->
+            preop_ms = System.monotonic_time(:millisecond) - t0
+            Logger.debug("[Slave #{data.name}] init: PREOP reached in #{preop_ms}ms total")
             {:ok, :preop, new_data2}
 
           {:error, reason, new_data2} ->
@@ -570,6 +588,7 @@ defmodule EtherCAT.Slave do
 
   defp do_transition(data, target) do
     code = Map.fetch!(@al_codes, target)
+    Logger.debug("[Slave #{data.name}] AL → #{target} (code=0x#{Integer.to_string(code, 16)})")
 
     with {:ok, [%{wkc: wkc}]} when wkc > 0 <-
            Bus.transaction_queue(
@@ -578,8 +597,13 @@ defmodule EtherCAT.Slave do
            ) do
       poll_al(data, code, @poll_limit)
     else
-      {:ok, [%{wkc: 0}]} -> {:error, :no_response, data}
-      {:error, reason} -> {:error, reason, data}
+      {:ok, [%{wkc: 0}]} ->
+        Logger.warning("[Slave #{data.name}] AL → #{target}: no response (wkc=0)")
+        {:error, :no_response, data}
+
+      {:error, reason} ->
+        Logger.warning("[Slave #{data.name}] AL → #{target} failed: #{inspect(reason)}")
+        {:error, reason, data}
     end
   end
 
