@@ -168,7 +168,7 @@ defmodule EtherCAT.DC do
   # -- Init helpers ----------------------------------------------------------
 
   defp trigger_recv_latch(link) do
-    case Bus.transaction(link, &Transaction.bwr(&1, Registers.dc_recv_time_latch())) do
+    case Bus.transaction_queue(link, &Transaction.bwr(&1, Registers.dc_recv_time_latch())) do
       {:ok, _} -> :ok
       {:error, _} = err -> err
     end
@@ -178,7 +178,7 @@ defmodule EtherCAT.DC do
     results =
       Enum.map(stations, fn station ->
         ecat =
-          case Bus.transaction(
+          case Bus.transaction_queue(
                  link,
                  &Transaction.fprd(&1, station, Registers.dc_recv_time_ecat())
                ) do
@@ -187,13 +187,13 @@ defmodule EtherCAT.DC do
           end
 
         p0 =
-          case Bus.transaction(link, &Transaction.fprd(&1, station, Registers.dc_recv_time(0))) do
+          case Bus.transaction_queue(link, &Transaction.fprd(&1, station, Registers.dc_recv_time(0))) do
             {:ok, [%{data: <<t::32-little>>, wkc: 1}]} -> t
             _ -> nil
           end
 
         p1 =
-          case Bus.transaction(link, &Transaction.fprd(&1, station, Registers.dc_recv_time(1))) do
+          case Bus.transaction_queue(link, &Transaction.fprd(&1, station, Registers.dc_recv_time(1))) do
             {:ok, [%{data: <<t::32-little>>, wkc: 1}]} -> t
             _ -> nil
           end
@@ -265,7 +265,7 @@ defmodule EtherCAT.DC do
     |> Enum.each(fn {station, {ecat_ns, _, _}} ->
       if ecat_ns != nil do
         # Read current value and write it back — this resets the filter
-        case Bus.transaction(
+        case Bus.transaction_queue(
                link,
                &Transaction.fprd(&1, station, Registers.dc_speed_counter_start())
              ) do
@@ -284,6 +284,6 @@ defmodule EtherCAT.DC do
 
   # Thin wrapper — ignore result (init writes may get no wkc if slaves not yet ready)
   defp link_tx(link, fun) do
-    Bus.transaction(link, fun)
+    Bus.transaction_queue(link, fun)
   end
 end

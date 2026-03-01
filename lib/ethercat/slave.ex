@@ -514,7 +514,7 @@ defmodule EtherCAT.Slave do
             # SM register: full SM size, byte-aligned
             sm_reg = <<phys::16-little, total_sm_size::16-little, ctrl::8, 0::8, 0x01::8, 0::8>>
 
-            Bus.transaction(
+            Bus.transaction_queue(
               data.link,
               &Transaction.fpwr(&1, data.station, Registers.sm(sm_idx, sm_reg))
             )
@@ -524,7 +524,7 @@ defmodule EtherCAT.Slave do
               <<offset::32-little, total_sm_size::16-little, 0::8, 7::8, phys::16-little, 0::8,
                 fmmu_type::8, 0x01::8, 0::24>>
 
-            case Bus.transaction(
+            case Bus.transaction_queue(
                    data.link,
                    &Transaction.fpwr(&1, data.station, Registers.fmmu(fmmu_idx, fmmu_reg))
                  ) do
@@ -572,7 +572,7 @@ defmodule EtherCAT.Slave do
     code = Map.fetch!(@al_codes, target)
 
     with {:ok, [%{wkc: wkc}]} when wkc > 0 <-
-           Bus.transaction(
+           Bus.transaction_queue(
              data.link,
              &Transaction.fpwr(&1, data.station, Registers.al_control(code))
            ) do
@@ -586,7 +586,7 @@ defmodule EtherCAT.Slave do
   defp poll_al(data, _code, 0), do: {:error, :transition_timeout, data}
 
   defp poll_al(data, code, n) do
-    case Bus.transaction(
+    case Bus.transaction_queue(
            data.link,
            &Transaction.fprd(&1, data.station, Registers.al_status())
          ) do
@@ -612,7 +612,7 @@ defmodule EtherCAT.Slave do
 
   defp ack_error(data) do
     err_code =
-      case Bus.transaction(
+      case Bus.transaction_queue(
              data.link,
              &Transaction.fprd(&1, data.station, Registers.al_status_code())
            ) do
@@ -621,7 +621,7 @@ defmodule EtherCAT.Slave do
       end
 
     state_code =
-      case Bus.transaction(
+      case Bus.transaction_queue(
              data.link,
              &Transaction.fprd(&1, data.station, Registers.al_status())
            ) do
@@ -631,7 +631,7 @@ defmodule EtherCAT.Slave do
 
     ack_value = state_code + 0x10
 
-    Bus.transaction(
+    Bus.transaction_queue(
       data.link,
       &Transaction.fpwr(&1, data.station, Registers.al_control(ack_value))
     )
@@ -719,7 +719,7 @@ defmodule EtherCAT.Slave do
 
       # All four writes go in one frame so the activation datagram sees the
       # already-written cycle/pulse/start values in the same processing pass.
-      Bus.transaction(data.link, fn tx ->
+      Bus.transaction_queue(data.link, fn tx ->
         tx
         |> Transaction.fpwr(data.station, Registers.dc_sync0_cycle_time(cycle_ns))
         |> Transaction.fpwr(data.station, Registers.dc_pulse_length(pulse_ns))
@@ -749,7 +749,7 @@ defmodule EtherCAT.Slave do
     sm0 = <<ro::16-little, rs::16-little, 0x26::8, 0::8, 0x01::8, 0::8>>
     sm1 = <<so::16-little, ss::16-little, 0x22::8, 0::8, 0x01::8, 0::8>>
 
-    Bus.transaction(data.link, fn tx ->
+    Bus.transaction_queue(data.link, fn tx ->
       tx
       |> Transaction.fpwr(data.station, Registers.sm(0, sm0))
       |> Transaction.fpwr(data.station, Registers.sm(1, sm1))
