@@ -9,8 +9,8 @@
 #   Bench.run("eth0", frames: 200)
 
 defmodule Bench do
-  alias EtherCAT.Link
-  alias EtherCAT.Link.Transaction
+  alias EtherCAT.Bus
+  alias EtherCAT.Bus.Transaction
 
   @default_frames 100
 
@@ -20,15 +20,15 @@ defmodule Bench do
     IO.puts("\nEtherCAT link bench — #{interface}, #{frames} frames")
     IO.puts(String.duplicate("-", 50))
 
-    {:ok, link} = Link.start_link(interface: interface)
+    {:ok, link} = Bus.start_link(interface: interface)
 
     # Warm-up: one frame to prime the socket
-    Link.transaction(link, &Transaction.brd(&1, {0x0000, 1}))
+    Bus.transaction_queue(link, &Transaction.brd(&1, {0x0000, 1}))
 
     samples =
       Enum.map(1..frames, fn i ->
         t0 = System.monotonic_time(:microsecond)
-        result = Link.transaction(link, &Transaction.brd(&1, {0x0000, 1}))
+        result = Bus.transaction_queue(link, &Transaction.brd(&1, {0x0000, 1}))
         t1 = System.monotonic_time(:microsecond)
         rtt_us = t1 - t0
 
@@ -73,7 +73,7 @@ defmodule Bench do
         avg_us < 10_000 ->
           IO.puts("  OK — usable, but check for jitter if using DC sync.")
         avg_us < 90_000 ->
-          IO.puts("  SLOW — link timeouts may need tuning (current limit: 100ms).")
+          IO.puts("  SLOW — link timeouts may need tuning (current limit: 150ms).")
         true ->
           IO.puts("  TOO SLOW — at #{fmt(avg_us)} avg, DC and slave init will timeout.")
           IO.puts("             Check: NIC driver, kernel AF_PACKET config, USB path.")

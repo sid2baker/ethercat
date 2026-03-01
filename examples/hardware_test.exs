@@ -346,7 +346,7 @@ IO.puts("  image_size=#{s0.image_size} bytes  state=#{s0.state}")
 
 # Capture raw slave count for UDP comparison
 raw_slave_count =
-  case Bus.transaction(EtherCAT.link(), &Transaction.brd(&1, {0x0000, 1})) do
+  case Bus.transaction_queue(EtherCAT.link(), &Transaction.brd(&1, {0x0000, 1})) do
     {:ok, [%{wkc: n}]} -> n
     _ -> nil
   end
@@ -443,7 +443,7 @@ IO.puts("  RX error counters (per slave port):")
 bus = EtherCAT.link()
 
 for {name, station, _} <- slaves do
-  case Bus.transaction(bus, &Transaction.fprd(&1, station, Registers.rx_error_counter())) do
+  case Bus.transaction_queue(bus, &Transaction.fprd(&1, station, Registers.rx_error_counter())) do
     {:ok, [%{data: <<p0::16-little, p1::16-little, p2::16-little, p3::16-little>>, wkc: wkc}]}
     when wkc > 0 ->
       IO.puts("    #{inspect(name)} @ #{hex.(station)}: port0=#{p0} port1=#{p1} port2=#{p2} port3=#{p3}")
@@ -478,7 +478,7 @@ if udp_host do
 
         # a. BRD — slave count check
         brd_ok =
-          case Bus.transaction(udp_bus, &Transaction.brd(&1, {0x0000, 1})) do
+          case Bus.transaction_queue(udp_bus, &Transaction.brd(&1, {0x0000, 1})) do
             {:ok, [%{wkc: n}]} when n == raw_slave_count ->
               IO.puts("  ✓ BRD: wkc=#{n} (matches raw count)")
               true
@@ -497,7 +497,7 @@ if udp_host do
 
         fprd_results =
           Enum.map(1..50, fn _ ->
-            Bus.transaction(udp_bus, &Transaction.fprd(&1, first_station, Registers.al_status()))
+            Bus.transaction_queue(udp_bus, &Transaction.fprd(&1, first_station, Registers.al_status()))
           end)
 
         fprd_ok_count = Enum.count(fprd_results, &match?({:ok, [%{wkc: 1}]}, &1))
@@ -513,7 +513,7 @@ if udp_host do
         batch_tasks =
           Enum.map(1..5, fn _ ->
             Task.async(fn ->
-              Bus.transaction(udp_bus, &Transaction.brd(&1, {0x0000, 1}))
+              Bus.transaction_queue(udp_bus, &Transaction.brd(&1, {0x0000, 1}))
             end)
           end)
 

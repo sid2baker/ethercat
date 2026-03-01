@@ -1,8 +1,8 @@
 #!/usr/bin/env elixir
 # Inspect the actual SII PDO configs and LRW frame data for EL2809.
 
-alias EtherCAT.{Domain, Link}
-alias EtherCAT.Link.Transaction
+alias EtherCAT.{Domain, Bus}
+alias EtherCAT.Bus.Transaction
 alias EtherCAT.Slave.SII
 
 defmodule DigitalOut do
@@ -17,11 +17,11 @@ interface = opts[:interface] || raise "pass --interface"
 
 # --- Step 1: read SII PDO configs directly (no master running) ---
 IO.puts("=== SII PDO configs for EL2809 (station 0x1002) ===")
-{:ok, link} = Link.start_link(interface: interface)
+{:ok, link} = Bus.start_link(interface: interface)
 
 # Assign station addresses
 for pos <- 0..3 do
-  Link.transaction(link, &Transaction.apwr(&1, pos, {0x0010, <<(0x1000 + pos)::16-little>>}))
+  Bus.transaction_queue(link, &Transaction.apwr(&1, pos, {0x0010, <<(0x1000 + pos)::16-little>>}))
 end
 
 case SII.read_pdo_configs(link, 0x1002) do
@@ -56,7 +56,7 @@ link2 = EtherCAT.link()
 IO.puts("image_size=#{stats.image_size}")
 
 # Read current output ETS value and SM0 before any set_output
-sm0_before = case Link.transaction(link2, &Transaction.fprd(&1, 0x1002, {0x0F00, 2})) do
+sm0_before = case Bus.transaction_queue(link2, &Transaction.fprd(&1, 0x1002, {0x0F00, 2})) do
   {:ok, [%{data: d, wkc: w}]} when w > 0 -> inspect(d, base: :hex)
   _ -> "err"
 end
@@ -69,7 +69,7 @@ Process.sleep(20)
 ets_val = Domain.read(:main, {:out, :ch1})
 IO.puts("ETS {:out,:ch1} = #{inspect(ets_val)}")
 
-sm0_after = case Link.transaction(link2, &Transaction.fprd(&1, 0x1002, {0x0F00, 2})) do
+sm0_after = case Bus.transaction_queue(link2, &Transaction.fprd(&1, 0x1002, {0x0F00, 2})) do
   {:ok, [%{data: d, wkc: w}]} when w > 0 -> inspect(d, base: :hex)
   _ -> "err"
 end

@@ -8,8 +8,8 @@
 # Usage:
 #   mix run examples/sdo_debug.exs --interface enp0s31f6
 
-alias EtherCAT.Link
-alias EtherCAT.Link.Transaction
+alias EtherCAT.Bus
+alias EtherCAT.Bus.Transaction
 alias EtherCAT.Slave.{Registers, SII}
 
 {opts, _, _} = OptionParser.parse(System.argv(), switches: [interface: :string])
@@ -43,14 +43,14 @@ IO.puts("SII mailbox send : offset=0x#{Integer.to_string(mbx.send_offset, 16)}  
 
 for i <- 0..1 do
   {:ok, [%{data: <<phys::16-little, len::16-little, ctrl::8, _::8, act::8, _::8>>, wkc: wkc}]} =
-    Link.transaction(link, &Transaction.fprd(&1, station, {Registers.sm(i), 8}))
+    Bus.transaction_queue(link, &Transaction.fprd(&1, station, {Registers.sm(i), 8}))
   IO.puts("SM#{i} : phys=0x#{Integer.to_string(phys, 16)}  len=#{len}  ctrl=0x#{Integer.to_string(ctrl, 16)}  activate=#{act}  wkc=#{wkc}")
 end
 
 # ── 3. SM1 status before any write ───────────────────────────────────────────
 
 {:ok, [%{data: <<st::8>>, wkc: wkc}]} =
-  Link.transaction(link, &Transaction.fprd(&1, station, Registers.sm_status(1)))
+  Bus.transaction_queue(link, &Transaction.fprd(&1, station, Registers.sm_status(1)))
 IO.puts("\nSM1 status before write : 0x#{Integer.to_string(st, 16)}  bit3(full)=#{Bitwise.band(st, 0x08) != 0}  wkc=#{wkc}")
 
 # ── 4. Build SDO frame: write 0x8000:0x02 = 4 (Presentation = 1/64 Ω) ──────
@@ -69,31 +69,31 @@ IO.puts("\nSDO frame size : #{frame_size} bytes  recv_size : #{mbx.recv_size} by
 
 IO.puts("\n[A] Unpadded write (#{frame_size} bytes):")
 {:ok, [%{wkc: wkc_a}]} =
-  Link.transaction(link, &Transaction.fpwr(&1, station, {mbx.recv_offset, frame}))
+  Bus.transaction_queue(link, &Transaction.fpwr(&1, station, {mbx.recv_offset, frame}))
 IO.puts("    write wkc=#{wkc_a}")
 
 Process.sleep(300)
 {:ok, [%{data: <<st_a::8>>}]} =
-  Link.transaction(link, &Transaction.fprd(&1, station, Registers.sm_status(1)))
+  Bus.transaction_queue(link, &Transaction.fprd(&1, station, Registers.sm_status(1)))
 IO.puts("    SM1 status : 0x#{Integer.to_string(st_a, 16)}  bit3=#{Bitwise.band(st_a, 0x08) != 0}")
 
 # ── 6. Reset SM0 by rewriting its register, then test B ──────────────────────
 
 # Rewrite SM0 so it returns to the "writeable" initial mailbox state
 sm0_reset = <<mbx.recv_offset::16-little, mbx.recv_size::16-little, 0x26::8, 0::8, 0x01::8, 0::8>>
-Link.transaction(link, &Transaction.fpwr(&1, station, Registers.sm(0, sm0_reset)))
+Bus.transaction_queue(link, &Transaction.fpwr(&1, station, Registers.sm(0, sm0_reset)))
 Process.sleep(50)
 
 IO.puts("\n[B] Padded write (#{mbx.recv_size} bytes — frame + zeros):")
 padded = frame <> :binary.copy(<<0>>, mbx.recv_size - frame_size)
 {:ok, [%{wkc: wkc_b}]} =
-  Link.transaction(link, &Transaction.fpwr(&1, station, {mbx.recv_offset, padded}))
+  Bus.transaction_queue(link, &Transaction.fpwr(&1, station, {mbx.recv_offset, padded}))
 IO.puts("    write wkc=#{wkc_b}")
 
 for i <- 1..20 do
   Process.sleep(50)
   {:ok, [%{data: <<st::8>>}]} =
-    Link.transaction(link, &Transaction.fprd(&1, station, Registers.sm_status(1)))
+    Bus.transaction_queue(link, &Transaction.fprd(&1, station, Registers.sm_status(1)))
   full = Bitwise.band(st, 0x08) != 0
   IO.puts("    poll #{String.pad_leading(to_string(i), 2)} : SM1 status=0x#{Integer.to_string(st, 16)}  bit3=#{full}#{if full, do: "  ← FULL", else: ""}")
 end
