@@ -27,6 +27,7 @@ alias EtherCAT.Bus.Transaction
 alias EtherCAT.Domain
 alias EtherCAT.Slave
 alias EtherCAT.Slave.Registers
+alias EtherCAT.Telemetry
 
 # ---------------------------------------------------------------------------
 # Driver definitions
@@ -306,6 +307,7 @@ EtherCAT hardware stress test
 
 banner.("1. Start + discover + run")
 
+Telemetry.attach()
 EtherCAT.stop()
 Process.sleep(300)
 
@@ -451,6 +453,10 @@ for {name, station, _} <- slaves do
       IO.puts("    #{inspect(name)} @ #{hex.(station)}: could not read")
   end
 end
+
+IO.puts("")
+IO.puts("  Telemetry counters:")
+Telemetry.stats()
 
 IO.puts("")
 IO.puts("  Verdict: #{if all_ok, do: "PASS ✓", else: "FAIL ✗"}")

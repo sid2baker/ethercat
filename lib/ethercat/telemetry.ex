@@ -130,6 +130,21 @@ defmodule EtherCAT.Telemetry do
   end
 
   @doc false
+  def transact_direct(transport) do
+    execute([:ethercat, :bus, :transact, :direct], %{}, %{transport: transport})
+  end
+
+  @doc false
+  def transact_postponed(transport) do
+    execute([:ethercat, :bus, :transact, :postponed], %{}, %{transport: transport})
+  end
+
+  @doc false
+  def transact_queued(transport) do
+    execute([:ethercat, :bus, :transact, :queued], %{}, %{transport: transport})
+  end
+
+  @doc false
   def socket_down(transport, reason) do
     execute(
       [:ethercat, :bus, :transport, :down],
@@ -159,6 +174,9 @@ defmodule EtherCAT.Telemetry do
     [:ethercat, :bus, :transact, :exception],
     [:ethercat, :bus, :transact, :discarded],
     [:ethercat, :bus, :transact, :batch_sent],
+    [:ethercat, :bus, :transact, :direct],
+    [:ethercat, :bus, :transact, :postponed],
+    [:ethercat, :bus, :transact, :queued],
     [:ethercat, :bus, :frame, :sent],
     [:ethercat, :bus, :frame, :received],
     [:ethercat, :bus, :frame, :dropped],

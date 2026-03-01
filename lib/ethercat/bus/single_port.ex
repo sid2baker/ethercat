@@ -112,12 +112,14 @@ defmodule EtherCAT.Bus.SinglePort do
     if System.monotonic_time(:microsecond) - enqueued_at > timeout_us do
       {:keep_state_and_data, [{:reply, from, {:error, :expired}}]}
     else
+      Telemetry.transact_direct(data.transport_mod.name(data.transport))
       do_send(datagrams, from, data)
     end
   end
 
   # Queued transaction — always send immediately when idle
   def handle_event({:call, from}, {:transact_queue, datagrams}, :idle, data) do
+    Telemetry.transact_direct(data.transport_mod.name(data.transport))
     do_send(datagrams, from, data)
   end
 
@@ -126,12 +128,14 @@ defmodule EtherCAT.Bus.SinglePort do
   def handle_event(:enter, _old, :awaiting, _data), do: :keep_state_and_data
 
   # Timed transaction while awaiting — postpone for re-delivery on :idle
-  def handle_event({:call, _from}, {:transact, _, _, _}, :awaiting, _data) do
+  def handle_event({:call, _from}, {:transact, _, _, _}, :awaiting, data) do
+    Telemetry.transact_postponed(data.transport_mod.name(data.transport))
     {:keep_state_and_data, [:postpone]}
   end
 
   # Queued transaction while awaiting — add to pending batch
   def handle_event({:call, from}, {:transact_queue, datagrams}, :awaiting, data) do
+    Telemetry.transact_queued(data.transport_mod.name(data.transport))
     {:keep_state, %{data | pending: data.pending ++ [{from, datagrams}]}}
   end
 
