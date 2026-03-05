@@ -35,10 +35,6 @@ defmodule EtherCAT do
   @spec bus() :: pid()
   def bus, do: Master.bus()
 
-  @deprecated "Use bus/0 instead."
-  @spec link() :: pid()
-  def link, do: bus()
-
   @doc """
   Start the master: open the interface, scan for slaves, and begin
   self-driving configuration.

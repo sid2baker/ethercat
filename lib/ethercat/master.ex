@@ -98,10 +98,6 @@ defmodule EtherCAT.Master do
   @spec bus() :: pid() | nil
   def bus, do: :gen_statem.call(__MODULE__, :bus)
 
-  @deprecated "Use bus/0 instead."
-  @spec link() :: pid() | nil
-  def link, do: bus()
-
   @doc "Return the current master state atom."
   @spec state() :: atom()
   def state, do: :gen_statem.call(__MODULE__, :state)
