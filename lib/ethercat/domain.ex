@@ -34,8 +34,8 @@ defmodule EtherCAT.Domain do
 
   ## Input change notifications
 
-  The Domain sends `{:domain_input, domain_id, key, raw_binary}` to the
-  registered slave pid whenever an input value changes after a cycle.
+  The Domain sends `{:domain_input, domain_id, key, old_raw_binary | :unset, new_raw_binary}`
+  to the registered slave pid whenever an input value changes after a cycle.
   Slaves decode and re-publish to application subscribers.
 
   ## ETS table schema
@@ -410,7 +410,7 @@ defmodule EtherCAT.Domain do
 
       if new_val != old_val do
         :ets.update_element(table, key, {2, new_val})
-        send(slave_pid, {:domain_input, domain_id, key, new_val})
+        send(slave_pid, {:domain_input, domain_id, key, old_val, new_val})
       end
     end)
   end

@@ -26,14 +26,13 @@ defmodule EtherCAT.SlaveTest do
         ch1: %{sm_key: {:sm, 0}, bit_offset: 0, bit_size: 1},
         ch2: %{sm_key: {:sm, 0}, bit_offset: 1, bit_size: 1}
       },
-      pdo_subscriptions: %{ch1: [self()], ch2: [self()]},
-      pdo_last_inputs: %{}
+      pdo_subscriptions: %{ch1: [self()], ch2: [self()]}
     }
 
-    assert {:keep_state, data_after_initial} =
+    assert :keep_state_and_data =
              EtherCAT.Slave.handle_event(
                :info,
-               {:domain_input, :main, {:sensor, {:sm, 0}}, <<0>>},
+               {:domain_input, :main, {:sensor, {:sm, 0}}, :unset, <<0>>},
                :op,
                data
              )
@@ -42,34 +41,34 @@ defmodule EtherCAT.SlaveTest do
     assert_receive {:slave_input, :sensor, :ch2, 0}
     refute_receive _
 
-    assert {:keep_state, data_after_ch2} =
+    assert :keep_state_and_data =
              EtherCAT.Slave.handle_event(
                :info,
-               {:domain_input, :main, {:sensor, {:sm, 0}}, <<2>>},
+               {:domain_input, :main, {:sensor, {:sm, 0}}, <<0>>, <<2>>},
                :op,
-               data_after_initial
+               data
              )
 
     assert_receive {:slave_input, :sensor, :ch2, 1}
     refute_receive {:slave_input, :sensor, :ch1, _}
     refute_receive _
 
-    assert {:keep_state, _data_after_repeat} =
+    assert :keep_state_and_data =
              EtherCAT.Slave.handle_event(
                :info,
-               {:domain_input, :main, {:sensor, {:sm, 0}}, <<2>>},
+               {:domain_input, :main, {:sensor, {:sm, 0}}, <<2>>, <<2>>},
                :op,
-               data_after_ch2
+               data
              )
 
     refute_receive _
 
-    assert {:keep_state, _data_after_ch1} =
+    assert :keep_state_and_data =
              EtherCAT.Slave.handle_event(
                :info,
-               {:domain_input, :main, {:sensor, {:sm, 0}}, <<3>>},
+               {:domain_input, :main, {:sensor, {:sm, 0}}, <<2>>, <<3>>},
                :op,
-               data_after_ch2
+               data
              )
 
     assert_receive {:slave_input, :sensor, :ch1, 1}

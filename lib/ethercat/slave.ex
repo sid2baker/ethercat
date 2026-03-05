@@ -110,8 +110,6 @@ defmodule EtherCAT.Slave do
     :pdo_registrations,
     # %{pdo_name => [pid]}
     :pdo_subscriptions,
-    # %{pdo_name => raw_input_binary} used to emit change notifications per PDO
-    pdo_last_inputs: %{},
     # %{{latch_id, edge} => [pid]}
     latch_subscriptions: %{}
   ]
@@ -229,7 +227,6 @@ defmodule EtherCAT.Slave do
       latch_poll_ms: nil,
       pdo_registrations: %{},
       pdo_subscriptions: %{},
-      pdo_last_inputs: %{},
       latch_subscriptions: %{}
     }
 
@@ -395,45 +392,39 @@ defmodule EtherCAT.Slave do
   # SM-grouped key: {slave_name, {:sm, idx}} — unpack per-PDO bits and dispatch.
   def handle_event(
         :info,
-        {:domain_input, _domain_id, {_slave_name, {:sm, _} = sm_key}, sm_bytes},
+        {:domain_input, _domain_id, {_slave_name, {:sm, _} = sm_key}, old_sm_bytes, new_sm_bytes},
         _state,
         data
       ) do
-    {new_pdo_last_inputs, notifications} =
+    notifications =
       data.pdo_registrations
       |> Enum.filter(fn {_pdo_name, reg} -> reg.sm_key == sm_key end)
-      |> Enum.reduce({data.pdo_last_inputs, []}, fn
-        {pdo_name, %{bit_offset: bit_offset, bit_size: bit_size}}, {pdo_last_inputs, acc} ->
-          raw = extract_sm_bits(sm_bytes, bit_offset, bit_size)
+      |> Enum.reduce([], fn {pdo_name, %{bit_offset: bit_offset, bit_size: bit_size}}, acc ->
+        if pdo_changed?(old_sm_bytes, new_sm_bytes, bit_offset, bit_size) do
+          raw = extract_sm_bits(new_sm_bytes, bit_offset, bit_size)
 
-          case Map.get(pdo_last_inputs, pdo_name) do
-            ^raw ->
-              {pdo_last_inputs, acc}
+          decoded =
+            if data.driver != nil do
+              data.driver.decode_inputs(pdo_name, data.config, raw)
+            else
+              raw
+            end
 
-            _prev_raw ->
-              decoded =
-                if data.driver != nil do
-                  data.driver.decode_inputs(pdo_name, data.config, raw)
-                else
-                  raw
-                end
-
-              next_acc =
-                data.pdo_subscriptions
-                |> Map.get(pdo_name, [])
-                |> Enum.reduce(acc, fn pid, pid_acc ->
-                  [{pid, pdo_name, decoded} | pid_acc]
-                end)
-
-              {Map.put(pdo_last_inputs, pdo_name, raw), next_acc}
-          end
+          data.pdo_subscriptions
+          |> Map.get(pdo_name, [])
+          |> Enum.reduce(acc, fn pid, pid_acc ->
+            [{pid, pdo_name, decoded} | pid_acc]
+          end)
+        else
+          acc
+        end
       end)
 
     Enum.each(Enum.reverse(notifications), fn {pid, pdo_name, decoded} ->
       send(pid, {:slave_input, data.name, pdo_name, decoded})
     end)
 
-    {:keep_state, %{data | pdo_last_inputs: new_pdo_last_inputs}}
+    :keep_state_and_data
   end
 
   def handle_event(:state_timeout, :latch_poll, :op, data) do
@@ -1061,6 +1052,13 @@ defmodule EtherCAT.Slave do
 
       <<encoded_value::unsigned-little-size(encoded_bits)>>
     end
+  end
+
+  defp pdo_changed?(:unset, _new_sm_bytes, _bit_offset, _bit_size), do: true
+
+  defp pdo_changed?(old_sm_bytes, new_sm_bytes, bit_offset, bit_size) do
+    extract_sm_bits(old_sm_bytes, bit_offset, bit_size) !=
+      extract_sm_bits(new_sm_bytes, bit_offset, bit_size)
   end
 
   # Write `bit_size` bits from `encoded` into `sm_bytes` at `bit_offset`.
