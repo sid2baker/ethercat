@@ -53,6 +53,7 @@ defmodule EtherCAT.Domain do
 
   alias EtherCAT.Bus
   alias EtherCAT.Bus.Transaction
+  alias EtherCAT.Telemetry
 
   @type domain_id :: atom()
   @type pdo_key :: {slave_name :: atom(), pdo_name :: atom()}
@@ -300,11 +301,7 @@ defmodule EtherCAT.Domain do
         dispatch_inputs(response, data.input_slices, data.table, data.id)
         duration_us = System.monotonic_time(:microsecond) - t0
 
-        :telemetry.execute(
-          [:ethercat, :domain, :cycle, :done],
-          %{duration_us: duration_us, cycle_count: data.cycle_count + 1},
-          %{domain: data.id}
-        )
+        Telemetry.domain_cycle_done(data.id, duration_us, data.cycle_count + 1)
 
         new_data = %{
           data
@@ -318,11 +315,7 @@ defmodule EtherCAT.Domain do
       other ->
         reason = if match?({:ok, _}, other), do: :no_response, else: elem(other, 1)
 
-        :telemetry.execute(
-          [:ethercat, :domain, :cycle, :missed],
-          %{miss_count: data.miss_count + 1},
-          %{domain: data.id, reason: reason}
-        )
+        Telemetry.domain_cycle_missed(data.id, data.miss_count + 1, reason)
 
         new_data = %{
           data
