@@ -1,4 +1,4 @@
-defmodule EtherCAT.Bus.SinglePort do
+defmodule EtherCAT.Bus.Transport.SinglePort do
   @moduledoc """
   Single-port EtherCAT bus implementation.
 
@@ -176,7 +176,7 @@ defmodule EtherCAT.Bus.SinglePort do
     n = length(data.awaiting_callers || [])
 
     Logger.warning(
-      "[Bus.SinglePort] frame timeout after #{elapsed_ms}ms — #{n} caller(s) lost (transport=#{data.transport_mod.name(data.transport)})"
+      "[Bus.Transport.SinglePort] frame timeout after #{elapsed_ms}ms — #{n} caller(s) lost (transport=#{data.transport_mod.name(data.transport)})"
     )
 
     data.transport_mod.drain(data.transport)

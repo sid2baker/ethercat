@@ -3,7 +3,7 @@
 ## Purpose
 
 `EtherCAT.Master` is the singleton `gen_statem` registered as `EtherCAT.Master` (local name).
-It coordinates the entire bus startup sequence: link open, slave count stabilization, station
+It coordinates the entire bus startup sequence: bus open, slave count stabilization, station
 assignment, DC initialization, slave spawning, and transition to operational state.
 
 Supervised as `:permanent` under `EtherCAT.Application`. Started at application boot, not
@@ -21,7 +21,7 @@ restarted on individual slave crashes.
 | State | Description |
 |-------|-------------|
 | `:idle` | Not started. Rejects all calls except `start/1`. |
-| `:scanning` | Link open, polling bus for a stable slave count via BRD to `0x0000`. |
+| `:scanning` | Bus open, polling for a stable slave count via BRD to `0x0000`. |
 | `:configuring` | Stations assigned, DC initialized, slaves spawned. Waiting for all named slaves to send `{:slave_ready, name, :preop}`. |
 | `:running` | All slaves at `:preop`, domains cycling, slaves advanced to `:op`. Stable operational state. |
 
@@ -32,7 +32,7 @@ restarted on individual slave crashes.
 Entry action: immediately schedule `{:timeout, :scan_poll}` with 0 ms delay.
 
 On each scan poll:
-1. `Bus.transaction_queue(link, &Transaction.brd(&1, {0x0000, 1}))` — BRD to register 0 (any accessible byte). WKC = number of responding slaves.
+1. `Bus.transaction_queue(bus, &Transaction.brd(&1, {0x0000, 1}))` — BRD to register 0 (any accessible byte). WKC = number of responding slaves.
 2. Append `{monotonic_ms, wkc}` to sliding window; trim entries older than `scan_stable_ms + scan_poll_ms` (1100 ms window).
 3. Stable when: window spans ≥ 1000 ms, ≥ 2 readings, all readings identical, count > 0.
 4. On stability: call `do_configure/1` synchronously, then transition to `:configuring` or `:running` (the latter if no named slaves).
@@ -51,7 +51,7 @@ APWR to each slave by auto-increment position (0 to count-1), writing `base_stat
 FPRD `0x0110–0x0111` from each slave — 2-byte DL status. Passed to `DC.init/2` to determine topology (which ports are open).
 
 **Step 3: DC initialization**
-`DC.init(link, slave_stations)` — see DC section below. Returns `{:ok, ref_station}` or `{:error, reason}`.
+`DC.init(bus, slave_stations)` — see DC section below. Returns `{:ok, ref_station}` or `{:error, reason}`.
 
 If DC init fails, master proceeds without DC: `dc_cycle_ns` is set to `nil`, no SYNC0 will be configured on any slave.
 
@@ -82,7 +82,7 @@ When `pending_preop` empties: call `do_activate/1` and transition to `:running`.
 Runs synchronously before transitioning to `:running`.
 
 **Step 1: Start DC gen_statem**
-`DC.start_link(link: link, ref_station: ref_station, period_ms: 10)` — starts cyclic ARMW ticker.
+`DC.start_link(link: bus, ref_station: ref_station, period_ms: 10)` — starts cyclic ARMW ticker.
 Started *after* all slaves reach `:preop` so DC ticks don't compete with slave SM transitions on the socket.
 
 **Step 2: Start domain cycling**
@@ -98,9 +98,9 @@ Started *after* all slaves reach `:preop` so DC ticks don't compete with slave S
 
 ## Running Phase
 
-Master accepts `stop/0`, `slaves/0`, `link/0`, `state/0`, and `await_running/1`.
+Master accepts `stop/0`, `slaves/0`, `bus/0`, `state/0`, and `await_running/1`.
 Ignores `{:slave_ready, ...}` (stale from restart race).
-On link crash (`{:DOWN, ref, ...}`): calls `stop_session/1`, replies `{:error, {:link_down, reason}}` to blocked callers, returns to `:idle`.
+On bus crash (`{:DOWN, ref, ...}`): calls `stop_session/1`, replies `{:error, {:link_down, reason}}` to blocked callers, returns to `:idle`.
 
 ---
 
@@ -124,7 +124,7 @@ Implements ESC datasheet §9.1.3.6 (clock synchronization initialization):
 
 `DC` is a `gen_statem` in state `:running`. On each tick (default 10 ms):
 ```
-Bus.transaction(link, &Transaction.armw(&1, ref_station, Registers.dc_system_time()))
+Bus.transaction(bus, &Transaction.armw(&1, ref_station, Registers.dc_system_time()))
 ```
 ARMW to `0x0910` of reference clock: the reference clock's 64-bit system time is read into the datagram; all downstream slaves in the ring write the datagram value to their own `0x0910`. Each slave's PLL computes `Δt` and adjusts clock speed.
 
@@ -138,8 +138,8 @@ Telemetry: `[:ethercat, :dc, :tick]` with `%{wkc: wkc}` on each tick.
 
 ```elixir
 %EtherCAT.Master{
-  link_pid:        pid() | nil,
-  link_ref:        reference() | nil,    # Process.monitor ref for link crash detection
+  bus_pid:         pid() | nil,
+  bus_ref:         reference() | nil,    # Process.monitor ref for bus crash detection
   dc_pid:          pid() | nil,          # DC gen_statem pid
   dc_ref_station:  non_neg_integer() | nil,  # Station of reference clock slave
   slave_config:    list(),               # Raw slave config entries from start/1
@@ -158,7 +158,7 @@ Telemetry: `[:ethercat, :dc, :tick]` with `%{wkc: wkc}` on each tick.
 
 ## Known Gaps
 
-- **No per-slave monitoring after Op**: master does not poll AL status or error counters on running slaves. Slave crashes are not detected by the master (only link crashes trigger recovery).
+- **No per-slave monitoring after Op**: master does not poll AL status or error counters on running slaves. Slave crashes are not detected by the master (only bus crashes trigger recovery).
 - **Sequential slave activation**: slaves are advanced to SafeOp then Op one at a time via synchronous `Slave.request/2`. For large slave counts this can be slow. Parallel advancement (async + barrier) is not implemented.
 - **No DC lock detection**: master does not wait for DC PLL to lock (read `0x092C` converging to 0) before advancing slaves to Op. Slaves enter Op before clocks are fully synchronized.
 - **No static drift pre-compensation**: the datasheet recommends sending ~15,000 ARMW frames before operation to eliminate static drift. The DC gen_statem starts periodic ticking immediately without this warm-up phase.

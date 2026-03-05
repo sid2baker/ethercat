@@ -91,8 +91,8 @@ defmodule EtherCAT.Bus do
 
     impl =
       if opts[:backup_interface],
-        do: EtherCAT.Bus.Redundant,
-        else: EtherCAT.Bus.SinglePort
+        do: EtherCAT.Bus.Transport.Redundant,
+        else: EtherCAT.Bus.Transport.SinglePort
 
     opts = Keyword.put(opts, :transport_mod, transport_mod)
 
