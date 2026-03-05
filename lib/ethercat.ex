@@ -49,6 +49,8 @@ defmodule EtherCAT do
       (position matters — station address = `base_station + index`)
     - `:base_station` — first station address, default `0x1000`
     - `:dc_cycle_ns` — SYNC0 cycle time in ns, default `1_000_000`
+    - `:frame_timeout_ms` — optional fixed bus frame response timeout in ms
+      (otherwise auto-tuned from slave count and cycle time)
   """
   @spec start(keyword()) :: :ok | {:error, term()}
   def start(opts \\ []), do: Master.start(opts)

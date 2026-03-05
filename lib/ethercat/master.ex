@@ -47,6 +47,15 @@ defmodule EtherCAT.Master do
   # Configuring: 30 s to receive :preop notifications from all slaves
   @configuring_timeout_ms 30_000
 
+  # Bus frame timeout tuning:
+  # base + per-slave budget keeps timeout proportional to bus size, then capped
+  # to a fraction of cycle time so one stalled frame does not block multiple cycles.
+  @frame_timeout_base_us 200
+  @frame_timeout_per_slave_us 40
+  @frame_timeout_cycle_margin_pct 90
+  @frame_timeout_min_us 500
+  @frame_timeout_max_ms 10
+
   defstruct [
     :bus_pid,
     :bus_ref,
@@ -56,6 +65,7 @@ defmodule EtherCAT.Master do
     :slave_config,
     :domain_config,
     :dc_cycle_ns,
+    :frame_timeout_override_ms,
     base_station: @base_station,
     slaves: [],
     # [{monotonic_ms, count}] — sliding window for scan stability
@@ -82,6 +92,8 @@ defmodule EtherCAT.Master do
       keys `:id` (atom, required) and `:period` (ms, required), plus any Domain options
     - `:base_station` — starting station address, default `0x1000`
     - `:dc_cycle_ns` — SYNC0 cycle time in ns for DC-capable slaves (default `1_000_000`)
+    - `:frame_timeout_ms` — optional fixed bus frame response timeout (ms); if omitted,
+      master auto-tunes from slave count + cycle time
   """
   @spec start(keyword()) :: :ok | {:error, term()}
   def start(opts \\ []), do: :gen_statem.call(__MODULE__, {:start, opts})
@@ -150,10 +162,15 @@ defmodule EtherCAT.Master do
     slave_config = Keyword.get(opts, :slaves, [])
     domain_config = Keyword.get(opts, :domains, [])
     dc_cycle_ns = Keyword.get(opts, :dc_cycle_ns, 1_000_000)
+    frame_timeout_override_ms = Keyword.get(opts, :frame_timeout_ms)
+
+    bus_opts =
+      [interface: interface, name: EtherCAT.Bus]
+      |> maybe_put_frame_timeout(frame_timeout_override_ms)
 
     case DynamicSupervisor.start_child(
            EtherCAT.SessionSupervisor,
-           {Bus, interface: interface, name: EtherCAT.Bus}
+           {Bus, bus_opts}
          ) do
       {:ok, bus_pid} ->
         bus_ref = Process.monitor(bus_pid)
@@ -166,6 +183,7 @@ defmodule EtherCAT.Master do
             slave_config: slave_config,
             domain_config: domain_config,
             dc_cycle_ns: dc_cycle_ns,
+            frame_timeout_override_ms: frame_timeout_override_ms,
             slaves: [],
             scan_window: []
         }
@@ -216,6 +234,7 @@ defmodule EtherCAT.Master do
 
     if stable?(new_window, now_ms) do
       [{_, slave_count} | _] = new_window
+      tune_bus_frame_timeout(data, slave_count)
       Logger.info("[Master] bus stable — #{slave_count} slave(s)")
       configured = do_configure(%{data | scan_window: [], slave_count: slave_count})
 
@@ -405,6 +424,64 @@ defmodule EtherCAT.Master do
   end
 
   defp normalize_slave_config(opts) when is_list(opts), do: opts
+
+  defp maybe_put_frame_timeout(opts, timeout_ms) when is_integer(timeout_ms) and timeout_ms > 0 do
+    Keyword.put(opts, :frame_timeout_ms, timeout_ms)
+  end
+
+  defp maybe_put_frame_timeout(opts, _timeout_ms), do: opts
+
+  defp tune_bus_frame_timeout(%{bus_pid: nil}, _slave_count), do: :ok
+
+  defp tune_bus_frame_timeout(data, slave_count) do
+    target_ms = recommended_frame_timeout_ms(data, slave_count)
+
+    case Bus.set_frame_timeout(data.bus_pid, target_ms) do
+      :ok ->
+        Logger.info(
+          "[Master] bus frame timeout set to #{target_ms}ms (slaves=#{slave_count}, dc_cycle_ns=#{inspect(data.dc_cycle_ns)})"
+        )
+
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "[Master] failed to tune bus frame timeout to #{target_ms}ms: #{inspect(reason)}"
+        )
+
+        :ok
+    end
+  end
+
+  defp recommended_frame_timeout_ms(%{frame_timeout_override_ms: timeout_ms}, _slave_count)
+       when is_integer(timeout_ms) and timeout_ms > 0 do
+    timeout_ms
+  end
+
+  defp recommended_frame_timeout_ms(data, slave_count)
+       when is_integer(slave_count) and slave_count > 0 do
+    by_topology_us = @frame_timeout_base_us + slave_count * @frame_timeout_per_slave_us
+
+    by_cycle_us =
+      case data.dc_cycle_ns do
+        cycle_ns when is_integer(cycle_ns) and cycle_ns > 0 ->
+          div(cycle_ns * @frame_timeout_cycle_margin_pct, 100)
+
+        _ ->
+          @frame_timeout_max_ms * 1_000
+      end
+
+    budget_us = min(by_topology_us, by_cycle_us)
+    timeout_us = max(budget_us, @frame_timeout_min_us)
+    timeout_ms = ceil_div(timeout_us, 1_000)
+    min(timeout_ms, @frame_timeout_max_ms)
+  end
+
+  defp recommended_frame_timeout_ms(_data, _slave_count), do: 1
+
+  defp ceil_div(value, divisor) when is_integer(value) and is_integer(divisor) and divisor > 0 do
+    div(value + divisor - 1, divisor)
+  end
 
   defp start_domains(bus, domain_config) do
     Enum.each(domain_config, fn entry ->

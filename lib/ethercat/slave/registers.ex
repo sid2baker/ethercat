@@ -270,7 +270,19 @@ defmodule EtherCAT.Slave.Registers do
   @spec dc_speed_counter_start(non_neg_integer()) :: reg_write()
   def dc_speed_counter_start(v), do: {0x0930, <<v::16-little>>}
 
-  @doc "DC Activation register. Write 0x03 to enable SYNC0+SYNC1 output."
+  @doc """
+  DC Activation register.
+
+  Bit layout:
+    bit 0 — cyclic operation enable
+    bit 1 — SYNC0 generation enable
+    bit 2 — SYNC1 generation enable
+
+  Common values:
+    0x01 — cyclic enable only
+    0x03 — SYNC0 enabled
+    0x07 — SYNC0 + SYNC1 enabled
+  """
   @spec dc_activation() :: reg()
   def dc_activation, do: {0x0981, 1}
 
@@ -301,4 +313,68 @@ defmodule EtherCAT.Slave.Registers do
   @doc "SYNC0 cycle time write — encodes `cycle_ns` as a 32-bit little-endian value."
   @spec dc_sync0_cycle_time(non_neg_integer()) :: reg_write()
   def dc_sync0_cycle_time(cycle_ns), do: {0x09A0, <<cycle_ns::32-little>>}
+
+  @doc "SYNC1 cycle time in ns. 0 = disabled. This is the delay from SYNC0 to SYNC1."
+  @spec dc_sync1_cycle_time() :: reg()
+  def dc_sync1_cycle_time, do: {0x09A4, 4}
+
+  @doc "SYNC1 cycle time write — encodes `cycle_ns` as a 32-bit little-endian value."
+  @spec dc_sync1_cycle_time(non_neg_integer()) :: reg_write()
+  def dc_sync1_cycle_time(cycle_ns), do: {0x09A4, <<cycle_ns::32-little>>}
+
+  @doc "LATCH0 control register. bit0=positive edge capture enable, bit1=negative edge capture enable."
+  @spec dc_latch0_control() :: reg()
+  def dc_latch0_control, do: {0x09A8, 1}
+
+  @doc "LATCH0 control write — encodes control bits as a single byte."
+  @spec dc_latch0_control(non_neg_integer()) :: reg_write()
+  def dc_latch0_control(code), do: {0x09A8, <<code::8>>}
+
+  @doc "LATCH1 control register. bit0=positive edge capture enable, bit1=negative edge capture enable."
+  @spec dc_latch1_control() :: reg()
+  def dc_latch1_control, do: {0x09A9, 1}
+
+  @doc "LATCH1 control write — encodes control bits as a single byte."
+  @spec dc_latch1_control(non_neg_integer()) :: reg_write()
+  def dc_latch1_control(code), do: {0x09A9, <<code::8>>}
+
+  @doc """
+  Combined LATCH0/LATCH1 event status bytes.
+
+  Byte 0 (0x09AE): LATCH0 status
+    bit0 event positive edge captured
+    bit1 event negative edge captured
+    bit2 current pin state
+
+  Byte 1 (0x09AF): LATCH1 status
+    bit0 event positive edge captured
+    bit1 event negative edge captured
+    bit2 current pin state
+  """
+  @spec dc_latch_event_status() :: reg()
+  def dc_latch_event_status, do: {0x09AE, 2}
+
+  @doc "LATCH0 status byte."
+  @spec dc_latch0_status() :: reg()
+  def dc_latch0_status, do: {0x09AE, 1}
+
+  @doc "LATCH1 status byte."
+  @spec dc_latch1_status() :: reg()
+  def dc_latch1_status, do: {0x09AF, 1}
+
+  @doc "LATCH0 positive-edge timestamp (64-bit, ns since 2000-01-01)."
+  @spec dc_latch0_pos_time() :: reg()
+  def dc_latch0_pos_time, do: {0x09B0, 8}
+
+  @doc "LATCH0 negative-edge timestamp (64-bit, ns since 2000-01-01)."
+  @spec dc_latch0_neg_time() :: reg()
+  def dc_latch0_neg_time, do: {0x09B8, 8}
+
+  @doc "LATCH1 positive-edge timestamp (64-bit, ns since 2000-01-01)."
+  @spec dc_latch1_pos_time() :: reg()
+  def dc_latch1_pos_time, do: {0x09C0, 8}
+
+  @doc "LATCH1 negative-edge timestamp (64-bit, ns since 2000-01-01)."
+  @spec dc_latch1_neg_time() :: reg()
+  def dc_latch1_neg_time, do: {0x09C8, 8}
 end

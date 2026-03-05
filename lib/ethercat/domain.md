@@ -57,7 +57,7 @@ rounded up). On each `:tick`:
 
 1. **Build frame** (`build_frame/3`): constructs output binary using iodata — patches
    output values from ETS into a zero-filled frame without intermediate allocation.
-2. **LRW transaction** (`Bus.transaction/2`): sends the frame; blocks until response.
+2. **LRW transaction** (`Bus.transaction/3`): sends the frame with a timeout budget slightly below cycle period; stale ticks are dropped.
 3. **Dispatch inputs** (`dispatch_inputs/4`): for each input slice, compares new value
    against ETS; on change, updates ETS and sends `{:domain_input, domain_id, key, raw}` to
    the slave pid.
@@ -155,9 +155,9 @@ record     : {key, value, slave_pid}
 
 ## Key Design Decisions
 
-**Why `Bus.transaction/2` instead of `Bus.transaction_queue/2` for the LRW?**
+**Why `Bus.transaction/3` instead of `Bus.transaction_queue/2` for the LRW?**
 The domain cycle is the only operation running during Op — no other concurrent writes.
-`transaction/2` (direct, blocking) is appropriate here. `transaction_queue/2` is for
+`transaction/3` (direct, blocking with period-derived staleness budget) is appropriate here. `transaction_queue/2` is for
 batching multiple register writes into one frame (slave init path).
 
 **Why drift-compensated scheduling (`next_cycle_at + period_us`, not `now + period_us`)?**

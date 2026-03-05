@@ -35,7 +35,7 @@ On each scan poll:
 1. `Bus.transaction_queue(bus, &Transaction.brd(&1, {0x0000, 1}))` — BRD to register 0 (any accessible byte). WKC = number of responding slaves.
 2. Append `{monotonic_ms, wkc}` to sliding window; trim entries older than `scan_stable_ms + scan_poll_ms` (1100 ms window).
 3. Stable when: window spans ≥ 1000 ms, ≥ 2 readings, all readings identical, count > 0.
-4. On stability: call `do_configure/1` synchronously, then transition to `:configuring` or `:running` (the latter if no named slaves).
+4. On stability: tune bus frame timeout (`Bus.set_frame_timeout/2`) from slave count and cycle budget, then call `do_configure/1` synchronously and transition to `:configuring` or `:running` (the latter if no named slaves).
 5. On BRD failure: reset window, reschedule after `scan_poll_ms` (100 ms).
 
 ---
@@ -128,7 +128,7 @@ Bus.transaction(bus, &Transaction.armw(&1, ref_station, Registers.dc_system_time
 ```
 ARMW to `0x0910` of reference clock: the reference clock's 64-bit system time is read into the datagram; all downstream slaves in the ring write the datagram value to their own `0x0910`. Each slave's PLL computes `Δt` and adjusts clock speed.
 
-Uses `Bus.transaction/2` (direct, not queued) to avoid ordering issues with other concurrent datagrams.
+Uses `Bus.transaction/3` (direct, not queued) with a timeout budget derived from the DC tick period, to avoid ordering issues with other concurrent datagrams while dropping stale ticks.
 
 Telemetry: `[:ethercat, :dc, :tick]` with `%{wkc: wkc}` on each tick.
 
@@ -145,6 +145,7 @@ Telemetry: `[:ethercat, :dc, :tick]` with `%{wkc: wkc}` on each tick.
   slave_config:    list(),               # Raw slave config entries from start/1
   domain_config:   list(),               # Raw domain config entries from start/1
   dc_cycle_ns:     pos_integer() | nil,  # SYNC0 period; nil if no DC
+  frame_timeout_override_ms: pos_integer() | nil, # Optional fixed bus frame timeout
   base_station:    non_neg_integer(),    # Default 0x1000
   slaves:          [{name, station, pid}], # Named slave tuples
   scan_window:     [{ms, count}],        # Sliding stability window
