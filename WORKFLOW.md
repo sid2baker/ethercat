@@ -4,7 +4,7 @@ tracker:
   # Find your project slug in the Linear URL:
   # linear.app/<workspace>/project/<project-name>-<id>
   # Copy the last segment, e.g. "ethercat-0c79b11b75ea"
-  project_slug: "YOUR-LINEAR-PROJECT-SLUG"
+  project_slug: "ethercat-b8d52f3ad4e8"
   active_states:
     - Todo
     - In Progress
@@ -27,6 +27,11 @@ hooks:
   after_create: |
     git clone --depth 1 git@github.com:sid2baker/ethercat.git .
     mix deps.get
+    git clone --depth 1 https://gitlab.com/etherlab.org/ethercat.git docs/references/igh
+    git clone --depth 1 https://github.com/OpenEtherCATsociety/SOEM.git docs/references/soem
+  before_run: |
+    git fetch origin main --depth 1
+    git merge --ff-only origin/main 2>/dev/null || true
   before_remove: ""
 
 agent:
@@ -36,9 +41,9 @@ agent:
 codex:
   command: codex --config shell_environment_policy.inherit=all --config model_reasoning_effort=high app-server
   approval_policy: never
-  thread_sandbox: workspace-write
+  thread_sandbox: danger-full-access
   turn_sandbox_policy:
-    type: workspaceWrite
+    type: dangerFullAccess
 ---
 
 You are working on a Linear ticket `{{ issue.identifier }}`: **{{ issue.title }}**
@@ -67,6 +72,21 @@ Previous attempt context:
 ## Prerequisite: Linear Access
 
 The `linear_graphql` tool is injected into your session. Use it for all Linear operations (state transitions, comments, workpad updates). Never shell out to Linear APIs directly.
+
+## GitHub Connectivity Blocker Protocol (sandbox-specific)
+
+This environment may block outbound DNS/TCP/socket access to GitHub.
+
+If any publish step fails with network-resolution or socket errors (for example `Could not resolve hostname github.com`, `Could not resolve host`, `Temporary failure in name resolution`, or `Operation not permitted` while opening sockets):
+
+1. Stop push/publish retries immediately after the first failure.
+2. Add a concise blocker brief to the existing `## Codex Workpad` comment including:
+   - exact command attempted,
+   - exact error text,
+   - timestamp,
+   - statement that sandbox networking prevents remote publish from this run.
+3. Move the issue to `Human Review` with the blocker noted in the workpad.
+4. Do not continue implementation once this blocker is confirmed.
 
 ## Status Routing
 
@@ -142,4 +162,5 @@ All of the following must be true:
 3. Implement on a feature branch (`git checkout -b <issue-id>-<short-slug>`).
 4. Verify with `mix compile --warnings-as-errors && mix test` after every non-trivial change.
 5. When done, run the `push` skill (`.codex/skills/push/SKILL.md`) to create the PR.
-6. Transition ticket to `Human Review`.
+6. If push fails due to GitHub DNS/socket/network restrictions, follow the `GitHub Connectivity Blocker Protocol (sandbox-specific)` and stop retries.
+7. Transition ticket to `Human Review` after successful publish, or immediately after recording the confirmed connectivity blocker.
