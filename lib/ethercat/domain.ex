@@ -70,7 +70,7 @@ defmodule EtherCAT.Domain do
     output_patches: [],
     # [{offset, size, key, slave_pid}] in registration order
     input_slices: [],
-    # LRW expected working counter = output_fmmu_count * 2 + input_fmmu_count
+    # LRW expected working counter = output_slave_count * 2 + input_slave_count
     expected_wkc: 0,
     miss_count: 0,
     miss_threshold: 100,
@@ -419,7 +419,21 @@ defmodule EtherCAT.Domain do
   defp binary_pad(data, size), do: data <> :binary.copy(<<0>>, size - byte_size(data))
 
   defp expected_working_counter(data) do
-    length(data.output_patches) * 2 + length(data.input_slices)
+    output_slave_count =
+      data.output_patches
+      |> Enum.reduce(MapSet.new(), fn {_offset, _size, {slave_name, _pdo}}, acc ->
+        MapSet.put(acc, slave_name)
+      end)
+      |> MapSet.size()
+
+    input_slave_count =
+      data.input_slices
+      |> Enum.reduce(MapSet.new(), fn {_offset, _size, {slave_name, _pdo}, _slave_pid}, acc ->
+        MapSet.put(acc, slave_name)
+      end)
+      |> MapSet.size()
+
+    output_slave_count * 2 + input_slave_count
   end
 
   defp mark_cycle_missed(data, reason, next_at, next_timeout) do
