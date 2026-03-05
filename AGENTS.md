@@ -12,6 +12,9 @@ Start here. Read in order for any non-trivial task.
 | `lib/ethercat/domain.md` | Domain cyclic LRW, ETS schema, frame assembly, hot path |
 | `docs/references/ethercat-esc-technology.md` | ESC hardware: FMMU, SM, DC, ESM, SII, interrupts |
 | `docs/references/ethercat-esc-registers.md` | Full ESC register map |
+| `docs/references/README.md` | **Reference implementations index** — IgH + SOEM file map by topic |
+| `docs/references/igh/master/` | IgH EtherCAT Master source (C, kernel). Key files: `fsm_slave_config.c`, `fsm_coe.c`, `fsm_master.c` |
+| `docs/references/soem/src/` | SOEM source (C, userspace). Key files: `ec_dc.c`, `ec_coe.c`, `ec_config.c` |
 | `docs/exec-plans/active/dc-sync1-latch-complete.md` | Planned SYNC1 + LATCH implementation |
 | `docs/exec-plans/tech-debt-tracker.md` | Known gaps across all subsystems |
 | `docs/design-docs/engineering-summary.md` | Narrative summary with hardware observations |
