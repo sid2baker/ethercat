@@ -65,6 +65,16 @@ defmodule EtherCAT.Telemetry do
         measurements: %{wkc: integer()}
         metadata:     %{ref_station: non_neg_integer()}
 
+  ### Domain cycle events
+
+      [:ethercat, :domain, :cycle, :done]
+        measurements: %{duration_us: integer(), cycle_count: non_neg_integer()}
+        metadata:     %{domain: atom()}
+
+      [:ethercat, :domain, :cycle, :missed]
+        measurements: %{miss_count: pos_integer()}
+        metadata:     %{domain: atom(), reason: term()}
+
   ## Timestamps
 
   `tx_timestamp` and `rx_timestamp` are `System.monotonic_time/0` values.
@@ -186,6 +196,24 @@ defmodule EtherCAT.Telemetry do
     )
   end
 
+  @doc false
+  def domain_cycle_done(domain_id, duration_us, cycle_count) do
+    execute(
+      [:ethercat, :domain, :cycle, :done],
+      %{duration_us: duration_us, cycle_count: cycle_count},
+      %{domain: domain_id}
+    )
+  end
+
+  @doc false
+  def domain_cycle_missed(domain_id, miss_count, reason) do
+    execute(
+      [:ethercat, :domain, :cycle, :missed],
+      %{miss_count: miss_count},
+      %{domain: domain_id, reason: reason}
+    )
+  end
+
   # ---------------------------------------------------------------------------
   # Lightweight event counters for IEx inspection
   # ---------------------------------------------------------------------------
@@ -207,7 +235,9 @@ defmodule EtherCAT.Telemetry do
     [:ethercat, :bus, :frame, :ignored],
     [:ethercat, :bus, :transport, :down],
     [:ethercat, :bus, :transport, :reconnected],
-    [:ethercat, :dc, :tick]
+    [:ethercat, :dc, :tick],
+    [:ethercat, :domain, :cycle, :done],
+    [:ethercat, :domain, :cycle, :missed]
   ]
 
   @event_index @all_events |> Enum.with_index() |> Map.new()
