@@ -4,7 +4,7 @@ defmodule EtherCAT.DC do
 
   ## Initialization
 
-  `DC.init/2` performs the one-time clock synchronization sequence described in
+  `DC.initialize_clocks/2` performs the one-time clock synchronization sequence described in
   §9.1.3.6 of the ESC datasheet:
 
   1. Trigger receive-time latch on all slaves (BWR to 0x0900).
@@ -48,9 +48,9 @@ defmodule EtherCAT.DC do
   Returns `{:ok, ref_station}` where `ref_station` is the station address of
   the reference clock slave, or `{:error, reason}`.
   """
-  @spec init(Bus.server(), [{non_neg_integer(), binary()}]) ::
+  @spec initialize_clocks(Bus.server(), [{non_neg_integer(), binary()}]) ::
           {:ok, non_neg_integer()} | {:error, term()}
-  def init(link, slave_stations) when slave_stations != [] do
+  def initialize_clocks(link, slave_stations) when slave_stations != [] do
     stations = Enum.map(slave_stations, &elem(&1, 0))
 
     # Step 1: trigger receive-time latch on all slaves
@@ -80,7 +80,7 @@ defmodule EtherCAT.DC do
     end
   end
 
-  def init(_link, []), do: {:error, :no_slaves}
+  def initialize_clocks(_link, []), do: {:error, :no_slaves}
 
   # -- child_spec / start_link -----------------------------------------------
 

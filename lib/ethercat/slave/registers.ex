@@ -178,6 +178,10 @@ defmodule EtherCAT.Slave.Registers do
   @spec sm_activate(non_neg_integer()) :: reg()
   def sm_activate(i), do: {sm(i) + 6, 1}
 
+  @doc "Activate register write for SM `index`."
+  @spec sm_activate(non_neg_integer(), 0 | 1) :: reg_write()
+  def sm_activate(i, enabled), do: {sm(i) + 6, <<enabled::8>>}
+
   @doc "PDI control register of SM `index`. Bit [0]=1 requests deactivation from PDI."
   @spec sm_pdi_control(non_neg_integer()) :: reg()
   def sm_pdi_control(i), do: {sm(i) + 7, 1}

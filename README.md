@@ -145,13 +145,12 @@ EtherCAT.Application
 ├── EtherCAT.Master              ← bus scan → config → running state machine
 ├── EtherCAT.SessionSupervisor
 │   ├── EtherCAT.Bus             ← raw Ethernet (AF_PACKET) or UDP transport
-│   └── EtherCAT.DC              ← drift maintenance via periodic ARMW
+│   ├── EtherCAT.DC              ← drift maintenance via periodic ARMW
+│   └── EtherCAT.Domain          ← cyclic LRW loop; ETS-backed process image (session-scoped)
 ├── EtherCAT.SlaveSupervisor
 │   └── EtherCAT.Slave           ← per-slave ESM (INIT→PREOP→SAFEOP→OP)
 │       ├── EtherCAT.Slave.SII   ← EEPROM identity + PDO map
 │       └── EtherCAT.Slave.CoE   ← SDO mailbox
-└── EtherCAT.DomainSupervisor
-    └── EtherCAT.Domain          ← cyclic LRW loop; ETS-backed process image
 ```
 
 **Hot path:** `Domain` I/O is direct ETS reads/writes — no `GenServer` round-trips.

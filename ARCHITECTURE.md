@@ -15,18 +15,16 @@ EtherCAT.Application
 │
 ├── EtherCAT.Master              (singleton gen_statem — bus lifecycle coordinator)
 │
-├── EtherCAT.SessionSupervisor   (one-for-all, started per session)
+├── EtherCAT.SessionSupervisor   (dynamic supervisor for session-scoped runtime processes)
 │   ├── EtherCAT.Bus             (raw socket server — all frame I/O goes here)
-│   └── EtherCAT.DC              (gen_statem — periodic ARMW drift ticker)
+│   ├── EtherCAT.DC              (gen_statem — periodic ARMW drift ticker)
+│   └── EtherCAT.Domain          (gen_statem per domain — cyclic LRW exchange)
 │
 ├── EtherCAT.SlaveSupervisor     (simple_one_for_one — :temporary slaves)
 │   └── EtherCAT.Slave           (gen_statem per named slave — ESM lifecycle)
 │       ├── EtherCAT.SII         (EEPROM reader — stateless, called from Slave.init)
 │       ├── EtherCAT.Slave.Driver (behaviour contract for user drivers)
 │       └── EtherCAT.Slave.Registers (ESC register address map — pure functions)
-│
-└── EtherCAT.DomainSupervisor    (simple_one_for_one — :temporary domains)
-    └── EtherCAT.Domain          (gen_statem per domain — cyclic LRW exchange)
 ```
 
 Registry: `EtherCAT.Registry` (local). Slaves register as `{:slave, name}` and
@@ -42,8 +40,8 @@ Registry: `EtherCAT.Registry` (local). Slaves register as `{:slave, name}` and
 Master :scanning ──── BRD 0x0000, count stable ──── Master :configuring
   │
   ├── APWR 0x0010 × N        assign station addresses
-  ├── DC.init/2              propagation delay calc + system time offset
-  ├── DomainSupervisor       start Domain gen_stams (must exist before slaves)
+  ├── DC.initialize_clocks/2 propagation delay calc + system time offset
+  ├── SessionSupervisor      start Domain gen_stams (must exist before slaves)
   └── SlaveSupervisor        start Slave gen_stams (each auto-advances to PreOp)
         │
         Slave :init ─── SII read ─── configure mailbox SMs ─── AL 0x02 ─── Slave :preop
@@ -116,7 +114,7 @@ calls `{:next_state, ...}`.
 ## Startup Sequence Detail
 
 1. `Bus.open_link/1` — opens raw Ethernet socket on named interface
-2. `DC.init/2` — BWR latch, read receive times, compute propagation delays, write offsets
+2. `DC.initialize_clocks/2` — BWR latch, read receive times, compute propagation delays, write offsets
 3. `Domain.start_link` per config — creates ETS tables, enters `:open`
 4. `Slave.start_link` per config — starts SII read, mailbox SM config, auto-advances to `:preop`
 5. `Master` waits for all `{:slave_ready, name, :preop}` messages (30 s timeout)

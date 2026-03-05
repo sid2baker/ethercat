@@ -70,6 +70,8 @@ defmodule EtherCAT.Domain do
     output_patches: [],
     # [{offset, size, key, slave_pid}] in registration order
     input_slices: [],
+    # LRW expected working counter = output_fmmu_count * 2 + input_fmmu_count
+    expected_wkc: 0,
     miss_count: 0,
     miss_threshold: 100,
     cycle_count: 0,
@@ -206,6 +208,7 @@ defmodule EtherCAT.Domain do
       image_size: 0,
       output_patches: [],
       input_slices: [],
+      expected_wkc: 0,
       miss_count: 0,
       miss_threshold: miss_threshold,
       cycle_count: 0,
@@ -267,7 +270,13 @@ defmodule EtherCAT.Domain do
       {:keep_state_and_data, [{:reply, from, {:error, :nothing_registered}}]}
     else
       now = System.monotonic_time(:microsecond)
-      new_data = %{data | next_cycle_at: now + data.period_us}
+
+      new_data = %{
+        data
+        | next_cycle_at: now + data.period_us,
+          expected_wkc: expected_working_counter(data)
+      }
+
       {:next_state, :cycling, new_data, [{:reply, from, :ok}]}
     end
   end
@@ -278,7 +287,14 @@ defmodule EtherCAT.Domain do
 
   def handle_event({:call, from}, :start_cycling, :stopped, data) do
     now = System.monotonic_time(:microsecond)
-    new_data = %{data | next_cycle_at: now + data.period_us, miss_count: 0}
+
+    new_data = %{
+      data
+      | next_cycle_at: now + data.period_us,
+        miss_count: 0,
+        expected_wkc: expected_working_counter(data)
+    }
+
     {:next_state, :cycling, new_data, [{:reply, from, :ok}]}
   end
 
@@ -303,7 +319,7 @@ defmodule EtherCAT.Domain do
     next_timeout = [{:state_timeout, delay_ms, :tick}]
 
     case result do
-      {:ok, [%{data: response, wkc: wkc}]} when wkc > 0 ->
+      {:ok, [%{data: response, wkc: wkc}]} when wkc == data.expected_wkc and wkc > 0 ->
         dispatch_inputs(response, data.input_slices, data.table, data.id)
         duration_us = System.monotonic_time(:microsecond) - t0
 
@@ -318,24 +334,13 @@ defmodule EtherCAT.Domain do
 
         {:keep_state, new_data, next_timeout}
 
+      {:ok, [%{wkc: wkc}]} when wkc >= 0 ->
+        reason = {:wkc_mismatch, %{expected: data.expected_wkc, actual: wkc}}
+        mark_cycle_missed(data, reason, next_at, next_timeout)
+
       other ->
         reason = if match?({:ok, _}, other), do: :no_response, else: elem(other, 1)
-
-        Telemetry.domain_cycle_missed(data.id, data.miss_count + 1, reason)
-
-        new_data = %{
-          data
-          | miss_count: data.miss_count + 1,
-            total_miss_count: data.total_miss_count + 1,
-            next_cycle_at: next_at
-        }
-
-        if new_data.miss_count >= data.miss_threshold do
-          Logger.error("[Domain #{data.id}] #{data.miss_threshold} consecutive misses — stopping")
-          {:next_state, :stopped, new_data}
-        else
-          {:keep_state, new_data, next_timeout}
-        end
+        mark_cycle_missed(data, reason, next_at, next_timeout)
     end
   end
 
@@ -353,7 +358,8 @@ defmodule EtherCAT.Domain do
       cycle_count: data.cycle_count,
       miss_count: data.miss_count,
       total_miss_count: data.total_miss_count,
-      image_size: data.image_size
+      image_size: data.image_size,
+      expected_wkc: data.expected_wkc
     }
 
     {:keep_state_and_data, [{:reply, from, {:ok, stats}}]}
@@ -411,6 +417,28 @@ defmodule EtherCAT.Domain do
 
   defp binary_pad(data, size) when byte_size(data) >= size, do: binary_part(data, 0, size)
   defp binary_pad(data, size), do: data <> :binary.copy(<<0>>, size - byte_size(data))
+
+  defp expected_working_counter(data) do
+    length(data.output_patches) * 2 + length(data.input_slices)
+  end
+
+  defp mark_cycle_missed(data, reason, next_at, next_timeout) do
+    Telemetry.domain_cycle_missed(data.id, data.miss_count + 1, reason)
+
+    new_data = %{
+      data
+      | miss_count: data.miss_count + 1,
+        total_miss_count: data.total_miss_count + 1,
+        next_cycle_at: next_at
+    }
+
+    if new_data.miss_count >= data.miss_threshold do
+      Logger.error("[Domain #{data.id}] #{data.miss_threshold} consecutive misses — stopping")
+      {:next_state, :stopped, new_data}
+    else
+      {:keep_state, new_data, next_timeout}
+    end
+  end
 
   defp cycle_transaction_timeout_us(period_us)
        when is_integer(period_us) and period_us > 0 do

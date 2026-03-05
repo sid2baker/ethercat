@@ -9,6 +9,7 @@ defmodule EtherCAT.Master do
     - `:configuring` — stations assigned, DC initialised, slaves spawned;
       waiting for all named slaves to reach `:preop`
     - `:running` — fully operational
+    - `:degraded` — startup completed partially; failed slave promotions are retried
 
   The state machine is fully self-driving. Call `start/1` once, then either
   poll `state/0` or block on `await_running/1`.
@@ -57,6 +58,7 @@ defmodule EtherCAT.Master do
   @frame_timeout_cycle_margin_pct 90
   @frame_timeout_min_us 500
   @frame_timeout_max_ms 10
+  @degraded_retry_ms 1_000
 
   defstruct [
     :bus_pid,
@@ -64,8 +66,9 @@ defmodule EtherCAT.Master do
     :dc_pid,
     # station address of the DC reference clock slave (nil if no DC)
     :dc_ref_station,
-    :slave_config,
     :domain_config,
+    :domain_pids,
+    :slave_config,
     :dc_cycle_ns,
     :frame_timeout_override_ms,
     base_station: @base_station,
@@ -76,6 +79,8 @@ defmodule EtherCAT.Master do
     slave_count: nil,
     # MapSet of slave names still waiting to report :preop
     pending_preop: MapSet.new(),
+    # %{slave_name => {target_state, reason}} for startup activation failures
+    activation_failures: %{},
     # blocked await_running callers — replied when :running is entered
     await_callers: []
   ]
@@ -192,7 +197,9 @@ defmodule EtherCAT.Master do
               frame_timeout_override_ms: frame_timeout_override_ms,
               activatable_slaves: [],
               slaves: [],
-              scan_window: []
+              scan_window: [],
+              domain_pids: [],
+              activation_failures: %{}
           }
 
           {:next_state, :scanning, new_data, [{:reply, from, :ok}]}
@@ -251,7 +258,11 @@ defmodule EtherCAT.Master do
 
       if MapSet.size(configured.pending_preop) == 0 do
         Logger.info("[Master] all slaves in :preop — activating")
-        {:next_state, :running, do_activate(configured)}
+
+        case do_activate(configured) do
+          {:ok, active_data} -> {:next_state, :running, active_data}
+          {:degraded, degraded_data} -> {:next_state, :degraded, degraded_data}
+        end
       else
         {:next_state, :configuring, configured}
       end
@@ -283,8 +294,13 @@ defmodule EtherCAT.Master do
     if MapSet.size(new_pending) == 0 do
       Logger.info("[Master] all slaves in :preop — activating")
 
-      {:next_state, :running, do_activate(%{data | pending_preop: new_pending}),
-       [{{:timeout, :configuring}, :cancel}]}
+      case do_activate(%{data | pending_preop: new_pending}) do
+        {:ok, active_data} ->
+          {:next_state, :running, active_data, [{{:timeout, :configuring}, :cancel}]}
+
+        {:degraded, degraded_data} ->
+          {:next_state, :degraded, degraded_data, [{{:timeout, :configuring}, :cancel}]}
+      end
     else
       {:keep_state, %{data | pending_preop: new_pending}}
     end
@@ -323,6 +339,40 @@ defmodule EtherCAT.Master do
 
   def handle_event({:call, from}, :await_running, :running, _data) do
     {:keep_state_and_data, [{:reply, from, :ok}]}
+  end
+
+  # :degraded ----------------------------------------------------------------
+
+  def handle_event(:enter, _old, :degraded, data) do
+    Logger.warning("[Master] degraded startup; retrying failed slave promotions")
+
+    reply_await_callers(
+      data.await_callers,
+      {:error, {:activation_failed, data.activation_failures}}
+    )
+
+    {:keep_state, %{data | await_callers: []},
+     [{{:timeout, :degraded_retry}, @degraded_retry_ms, nil}]}
+  end
+
+  def handle_event({:timeout, :degraded_retry}, nil, :degraded, data) do
+    case retry_failed_activation(data) do
+      {:ok, healed_data} ->
+        {:next_state, :running, healed_data}
+
+      {:degraded, still_degraded} ->
+        {:keep_state, still_degraded, [{{:timeout, :degraded_retry}, @degraded_retry_ms, nil}]}
+    end
+  end
+
+  def handle_event({:call, from}, :stop, :degraded, data) do
+    stop_session(data)
+    {:next_state, :idle, %__MODULE__{}, [{:reply, from, :ok}]}
+  end
+
+  def handle_event({:call, from}, :await_running, :degraded, data) do
+    {:keep_state_and_data,
+     [{:reply, from, {:error, {:activation_failed, data.activation_failures}}}]}
   end
 
   # -- Shared handlers (all non-idle states) ---------------------------------
@@ -544,24 +594,28 @@ defmodule EtherCAT.Master do
   end
 
   defp start_domains(bus, domain_config) do
-    Enum.each(domain_config, fn entry ->
+    domain_config
+    |> Enum.reduce([], fn entry, acc ->
       domain_opts = normalize_domain_config(entry)
       id = Keyword.fetch!(domain_opts, :id)
 
       case DynamicSupervisor.start_child(
-             EtherCAT.DomainSupervisor,
+             EtherCAT.SessionSupervisor,
              {Domain, [{:id, id}, {:link, bus} | domain_opts]}
            ) do
-        {:ok, _pid} ->
-          :ok
+        {:ok, pid} ->
+          [pid | acc]
 
-        {:error, {:already_started, _}} ->
+        {:error, {:already_started, pid}} ->
           Logger.warning("[Master] domain #{inspect(id)} already started")
+          [pid | acc]
 
         {:error, reason} ->
           Logger.error("[Master] failed to start domain #{inspect(id)}: #{inspect(reason)}")
+          acc
       end
     end)
+    |> Enum.reverse()
   end
 
   # Returns {:ok, slaves_list, pending_preop_names, activatable_names}
@@ -652,7 +706,7 @@ defmodule EtherCAT.Master do
     # The DC gen_statem (cyclic ARMW) is started later in do_activate, after
     # all slaves reach PREOP, so its ticks don't compete with slave init.
     dc_ref_station =
-      case DC.init(bus, slave_stations) do
+      case DC.initialize_clocks(bus, slave_stations) do
         {:ok, ref_station} ->
           Logger.info("[Master] DC initialized, ref=0x#{Integer.to_string(ref_station, 16)}")
           ref_station
@@ -664,7 +718,7 @@ defmodule EtherCAT.Master do
 
     # Start domains before slaves so domains are registered in the Registry
     # when slaves call Domain.register_pdo/4 in their :preop enter.
-    start_domains(bus, data.domain_config || [])
+    domain_pids = start_domains(bus, data.domain_config || [])
 
     {:ok, slaves, pending_preop, activatable_slaves} =
       start_slaves(bus, data.base_station, count, data.slave_config || [],
@@ -676,14 +730,16 @@ defmodule EtherCAT.Master do
       | dc_ref_station: dc_ref_station,
         slaves: slaves,
         pending_preop: MapSet.new(pending_preop),
-        activatable_slaves: activatable_slaves
+        activatable_slaves: activatable_slaves,
+        domain_pids: domain_pids,
+        activation_failures: %{}
     }
   end
 
   # Runs synchronously in the scan/configuring handler before transitioning to :running.
   defp do_activate(%{activatable_slaves: []} = data) do
     Logger.info("[Master] dynamic startup: slaves held in :preop for runtime configuration")
-    data
+    {:ok, %{data | activation_failures: %{}}}
   end
 
   defp do_activate(data) do
@@ -720,27 +776,18 @@ defmodule EtherCAT.Master do
       end
     end)
 
-    Enum.each(data.activatable_slaves, fn name ->
-      case Slave.request(name, :safeop) do
-        :ok ->
-          :ok
+    activation_failures = activate_required_slaves(data.activatable_slaves)
+    activated_data = %{data | dc_pid: dc_pid, activation_failures: activation_failures}
 
-        {:error, reason} ->
-          Logger.warning("[Master] slave #{inspect(name)} → safeop failed: #{inspect(reason)}")
-      end
-    end)
+    if map_size(activation_failures) == 0 do
+      {:ok, activated_data}
+    else
+      Logger.warning(
+        "[Master] activation incomplete; degraded mode for #{inspect(Map.keys(activation_failures))}"
+      )
 
-    Enum.each(data.activatable_slaves, fn name ->
-      case Slave.request(name, :op) do
-        :ok ->
-          :ok
-
-        {:error, reason} ->
-          Logger.warning("[Master] slave #{inspect(name)} → op failed: #{inspect(reason)}")
-      end
-    end)
-
-    %{data | dc_pid: dc_pid}
+      {:degraded, activated_data}
+    end
   end
 
   # -- Session teardown ------------------------------------------------------
@@ -755,8 +802,61 @@ defmodule EtherCAT.Master do
       DynamicSupervisor.terminate_child(EtherCAT.SlaveSupervisor, pid)
     end)
 
+    Enum.each(data.domain_pids || [], fn pid ->
+      DynamicSupervisor.terminate_child(EtherCAT.SessionSupervisor, pid)
+    end)
+
     if data.bus_pid do
       DynamicSupervisor.terminate_child(EtherCAT.SessionSupervisor, data.bus_pid)
+    end
+  end
+
+  defp activate_required_slaves(slave_names) do
+    {safeop_ready, safeop_failures} =
+      Enum.reduce(slave_names, {[], %{}}, fn name, {ready, failures} ->
+        case Slave.request(name, :safeop) do
+          :ok ->
+            {[name | ready], failures}
+
+          {:error, reason} ->
+            Logger.warning("[Master] slave #{inspect(name)} → safeop failed: #{inspect(reason)}")
+            {ready, Map.put(failures, name, {:safeop, reason})}
+        end
+      end)
+
+    Enum.reduce(safeop_ready, safeop_failures, fn name, failures ->
+      case Slave.request(name, :op) do
+        :ok ->
+          failures
+
+        {:error, reason} ->
+          Logger.warning("[Master] slave #{inspect(name)} → op failed: #{inspect(reason)}")
+          Map.put(failures, name, {:op, reason})
+      end
+    end)
+  end
+
+  defp retry_failed_activation(%{activation_failures: failures} = data) do
+    retried_failures =
+      Enum.reduce(failures, %{}, fn {name, _last_failure}, acc ->
+        case Slave.request(name, :op) do
+          :ok ->
+            acc
+
+          {:error, reason} ->
+            Logger.warning(
+              "[Master] degraded retry: #{inspect(name)} still not in :op: #{inspect(reason)}"
+            )
+
+            Map.put(acc, name, {:op, reason})
+        end
+      end)
+
+    if map_size(retried_failures) == 0 do
+      Logger.info("[Master] degraded recovery succeeded; all activatable slaves are in :op")
+      {:ok, %{data | activation_failures: %{}}}
+    else
+      {:degraded, %{data | activation_failures: retried_failures}}
     end
   end
 

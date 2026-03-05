@@ -8,7 +8,6 @@ defmodule EtherCAT.Application do
     children = [
       {Registry, keys: :unique, name: EtherCAT.Registry},
       {DynamicSupervisor, name: EtherCAT.SlaveSupervisor, strategy: :one_for_one},
-      {DynamicSupervisor, name: EtherCAT.DomainSupervisor, strategy: :one_for_one},
       {DynamicSupervisor, name: EtherCAT.SessionSupervisor, strategy: :one_for_one},
       EtherCAT.Master
     ]
