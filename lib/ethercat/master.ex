@@ -652,7 +652,7 @@ defmodule EtherCAT.Master do
     # The DC gen_statem (cyclic ARMW) is started later in do_activate, after
     # all slaves reach PREOP, so its ticks don't compete with slave init.
     dc_ref_station =
-      case DC.init(bus, slave_stations) do
+      case DC.initialize_clocks(bus, slave_stations) do
         {:ok, ref_station} ->
           Logger.info("[Master] DC initialized, ref=0x#{Integer.to_string(ref_station, 16)}")
           ref_station

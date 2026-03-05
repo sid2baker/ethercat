@@ -101,4 +101,5 @@ Primary improvements are now in correctness hardening for fault/restart paths an
 
 ## Notes
 
-Known gaps already listed in `docs/exec-plans/tech-debt-tracker.md` (DC lock detection, CoE sync mode objects, mailbox/test coverage) remain valid and consistent with this review.
+- Rework update (2026-03-05): DC public API was renamed from `EtherCAT.DC.init/2` to `EtherCAT.DC.initialize_clocks/2` for clarity (and to avoid confusion with `gen_statem` callback `init/1`).
+- Cross-check against `docs/exec-plans/tech-debt-tracker.md`: most listed gaps remain valid; the stale item `Activation byte hardcoded 0x03` has been removed because SYNC1 activation support is already implemented.

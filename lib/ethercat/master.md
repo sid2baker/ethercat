@@ -48,10 +48,10 @@ Runs synchronously inside the scan poll handler before any state transition.
 APWR to each slave by auto-increment position (0 to count-1), writing `base_station + pos` to register `0x0010`. Default `base_station = 0x1000`.
 
 **Step 2: Read DL status**
-FPRD `0x0110–0x0111` from each slave — 2-byte DL status. Passed to `DC.init/2` to determine topology (which ports are open).
+FPRD `0x0110–0x0111` from each slave — 2-byte DL status. Passed to `DC.initialize_clocks/2` to determine topology (which ports are open).
 
 **Step 3: DC initialization**
-`DC.init(bus, slave_stations)` — see DC section below. Returns `{:ok, ref_station}` or `{:error, reason}`.
+`DC.initialize_clocks(bus, slave_stations)` — see DC section below. Returns `{:ok, ref_station}` or `{:error, reason}`.
 
 If DC init fails, master proceeds without DC: `dc_cycle_ns` is set to `nil`, no SYNC0 will be configured on any slave.
 
@@ -108,7 +108,7 @@ On bus crash (`{:DOWN, ref, ...}`): calls `stop_session/1`, replies `{:error, {:
 
 ---
 
-## DC Initialization (`EtherCAT.DC.init/2`)
+## DC Initialization (`EtherCAT.DC.initialize_clocks/2`)
 
 Implements ESC datasheet §9.1.3.6 (clock synchronization initialization):
 
