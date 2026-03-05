@@ -2,7 +2,7 @@
 # EtherCAT hardware stress test — new EtherCAT top-level API
 #
 # Hardware setup (3-slave ring):
-#   position 0 → 0x1000  EK1100 coupler  (nil — no driver)
+#   position 0 → 0x1000  EK1100 coupler  (default driver)
 #   position 1 → 0x1001  EL1809 16-ch digital input
 #   position 2 → 0x1002  EL2809 16-ch digital output
 #   position 3 → 0x1003  EL3202 2-ch PT100 resistance input
@@ -317,7 +317,7 @@ check.("EtherCAT.start", EtherCAT.start(
     %EtherCAT.Domain.Config{id: :main, period: period_ms, miss_threshold: 500}
   ],
   slaves: [
-    nil,
+    %EtherCAT.Slave.Config{name: :coupler},
     %EtherCAT.Slave.Config{name: :sensor, driver: Example.EL1809, domain: :main},
     %EtherCAT.Slave.Config{name: :valve,  driver: Example.EL2809, domain: :main},
     %EtherCAT.Slave.Config{name: :thermo, driver: Example.EL3202, domain: :main}

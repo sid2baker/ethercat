@@ -78,6 +78,7 @@ sudo setcap cap_net_raw+ep _build/dev/lib/ethercat/priv/raw_socket
 EtherCAT.start(
   interface: "enp0s31f6",
   slaves: [
+    %EtherCAT.Slave.Config{name: :coupler},
     %EtherCAT.Slave.Config{name: :el1809, driver: MyApp.EL1809Driver},
     %EtherCAT.Slave.Config{name: :el2809, driver: MyApp.EL2809Driver}
   ],

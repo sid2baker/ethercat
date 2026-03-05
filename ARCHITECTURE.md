@@ -50,8 +50,10 @@ Master :scanning ──── BRD 0x0000, count stable ──── Master :conf
               │
               preop enter: sdo_config → register_pdos_and_fmmus → {:slave_ready, name, :preop}
               │
-              Master collects all {:slave_ready} → DC start → domain cycling →
-              Slave.request(:safeop) → Slave.request(:op) → Master :running
+              Master collects all {:slave_ready} →
+              (explicit config) DC start → domain cycling → SafeOp → Op
+              OR (dynamic startup) remain in PreOp for runtime configuration →
+              Master :running
 ```
 
 ### Cyclic I/O (Domain owns)
@@ -118,10 +120,10 @@ calls `{:next_state, ...}`.
 3. `Domain.start_link` per config — creates ETS tables, enters `:open`
 4. `Slave.start_link` per config — starts SII read, mailbox SM config, auto-advances to `:preop`
 5. `Master` waits for all `{:slave_ready, name, :preop}` messages (30 s timeout)
-6. `DC.start_link` — starts ARMW ticker (after all slaves are in PreOp)
-7. `Domain.start_cycling` per domain — begins self-timed LRW
-8. `Slave.request(:safeop)` per slave — configures DC SYNC signals (SYNC0 activation)
-9. `Slave.request(:op)` per slave — full process data exchange active
+6. If activatable slaves exist: `DC.start_link` — starts ARMW ticker (after all slaves are in PreOp)
+7. If activatable slaves exist: `Domain.start_cycling` per domain — begins self-timed LRW
+8. If activatable slaves exist: `Slave.request(:safeop)` per slave — configures DC SYNC signals (SYNC0 activation)
+9. If activatable slaves exist: `Slave.request(:op)` per slave — full process data exchange active
 
 ---
 

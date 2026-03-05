@@ -19,7 +19,7 @@ defmodule EtherCAT.Master do
         interface: "eth0",
         domains: [%EtherCAT.Domain.Config{id: :main, period: 1}],
         slaves: [
-          nil,
+          %EtherCAT.Slave.Config{name: :coupler},
           %EtherCAT.Slave.Config{name: :sensor, driver: MyApp.EL1809, domain: :main},
           %EtherCAT.Slave.Config{name: :valve,  driver: MyApp.EL2809, domain: :main}
         ]
@@ -27,7 +27,8 @@ defmodule EtherCAT.Master do
       :ok = EtherCAT.await_running()
 
   Station addresses are assigned from list position: `base_station + index`.
-  `nil` entries get a station address but no Slave gen_statem is started.
+  When `slaves: []` (or omitted), the master starts one dynamic default slave per
+  discovered station and leaves them in `:preop` for runtime configuration.
   """
 
   @behaviour :gen_statem
@@ -36,6 +37,7 @@ defmodule EtherCAT.Master do
 
   alias EtherCAT.{DC, Domain, Bus, Slave}
   alias EtherCAT.Bus.Transaction
+  alias EtherCAT.Slave.Driver.Default, as: DefaultSlaveDriver
   alias EtherCAT.Slave.Registers
 
   @base_station 0x1000
@@ -67,6 +69,7 @@ defmodule EtherCAT.Master do
     :dc_cycle_ns,
     :frame_timeout_override_ms,
     base_station: @base_station,
+    activatable_slaves: [],
     slaves: [],
     # [{monotonic_ms, count}] — sliding window for scan stability
     scan_window: [],
@@ -84,10 +87,12 @@ defmodule EtherCAT.Master do
 
   Options:
     - `:interface` (required) — e.g. `"eth0"`
-    - `:slaves` — list of slave config entries, default `[]`. Each entry is either `nil`
-      (station assigned, no driver) or a keyword list with keys: `:name`, `:driver`,
+    - `:slaves` — list of slave config entries, default `[]`. Each entry is a
+      `%EtherCAT.Slave.Config{}` (or equivalent keyword list) with keys: `:name`, `:driver`,
       `:config`, and `:pdos` (`[{pdo_name, domain_id}]` pairs — passed to the slave
-      which self-registers in its `:preop` enter handler)
+      which self-registers in its `:preop` enter handler). `nil` entries are rejected.
+      If omitted, dynamic default slaves are started for all discovered stations and
+      held in `:preop` for runtime configuration.
     - `:domains` — list of domain specs, default `[]`. Each entry is a keyword list with
       keys `:id` (atom, required) and `:period` (ms, required), plus any Domain options
     - `:base_station` — starting station address, default `0x1000`
@@ -164,32 +169,38 @@ defmodule EtherCAT.Master do
     dc_cycle_ns = Keyword.get(opts, :dc_cycle_ns, 1_000_000)
     frame_timeout_override_ms = Keyword.get(opts, :frame_timeout_ms)
 
-    bus_opts =
-      [interface: interface, name: EtherCAT.Bus]
-      |> maybe_put_frame_timeout(frame_timeout_override_ms)
+    with :ok <- validate_slave_start_config(slave_config) do
+      bus_opts =
+        [interface: interface, name: EtherCAT.Bus]
+        |> maybe_put_frame_timeout(frame_timeout_override_ms)
 
-    case DynamicSupervisor.start_child(
-           EtherCAT.SessionSupervisor,
-           {Bus, bus_opts}
-         ) do
-      {:ok, bus_pid} ->
-        bus_ref = Process.monitor(bus_pid)
+      case DynamicSupervisor.start_child(
+             EtherCAT.SessionSupervisor,
+             {Bus, bus_opts}
+           ) do
+        {:ok, bus_pid} ->
+          bus_ref = Process.monitor(bus_pid)
 
-        new_data = %{
-          data
-          | bus_pid: bus_pid,
-            bus_ref: bus_ref,
-            base_station: base,
-            slave_config: slave_config,
-            domain_config: domain_config,
-            dc_cycle_ns: dc_cycle_ns,
-            frame_timeout_override_ms: frame_timeout_override_ms,
-            slaves: [],
-            scan_window: []
-        }
+          new_data = %{
+            data
+            | bus_pid: bus_pid,
+              bus_ref: bus_ref,
+              base_station: base,
+              slave_config: slave_config,
+              domain_config: domain_config,
+              dc_cycle_ns: dc_cycle_ns,
+              frame_timeout_override_ms: frame_timeout_override_ms,
+              activatable_slaves: [],
+              slaves: [],
+              scan_window: []
+          }
 
-        {:next_state, :scanning, new_data, [{:reply, from, :ok}]}
+          {:next_state, :scanning, new_data, [{:reply, from, :ok}]}
 
+        {:error, _} = err ->
+          {:keep_state_and_data, [{:reply, from, err}]}
+      end
+    else
       {:error, _} = err ->
         {:keep_state_and_data, [{:reply, from, err}]}
     end
@@ -408,6 +419,18 @@ defmodule EtherCAT.Master do
     end)
   end
 
+  defp validate_slave_start_config(slave_config) when is_list(slave_config) do
+    case Enum.find_index(slave_config, &is_nil/1) do
+      nil ->
+        :ok
+
+      idx ->
+        {:error, {:invalid_slave_config, {:nil_entry, idx}}}
+    end
+  end
+
+  defp validate_slave_start_config(_), do: {:error, {:invalid_slave_config, :invalid_list}}
+
   defp normalize_domain_config(%EtherCAT.Domain.Config{} = cfg) do
     [
       id: cfg.id,
@@ -420,10 +443,47 @@ defmodule EtherCAT.Master do
   defp normalize_domain_config(opts) when is_list(opts), do: opts
 
   defp normalize_slave_config(%EtherCAT.Slave.Config{} = cfg) do
-    [name: cfg.name, driver: cfg.driver, config: cfg.config, domain: cfg.domain, pdos: cfg.pdos]
+    [
+      name: cfg.name,
+      driver: normalize_slave_driver(cfg.driver),
+      config: cfg.config,
+      domain: cfg.domain,
+      pdos: cfg.pdos,
+      auto_activate?: true
+    ]
   end
 
-  defp normalize_slave_config(opts) when is_list(opts), do: opts
+  defp normalize_slave_config(opts) when is_list(opts) do
+    [
+      name: Keyword.fetch!(opts, :name),
+      driver: normalize_slave_driver(Keyword.get(opts, :driver)),
+      config: Keyword.get(opts, :config, %{}),
+      domain: Keyword.get(opts, :domain),
+      pdos: Keyword.get(opts, :pdos, []),
+      auto_activate?: Keyword.get(opts, :auto_activate?, true)
+    ]
+  end
+
+  defp normalize_slave_driver(nil), do: DefaultSlaveDriver
+  defp normalize_slave_driver(driver), do: driver
+
+  defp dynamic_slave_configs(0), do: []
+
+  defp dynamic_slave_configs(bus_count) do
+    Enum.map(0..(bus_count - 1), fn pos ->
+      [
+        name: dynamic_slave_name(pos),
+        driver: DefaultSlaveDriver,
+        config: %{},
+        domain: nil,
+        pdos: [],
+        auto_activate?: false
+      ]
+    end)
+  end
+
+  defp dynamic_slave_name(0), do: :coupler
+  defp dynamic_slave_name(pos), do: :"slave_#{pos}"
 
   defp maybe_put_frame_timeout(opts, timeout_ms) when is_integer(timeout_ms) and timeout_ms > 0 do
     Keyword.put(opts, :frame_timeout_ms, timeout_ms)
@@ -504,28 +564,22 @@ defmodule EtherCAT.Master do
     end)
   end
 
-  # Returns {:ok, slaves_list, named_slave_names}
+  # Returns {:ok, slaves_list, pending_preop_names, activatable_names}
   # slaves_list: [{name, station, pid}] for named slaves
-  # named_slave_names: [name] — names to track in pending_preop
+  # pending_preop_names: [name] — names to track in pending_preop
+  # activatable_names: [name] — names the master should move PREOP→OP
   defp start_slaves(bus, base, bus_count, slave_config, extra_opts) do
     dc_cycle_ns = Keyword.get(extra_opts, :dc_cycle_ns)
+    effective_config = if(slave_config == [], do: dynamic_slave_configs(bus_count), else: [])
 
-    # Pad or trim config to match bus_count
-    config_padded =
-      slave_config
-      |> Enum.take(bus_count)
-      |> then(fn c -> c ++ List.duplicate(nil, max(0, bus_count - length(c))) end)
-
-    {slaves, named_names} =
-      config_padded
+    {slaves, pending_names, activatable_names} =
+      effective_config
+      |> Kernel.++(Enum.take(slave_config, bus_count))
       |> Enum.with_index()
-      |> Enum.reduce({[], []}, fn {entry, pos}, {slave_acc, names_acc} ->
+      |> Enum.reduce({[], [], []}, fn {entry, pos}, {slave_acc, pending_acc, activatable_acc} ->
         station = base + pos
 
         case entry do
-          nil ->
-            {slave_acc, names_acc}
-
           entry when is_list(entry) or is_struct(entry, EtherCAT.Slave.Config) ->
             slave_opts = normalize_slave_config(entry)
             name = Keyword.fetch!(slave_opts, :name)
@@ -533,6 +587,7 @@ defmodule EtherCAT.Master do
             config = Keyword.get(slave_opts, :config, %{})
             pdos = Keyword.get(slave_opts, :pdos, [])
             domain = Keyword.get(slave_opts, :domain)
+            auto_activate? = Keyword.get(slave_opts, :auto_activate?, true)
 
             opts = [
               link: bus,
@@ -547,19 +602,33 @@ defmodule EtherCAT.Master do
 
             case DynamicSupervisor.start_child(EtherCAT.SlaveSupervisor, {Slave, opts}) do
               {:ok, pid} ->
-                {[{name, station, pid} | slave_acc], [name | names_acc]}
+                activatable_acc =
+                  if auto_activate? do
+                    [name | activatable_acc]
+                  else
+                    activatable_acc
+                  end
+
+                {[{name, station, pid} | slave_acc], [name | pending_acc], activatable_acc}
 
               {:error, reason} ->
                 Logger.error(
                   "[Master] failed to start slave #{inspect(name)} at 0x#{Integer.to_string(station, 16)}: #{inspect(reason)}"
                 )
 
-                {slave_acc, names_acc}
+                {slave_acc, pending_acc, activatable_acc}
             end
+
+          invalid_entry ->
+            Logger.warning(
+              "[Master] invalid slave config at position #{pos}: #{inspect(invalid_entry)}"
+            )
+
+            {slave_acc, pending_acc, activatable_acc}
         end
       end)
 
-    {:ok, Enum.reverse(slaves), named_names}
+    {:ok, Enum.reverse(slaves), Enum.reverse(pending_names), Enum.reverse(activatable_names)}
   end
 
   defp get_domain_ids(domain_config) do
@@ -597,7 +666,7 @@ defmodule EtherCAT.Master do
     # when slaves call Domain.register_pdo/4 in their :preop enter.
     start_domains(bus, data.domain_config || [])
 
-    {:ok, slaves, named_slaves} =
+    {:ok, slaves, pending_preop, activatable_slaves} =
       start_slaves(bus, data.base_station, count, data.slave_config || [],
         dc_cycle_ns: if(dc_ref_station, do: data.dc_cycle_ns, else: nil)
       )
@@ -606,11 +675,17 @@ defmodule EtherCAT.Master do
       data
       | dc_ref_station: dc_ref_station,
         slaves: slaves,
-        pending_preop: MapSet.new(named_slaves)
+        pending_preop: MapSet.new(pending_preop),
+        activatable_slaves: activatable_slaves
     }
   end
 
   # Runs synchronously in the scan/configuring handler before transitioning to :running.
+  defp do_activate(%{activatable_slaves: []} = data) do
+    Logger.info("[Master] dynamic startup: slaves held in :preop for runtime configuration")
+    data
+  end
+
   defp do_activate(data) do
     Logger.info("[Master] activating — starting DC, domains, and advancing slaves to :op")
 
@@ -645,7 +720,7 @@ defmodule EtherCAT.Master do
       end
     end)
 
-    Enum.each(data.slaves, fn {name, _station, _pid} ->
+    Enum.each(data.activatable_slaves, fn name ->
       case Slave.request(name, :safeop) do
         :ok ->
           :ok
@@ -655,7 +730,7 @@ defmodule EtherCAT.Master do
       end
     end)
 
-    Enum.each(data.slaves, fn {name, _station, _pid} ->
+    Enum.each(data.activatable_slaves, fn name ->
       case Slave.request(name, :op) do
         :ok ->
           :ok

@@ -4,21 +4,20 @@ defmodule EtherCAT.Slave.Config do
 
   Fields:
     - `:name` (required) — atom identifying this slave
-    - `:driver` (required) — module implementing `EtherCAT.Slave.Driver`
+    - `:driver` — module implementing `EtherCAT.Slave.Driver`,
+      defaults to `EtherCAT.Slave.Driver.Default`
     - `:config` — driver-specific configuration map, default `%{}`
     - `:domain` — when set (and `:pdos` is empty), all PDO names from the
       driver's `process_data_profile/1` are auto-registered against this domain id
     - `:pdos` — explicit `[{pdo_name, domain_id}]` override list; when non-empty,
       `:domain` is ignored and this list is used verbatim
   """
-  @enforce_keys [:name, :driver]
-  defstruct [
-    :name,
-    :driver,
-    :domain,
-    config: %{},
-    pdos: []
-  ]
+  @enforce_keys [:name]
+  defstruct name: nil,
+            driver: EtherCAT.Slave.Driver.Default,
+            domain: nil,
+            config: %{},
+            pdos: []
 end
 
 defmodule EtherCAT.Slave do
@@ -204,7 +203,7 @@ defmodule EtherCAT.Slave do
     link = Keyword.fetch!(opts, :link)
     station = Keyword.fetch!(opts, :station)
     name = Keyword.fetch!(opts, :name)
-    driver = Keyword.get(opts, :driver)
+    driver = Keyword.get(opts, :driver, EtherCAT.Slave.Driver.Default)
     config = Keyword.get(opts, :config, %{})
     dc_cycle_ns = Keyword.get(opts, :dc_cycle_ns)
     pdos = Keyword.get(opts, :pdos, [])

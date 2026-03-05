@@ -23,7 +23,7 @@ restarted on individual slave crashes.
 | `:idle` | Not started. Rejects all calls except `start/1`. |
 | `:scanning` | Bus open, polling for a stable slave count via BRD to `0x0000`. |
 | `:configuring` | Stations assigned, DC initialized, slaves spawned. Waiting for all named slaves to send `{:slave_ready, name, :preop}`. |
-| `:running` | All slaves at `:preop`, domains cycling, slaves advanced to `:op`. Stable operational state. |
+| `:running` | Startup sequence complete. Explicitly configured slaves are advanced to `:op`; dynamic defaults may remain in `:preop` for runtime configuration. |
 
 ---
 
@@ -59,7 +59,9 @@ If DC init fails, master proceeds without DC: `dc_cycle_ns` is set to `nil`, no 
 `start_domains/2` starts one `EtherCAT.Domain` gen_statem per domain config entry via `EtherCAT.DomainSupervisor`. Domains must exist before slaves call `Domain.register_pdo/4` in their `:preop` enter handler. Each domain registers itself in `EtherCAT.Registry` under `{:domain, id}`.
 
 **Step 5: Start slaves**
-`start_slaves/5` — one `EtherCAT.Slave` gen_statem per config entry via `EtherCAT.SlaveSupervisor`. `nil` config entries receive a station address but no gen_statem. Named slaves are tracked in `pending_preop` MapSet.
+`start_slaves/5` — one `EtherCAT.Slave` gen_statem per config entry via `EtherCAT.SlaveSupervisor`. `nil` config entries are rejected at `start/1`. Missing drivers use `EtherCAT.Slave.Driver.Default`.
+
+If `slaves: []` (or omitted), the master auto-creates one default slave config per discovered station (`:coupler`, `:slave_1`, ...), starts all of them, and tracks them in `pending_preop` so each process still executes INIT→PREOP.
 
 Slaves receive `dc_cycle_ns` only if DC init succeeded (otherwise `nil`).
 
@@ -80,6 +82,8 @@ When `pending_preop` empties: call `do_activate/1` and transition to `:running`.
 ## Activation (`do_activate/1`)
 
 Runs synchronously before transitioning to `:running`.
+
+If no activatable slaves are configured (dynamic startup mode), activation is skipped and slaves remain in `:preop`.
 
 **Step 1: Start DC gen_statem**
 `DC.start_link(link: bus, ref_station: ref_station, period_ms: 10)` — starts cyclic ARMW ticker.
@@ -148,6 +152,7 @@ Telemetry: `[:ethercat, :dc, :tick]` with `%{wkc: wkc}` on each tick.
   frame_timeout_override_ms: pos_integer() | nil, # Optional fixed bus frame timeout
   base_station:    non_neg_integer(),    # Default 0x1000
   slaves:          [{name, station, pid}], # Named slave tuples
+  activatable_slaves: [atom()],          # Slaves to auto-advance PREOP→OP
   scan_window:     [{ms, count}],        # Sliding stability window
   slave_count:     non_neg_integer() | nil,
   pending_preop:   MapSet.t(),           # Names not yet reporting :preop
