@@ -50,10 +50,11 @@ via the `@paths` map. `walk_path/2` calls `do_transition/2` for each intermediat
 
 **`:safeop` enter**:
 1. `invoke_driver(data, :on_safeop)`.
-2. `configure_sync0_if_needed/1` — if `dc_cycle_ns` is set and driver exports `dc_config/1`: write cycle time, pulse length, start time, and activation byte in one frame.
+2. `configure_dc_signals/1` — if `dc_cycle_ns` is set and driver exports `dc_config/1`: write SYNC0/SYNC1 parameters, latch controls, start time, and activation byte in one frame.
 
 **`:op` enter**:
 1. `invoke_driver(data, :on_op)`.
+2. If latches are configured, arm a recurring `state_timeout` poll (`:latch_poll`) to read latch event status/timestamps.
 
 ### Transition Mechanics
 
@@ -81,8 +82,11 @@ via the `@paths` map. `walk_path/2` calls `do_transition/2` for each intermediat
   sii_sm_configs:    list(),             # [{sm_index, phys_start, length, ctrl}] from SII
   sii_pdo_configs:   list(),             # [%{index, direction, sm_index, bit_size, bit_offset}]
   pdos:              list(),             # [{pdo_name, domain_id}] to register
+  active_latches:    list() | nil,       # [{0|1, :pos|:neg}] from dc_config
+  latch_poll_ms:     pos_integer() | nil, # latch poll interval while in :op
   pdo_registrations: map(),             # %{pdo_name => %{domain_id, sm_key, bit_offset, bit_size}}
   pdo_subscriptions: map(),             # %{pdo_name => [pid]}
+  latch_subscriptions: map(),           # %{{latch_id, edge} => [pid]}
 }
 ```
 
@@ -101,7 +105,8 @@ All callbacks receive `(config :: map())` or `(slave_name :: atom(), config :: m
 | `on_safeop/2` | optional | `(name, config) -> :ok` | Called on SafeOp entry. |
 | `on_op/2` | optional | `(name, config) -> :ok` | Called on Op entry. |
 | `sdo_config/1` | optional | `config -> [{index, subindex, value, size}]` | SDO writes to execute in PreOp before SM/FMMU config. Can perform PDO remapping (0x1C12/0x1C13). |
-| `dc_config/1` | optional | `config -> %{sync0_pulse_ns: pos_integer()} \| nil` | SYNC0 DC parameters. Return `nil` to disable DC on this slave. |
+| `dc_config/1` | optional | `config -> %{sync0_pulse_ns: pos_integer(), optional(:sync1_cycle_ns) => pos_integer(), optional(:latches) => [%{latch_id: 0\|1, edge: :pos\|:neg}]} \| nil` | DC signal parameters. Return `nil` to disable DC config on this slave. |
+| `on_latch/5` | optional | `(name, config, latch_id, edge, timestamp_ns) -> :ok` | Called when a configured ESC LATCH event is captured during `:op`. |
 
 Sub-byte PDOs (e.g., 1-bit digital channels): `decode_inputs` receives a 1-byte binary with the value in bit 0 (LSB). `encode_outputs` must return a 1-byte binary with the value in bit 0.
 
@@ -129,24 +134,25 @@ The domain key is `{slave_name, {:sm, sm_idx}}` — a single ETS entry covers al
 
 ### What is implemented
 
-SYNC0 only. Configured at `:safeop` entry in `configure_sync0_if_needed/1`:
+SYNC0 + optional SYNC1 and LATCH0/1 polling. Configured at `:safeop` entry in `configure_dc_signals/1`:
 
-1. Read `dc_config/1` from driver to get `sync0_pulse_ns`.
+1. Read `dc_config/1` from driver.
 2. Compute `start_time = System.os_time(:nanosecond) - @ethercat_epoch_offset_ns + 100_000` (100 µs headroom for frame round-trip per §9.2.3.6 step 6).
-3. Send four FPWR datagrams in one frame:
+3. Send FPWR datagrams in one frame:
    - `Registers.dc_sync0_cycle_time(cycle_ns)` → `0x09A0`
+   - `Registers.dc_sync1_cycle_time(sync1_cycle_ns)` → `0x09A4`
    - `Registers.dc_pulse_length(pulse_ns)` → `0x0982`
    - `Registers.dc_sync0_start_time(start_time)` → `0x0990`
-   - `Registers.dc_activation(0x03)` → `0x0981` (bits 0+1: cyclic enable + SYNC0 output)
+   - `Registers.dc_latch0_control(latch0_ctrl)` / `dc_latch1_control(latch1_ctrl)` → `0x09A8/0x09A9`
+   - `Registers.dc_activation(0x03 | 0x07)` → `0x0981` (bits 0+1 always; bit2 when SYNC1 enabled)
+4. In `:op`, if latches are configured, poll `0x09AE/0x09AF`; on captured edge read `0x09B0..0x09CF`, dispatch `{:slave_latch, ...}`, and call optional `on_latch/5`.
 
-All four writes in one frame so the activation datagram sees already-written parameters.
+All writes happen in one frame so the activation datagram sees already-written parameters.
 
 EtherCAT epoch offset: `946_684_800_000_000_000` ns (difference between Unix epoch 1970 and EtherCAT epoch 2000-01-01).
 
 ### What is missing
 
-- **SYNC1**: `0x09A4–0x09A7` (cycle time), `0x0981[2]` (output enable). SYNC1 is a delayed derivative of SYNC0 used when PDO input sampling and output update need different phases.
-- **LATCH timestamping**: ESC LATCH0/LATCH1 hardware input pins (`0x09A8–0x09CF`). Used by high-precision slaves to timestamp external events (e.g., encoder index pulse) against DC system time.
 - **CoE sync mode objects**: `0x1C32` (output sync parameters) and `0x1C33` (input sync parameters). These CoE objects configure the slave application's synchronization mode (free-run, SM event, SYNC0). Required for drives and other servo devices. Currently no support for reading or writing these.
 - **DC lock detection**: should poll `0x092C–0x092F` (system time difference) and wait for lock before entering Op.
 - **SYNC0 status acknowledgement**: in acknowledge pulse mode (`pulse_ns=0`), slave application must read `0x098E` to release each SYNC0 pulse.
@@ -155,7 +161,7 @@ EtherCAT epoch offset: `946_684_800_000_000_000` ns (difference between Unix epo
 
 ## Key Design Decisions
 
-**Why `configure_sync0` at `:safeop` entry, not `:preop`?**
+**Why `configure_dc_signals` at `:safeop` entry, not `:preop`?**
 ETG.1020 §6.3.2 requires DC SYNC configuration after the slave has confirmed SafeOp. At this point FMMUs are already written (done in `:preop`) and the PDI is armed. Configuring earlier risks a race where the first SYNC0 pulse fires before the slave PDI is ready.
 
 **Why `transaction_queue` not `transaction`?**
@@ -176,8 +182,6 @@ Master waits for all named slaves to report `:preop` before advancing any slave 
 
 ## Known Gaps and TODOs
 
-- No SYNC1, SYNC2, SYNC3 generation.
-- No LATCH hardware pin support (timestamping).
 - No CoE sync mode configuration (0x1C32/0x1C33); required for servo drives.
 - No DC lock detection before advancing to Op.
 - No per-slave health monitoring (AL status polling, error counter reads) after reaching Op.

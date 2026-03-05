@@ -108,7 +108,14 @@ defmodule EtherCAT.Slave.Driver do
   @type pdo_name :: atom()
   @type config :: map()
 
-  @type dc_config :: %{sync0_pulse_ns: pos_integer()}
+  @type latch_edge :: :pos | :neg
+  @type latch_config :: %{latch_id: 0 | 1, edge: latch_edge()}
+
+  @type dc_config :: %{
+          required(:sync0_pulse_ns) => pos_integer(),
+          optional(:sync1_cycle_ns) => pos_integer(),
+          optional(:latches) => [latch_config()]
+        }
 
   @doc "Return a map of PDO name → SII PDO object index (e.g. 0x1A00)."
   @callback process_data_profile(config()) :: %{pdo_name() => non_neg_integer()}
@@ -149,5 +156,19 @@ defmodule EtherCAT.Slave.Driver do
   """
   @callback dc_config(config()) :: dc_config() | nil
 
-  @optional_callbacks [on_preop: 2, on_safeop: 2, on_op: 2, sdo_config: 1, dc_config: 1]
+  @doc """
+  Called when an ESC hardware LATCH event is captured during Op.
+
+  `timestamp_ns` is DC system time in ns since 2000-01-01.
+  """
+  @callback on_latch(atom(), config(), 0 | 1, latch_edge(), non_neg_integer()) :: :ok
+
+  @optional_callbacks [
+    on_preop: 2,
+    on_safeop: 2,
+    on_op: 2,
+    sdo_config: 1,
+    dc_config: 1,
+    on_latch: 5
+  ]
 end

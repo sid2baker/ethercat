@@ -103,10 +103,16 @@ defmodule EtherCAT.Slave do
     :sii_pdo_configs,
     # [{pdo_name, domain_id}] — PDOs to register in :preop enter
     :pdos,
+    # [{latch_id, edge}] from driver dc_config/1; nil = latch polling disabled
+    :active_latches,
+    # poll period for hardware latch event registers while in :op
+    :latch_poll_ms,
     # %{pdo_name => %{domain_id, offset}}
     :pdo_registrations,
     # %{pdo_name => [pid]}
-    :pdo_subscriptions
+    :pdo_subscriptions,
+    # %{{latch_id, edge} => [pid]}
+    latch_subscriptions: %{}
   ]
 
   # -- child_spec / start_link -----------------------------------------------
@@ -182,6 +188,12 @@ defmodule EtherCAT.Slave do
     :gen_statem.call(via(slave_name), {:read_input, pdo_name})
   end
 
+  @doc "Subscribe `pid` to LATCH hardware events (`{:slave_latch, slave, id, edge, timestamp_ns}`)."
+  @spec subscribe_latch(atom(), 0 | 1, :pos | :neg, pid()) :: :ok
+  def subscribe_latch(slave_name, latch_id, edge, pid) do
+    :gen_statem.call(via(slave_name), {:subscribe_latch, latch_id, edge, pid})
+  end
+
   # -- :gen_statem callbacks -------------------------------------------------
 
   @impl true
@@ -212,8 +224,11 @@ defmodule EtherCAT.Slave do
       sii_sm_configs: [],
       sii_pdo_configs: [],
       pdos: pdos,
+      active_latches: nil,
+      latch_poll_ms: nil,
       pdo_registrations: %{},
-      pdo_subscriptions: %{}
+      pdo_subscriptions: %{},
+      latch_subscriptions: %{}
     }
 
     with {:ok, data2} <- do_transition(data, :init) do
@@ -247,13 +262,21 @@ defmodule EtherCAT.Slave do
     invoke_driver(data, :on_safeop)
     # ETG.1020 §6.3.2: configure DC SYNC after the slave confirms SAFEOP —
     # FMMUs are already written (done in :preop enter), cycle time is canonical.
-    configure_sync0_if_needed(data)
-    :keep_state_and_data
+    new_data = configure_dc_signals(data)
+    {:keep_state, new_data}
   end
 
   def handle_event(:enter, _old, :op, data) do
     invoke_driver(data, :on_op)
-    :keep_state_and_data
+
+    actions =
+      if data.latch_poll_ms do
+        [{:state_timeout, data.latch_poll_ms, :latch_poll}]
+      else
+        []
+      end
+
+    {:keep_state_and_data, actions}
   end
 
   def handle_event(:enter, _old, :bootstrap, _data), do: :keep_state_and_data
@@ -309,6 +332,18 @@ defmodule EtherCAT.Slave do
     subs = Map.get(data.pdo_subscriptions, pdo_name, [])
     new_subs = Map.put(data.pdo_subscriptions, pdo_name, [pid | subs])
     {:keep_state, %{data | pdo_subscriptions: new_subs}, [{:reply, from, :ok}]}
+  end
+
+  def handle_event({:call, from}, {:subscribe_latch, latch_id, edge, pid}, _state, data)
+      when latch_id in [0, 1] and edge in [:pos, :neg] do
+    key = {latch_id, edge}
+    subs = Map.get(data.latch_subscriptions, key, [])
+    new_subs = Map.put(data.latch_subscriptions, key, [pid | subs])
+    {:keep_state, %{data | latch_subscriptions: new_subs}, [{:reply, from, :ok}]}
+  end
+
+  def handle_event({:call, from}, {:subscribe_latch, _latch_id, _edge, _pid}, _state, _data) do
+    {:keep_state_and_data, [{:reply, from, :ok}]}
   end
 
   # -- Set output ------------------------------------------------------------
@@ -383,6 +418,29 @@ defmodule EtherCAT.Slave do
     end)
 
     :keep_state_and_data
+  end
+
+  def handle_event(:state_timeout, :latch_poll, :op, data) do
+    if data.active_latches do
+      case Bus.transaction_queue(data.link, fn tx ->
+             Transaction.fprd(tx, data.station, Registers.dc_latch_event_status())
+           end) do
+        {:ok, [%{data: <<latch0_status::8, latch1_status::8>>, wkc: wkc}]} when wkc > 0 ->
+          dispatch_latch_events(data, latch0_status, latch1_status)
+
+        _ ->
+          :ok
+      end
+    end
+
+    actions =
+      if data.latch_poll_ms do
+        [{:state_timeout, data.latch_poll_ms, :latch_poll}]
+      else
+        []
+      end
+
+    {:keep_state_and_data, actions}
   end
 
   # -- Catch-all -------------------------------------------------------------
@@ -685,14 +743,26 @@ defmodule EtherCAT.Slave do
 
   # -- Driver invocation -----------------------------------------------------
 
-  defp invoke_driver(%{driver: nil}, _cb), do: :ok
+  defp invoke_driver(data, cb), do: invoke_driver(data, cb, [])
 
-  defp invoke_driver(data, cb) do
-    if function_exported?(data.driver, cb, 2) do
-      apply(data.driver, cb, [data.name, data.config])
+  defp invoke_driver(%{driver: nil}, _cb, _args), do: :ok
+
+  defp invoke_driver(data, cb, args) do
+    arity = 2 + length(args)
+
+    if function_exported?(data.driver, cb, arity) do
+      apply(data.driver, cb, [data.name, data.config | args])
     end
 
     :ok
+  end
+
+  defp invoke_driver_call(%{driver: nil}, _cb), do: nil
+
+  defp invoke_driver_call(data, cb) do
+    if function_exported?(data.driver, cb, 1) do
+      apply(data.driver, cb, [data.config])
+    end
   end
 
   # -- CoE SDO configuration (called from :preop enter) ----------------------
@@ -725,48 +795,142 @@ defmodule EtherCAT.Slave do
     :ok
   end
 
-  # -- SYNC0 configuration ---------------------------------------------------
+  # -- DC signal configuration -----------------------------------------------
 
-  # Configure SYNC0 on this slave if its driver profile has a `dc:` key and
-  # dc_cycle_ns is set. Called from the :safeop enter handler — FMMUs are
-  # already written (done in :preop enter) and the ESC has just confirmed
-  # SAFEOP, so the PDI is synchronized from the first OP cycle.
-  defp configure_sync0_if_needed(%{driver: nil}), do: :ok
+  defp configure_dc_signals(%{driver: nil} = data), do: clear_latch_config(data)
 
-  defp configure_sync0_if_needed(%{dc_cycle_ns: nil}), do: :ok
+  defp configure_dc_signals(%{dc_cycle_ns: nil} = data), do: clear_latch_config(data)
 
-  defp configure_sync0_if_needed(data) do
-    dc_spec =
-      if function_exported?(data.driver, :dc_config, 1) do
-        data.driver.dc_config(data.config)
-      end
+  defp configure_dc_signals(data) do
+    case invoke_driver_call(data, :dc_config) do
+      nil ->
+        clear_latch_config(data)
 
-    if dc_spec != nil do
-      pulse_ns = Map.fetch!(dc_spec, :sync0_pulse_ns)
-      cycle_ns = data.dc_cycle_ns
-      system_time_ns = System.os_time(:nanosecond) - @ethercat_epoch_offset_ns
-      # start_time must be in the future relative to when the activation datagram
-      # is processed by the slave (§9.2.3.6 step 6).  100 µs is ample headroom
-      # for a single frame round-trip.
-      start_time = system_time_ns + 100_000
+      dc_spec ->
+        pulse_ns = Map.fetch!(dc_spec, :sync0_pulse_ns)
+        cycle_ns = data.dc_cycle_ns
+        sync1_cycle_ns = Map.get(dc_spec, :sync1_cycle_ns, 0)
+        activation = if sync1_cycle_ns > 0, do: 0x07, else: 0x03
 
-      # All four writes go in one frame so the activation datagram sees the
-      # already-written cycle/pulse/start values in the same processing pass.
-      Bus.transaction_queue(data.link, fn tx ->
-        tx
-        |> Transaction.fpwr(data.station, Registers.dc_sync0_cycle_time(cycle_ns))
-        |> Transaction.fpwr(data.station, Registers.dc_pulse_length(pulse_ns))
-        |> Transaction.fpwr(data.station, Registers.dc_sync0_start_time(start_time))
-        |> Transaction.fpwr(data.station, Registers.dc_activation(0x03))
-      end)
+        system_time_ns = System.os_time(:nanosecond) - @ethercat_epoch_offset_ns
+        # start_time must be in the future relative to when the activation datagram
+        # is processed by the slave (§9.2.3.6 step 6).  100 µs is ample headroom
+        # for a single frame round-trip.
+        start_time = system_time_ns + 100_000
 
-      Logger.debug(
-        "[Slave #{data.name}] SYNC0 configured: cycle=#{cycle_ns}ns pulse=#{pulse_ns}ns"
-      )
+        {active_latches, latch0_ctrl, latch1_ctrl} =
+          build_latch_config(Map.get(dc_spec, :latches, []))
+
+        Bus.transaction_queue(data.link, fn tx ->
+          tx
+          |> Transaction.fpwr(data.station, Registers.dc_sync0_cycle_time(cycle_ns))
+          |> Transaction.fpwr(data.station, Registers.dc_sync1_cycle_time(sync1_cycle_ns))
+          |> Transaction.fpwr(data.station, Registers.dc_pulse_length(pulse_ns))
+          |> Transaction.fpwr(data.station, Registers.dc_sync0_start_time(start_time))
+          |> Transaction.fpwr(data.station, Registers.dc_latch0_control(latch0_ctrl))
+          |> Transaction.fpwr(data.station, Registers.dc_latch1_control(latch1_ctrl))
+          |> Transaction.fpwr(data.station, Registers.dc_activation(activation))
+        end)
+
+        active_latches_or_nil =
+          if active_latches == [] do
+            nil
+          else
+            active_latches
+          end
+
+        latch_poll_ms =
+          if active_latches_or_nil do
+            1
+          else
+            nil
+          end
+
+        Logger.debug(
+          "[Slave #{data.name}] DC configured: cycle=#{cycle_ns}ns sync1=#{sync1_cycle_ns}ns pulse=#{pulse_ns}ns latches=#{inspect(active_latches_or_nil)}"
+        )
+
+        %{data | active_latches: active_latches_or_nil, latch_poll_ms: latch_poll_ms}
     end
-
-    :ok
   end
+
+  defp clear_latch_config(data) do
+    %{data | active_latches: nil, latch_poll_ms: nil}
+  end
+
+  defp build_latch_config(latches) do
+    active_latches =
+      latches
+      |> Enum.reduce([], fn
+        %{latch_id: latch_id, edge: edge}, acc when latch_id in [0, 1] and edge in [:pos, :neg] ->
+          [{latch_id, edge} | acc]
+
+        _, acc ->
+          acc
+      end)
+      |> Enum.uniq()
+      |> Enum.sort()
+
+    latch0_ctrl = latch_control_byte(active_latches, 0)
+    latch1_ctrl = latch_control_byte(active_latches, 1)
+    {active_latches, latch0_ctrl, latch1_ctrl}
+  end
+
+  defp latch_control_byte(active_latches, latch_id) do
+    (if Enum.member?(active_latches, {latch_id, :pos}), do: 0x01, else: 0x00) +
+      (if Enum.member?(active_latches, {latch_id, :neg}), do: 0x02, else: 0x00)
+  end
+
+  defp dispatch_latch_events(data, latch0_status, latch1_status) do
+    Enum.each(data.active_latches, fn {latch_id, edge} = key ->
+      status = if latch_id == 0, do: latch0_status, else: latch1_status
+
+      if latch_event_captured?(status, edge) do
+        case read_latch_timestamp(data, latch_id, edge) do
+          {:ok, timestamp_ns} ->
+            msg = {:slave_latch, data.name, latch_id, edge, timestamp_ns}
+
+            data.latch_subscriptions
+            |> Map.get(key, [])
+            |> Enum.each(&send(&1, msg))
+
+            invoke_driver(data, :on_latch, [latch_id, edge, timestamp_ns])
+
+          :error ->
+            :ok
+        end
+      end
+    end)
+  end
+
+  defp latch_event_captured?(status, :pos) do
+    <<_::6, _neg::1, pos::1>> = <<status>>
+    pos == 1
+  end
+
+  defp latch_event_captured?(status, :neg) do
+    <<_::6, neg::1, _pos::1>> = <<status>>
+    neg == 1
+  end
+
+  defp read_latch_timestamp(data, latch_id, edge) do
+    reg = latch_time_register(latch_id, edge)
+
+    case Bus.transaction_queue(data.link, fn tx ->
+           Transaction.fprd(tx, data.station, reg)
+         end) do
+      {:ok, [%{data: <<timestamp_ns::64-little>>, wkc: wkc}]} when wkc > 0 ->
+        {:ok, timestamp_ns}
+
+      _ ->
+        :error
+    end
+  end
+
+  defp latch_time_register(0, :pos), do: Registers.dc_latch0_pos_time()
+  defp latch_time_register(0, :neg), do: Registers.dc_latch0_neg_time()
+  defp latch_time_register(1, :pos), do: Registers.dc_latch1_pos_time()
+  defp latch_time_register(1, :neg), do: Registers.dc_latch1_neg_time()
 
   # -- Mailbox SM setup -------------------------------------------------------
 

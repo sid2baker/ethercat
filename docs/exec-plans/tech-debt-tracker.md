@@ -8,8 +8,6 @@ Known gaps and deferred work. Add entries when identified; move to `completed/` 
 
 | Gap | Location | Impact | Notes |
 |-----|----------|--------|-------|
-| No SYNC1 output | `slave.ex`, `registers.ex` | Cannot drive slaves requiring phase-shifted sync | Active plan: `active/dc-sync1-latch-complete.md` |
-| No LATCH0/LATCH1 hardware pin support | `slave.ex`, `registers.ex` | Cannot timestamp external events against DC system time | Active plan: `active/dc-sync1-latch-complete.md` |
 | No CoE sync mode config (0x1C32/0x1C33) | `slave.ex` | Servo drives require this SDO write to enter DC SYNC mode | Must pair with SYNC0 changes |
 | No DC lock detection | `master.ex`, `dc.ex` | Slaves enter Op before PLL converges; small timing error at startup | Poll `0x092C` until near zero before Op |
 | No static drift pre-compensation | `dc.ex` | ETG spec recommends ~15,000 ARMW warm-up frames; we start ticking immediately | Low practical impact on discrete I/O |
