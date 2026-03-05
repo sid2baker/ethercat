@@ -120,6 +120,8 @@ All of the following must be true:
 
 ## Implementation Rules (from AGENTS.md)
 
+**API evolution (pre-release)**: Prefer API clarity over backward compatibility. If a better API requires a breaking change, make it and update call sites directly. Do not add compatibility shims or deprecation layers unless explicitly requested.
+
 **Bitwise**: Never use `import Bitwise` or operators (`&&&`, `|||`, `band`, `bor`). Always use binary pattern matching to extract bit fields.
 
 **gen_statem enter callbacks**: May not transition state. Enter callbacks are for side-effects only (arming timers, telemetry). State-deciding logic belongs in the event handler that calls `{:next_state, ...}`.

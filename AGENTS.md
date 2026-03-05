@@ -23,6 +23,14 @@ Start here. Read in order for any non-trivial task.
 
 ## Hard Rules
 
+### API Evolution (Pre-release)
+
+This library is pre-release. Prefer API clarity over backward compatibility.
+
+When a cleaner API requires a breaking change, make the breaking change and update
+all call sites in the same change. Do not add compatibility shims, deprecation
+layers, or dual-path behavior unless explicitly requested.
+
 ### Bitwise Operations
 
 **Never use `import Bitwise` or Bitwise operators (`&&&`, `|||`, `band`, `bor`, etc.)**
