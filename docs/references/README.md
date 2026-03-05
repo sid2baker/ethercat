@@ -10,6 +10,16 @@ git clone --depth 1 https://github.com/OpenEtherCATsociety/SOEM.git docs/referen
 
 ---
 
+## EtherCAT Spec Chapters (`ethercat-spec/`)
+
+Technical chapter summaries derived from the local EtherCAT PDFs.
+
+- Start with `ethercat-spec/01-llm-reference-index.md`.
+- Use that index to load only the chapter files needed for the current task.
+- Chapter files are grouped by protocol framing, ESM transitions, ESC memory/registers, SyncManager/FMMU/PDO mapping, DC timing, and master runtime sequencing.
+
+---
+
 ## IgH EtherCAT Master (`igh/`)
 
 Kernel module, C. Production-grade, most complete open-source implementation.

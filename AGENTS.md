@@ -6,6 +6,7 @@ Start here. Read in order for any non-trivial task.
 
 | File | What it gives you |
 |------|-------------------|
+| `docs/references/ethercat-spec/01-llm-reference-index.md` | **Primary reference entrypoint**; chapter map and context-loading guidance |
 | `ARCHITECTURE.md` | System map, data flow, key design decisions |
 | `lib/ethercat/slave.md` | Slave ESM lifecycle, driver contract, PDO registration, DC config |
 | `lib/ethercat/master.md` | Master scan/configure/activate sequence, DC init steps |
