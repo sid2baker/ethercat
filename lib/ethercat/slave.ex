@@ -422,9 +422,13 @@ defmodule EtherCAT.Slave do
 
   def handle_event(:state_timeout, :latch_poll, :op, data) do
     if data.active_latches do
-      case Bus.transaction(data.link, fn tx ->
-             Transaction.fprd(tx, data.station, Registers.dc_latch_event_status())
-           end, latch_poll_timeout_us(data)) do
+      case Bus.transaction(
+             data.link,
+             fn tx ->
+               Transaction.fprd(tx, data.station, Registers.dc_latch_event_status())
+             end,
+             latch_poll_timeout_us(data)
+           ) do
         {:ok, [%{data: <<latch0_status::8, latch1_status::8>>, wkc: wkc}]} when wkc > 0 ->
           dispatch_latch_events(data, latch0_status, latch1_status)
 
@@ -877,8 +881,8 @@ defmodule EtherCAT.Slave do
   end
 
   defp latch_control_byte(active_latches, latch_id) do
-    (if Enum.member?(active_latches, {latch_id, :pos}), do: 0x01, else: 0x00) +
-      (if Enum.member?(active_latches, {latch_id, :neg}), do: 0x02, else: 0x00)
+    if(Enum.member?(active_latches, {latch_id, :pos}), do: 0x01, else: 0x00) +
+      if Enum.member?(active_latches, {latch_id, :neg}), do: 0x02, else: 0x00
   end
 
   defp dispatch_latch_events(data, latch0_status, latch1_status) do
@@ -916,9 +920,13 @@ defmodule EtherCAT.Slave do
   defp read_latch_timestamp(data, latch_id, edge) do
     reg = latch_time_register(latch_id, edge)
 
-    case Bus.transaction(data.link, fn tx ->
-           Transaction.fprd(tx, data.station, reg)
-         end, latch_poll_timeout_us(data)) do
+    case Bus.transaction(
+           data.link,
+           fn tx ->
+             Transaction.fprd(tx, data.station, reg)
+           end,
+           latch_poll_timeout_us(data)
+         ) do
       {:ok, [%{data: <<timestamp_ns::64-little>>, wkc: wkc}]} when wkc > 0 ->
         {:ok, timestamp_ns}
 
@@ -932,11 +940,23 @@ defmodule EtherCAT.Slave do
   defp latch_time_register(1, :pos), do: Registers.dc_latch1_pos_time()
   defp latch_time_register(1, :neg), do: Registers.dc_latch1_neg_time()
 
-  defp latch_poll_timeout_us(%{latch_poll_ms: poll_ms})
-       when is_integer(poll_ms) and poll_ms > 0,
-       do: poll_ms * 1_000
+  defp latch_poll_timeout_us(%{latch_poll_ms: poll_ms, dc_cycle_ns: dc_cycle_ns})
+       when is_integer(poll_ms) and poll_ms > 0 do
+    poll_budget_us = div(poll_ms * 1_000 * 9, 10)
 
-  defp latch_poll_timeout_us(_data), do: 1_000
+    cycle_budget_us =
+      case dc_cycle_ns do
+        cycle_ns when is_integer(cycle_ns) and cycle_ns > 0 ->
+          div(cycle_ns * 9, 10)
+
+        _ ->
+          poll_budget_us
+      end
+
+    max(min(poll_budget_us, cycle_budget_us), 200)
+  end
+
+  defp latch_poll_timeout_us(_data), do: 900
 
   # -- Mailbox SM setup -------------------------------------------------------
 

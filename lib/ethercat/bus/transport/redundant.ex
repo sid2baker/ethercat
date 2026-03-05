@@ -250,6 +250,15 @@ defmodule EtherCAT.Bus.Transport.Redundant do
     {:keep_state_and_data, [{:reply, from, {:error, :down}}]}
   end
 
+  def handle_event({:call, from}, {:set_frame_timeout, timeout_ms}, _state, data)
+      when is_integer(timeout_ms) and timeout_ms > 0 do
+    {:keep_state, %{data | frame_timeout_ms: timeout_ms}, [{:reply, from, :ok}]}
+  end
+
+  def handle_event({:call, from}, {:set_frame_timeout, _timeout_ms}, _state, _data) do
+    {:keep_state_and_data, [{:reply, from, {:error, :invalid_timeout}}]}
+  end
+
   # -- catch-all --------------------------------------------------------------
 
   def handle_event(_type, _event, _state, _data), do: :keep_state_and_data

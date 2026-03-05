@@ -288,7 +288,13 @@ defmodule EtherCAT.Domain do
     t0 = System.monotonic_time(:microsecond)
     image = build_frame(data.image_size, data.output_patches, data.table)
 
-    result = Bus.transaction(data.link, &Transaction.lrw(&1, {data.logical_base, image}))
+    result =
+      Bus.transaction(
+        data.link,
+        &Transaction.lrw(&1, {data.logical_base, image}),
+        cycle_transaction_timeout_us(data.period_us)
+      )
+
     next_at = data.next_cycle_at + data.period_us
 
     now_after = System.monotonic_time(:microsecond)
@@ -405,4 +411,9 @@ defmodule EtherCAT.Domain do
 
   defp binary_pad(data, size) when byte_size(data) >= size, do: binary_part(data, 0, size)
   defp binary_pad(data, size), do: data <> :binary.copy(<<0>>, size - byte_size(data))
+
+  defp cycle_transaction_timeout_us(period_us)
+       when is_integer(period_us) and period_us > 0 do
+    max(div(period_us * 9, 10), 200)
+  end
 end

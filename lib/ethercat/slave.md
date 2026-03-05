@@ -166,7 +166,7 @@ ETG.1020 §6.3.2 requires DC SYNC configuration after the slave has confirmed Sa
 
 **Which bus transaction mode is used where?**
 Configuration and mailbox writes use `Bus.transaction_queue/2` because delivery matters more than strict timing.
-Runtime latch polling in `:op` uses `Bus.transaction/3` with a short timeout so stale poll reads are dropped instead of queued, preventing recurring latch polls from building backlog on the bus.
+Runtime latch polling in `:op` uses `Bus.transaction/3` with a timeout budget slightly below poll/cycle period so stale polls are dropped instead of queued, preventing recurring latch polls from building backlog on the bus.
 
 **Why send `{:slave_ready, name, :preop}` to `EtherCAT.Master`?**
 Master waits for all named slaves to report `:preop` before advancing any slave to SafeOp/Op. This ensures all FMMUs and SM registers are written before the first LRW cycle starts. The master uses `Process.send(__MODULE__, ...)` so it doesn't need the slave's pid.

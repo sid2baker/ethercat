@@ -133,7 +133,8 @@ defmodule EtherCAT.DC do
     result =
       Bus.transaction(
         data.link,
-        &Transaction.armw(&1, data.ref_station, Registers.dc_system_time())
+        &Transaction.armw(&1, data.ref_station, Registers.dc_system_time()),
+        drift_tick_timeout_us(data.period_ms)
       )
 
     new_data =
@@ -288,5 +289,10 @@ defmodule EtherCAT.DC do
   # Thin wrapper — ignore result (init writes may get no wkc if slaves not yet ready)
   defp link_tx(link, fun) do
     Bus.transaction_queue(link, fun)
+  end
+
+  defp drift_tick_timeout_us(period_ms) when is_integer(period_ms) and period_ms > 0 do
+    period_us = period_ms * 1_000
+    max(div(period_us * 9, 10), 200)
   end
 end

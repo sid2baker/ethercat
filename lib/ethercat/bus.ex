@@ -7,6 +7,7 @@ defmodule EtherCAT.Bus do
     * `start_link/1` — open a connection to the EtherCAT bus
     * `transaction/3` — real-time transaction with a staleness deadline
     * `transaction_queue/2` — reliable transaction that always queues to pending
+    * `set_frame_timeout/2` — update response timeout while awaiting frame data
 
   Commands are built using `EtherCAT.Bus.Transaction` and executed atomically.
   Results are returned as `[EtherCAT.Bus.Result.t()]` in the same order as
@@ -79,6 +80,7 @@ defmodule EtherCAT.Bus do
     - `:backup_interface` — secondary interface for redundant raw mode
     - `:host` — destination IP tuple for UDP, e.g. `{192, 168, 1, 1}`
     - `:port` — UDP port (default: `34980` = `0x88A4`)
+    - `:frame_timeout_ms` — frame response timeout while awaiting (default `25`)
     - `:name` — optional registered name
   """
   @spec start_link(keyword()) :: :gen_statem.start_ret()
@@ -140,6 +142,22 @@ defmodule EtherCAT.Bus do
     %Transaction{datagrams: datagrams} = fun.(Transaction.new())
 
     do_call(bus, {:transact_queue, datagrams}, length(datagrams))
+  end
+
+  @doc """
+  Update the frame response timeout in milliseconds.
+
+  This controls how long the transport waits in `:awaiting` before declaring
+  `{:error, :timeout}` and allowing the bus to accept new frames again.
+  """
+  @spec set_frame_timeout(server(), pos_integer()) :: :ok | {:error, term()}
+  def set_frame_timeout(bus, timeout_ms) when is_integer(timeout_ms) and timeout_ms > 0 do
+    try do
+      :gen_statem.call(bus, {:set_frame_timeout, timeout_ms}, 5_000)
+    catch
+      :exit, {:timeout, _} -> {:error, :timeout}
+      :exit, reason -> {:error, reason}
+    end
   end
 
   defp do_call(bus, msg, datagram_count) do
