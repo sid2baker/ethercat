@@ -45,7 +45,12 @@ Process.sleep(300)
 :ok = EtherCAT.start(
   interface: interface,
   domains: [[id: :main, period: 4]],
-  slaves: [nil, nil, [name: :out, driver: DigitalOut, config: %{}, pdos: [ch1: :main]], nil]
+  slaves: [
+    [name: :coupler],
+    [name: :bridge_1],
+    [name: :out, driver: DigitalOut, config: %{}, pdos: [ch1: :main]],
+    [name: :bridge_3]
+  ]
 )
 :ok = EtherCAT.await_running(10_000)
 

@@ -72,7 +72,7 @@ via the `@paths` map. `walk_path/2` calls `do_transition/2` for each intermediat
   link:              pid(),              # Bus server reference
   station:           non_neg_integer(),  # Configured station address (e.g. 0x1000)
   name:              atom(),             # Slave name atom
-  driver:            module() | nil,     # Module implementing EtherCAT.Slave.Driver
+  driver:            module(),           # Module implementing EtherCAT.Slave.Driver (default: EtherCAT.Slave.Driver.Default)
   config:            map(),              # Driver-specific config, passed to all callbacks
   domain:            atom() | nil,       # Default domain id for auto-PDO-registration
   error_code:        non_neg_integer() | nil,  # Last AL status code from ESC

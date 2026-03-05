@@ -61,9 +61,9 @@ EtherCAT.start(
   interface: interface,
   domains: [[id: :main, period: 10]],
   slaves: [
-    nil,
-    nil,
-    nil,
+    [name: :coupler],
+    [name: :bridge_1],
+    [name: :bridge_2],
     [name: :thermo, driver: El3202Driver, config: %{}, pdos: [channel1: :main, channel2: :main]]
   ]
 )

@@ -44,7 +44,8 @@ defmodule EtherCAT.TelemetryTest do
 
     Telemetry.domain_cycle_done(:main, 42, 7)
 
-    assert_receive {:telemetry_event, ^event_name, %{duration_us: 42, cycle_count: 7}, %{domain: :main}}
+    assert_receive {:telemetry_event, ^event_name, %{duration_us: 42, cycle_count: 7},
+                    %{domain: :main}}
   end
 
   test "domain_cycle_missed/3 emits the domain missed telemetry event" do
@@ -66,7 +67,8 @@ defmodule EtherCAT.TelemetryTest do
 
     Telemetry.domain_cycle_missed(:main, 3, :no_response)
 
-    assert_receive {:telemetry_event, ^event_name, %{miss_count: 3}, %{domain: :main, reason: :no_response}}
+    assert_receive {:telemetry_event, ^event_name, %{miss_count: 3},
+                    %{domain: :main, reason: :no_response}}
   end
 
   def handle_event(event, measurements, metadata, pid) do

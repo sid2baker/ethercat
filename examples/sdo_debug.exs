@@ -22,7 +22,12 @@ Process.sleep(300)
 EtherCAT.start(
   interface: interface,
   domains: [],
-  slaves: [nil, nil, nil, [name: :thermo, driver: nil, config: %{}, pdos: []]]
+  slaves: [
+    [name: :coupler],
+    [name: :bridge_1],
+    [name: :bridge_2],
+    [name: :thermo, config: %{}, pdos: []]
+  ]
 )
 
 # Allow auto-advance (SII read + mailbox SM setup + PREOP transition) to complete

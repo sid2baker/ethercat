@@ -10,7 +10,7 @@ defmodule EtherCAT do
           %EtherCAT.Domain.Config{id: :main, period: 1}
         ],
         slaves: [
-          nil,
+          %EtherCAT.Slave.Config{name: :coupler},
           %EtherCAT.Slave.Config{name: :sensor, driver: MyApp.EL1809, domain: :main},
           %EtherCAT.Slave.Config{name: :valve,  driver: MyApp.EL2809, domain: :main}
         ]
@@ -45,8 +45,11 @@ defmodule EtherCAT do
   Options:
     - `:interface` (required) — network interface, e.g. `"eth0"`
     - `:domains` — list of `%EtherCAT.Domain.Config{}` structs
-    - `:slaves` — list of `%EtherCAT.Slave.Config{}` structs or `nil`
-      (position matters — station address = `base_station + index`)
+    - `:slaves` — list of `%EtherCAT.Slave.Config{}` structs
+      (position matters — station address = `base_station + index`).
+      `nil` entries are rejected; use `%EtherCAT.Slave.Config{name: :coupler}` for
+      unnamed couplers. If omitted or empty, one default slave process is started
+      per discovered station and held in `:preop` for dynamic configuration.
     - `:base_station` — first station address, default `0x1000`
     - `:dc_cycle_ns` — SYNC0 cycle time in ns, default `1_000_000`
     - `:frame_timeout_ms` — optional fixed bus frame response timeout in ms
