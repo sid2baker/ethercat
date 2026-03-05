@@ -50,16 +50,16 @@ defmodule EtherCAT.Slave.CoE do
   """
   @spec write_sdo(pid(), non_neg_integer(), map(), integer(), integer(), integer(), 1 | 2 | 4) ::
           :ok | {:error, term()}
-  def write_sdo(link, station, mailbox_config, index, subindex, value, size) do
+  def write_sdo(bus, station, mailbox_config, index, subindex, value, size) do
     frame = build_request(index, subindex, value, size)
     # Mailbox SM0 only closes (signals PDI) when the last byte of recv_size is written.
     # Pad the frame to recv_size so SM0 fully closes and the slave processes the request.
     padded = frame <> :binary.copy(<<0>>, mailbox_config.recv_size - byte_size(frame))
 
-    with :ok <- write_mailbox(link, station, mailbox_config.recv_offset, padded),
-         :ok <- wait_response(link, station),
+    with :ok <- write_mailbox(bus, station, mailbox_config.recv_offset, padded),
+         :ok <- wait_response(bus, station),
          {:ok, response} <-
-           read_mailbox(link, station, mailbox_config.send_offset, mailbox_config.send_size) do
+           read_mailbox(bus, station, mailbox_config.send_offset, mailbox_config.send_size) do
       validate_response(response, index, subindex)
     end
   end
@@ -86,20 +86,20 @@ defmodule EtherCAT.Slave.CoE do
 
   # -- Transport helpers -------------------------------------------------------
 
-  defp write_mailbox(link, station, recv_offset, frame) do
-    case Bus.transaction_queue(link, &Transaction.fpwr(&1, station, {recv_offset, frame})) do
+  defp write_mailbox(bus, station, recv_offset, frame) do
+    case Bus.transaction_queue(bus, &Transaction.fpwr(&1, station, {recv_offset, frame})) do
       {:ok, [%{wkc: wkc}]} when wkc > 0 -> :ok
       {:ok, [%{wkc: 0}]} -> {:error, :no_response}
       {:error, _} = err -> err
     end
   end
 
-  defp wait_response(link, station), do: wait_response(link, station, @poll_limit)
+  defp wait_response(bus, station), do: wait_response(bus, station, @poll_limit)
 
-  defp wait_response(_link, _station, 0), do: {:error, :response_timeout}
+  defp wait_response(_bus, _station, 0), do: {:error, :response_timeout}
 
-  defp wait_response(link, station, remaining) do
-    case Bus.transaction_queue(link, &Transaction.fprd(&1, station, Registers.sm_status(1))) do
+  defp wait_response(bus, station, remaining) do
+    case Bus.transaction_queue(bus, &Transaction.fprd(&1, station, Registers.sm_status(1))) do
       {:ok, [%{data: <<status::8>>, wkc: wkc}]} when wkc > 0 ->
         case <<status::8>> do
           <<_::4, 1::1, _::3>> ->
@@ -108,7 +108,7 @@ defmodule EtherCAT.Slave.CoE do
 
           _ ->
             Process.sleep(@poll_interval_ms)
-            wait_response(link, station, remaining - 1)
+            wait_response(bus, station, remaining - 1)
         end
 
       {:ok, [%{wkc: 0}]} ->
@@ -119,8 +119,8 @@ defmodule EtherCAT.Slave.CoE do
     end
   end
 
-  defp read_mailbox(link, station, send_offset, send_size) do
-    case Bus.transaction_queue(link, &Transaction.fprd(&1, station, {send_offset, send_size})) do
+  defp read_mailbox(bus, station, send_offset, send_size) do
+    case Bus.transaction_queue(bus, &Transaction.fprd(&1, station, {send_offset, send_size})) do
       {:ok, [%{data: data, wkc: wkc}]} when wkc > 0 -> {:ok, data}
       {:ok, [%{wkc: 0}]} -> {:error, :no_response}
       {:error, _} = err -> err

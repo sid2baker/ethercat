@@ -85,7 +85,7 @@ defmodule EtherCAT.Slave do
   @poll_interval_ms 1
 
   defstruct [
-    :link,
+    :bus,
     :station,
     :name,
     :driver,
@@ -200,7 +200,7 @@ defmodule EtherCAT.Slave do
 
   @impl true
   def init(opts) do
-    link = Keyword.fetch!(opts, :link)
+    bus = Keyword.fetch!(opts, :bus)
     station = Keyword.fetch!(opts, :station)
     name = Keyword.fetch!(opts, :name)
     driver = Keyword.get(opts, :driver, EtherCAT.Slave.Driver.Default)
@@ -213,7 +213,7 @@ defmodule EtherCAT.Slave do
     Registry.register(EtherCAT.Registry, {:slave_station, station}, name)
 
     data = %__MODULE__{
-      link: link,
+      bus: bus,
       station: station,
       name: name,
       driver: driver,
@@ -418,7 +418,7 @@ defmodule EtherCAT.Slave do
   def handle_event(:state_timeout, :latch_poll, :op, data) do
     if data.active_latches do
       case Bus.transaction(
-             data.link,
+             data.bus,
              fn tx ->
                Transaction.fprd(tx, data.station, Registers.dc_latch_event_status())
              end,
@@ -473,7 +473,7 @@ defmodule EtherCAT.Slave do
       "[Slave #{data.name}] init: reading SII (station=0x#{Integer.to_string(data.station, 16)})"
     )
 
-    case read_sii(data.link, data.station) do
+    case read_sii(data.bus, data.station) do
       {:ok, identity, mailbox_config, sm_configs, pdo_configs} ->
         sii_ms = System.monotonic_time(:millisecond) - t0
 
@@ -612,7 +612,7 @@ defmodule EtherCAT.Slave do
             # SM register: full SM size, byte-aligned. Keep SM deactivated while reprogramming.
             sm_reg = <<phys::16-little, total_sm_size::16-little, ctrl::8, 0::8, 0x00::8, 0::8>>
 
-            case Bus.transaction_queue(data.link, fn tx ->
+            case Bus.transaction_queue(data.bus, fn tx ->
                    tx
                    |> Transaction.fpwr(data.station, Registers.sm_activate(sm_idx, 0))
                    |> Transaction.fpwr(data.station, Registers.sm(sm_idx, sm_reg))
@@ -625,12 +625,12 @@ defmodule EtherCAT.Slave do
                       0::8, fmmu_type::8, 0x01::8, 0::24>>
 
                   case Bus.transaction_queue(
-                         data.link,
+                         data.bus,
                          &Transaction.fpwr(&1, data.station, Registers.fmmu(fmmu_idx, fmmu_reg))
                        ) do
                     {:ok, [%{wkc: wkc}]} when wkc > 0 ->
                       case Bus.transaction_queue(
-                             data.link,
+                             data.bus,
                              &Transaction.fpwr(&1, data.station, Registers.sm_activate(sm_idx, 1))
                            ) do
                         {:ok, [%{wkc: activate_wkc}]} when activate_wkc > 0 ->
@@ -696,7 +696,7 @@ defmodule EtherCAT.Slave do
 
     with {:ok, [%{wkc: wkc}]} when wkc > 0 <-
            Bus.transaction_queue(
-             data.link,
+             data.bus,
              &Transaction.fpwr(&1, data.station, Registers.al_control(code))
            ) do
       poll_al(data, code, @poll_limit)
@@ -715,7 +715,7 @@ defmodule EtherCAT.Slave do
 
   defp poll_al(data, code, n) do
     case Bus.transaction_queue(
-           data.link,
+           data.bus,
            &Transaction.fprd(&1, data.station, Registers.al_status())
          ) do
       {:ok, [%{data: <<_::3, _err::1, state::4, _::8>>, wkc: wkc}]}
@@ -741,7 +741,7 @@ defmodule EtherCAT.Slave do
   defp ack_error(data) do
     err_code =
       case Bus.transaction_queue(
-             data.link,
+             data.bus,
              &Transaction.fprd(&1, data.station, Registers.al_status_code())
            ) do
         {:ok, [%{data: <<c::16-little>>, wkc: wkc}]} when wkc > 0 -> c
@@ -750,7 +750,7 @@ defmodule EtherCAT.Slave do
 
     state_code =
       case Bus.transaction_queue(
-             data.link,
+             data.bus,
              &Transaction.fprd(&1, data.station, Registers.al_status())
            ) do
         {:ok, [%{data: <<_::3, _err::1, state::4, _::8>>, wkc: wkc}]} when wkc > 0 -> state
@@ -760,7 +760,7 @@ defmodule EtherCAT.Slave do
     ack_value = state_code + 0x10
 
     Bus.transaction_queue(
-      data.link,
+      data.bus,
       &Transaction.fpwr(&1, data.station, Registers.al_control(ack_value))
     )
 
@@ -769,11 +769,11 @@ defmodule EtherCAT.Slave do
 
   # -- SII -------------------------------------------------------------------
 
-  defp read_sii(link, station) do
-    with {:ok, identity} <- SII.read_identity(link, station),
-         {:ok, mailbox_config} <- SII.read_mailbox_config(link, station),
-         {:ok, sm_configs} <- SII.read_sm_configs(link, station),
-         {:ok, pdo_configs} <- SII.read_pdo_configs(link, station) do
+  defp read_sii(bus, station) do
+    with {:ok, identity} <- SII.read_identity(bus, station),
+         {:ok, mailbox_config} <- SII.read_mailbox_config(bus, station),
+         {:ok, sm_configs} <- SII.read_sm_configs(bus, station),
+         {:ok, pdo_configs} <- SII.read_pdo_configs(bus, station) do
       {:ok, identity, mailbox_config, sm_configs, pdo_configs}
     end
   end
@@ -810,7 +810,7 @@ defmodule EtherCAT.Slave do
     if function_exported?(data.driver, :sdo_config, 1) do
       Enum.each(data.driver.sdo_config(data.config), fn {index, subindex, value, size} ->
         case CoE.write_sdo(
-               data.link,
+               data.bus,
                data.station,
                data.mailbox_config,
                index,
@@ -858,7 +858,7 @@ defmodule EtherCAT.Slave do
         {active_latches, latch0_ctrl, latch1_ctrl} =
           build_latch_config(Map.get(dc_spec, :latches, []))
 
-        Bus.transaction_queue(data.link, fn tx ->
+        Bus.transaction_queue(data.bus, fn tx ->
           tx
           |> Transaction.fpwr(data.station, Registers.dc_sync0_cycle_time(cycle_ns))
           |> Transaction.fpwr(data.station, Registers.dc_sync1_cycle_time(sync1_cycle_ns))
@@ -954,7 +954,7 @@ defmodule EtherCAT.Slave do
     reg = latch_time_register(latch_id, edge)
 
     case Bus.transaction(
-           data.link,
+           data.bus,
            fn tx ->
              Transaction.fprd(tx, data.station, reg)
            end,
@@ -1005,7 +1005,7 @@ defmodule EtherCAT.Slave do
     sm0 = <<ro::16-little, rs::16-little, 0x26::8, 0::8, 0x00::8, 0::8>>
     sm1 = <<so::16-little, ss::16-little, 0x22::8, 0::8, 0x00::8, 0::8>>
 
-    Bus.transaction_queue(data.link, fn tx ->
+    Bus.transaction_queue(data.bus, fn tx ->
       tx
       |> Transaction.fpwr(data.station, Registers.sm_activate(0, 0))
       |> Transaction.fpwr(data.station, Registers.sm_activate(1, 0))

@@ -114,14 +114,14 @@ record     : {key, value, slave_pid}
 ```elixir
 %EtherCAT.Domain{
   id:               atom(),              # Domain ID; also ETS table name
-  link:             pid(),               # Bus server reference
+  bus:              pid(),               # Bus server reference
   period_us:        pos_integer(),       # Cycle period in microseconds
   logical_base:     non_neg_integer(),   # LRW logical address base (default 0)
   next_cycle_at:    integer() | nil,     # Monotonic target time for next tick
   image_size:       non_neg_integer(),   # Total LRW frame byte count
   output_patches:   [{offset, size, key}],         # Ordered output slices
   input_slices:     [{offset, size, key, slave_pid}],  # Ordered input slices
-  expected_wkc:     non_neg_integer(),   # LRW expected working counter (outputs*2 + inputs)
+  expected_wkc:     non_neg_integer(),   # LRW expected working counter (output_slaves*2 + input_slaves)
   miss_count:       non_neg_integer(),   # Consecutive misses (resets on success)
   miss_threshold:   pos_integer(),       # Stop after this many consecutive misses
   total_miss_count: non_neg_integer(),   # Lifetime miss count (never resets)

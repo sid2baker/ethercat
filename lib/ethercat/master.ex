@@ -67,7 +67,6 @@ defmodule EtherCAT.Master do
     # station address of the DC reference clock slave (nil if no DC)
     :dc_ref_station,
     :domain_config,
-    :domain_pids,
     :slave_config,
     :dc_cycle_ns,
     :frame_timeout_override_ms,
@@ -198,7 +197,6 @@ defmodule EtherCAT.Master do
               activatable_slaves: [],
               slaves: [],
               scan_window: [],
-              domain_pids: [],
               activation_failures: %{}
           }
 
@@ -390,10 +388,6 @@ defmodule EtherCAT.Master do
     {:keep_state_and_data, [{:reply, from, data.bus_pid}]}
   end
 
-  def handle_event({:call, from}, :link, _state, data) do
-    {:keep_state_and_data, [{:reply, from, data.bus_pid}]}
-  end
-
   # Catch-all for unrecognized calls in any active state
   def handle_event({:call, from}, _event, state, _data) do
     {:keep_state_and_data, [{:reply, from, {:error, state}}]}
@@ -403,7 +397,7 @@ defmodule EtherCAT.Master do
   def handle_event(:info, {:DOWN, ref, :process, _pid, reason}, _state, data)
       when ref == data.bus_ref and not is_nil(ref) do
     Logger.error("[Master] bus crashed (#{inspect(reason)}) — returning to idle")
-    reply_await_callers(data.await_callers, {:error, {:link_down, reason}})
+    reply_await_callers(data.await_callers, {:error, {:bus_down, reason}})
     stop_session(%{data | bus_pid: nil})
     {:next_state, :idle, %__MODULE__{}}
   end
@@ -594,28 +588,26 @@ defmodule EtherCAT.Master do
   end
 
   defp start_domains(bus, domain_config) do
-    domain_config
-    |> Enum.reduce([], fn entry, acc ->
+    Enum.each(domain_config, fn entry ->
       domain_opts = normalize_domain_config(entry)
       id = Keyword.fetch!(domain_opts, :id)
 
       case DynamicSupervisor.start_child(
              EtherCAT.SessionSupervisor,
-             {Domain, [{:id, id}, {:link, bus} | domain_opts]}
+             {Domain, [{:id, id}, {:bus, bus} | domain_opts]}
            ) do
-        {:ok, pid} ->
-          [pid | acc]
+        {:ok, _pid} ->
+          :ok
 
-        {:error, {:already_started, pid}} ->
+        {:error, {:already_started, _pid}} ->
           Logger.warning("[Master] domain #{inspect(id)} already started")
-          [pid | acc]
+          :ok
 
         {:error, reason} ->
           Logger.error("[Master] failed to start domain #{inspect(id)}: #{inspect(reason)}")
-          acc
+          :ok
       end
     end)
-    |> Enum.reverse()
   end
 
   # Returns {:ok, slaves_list, pending_preop_names, activatable_names}
@@ -644,7 +636,7 @@ defmodule EtherCAT.Master do
             auto_activate? = Keyword.get(slave_opts, :auto_activate?, true)
 
             opts = [
-              link: bus,
+              bus: bus,
               station: station,
               name: name,
               driver: driver,
@@ -718,7 +710,7 @@ defmodule EtherCAT.Master do
 
     # Start domains before slaves so domains are registered in the Registry
     # when slaves call Domain.register_pdo/4 in their :preop enter.
-    domain_pids = start_domains(bus, data.domain_config || [])
+    start_domains(bus, data.domain_config || [])
 
     {:ok, slaves, pending_preop, activatable_slaves} =
       start_slaves(bus, data.base_station, count, data.slave_config || [],
@@ -731,7 +723,6 @@ defmodule EtherCAT.Master do
         slaves: slaves,
         pending_preop: MapSet.new(pending_preop),
         activatable_slaves: activatable_slaves,
-        domain_pids: domain_pids,
         activation_failures: %{}
     }
   end
@@ -751,7 +742,7 @@ defmodule EtherCAT.Master do
       if data.dc_ref_station do
         case DynamicSupervisor.start_child(
                EtherCAT.SessionSupervisor,
-               {DC, link: data.bus_pid, ref_station: data.dc_ref_station, period_ms: 10}
+               {DC, bus: data.bus_pid, ref_station: data.dc_ref_station, period_ms: 10}
              ) do
           {:ok, pid} ->
             pid
@@ -802,8 +793,8 @@ defmodule EtherCAT.Master do
       DynamicSupervisor.terminate_child(EtherCAT.SlaveSupervisor, pid)
     end)
 
-    Enum.each(data.domain_pids || [], fn pid ->
-      DynamicSupervisor.terminate_child(EtherCAT.SessionSupervisor, pid)
+    Enum.each(get_domain_ids(data.domain_config || []), fn domain_id ->
+      terminate_domain(domain_id)
     end)
 
     if data.bus_pid do
@@ -862,5 +853,15 @@ defmodule EtherCAT.Master do
 
   defp reply_await_callers(callers, reply) do
     Enum.each(callers, fn from -> :gen_statem.reply(from, reply) end)
+  end
+
+  defp terminate_domain(domain_id) do
+    case Registry.lookup(EtherCAT.Registry, {:domain, domain_id}) do
+      [{pid, _}] ->
+        DynamicSupervisor.terminate_child(EtherCAT.SessionSupervisor, pid)
+
+      [] ->
+        :ok
+    end
   end
 end

@@ -60,7 +60,7 @@ defmodule EtherCAT.Domain do
 
   defstruct [
     :id,
-    :link,
+    :bus,
     :period_us,
     :logical_base,
     :next_cycle_at,
@@ -70,7 +70,7 @@ defmodule EtherCAT.Domain do
     output_patches: [],
     # [{offset, size, key, slave_pid}] in registration order
     input_slices: [],
-    # LRW expected working counter = output_fmmu_count * 2 + input_fmmu_count
+    # LRW expected working counter = output_slave_count * 2 + input_slave_count
     expected_wkc: 0,
     miss_count: 0,
     miss_threshold: 100,
@@ -99,7 +99,7 @@ defmodule EtherCAT.Domain do
 
   Options:
     - `:id` (required) — atom, also ETS table name and Registry key
-    - `:link` (required) — Link pid
+    - `:bus` (required) — bus pid
     - `:period` (required) — cycle period in milliseconds
     - `:logical_base` — LRW logical address base, default `0`
     - `:miss_threshold` — stop after N consecutive misses, default `100`
@@ -183,7 +183,7 @@ defmodule EtherCAT.Domain do
   @impl true
   def init(opts) do
     id = Keyword.fetch!(opts, :id)
-    link = Keyword.fetch!(opts, :link)
+    bus = Keyword.fetch!(opts, :bus)
     period_ms = Keyword.fetch!(opts, :period)
     logical_base = Keyword.get(opts, :logical_base, 0)
     miss_threshold = Keyword.get(opts, :miss_threshold, 100)
@@ -201,7 +201,7 @@ defmodule EtherCAT.Domain do
 
     data = %__MODULE__{
       id: id,
-      link: link,
+      bus: bus,
       period_us: period_ms * 1000,
       logical_base: logical_base,
       next_cycle_at: nil,
@@ -306,7 +306,7 @@ defmodule EtherCAT.Domain do
 
     result =
       Bus.transaction(
-        data.link,
+        data.bus,
         &Transaction.lrw(&1, {data.logical_base, image}),
         cycle_transaction_timeout_us(data.period_us)
       )
@@ -419,7 +419,21 @@ defmodule EtherCAT.Domain do
   defp binary_pad(data, size), do: data <> :binary.copy(<<0>>, size - byte_size(data))
 
   defp expected_working_counter(data) do
-    length(data.output_patches) * 2 + length(data.input_slices)
+    output_slave_count =
+      data.output_patches
+      |> Enum.reduce(MapSet.new(), fn {_offset, _size, {slave_name, _pdo}}, acc ->
+        MapSet.put(acc, slave_name)
+      end)
+      |> MapSet.size()
+
+    input_slave_count =
+      data.input_slices
+      |> Enum.reduce(MapSet.new(), fn {_offset, _size, {slave_name, _pdo}, _slave_pid}, acc ->
+        MapSet.put(acc, slave_name)
+      end)
+      |> MapSet.size()
+
+    output_slave_count * 2 + input_slave_count
   end
 
   defp mark_cycle_missed(data, reason, next_at, next_timeout) do
