@@ -164,8 +164,9 @@ EtherCAT epoch offset: `946_684_800_000_000_000` ns (difference between Unix epo
 **Why `configure_dc_signals` at `:safeop` entry, not `:preop`?**
 ETG.1020 §6.3.2 requires DC SYNC configuration after the slave has confirmed SafeOp. At this point FMMUs are already written (done in `:preop`) and the PDI is armed. Configuring earlier risks a race where the first SYNC0 pulse fires before the slave PDI is ready.
 
-**Why `transaction_queue` not `transaction`?**
-`Bus.transaction_queue/2` queues the datagram into the next frame send and returns the result. It is used everywhere in slave init to batch register writes and avoid per-write round-trips. `Bus.transaction/2` (direct, immediate) is used only where ordering with respect to other concurrent operations matters (e.g., DC drift tick in `dc.ex`).
+**Which bus transaction mode is used where?**
+Configuration and mailbox writes use `Bus.transaction_queue/2` because delivery matters more than strict timing.
+Runtime latch polling in `:op` uses `Bus.transaction/3` with a short timeout so stale poll reads are dropped instead of queued, preventing recurring latch polls from building backlog on the bus.
 
 **Why send `{:slave_ready, name, :preop}` to `EtherCAT.Master`?**
 Master waits for all named slaves to report `:preop` before advancing any slave to SafeOp/Op. This ensures all FMMUs and SM registers are written before the first LRW cycle starts. The master uses `Process.send(__MODULE__, ...)` so it doesn't need the slave's pid.

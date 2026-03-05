@@ -422,9 +422,9 @@ defmodule EtherCAT.Slave do
 
   def handle_event(:state_timeout, :latch_poll, :op, data) do
     if data.active_latches do
-      case Bus.transaction_queue(data.link, fn tx ->
+      case Bus.transaction(data.link, fn tx ->
              Transaction.fprd(tx, data.station, Registers.dc_latch_event_status())
-           end) do
+           end, latch_poll_timeout_us(data)) do
         {:ok, [%{data: <<latch0_status::8, latch1_status::8>>, wkc: wkc}]} when wkc > 0 ->
           dispatch_latch_events(data, latch0_status, latch1_status)
 
@@ -916,9 +916,9 @@ defmodule EtherCAT.Slave do
   defp read_latch_timestamp(data, latch_id, edge) do
     reg = latch_time_register(latch_id, edge)
 
-    case Bus.transaction_queue(data.link, fn tx ->
+    case Bus.transaction(data.link, fn tx ->
            Transaction.fprd(tx, data.station, reg)
-         end) do
+         end, latch_poll_timeout_us(data)) do
       {:ok, [%{data: <<timestamp_ns::64-little>>, wkc: wkc}]} when wkc > 0 ->
         {:ok, timestamp_ns}
 
@@ -931,6 +931,12 @@ defmodule EtherCAT.Slave do
   defp latch_time_register(0, :neg), do: Registers.dc_latch0_neg_time()
   defp latch_time_register(1, :pos), do: Registers.dc_latch1_pos_time()
   defp latch_time_register(1, :neg), do: Registers.dc_latch1_neg_time()
+
+  defp latch_poll_timeout_us(%{latch_poll_ms: poll_ms})
+       when is_integer(poll_ms) and poll_ms > 0,
+       do: poll_ms * 1_000
+
+  defp latch_poll_timeout_us(_data), do: 1_000
 
   # -- Mailbox SM setup -------------------------------------------------------
 
