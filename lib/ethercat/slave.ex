@@ -230,11 +230,7 @@ defmodule EtherCAT.Slave do
       latch_subscriptions: %{}
     }
 
-    with {:ok, data2} <- do_transition(data, :init) do
-      do_auto_advance(data2)
-    else
-      {:error, reason, _data} -> {:stop, reason}
-    end
+    do_auto_advance(data)
   end
 
   # -- State enter -----------------------------------------------------------
@@ -457,6 +453,20 @@ defmodule EtherCAT.Slave do
   # Full PREOP setup (SDO config, FMMU registration, :slave_ready) runs
   # asynchronously in the :preop enter handler — slaves init concurrently.
   defp do_auto_advance(data) do
+    case do_transition(data, :init) do
+      {:ok, init_data} ->
+        continue_auto_advance(init_data)
+
+      {:error, reason, init_data} ->
+        Logger.warning(
+          "[Slave #{data.name}] init transition failed: #{inspect(reason)} — retrying in #{@auto_advance_retry_ms} ms"
+        )
+
+        {:ok, :init, init_data, [{{:timeout, :auto_advance}, @auto_advance_retry_ms, nil}]}
+    end
+  end
+
+  defp continue_auto_advance(data) do
     t0 = System.monotonic_time(:millisecond)
 
     Logger.debug(
@@ -599,39 +609,63 @@ defmodule EtherCAT.Slave do
 
         case Domain.register_pdo(domain_id, {data.name, sm_key}, total_sm_size, direction) do
           {:ok, offset} ->
-            # SM register: full SM size, byte-aligned
-            sm_reg = <<phys::16-little, total_sm_size::16-little, ctrl::8, 0::8, 0x01::8, 0::8>>
+            # SM register: full SM size, byte-aligned. Keep SM deactivated while reprogramming.
+            sm_reg = <<phys::16-little, total_sm_size::16-little, ctrl::8, 0::8, 0x00::8, 0::8>>
 
-            Bus.transaction_queue(
-              data.link,
-              &Transaction.fpwr(&1, data.station, Registers.sm(sm_idx, sm_reg))
-            )
+            case Bus.transaction_queue(data.link, fn tx ->
+                   tx
+                   |> Transaction.fpwr(data.station, Registers.sm_activate(sm_idx, 0))
+                   |> Transaction.fpwr(data.station, Registers.sm(sm_idx, sm_reg))
+                 end) do
+              {:ok, replies} ->
+                if all_wkc_positive?(replies) do
+                  # One FMMU covers the entire SM, byte-aligned (start_bit=0, stop_bit=7)
+                  fmmu_reg =
+                    <<offset::32-little, total_sm_size::16-little, 0::8, 7::8, phys::16-little,
+                      0::8, fmmu_type::8, 0x01::8, 0::24>>
 
-            # One FMMU covers the entire SM, byte-aligned (start_bit=0, stop_bit=7)
-            fmmu_reg =
-              <<offset::32-little, total_sm_size::16-little, 0::8, 7::8, phys::16-little, 0::8,
-                fmmu_type::8, 0x01::8, 0::24>>
+                  case Bus.transaction_queue(
+                         data.link,
+                         &Transaction.fpwr(&1, data.station, Registers.fmmu(fmmu_idx, fmmu_reg))
+                       ) do
+                    {:ok, [%{wkc: wkc}]} when wkc > 0 ->
+                      case Bus.transaction_queue(
+                             data.link,
+                             &Transaction.fpwr(&1, data.station, Registers.sm_activate(sm_idx, 1))
+                           ) do
+                        {:ok, [%{wkc: activate_wkc}]} when activate_wkc > 0 ->
+                          # Record bit position metadata for each PDO in this SM group
+                          new_regs =
+                            Enum.reduce(sm_pdos, regs, fn {pdo_name, _domain_id, pdo_cfg}, acc ->
+                              Map.put(acc, pdo_name, %{
+                                domain_id: domain_id,
+                                sm_key: sm_key,
+                                bit_offset: pdo_cfg.bit_offset,
+                                bit_size: pdo_cfg.bit_size
+                              })
+                            end)
 
-            case Bus.transaction_queue(
-                   data.link,
-                   &Transaction.fpwr(&1, data.station, Registers.fmmu(fmmu_idx, fmmu_reg))
-                 ) do
-              {:ok, [%{wkc: wkc}]} when wkc > 0 ->
-                # Record bit position metadata for each PDO in this SM group
-                new_regs =
-                  Enum.reduce(sm_pdos, regs, fn {pdo_name, _domain_id, pdo_cfg}, acc ->
-                    Map.put(acc, pdo_name, %{
-                      domain_id: domain_id,
-                      sm_key: sm_key,
-                      bit_offset: pdo_cfg.bit_offset,
-                      bit_size: pdo_cfg.bit_size
-                    })
-                  end)
+                          {new_regs, fmmu_idx + 1}
 
-                {new_regs, fmmu_idx + 1}
+                        _ ->
+                          Logger.warning(
+                            "[Slave #{data.name}] SM#{sm_idx} activation failed after reconfigure"
+                          )
+
+                          {regs, fmmu_idx}
+                      end
+
+                    _ ->
+                      Logger.warning("[Slave #{data.name}] FMMU write for SM#{sm_idx} failed")
+                      {regs, fmmu_idx}
+                  end
+                else
+                  Logger.warning("[Slave #{data.name}] SM#{sm_idx} deactivate/reconfigure failed")
+                  {regs, fmmu_idx}
+                end
 
               _ ->
-                Logger.warning("[Slave #{data.name}] FMMU write for SM#{sm_idx} failed")
+                Logger.warning("[Slave #{data.name}] SM#{sm_idx} deactivate/reconfigure failed")
                 {regs, fmmu_idx}
             end
 
@@ -968,13 +1002,17 @@ defmodule EtherCAT.Slave do
   defp setup_mailbox_sms(data) do
     %{recv_offset: ro, recv_size: rs, send_offset: so, send_size: ss} = data.mailbox_config
 
-    sm0 = <<ro::16-little, rs::16-little, 0x26::8, 0::8, 0x01::8, 0::8>>
-    sm1 = <<so::16-little, ss::16-little, 0x22::8, 0::8, 0x01::8, 0::8>>
+    sm0 = <<ro::16-little, rs::16-little, 0x26::8, 0::8, 0x00::8, 0::8>>
+    sm1 = <<so::16-little, ss::16-little, 0x22::8, 0::8, 0x00::8, 0::8>>
 
     Bus.transaction_queue(data.link, fn tx ->
       tx
+      |> Transaction.fpwr(data.station, Registers.sm_activate(0, 0))
+      |> Transaction.fpwr(data.station, Registers.sm_activate(1, 0))
       |> Transaction.fpwr(data.station, Registers.sm(0, sm0))
       |> Transaction.fpwr(data.station, Registers.sm(1, sm1))
+      |> Transaction.fpwr(data.station, Registers.sm_activate(0, 1))
+      |> Transaction.fpwr(data.station, Registers.sm_activate(1, 1))
     end)
   end
 
@@ -988,14 +1026,19 @@ defmodule EtherCAT.Slave do
       # Byte-aligned fast path
       binary_part(sm_bytes, div(bit_offset, 8), div(bit_size, 8))
     else
-      # Sub-byte: extract bit_size consecutive bits from within one byte.
-      # skip_high = number of MSBs above our field in the byte.
-      byte_idx = div(bit_offset, 8)
-      bit_in_byte = rem(bit_offset, 8)
-      skip_high = 8 - bit_in_byte - bit_size
-      <<_::binary-size(byte_idx), byte::8, _::binary>> = sm_bytes
-      <<_::size(skip_high), val::size(bit_size), _::size(bit_in_byte)>> = <<byte>>
-      <<val::size(div(bit_size + 7, 8) * 8)>>
+      total_bits = byte_size(sm_bytes) * 8
+      <<sm_value::unsigned-little-size(total_bits)>> = sm_bytes
+      high_bits = total_bits - bit_offset - bit_size
+
+      <<_::size(high_bits), raw::size(bit_size), _::size(bit_offset)>> =
+        <<sm_value::size(total_bits)>>
+
+      encoded_bits = ceil_div(bit_size, 8) * 8
+
+      <<encoded_value::size(encoded_bits)>> =
+        <<0::size(encoded_bits - bit_size), raw::size(bit_size)>>
+
+      <<encoded_value::unsigned-little-size(encoded_bits)>>
     end
   end
 
@@ -1015,18 +1058,46 @@ defmodule EtherCAT.Slave do
         binary_part(padded, 0, byte_sz) <>
         binary_part(sm_bytes, byte_off + byte_sz, total - byte_off - byte_sz)
     else
-      # Sub-byte: patch bit_size bits within one SM byte.
-      byte_idx = div(bit_offset, 8)
-      bit_in_byte = rem(bit_offset, 8)
-      skip_high = 8 - bit_in_byte - bit_size
-      <<prefix::binary-size(byte_idx), old_byte::8, suffix::binary>> = sm_bytes
-      <<high::size(skip_high), _::size(bit_size), low::size(bit_in_byte)>> = <<old_byte>>
-      # Take the bit_size LSBs of the first encoded byte as the new value
-      <<_::size(8 - bit_size), new_val::size(bit_size)>> = binary_part(encoded, 0, 1)
+      total_bits = byte_size(sm_bytes) * 8
+      <<sm_value::unsigned-little-size(total_bits)>> = sm_bytes
 
-      prefix <>
-        <<high::size(skip_high), new_val::size(bit_size), low::size(bit_in_byte)>> <> suffix
+      encoded_bits = byte_size(encoded) * 8
+      <<encoded_value::unsigned-little-size(encoded_bits)>> = encoded
+
+      field_value =
+        if encoded_bits >= bit_size do
+          <<_::size(encoded_bits - bit_size), field::size(bit_size)>> =
+            <<encoded_value::size(encoded_bits)>>
+
+          field
+        else
+          <<field::size(bit_size)>> =
+            <<0::size(bit_size - encoded_bits), encoded_value::size(encoded_bits)>>
+
+          field
+        end
+
+      high_bits = total_bits - bit_offset - bit_size
+
+      <<high::size(high_bits), _::size(bit_size), low::size(bit_offset)>> =
+        <<sm_value::size(total_bits)>>
+
+      <<patched_value::size(total_bits)>> =
+        <<high::size(high_bits), field_value::size(bit_size), low::size(bit_offset)>>
+
+      <<patched_value::unsigned-little-size(total_bits)>>
     end
+  end
+
+  defp ceil_div(value, divisor) when is_integer(value) and is_integer(divisor) and divisor > 0 do
+    div(value + divisor - 1, divisor)
+  end
+
+  defp all_wkc_positive?(replies) when is_list(replies) do
+    Enum.all?(replies, fn
+      %{wkc: wkc} when is_integer(wkc) and wkc > 0 -> true
+      _ -> false
+    end)
   end
 
   # -- Registry helpers -------------------------------------------------------

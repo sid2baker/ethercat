@@ -71,7 +71,7 @@ defmodule EtherCAT do
   @spec await_running(timeout_ms :: pos_integer()) :: :ok | {:error, term()}
   def await_running(timeout_ms \\ 10_000), do: Master.await_running(timeout_ms)
 
-  @doc "Return the current master state: `:idle | :scanning | :configuring | :running`."
+  @doc "Return the current master state: `:idle | :scanning | :configuring | :running | :degraded`."
   @spec state() :: atom()
   def state, do: Master.state()
 

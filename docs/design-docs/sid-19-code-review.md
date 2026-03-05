@@ -99,6 +99,15 @@ Primary improvements are now in correctness hardening for fault/restart paths an
 3. Generalize bitfield pack/unpack correctness (Finding 4).
 4. Tighten SM reconfiguration + activation admission criteria (Findings 5 and 6).
 
+## Rework Implementation Status (2026-03-05)
+
+- Implemented Finding 1: domains are now session-scoped (`SessionSupervisor`) and explicitly terminated in `Master.stop_session/1`.
+- Implemented Finding 2: slave startup no longer hard-stops on transient INIT transition errors; retries are scheduled with the existing auto-advance timer.
+- Implemented Finding 3: domain cycle success now requires exact `expected_wkc` match (`outputs*2 + inputs`); mismatches are reported as missed cycles with mismatch metadata.
+- Implemented Finding 4: sub-byte helpers now support cross-byte bit fields via generic bit slicing/insertion on little-endian bit offsets.
+- Implemented Finding 5: SyncManager setup now deactivates SMs before reconfiguration and re-enables only after successful programming.
+- Implemented Finding 6: master now has a `:degraded` state when any activation promotion fails, plus periodic self-heal retries to recover to `:running`.
+
 ## Notes
 
 - Rework update (2026-03-05): DC public API was renamed from `EtherCAT.DC.init/2` to `EtherCAT.DC.initialize_clocks/2` for clarity (and to avoid confusion with `gen_statem` callback `init/1`).

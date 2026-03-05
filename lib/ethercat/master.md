@@ -14,7 +14,7 @@ restarted on individual slave crashes.
 ## States
 
 ```
-:idle → :scanning → :configuring → :running
+:idle → :scanning → :configuring → (:running | :degraded)
          ↑ (on failure or stop, returns to :idle)
 ```
 
@@ -24,6 +24,7 @@ restarted on individual slave crashes.
 | `:scanning` | Bus open, polling for a stable slave count via BRD to `0x0000`. |
 | `:configuring` | Stations assigned, DC initialized, slaves spawned. Waiting for all named slaves to send `{:slave_ready, name, :preop}`. |
 | `:running` | Startup sequence complete. Explicitly configured slaves are advanced to `:op`; dynamic defaults may remain in `:preop` for runtime configuration. |
+| `:degraded` | Startup is partially complete; at least one slave failed PREOP→SAFEOP/OP. Master retries failed promotions periodically and moves to `:running` once all succeed. |
 
 ---
 
@@ -56,7 +57,7 @@ FPRD `0x0110–0x0111` from each slave — 2-byte DL status. Passed to `DC.initi
 If DC init fails, master proceeds without DC: `dc_cycle_ns` is set to `nil`, no SYNC0 will be configured on any slave.
 
 **Step 4: Start domains**
-`start_domains/2` starts one `EtherCAT.Domain` gen_statem per domain config entry via `EtherCAT.DomainSupervisor`. Domains must exist before slaves call `Domain.register_pdo/4` in their `:preop` enter handler. Each domain registers itself in `EtherCAT.Registry` under `{:domain, id}`.
+`start_domains/2` starts one `EtherCAT.Domain` gen_statem per domain config entry via `EtherCAT.SessionSupervisor` (session-scoped lifecycle, torn down by `stop_session/1`). Domains must exist before slaves call `Domain.register_pdo/4` in their `:preop` enter handler. Each domain registers itself in `EtherCAT.Registry` under `{:domain, id}`.
 
 **Step 5: Start slaves**
 `start_slaves/5` — one `EtherCAT.Slave` gen_statem per config entry via `EtherCAT.SlaveSupervisor`. `nil` config entries are rejected at `start/1`. Missing drivers use `EtherCAT.Slave.Driver.Default`.
@@ -75,7 +76,7 @@ Waits for all entries in `pending_preop` to be removed by `{:slave_ready, name, 
 
 30-second timeout (`@configuring_timeout_ms`). On timeout: log error, call `stop_session/1`, reply `{:error, :configuring_timeout}` to any blocked `await_running` callers, return to `:idle`.
 
-When `pending_preop` empties: call `do_activate/1` and transition to `:running`.
+When `pending_preop` empties: call `do_activate/1` and transition to `:running` when all activatable slaves reach OP, otherwise `:degraded`.
 
 ---
 
@@ -98,6 +99,8 @@ Started *after* all slaves reach `:preop` so DC ticks don't compete with slave S
 **Step 4: Advance slaves to Op**
 `Slave.request(name, :op)` sequentially for each named slave.
 
+If any activatable slave fails SafeOp/Op, master enters `:degraded` and retries failed slaves with `Slave.request(name, :op)` every second until all are in OP.
+
 ---
 
 ## Running Phase
@@ -105,6 +108,13 @@ Started *after* all slaves reach `:preop` so DC ticks don't compete with slave S
 Master accepts `stop/0`, `slaves/0`, `bus/0`, `state/0`, and `await_running/1`.
 Ignores `{:slave_ready, ...}` (stale from restart race).
 On bus crash (`{:DOWN, ref, ...}`): calls `stop_session/1`, replies `{:error, {:link_down, reason}}` to blocked callers, returns to `:idle`.
+
+## Degraded Phase
+
+Master accepts the same APIs as `:running`, but `await_running/1` returns
+`{:error, {:activation_failed, failures}}` until recovery succeeds.
+On each retry timeout, master attempts OP promotion for failed slaves and
+transitions to `:running` once failures clear.
 
 ---
 
@@ -148,6 +158,7 @@ Telemetry: `[:ethercat, :dc, :tick]` with `%{wkc: wkc}` on each tick.
   dc_ref_station:  non_neg_integer() | nil,  # Station of reference clock slave
   slave_config:    list(),               # Raw slave config entries from start/1
   domain_config:   list(),               # Raw domain config entries from start/1
+  domain_pids:     [pid()],              # Session-scoped Domain processes
   dc_cycle_ns:     pos_integer() | nil,  # SYNC0 period; nil if no DC
   frame_timeout_override_ms: pos_integer() | nil, # Optional fixed bus frame timeout
   base_station:    non_neg_integer(),    # Default 0x1000
@@ -156,6 +167,7 @@ Telemetry: `[:ethercat, :dc, :tick]` with `%{wkc: wkc}` on each tick.
   scan_window:     [{ms, count}],        # Sliding stability window
   slave_count:     non_neg_integer() | nil,
   pending_preop:   MapSet.t(),           # Names not yet reporting :preop
+  activation_failures: %{atom() => {:safeop | :op, term()}},
   await_callers:   [from],              # Blocked await_running callers
 }
 ```

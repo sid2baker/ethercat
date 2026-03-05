@@ -7,9 +7,9 @@ owns one flat LRW process image and runs the self-timed cyclic exchange for all 
 registered to it. One Domain per configured domain ID. Registered in `EtherCAT.Registry`
 under `{:domain, id}` and creates an ETS table named after `id`.
 
-Supervised under `EtherCAT.DomainSupervisor` as `:temporary`. Started by Master in
-`do_configure/1` before any slave is spawned, so slaves can call `register_pdo/4` during
-their own `:preop` init.
+Supervised under `EtherCAT.SessionSupervisor` as `:temporary` (session-scoped). Started by
+Master in `do_configure/1` before any slave is spawned, so slaves can call
+`register_pdo/4` during their own `:preop` init.
 
 ---
 
@@ -64,7 +64,7 @@ rounded up). On each `:tick`:
 4. **Schedule next tick**: uses `next_cycle_at + period_us` drift-compensated schedule
    (not `now + period_us`) to prevent period drift accumulation.
 
-On LRW failure (WKC=0 or error):
+On LRW failure (WKC mismatch, WKC=0, or transport error):
 - Increments `miss_count` and `total_miss_count`.
 - Emits `:telemetry` event `[:ethercat, :domain, :cycle, :missed]`.
 - If `miss_count >= miss_threshold`: logs error, transitions to `:stopped`.
@@ -121,6 +121,7 @@ record     : {key, value, slave_pid}
   image_size:       non_neg_integer(),   # Total LRW frame byte count
   output_patches:   [{offset, size, key}],         # Ordered output slices
   input_slices:     [{offset, size, key, slave_pid}],  # Ordered input slices
+  expected_wkc:     non_neg_integer(),   # LRW expected working counter (outputs*2 + inputs)
   miss_count:       non_neg_integer(),   # Consecutive misses (resets on success)
   miss_threshold:   pos_integer(),       # Stop after this many consecutive misses
   total_miss_count: non_neg_integer(),   # Lifetime miss count (never resets)
@@ -136,7 +137,7 @@ record     : {key, value, slave_pid}
 | Event | Measurements | Metadata |
 |-------|-------------|---------|
 | `[:ethercat, :domain, :cycle, :done]` | `%{duration_us: us, cycle_count: n}` | `%{domain: id}` |
-| `[:ethercat, :domain, :cycle, :missed]` | `%{miss_count: n}` | `%{domain: id, reason: atom}` |
+| `[:ethercat, :domain, :cycle, :missed]` | `%{miss_count: n}` | `%{domain: id, reason: term}` |
 
 ---
 
@@ -149,7 +150,7 @@ record     : {key, value, slave_pid}
 | `stop_cyclic/1` | Halt cycling. Transitions `:cycling` → `:stopped`. |
 | `write/3` | Direct ETS output write. No gen_statem hop. |
 | `read/2` | Direct ETS read of any PDO. No gen_statem hop. |
-| `stats/1` | Returns `{:ok, %{state, cycle_count, miss_count, total_miss_count, image_size}}`. |
+| `stats/1` | Returns `{:ok, %{state, cycle_count, miss_count, total_miss_count, image_size, expected_wkc}}`. |
 
 ---
 
