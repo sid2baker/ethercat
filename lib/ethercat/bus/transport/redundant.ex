@@ -1,4 +1,4 @@
-defmodule EtherCAT.Bus.Redundant do
+defmodule EtherCAT.Bus.Transport.Redundant do
   @moduledoc """
   Dual-port redundant EtherCAT bus implementation.
 
@@ -16,7 +16,7 @@ defmodule EtherCAT.Bus.Redundant do
 
   ## Queue batching
 
-  Same as `Bus.SinglePort`: `Bus.transaction/3` calls are postponed when busy
+  Same as `Bus.Transport.SinglePort`: `Bus.transaction/3` calls are postponed when busy
   and expire if stale; `Bus.transaction_queue/2` calls always queue to pending.
   """
 

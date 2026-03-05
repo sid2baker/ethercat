@@ -127,10 +127,10 @@ end
 ```elixir
 alias EtherCAT.Bus.Transaction
 
-link = EtherCAT.link()
+bus = EtherCAT.bus()
 
 {:ok, result} =
-  EtherCAT.Bus.transaction(link, fn ->
+  EtherCAT.Bus.transaction(bus, fn ->
     Transaction.new()
     |> Transaction.fprd(station_addr, register, 2)    # read 2 bytes
     |> Transaction.fpwr(station_addr, register, data) # write data

@@ -25,15 +25,15 @@ defmodule EtherCAT do
 
   ## Sub-modules
 
-  `EtherCAT.Slave`, `EtherCAT.Domain`, `EtherCAT.Link` — raw slave control,
+  `EtherCAT.Slave`, `EtherCAT.Domain`, `EtherCAT.Bus` — raw slave control,
   domain stats, and direct frame transactions.
   """
 
   alias EtherCAT.{Master, Slave}
 
-  @doc "Return the link pid for direct frame transactions."
-  @spec link() :: pid()
-  def link, do: Master.link()
+  @doc "Return the bus pid for direct frame transactions."
+  @spec bus() :: pid()
+  def bus, do: Master.bus()
 
   @doc """
   Start the master: open the interface, scan for slaves, and begin
@@ -53,7 +53,7 @@ defmodule EtherCAT do
   @spec start(keyword()) :: :ok | {:error, term()}
   def start(opts \\ []), do: Master.start(opts)
 
-  @doc "Stop the master: shut down all slaves, domains, and the link."
+  @doc "Stop the master: shut down all slaves, domains, and the bus."
   @spec stop() :: :ok
   def stop, do: Master.stop()
 
