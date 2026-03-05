@@ -110,6 +110,8 @@ defmodule EtherCAT.Slave do
     :pdo_registrations,
     # %{pdo_name => [pid]}
     :pdo_subscriptions,
+    # %{pdo_name => raw_input_binary} used to emit change notifications per PDO
+    pdo_last_inputs: %{},
     # %{{latch_id, edge} => [pid]}
     latch_subscriptions: %{}
   ]
@@ -227,6 +229,7 @@ defmodule EtherCAT.Slave do
       latch_poll_ms: nil,
       pdo_registrations: %{},
       pdo_subscriptions: %{},
+      pdo_last_inputs: %{},
       latch_subscriptions: %{}
     }
 
@@ -396,23 +399,41 @@ defmodule EtherCAT.Slave do
         _state,
         data
       ) do
-    data.pdo_registrations
-    |> Enum.filter(fn {_pdo_name, reg} -> reg.sm_key == sm_key end)
-    |> Enum.each(fn {pdo_name, %{bit_offset: bit_offset, bit_size: bit_size}} ->
-      raw = extract_sm_bits(sm_bytes, bit_offset, bit_size)
+    {new_pdo_last_inputs, notifications} =
+      data.pdo_registrations
+      |> Enum.filter(fn {_pdo_name, reg} -> reg.sm_key == sm_key end)
+      |> Enum.reduce({data.pdo_last_inputs, []}, fn
+        {pdo_name, %{bit_offset: bit_offset, bit_size: bit_size}}, {pdo_last_inputs, acc} ->
+          raw = extract_sm_bits(sm_bytes, bit_offset, bit_size)
 
-      decoded =
-        if data.driver != nil do
-          data.driver.decode_inputs(pdo_name, data.config, raw)
-        else
-          raw
-        end
+          case Map.get(pdo_last_inputs, pdo_name) do
+            ^raw ->
+              {pdo_last_inputs, acc}
 
-      subs = Map.get(data.pdo_subscriptions, pdo_name, [])
-      Enum.each(subs, &send(&1, {:slave_input, data.name, pdo_name, decoded}))
+            _prev_raw ->
+              decoded =
+                if data.driver != nil do
+                  data.driver.decode_inputs(pdo_name, data.config, raw)
+                else
+                  raw
+                end
+
+              next_acc =
+                data.pdo_subscriptions
+                |> Map.get(pdo_name, [])
+                |> Enum.reduce(acc, fn pid, pid_acc ->
+                  [{pid, pdo_name, decoded} | pid_acc]
+                end)
+
+              {Map.put(pdo_last_inputs, pdo_name, raw), next_acc}
+          end
+      end)
+
+    Enum.each(Enum.reverse(notifications), fn {pid, pdo_name, decoded} ->
+      send(pid, {:slave_input, data.name, pdo_name, decoded})
     end)
 
-    :keep_state_and_data
+    {:keep_state, %{data | pdo_last_inputs: new_pdo_last_inputs}}
   end
 
   def handle_event(:state_timeout, :latch_poll, :op, data) do
