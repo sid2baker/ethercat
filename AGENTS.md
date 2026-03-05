@@ -1,52 +1,82 @@
-# EtherCAT Project Rules
+# EtherCAT Agent Guide
 
-## Bitwise Operations
-- **Never use `import Bitwise` or Bitwise operators (`&&&`, `|||`, `band`, `bor`, etc.)**
-- Always use binary pattern matching to extract or compose bit fields
-- Example — extract a 4-bit state and 1-bit error flag from a 16-bit LE register:
-  ```elixir
-  # Good: binary pattern matching
-  <<_::3, err_flag::1, state::4, _::8>> = register_bytes
+## Quick Orientation
 
-  # Bad: Bitwise
-  <<status::16-little>> = register_bytes
-  state = Bitwise.band(status, 0x0F)
-  err?  = Bitwise.band(status, 0x10) != 0
-  ```
-- To set a bit flag, use arithmetic (`state_code + 0x10`) when fields don't overlap,
-  or construct the byte directly with binary syntax (`<<flags::8>>`)
+Start here. Read in order for any non-trivial task.
 
-## gen_statem Enter Callbacks
+| File | What it gives you |
+|------|-------------------|
+| `ARCHITECTURE.md` | System map, data flow, key design decisions |
+| `lib/ethercat/slave.md` | Slave ESM lifecycle, driver contract, PDO registration, DC config |
+| `lib/ethercat/master.md` | Master scan/configure/activate sequence, DC init steps |
+| `lib/ethercat/domain.md` | Domain cyclic LRW, ETS schema, frame assembly, hot path |
+| `docs/references/ethercat-esc-technology.md` | ESC hardware: FMMU, SM, DC, ESM, SII, interrupts |
+| `docs/references/ethercat-esc-registers.md` | Full ESC register map |
+| `docs/exec-plans/active/dc-sync1-latch-complete.md` | Planned SYNC1 + LATCH implementation |
+| `docs/exec-plans/tech-debt-tracker.md` | Known gaps across all subsystems |
+| `docs/design-docs/engineering-summary.md` | Narrative summary with hardware observations |
 
-- **Enter callbacks may not transition state.** Returning `{:next_state, ...}` or
-  including `{:next_event, ...}` / `{:state_timeout, 0, ...}` in the actions list from
-  an enter callback is either illegal or a hack. OTP will crash the process.
-- **Work that causes a state transition belongs in the event handler that decides to
-  transition, not in the enter callback of the destination state.**
-- Enter callbacks are for side-effects that are unconditionally true on every entry:
-  arming a recurring timer, emitting telemetry, logging. Nothing else.
-- If you find yourself wanting to transition out of a state from its own enter callback,
-  extract the work into a `defp do_something(data)` and call it from the handler(s) that
-  return `{:next_state, :that_state, ...}`:
-  ```elixir
-  # Bad — enter callback trying to decide where to go next
-  def handle_event(:enter, _old, :configuring, data) do
-    new_data = do_configure(data)
-    if done?(new_data),
-      do: {:keep_state, new_data, [{:next_event, :internal, :done}]},  # illegal in enter
-      else: {:keep_state, new_data}
-  end
+---
 
-  # Good — caller does the work and picks the destination
-  def handle_event({:timeout, :scan_poll}, nil, :scanning, data) do
-    configured = do_configure(data)
-    if done?(configured),
-      do: {:next_state, :running, configured},
-      else: {:next_state, :configuring, configured}
-  end
-  ```
-- The same applies to `gen_statem.init/1`: start in the correct initial state directly
-  rather than starting in a placeholder state and using a `timeout 0` to immediately leave it.
+## Hard Rules
+
+### Bitwise Operations
+
+**Never use `import Bitwise` or Bitwise operators (`&&&`, `|||`, `band`, `bor`, etc.)**
+
+Always use binary pattern matching to extract or compose bit fields:
+
+```elixir
+# Good
+<<_::3, err_flag::1, state::4, _::8>> = register_bytes
+
+# Bad
+<<status::16-little>> = register_bytes
+state = Bitwise.band(status, 0x0F)
+```
+
+To set a flag: use arithmetic (`state_code + 0x10`) when fields don't overlap, or
+construct bytes directly (`<<flags::8>>`).
+
+### gen_statem Enter Callbacks
+
+**Enter callbacks may not transition state.** Returning `{:next_state, ...}` or
+`{:next_event, ...}` from an enter callback is illegal — OTP will crash the process.
+
+Enter callbacks are for unconditional side-effects only: arming a recurring timer,
+emitting telemetry, logging. Nothing that decides where to go next.
+
+Work that causes a state transition belongs in the event handler that decides to
+transition:
+
+```elixir
+# Bad — enter callback trying to decide where to go
+def handle_event(:enter, _old, :configuring, data) do
+  new_data = do_configure(data)
+  if done?(new_data),
+    do: {:keep_state, new_data, [{:next_event, :internal, :done}]},  # illegal
+    else: {:keep_state, new_data}
+end
+
+# Good — caller decides, enter callback just arms the timer
+def handle_event({:timeout, :scan_poll}, nil, :scanning, data) do
+  configured = do_configure(data)
+  if done?(configured),
+    do: {:next_state, :running, configured},
+    else: {:next_state, :configuring, configured}
+end
+```
+
+The same applies to `gen_statem.init/1`: start in the correct initial state directly
+rather than using a `timeout 0` to immediately leave a placeholder state.
+
+---
+
+## Tooling
+
+Use `mix usage_rules.docs Module` or `mix usage_rules.docs Module.fun/arity` to look up
+documentation for Elixir, OTP, or any dependency. Use `mix usage_rules.search_docs query`
+to search across all packages.
 
 <!-- usage-rules-start -->
 <!-- usage_rules-start -->
@@ -78,7 +108,7 @@ mix usage_rules.docs Enum.zip/1
 
 ## Searching Documentation
 
-You should also consult the documentation of any tools you are using, early and often. The best 
+You should also consult the documentation of any tools you are using, early and often. The best
 way to accomplish this is to use the `usage_rules.search_docs` mix task. Once you have
 found what you are looking for, use the links in the search results to get more detail. For example:
 
