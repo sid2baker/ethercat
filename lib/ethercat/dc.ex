@@ -30,6 +30,7 @@ defmodule EtherCAT.DC do
   alias EtherCAT.Bus
   alias EtherCAT.Bus.Transaction
   alias EtherCAT.Slave.Registers
+  alias EtherCAT.Telemetry
 
   # ns between Unix epoch (1970) and EtherCAT epoch (2000-01-01 00:00:00)
   @ethercat_epoch_offset_ns 946_684_800_000_000_000
@@ -142,11 +143,7 @@ defmodule EtherCAT.DC do
             Logger.info("[DC] drift tick recovered after #{data.fail_count} failure(s)")
           end
 
-          :telemetry.execute(
-            [:ethercat, :dc, :tick],
-            %{wkc: wkc},
-            %{ref_station: data.ref_station}
-          )
+          Telemetry.dc_tick(data.ref_station, wkc)
 
           %{data | fail_count: 0}
 

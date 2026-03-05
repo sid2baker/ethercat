@@ -59,6 +59,12 @@ defmodule EtherCAT.Telemetry do
         measurements: %{}
         metadata:     %{transport: String.t()}
 
+  ### DC drift maintenance
+
+      [:ethercat, :dc, :tick]
+        measurements: %{wkc: integer()}
+        metadata:     %{ref_station: non_neg_integer()}
+
   ## Timestamps
 
   `tx_timestamp` and `rx_timestamp` are `System.monotonic_time/0` values.
@@ -171,6 +177,15 @@ defmodule EtherCAT.Telemetry do
     )
   end
 
+  @doc false
+  def dc_tick(ref_station, wkc) do
+    execute(
+      [:ethercat, :dc, :tick],
+      %{wkc: wkc},
+      %{ref_station: ref_station}
+    )
+  end
+
   # ---------------------------------------------------------------------------
   # Lightweight event counters for IEx inspection
   # ---------------------------------------------------------------------------
@@ -191,7 +206,8 @@ defmodule EtherCAT.Telemetry do
     [:ethercat, :bus, :frame, :dropped],
     [:ethercat, :bus, :frame, :ignored],
     [:ethercat, :bus, :transport, :down],
-    [:ethercat, :bus, :transport, :reconnected]
+    [:ethercat, :bus, :transport, :reconnected],
+    [:ethercat, :dc, :tick]
   ]
 
   @event_index @all_events |> Enum.with_index() |> Map.new()
