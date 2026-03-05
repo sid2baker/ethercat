@@ -101,7 +101,7 @@ defmodule EtherCAT.Telemetry do
   end
 
   # ---------------------------------------------------------------------------
-  # Convenience emitters — called from Bus.SinglePort and Bus.Redundant
+  # Convenience emitters — called from Bus.Transport.SinglePort and Bus.Transport.Redundant
   # ---------------------------------------------------------------------------
 
   @doc false
