@@ -50,13 +50,13 @@ defmodule EtherCAT.DC do
   """
   @spec initialize_clocks(Bus.server(), [{non_neg_integer(), binary()}]) ::
           {:ok, non_neg_integer()} | {:error, term()}
-  def initialize_clocks(link, slave_stations) when slave_stations != [] do
+  def initialize_clocks(bus, slave_stations) when slave_stations != [] do
     stations = Enum.map(slave_stations, &elem(&1, 0))
 
     # Step 1: trigger receive-time latch on all slaves
-    with :ok <- trigger_recv_latch(link),
+    with :ok <- trigger_recv_latch(bus),
          # Step 2: read receive times from every slave
-         {:ok, recv_times} <- read_recv_times(link, stations),
+         {:ok, recv_times} <- read_recv_times(bus, stations),
          # Step 3: identify reference clock
          {:ok, ref_idx} <- find_ref_clock(recv_times),
          ref_station = Enum.at(stations, ref_idx) do
@@ -64,15 +64,15 @@ defmodule EtherCAT.DC do
 
       # Step 4: calculate propagation delays and write to each slave
       delays = calc_delays(recv_times, slave_stations)
-      write_delays(link, stations, delays)
+      write_delays(bus, stations, delays)
 
       # Step 5: write system time offsets
       master_ns = System.os_time(:nanosecond) - @ethercat_epoch_offset_ns
       {ref_ecat_ns, _, _} = Enum.at(recv_times, ref_idx)
-      write_offsets(link, stations, recv_times, ref_idx, ref_ecat_ns, master_ns)
+      write_offsets(bus, stations, recv_times, ref_idx, ref_ecat_ns, master_ns)
 
       # Step 6: reset PLL filters on all DC-capable slaves
-      reset_filters(link, stations, recv_times)
+      reset_filters(bus, stations, recv_times)
 
       # Step 7: static drift pre-compensation is done by the DC gen_statem
       # on startup so it runs concurrently with slave init and SII reads.
@@ -98,7 +98,7 @@ defmodule EtherCAT.DC do
   Start the DC drift maintenance gen_statem.
 
   Options:
-    - `:link` (required) — Link server reference
+    - `:bus` (required) — Bus server reference
     - `:ref_station` (required) — station address of the reference clock
     - `:period_ms` — drift correction interval, default 10 ms
   """
@@ -114,11 +114,11 @@ defmodule EtherCAT.DC do
 
   @impl true
   def init(opts) do
-    link = Keyword.fetch!(opts, :link)
+    bus = Keyword.fetch!(opts, :bus)
     ref_station = Keyword.fetch!(opts, :ref_station)
     period_ms = Keyword.get(opts, :period_ms, 10)
 
-    data = %{link: link, ref_station: ref_station, period_ms: period_ms, fail_count: 0}
+    data = %{bus: bus, ref_station: ref_station, period_ms: period_ms, fail_count: 0}
     {:ok, :running, data}
   end
 
@@ -132,7 +132,7 @@ defmodule EtherCAT.DC do
   def handle_event(:state_timeout, :tick, :running, data) do
     result =
       Bus.transaction(
-        data.link,
+        data.bus,
         &Transaction.armw(&1, data.ref_station, Registers.dc_system_time()),
         drift_tick_timeout_us(data.period_ms)
       )
@@ -165,19 +165,19 @@ defmodule EtherCAT.DC do
 
   # -- Init helpers ----------------------------------------------------------
 
-  defp trigger_recv_latch(link) do
-    case Bus.transaction_queue(link, &Transaction.bwr(&1, Registers.dc_recv_time_latch())) do
+  defp trigger_recv_latch(bus) do
+    case Bus.transaction_queue(bus, &Transaction.bwr(&1, Registers.dc_recv_time_latch())) do
       {:ok, _} -> :ok
       {:error, _} = err -> err
     end
   end
 
-  defp read_recv_times(link, stations) do
+  defp read_recv_times(bus, stations) do
     results =
       Enum.map(stations, fn station ->
         ecat =
           case Bus.transaction_queue(
-                 link,
+                 bus,
                  &Transaction.fprd(&1, station, Registers.dc_recv_time_ecat())
                ) do
             {:ok, [%{data: <<t::64-little>>, wkc: 1}]} -> t
@@ -186,7 +186,7 @@ defmodule EtherCAT.DC do
 
         p0 =
           case Bus.transaction_queue(
-                 link,
+                 bus,
                  &Transaction.fprd(&1, station, Registers.dc_recv_time(0))
                ) do
             {:ok, [%{data: <<t::32-little>>, wkc: 1}]} -> t
@@ -195,7 +195,7 @@ defmodule EtherCAT.DC do
 
         p1 =
           case Bus.transaction_queue(
-                 link,
+                 bus,
                  &Transaction.fprd(&1, station, Registers.dc_recv_time(1))
                ) do
             {:ok, [%{data: <<t::32-little>>, wkc: 1}]} -> t
@@ -238,14 +238,14 @@ defmodule EtherCAT.DC do
     |> Enum.reverse()
   end
 
-  defp write_delays(link, stations, delays) do
+  defp write_delays(bus, stations, delays) do
     Enum.zip(stations, delays)
     |> Enum.each(fn {station, delay} ->
-      link_tx(link, &Transaction.fpwr(&1, station, Registers.dc_system_time_delay(delay)))
+      bus_tx(bus, &Transaction.fpwr(&1, station, Registers.dc_system_time_delay(delay)))
     end)
   end
 
-  defp write_offsets(link, stations, recv_times, ref_idx, ref_ecat_ns, master_ns) do
+  defp write_offsets(bus, stations, recv_times, ref_idx, ref_ecat_ns, master_ns) do
     ref_offset = master_ns - ref_ecat_ns
 
     Enum.zip(stations, recv_times)
@@ -259,26 +259,26 @@ defmodule EtherCAT.DC do
             ref_ecat_ns - ecat_ns + ref_offset
           end
 
-        link_tx(link, &Transaction.fpwr(&1, station, Registers.dc_system_time_offset(offset)))
+        bus_tx(bus, &Transaction.fpwr(&1, station, Registers.dc_system_time_offset(offset)))
       end
     end)
   end
 
-  defp reset_filters(link, stations, recv_times) do
+  defp reset_filters(bus, stations, recv_times) do
     Enum.zip(stations, recv_times)
     |> Enum.each(fn {station, {ecat_ns, _, _}} ->
       if ecat_ns != nil do
         # Read current value and write it back — this resets the filter
         case Bus.transaction_queue(
-               link,
+               bus,
                &Transaction.fprd(&1, station, Registers.dc_speed_counter_start())
              ) do
           {:ok, [%{data: <<v::16-little>>, wkc: 1}]} ->
-            link_tx(link, &Transaction.fpwr(&1, station, Registers.dc_speed_counter_start(v)))
+            bus_tx(bus, &Transaction.fpwr(&1, station, Registers.dc_speed_counter_start(v)))
 
           _ ->
-            link_tx(
-              link,
+            bus_tx(
+              bus,
               &Transaction.fpwr(&1, station, Registers.dc_speed_counter_start(0x1000))
             )
         end
@@ -287,8 +287,8 @@ defmodule EtherCAT.DC do
   end
 
   # Thin wrapper — ignore result (init writes may get no wkc if slaves not yet ready)
-  defp link_tx(link, fun) do
-    Bus.transaction_queue(link, fun)
+  defp bus_tx(bus, fun) do
+    Bus.transaction_queue(bus, fun)
   end
 
   defp drift_tick_timeout_us(period_ms) when is_integer(period_ms) and period_ms > 0 do

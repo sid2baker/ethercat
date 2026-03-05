@@ -13,13 +13,13 @@ defmodule EtherCAT.Slave.SII do
       alias EtherCAT.Slave.SII
 
       # Read vendor ID (words 0x08–0x09)
-      {:ok, <<vendor_id::32-little>>} = SII.read(link, 0x1000, 0x08, 2)
+      {:ok, <<vendor_id::32-little>>} = SII.read(bus, 0x1000, 0x08, 2)
 
       # Write configured station alias (word 0x04)
-      :ok = SII.write(link, 0x1000, 0x04, <<0x00, 0x10>>)
+      :ok = SII.write(bus, 0x1000, 0x04, <<0x00, 0x10>>)
 
       # Reload ESC configuration from EEPROM
-      :ok = SII.reload(link, 0x1000)
+      :ok = SII.reload(bus, 0x1000)
   """
 
   alias EtherCAT.Bus
@@ -63,9 +63,9 @@ defmodule EtherCAT.Slave.SII do
              serial_number: integer()
            }}
           | {:error, atom()}
-  def read_identity(link, station) do
+  def read_identity(bus, station) do
     with {:ok, <<vid::32-little, pc::32-little, rev::32-little, sn::32-little>>} <-
-           read(link, station, 0x08, 8) do
+           read(bus, station, 0x08, 8) do
       {:ok, %{vendor_id: vid, product_code: pc, revision: rev, serial_number: sn}}
     end
   end
@@ -88,9 +88,9 @@ defmodule EtherCAT.Slave.SII do
              send_size: integer()
            }}
           | {:error, atom()}
-  def read_mailbox_config(link, station) do
+  def read_mailbox_config(bus, station) do
     with {:ok, <<ro::16-little, rs::16-little, so::16-little, ss::16-little>>} <-
-           read(link, station, 0x18, 4) do
+           read(bus, station, 0x18, 4) do
       {:ok, %{recv_offset: ro, recv_size: rs, send_offset: so, send_size: ss}}
     end
   end
@@ -121,7 +121,7 @@ defmodule EtherCAT.Slave.SII do
   matching the `DefaultSize` and `ControlRegister` shown by `ethercat pdos`.
   """
   @spec read_sm_configs(pid(), non_neg_integer()) :: {:ok, [sm_entry()]} | {:error, atom()}
-  def read_sm_configs(link, station), do: find_sm_category(link, station, @category_start)
+  def read_sm_configs(bus, station), do: find_sm_category(bus, station, @category_start)
 
   @doc """
   Read TxPDO (0x0032) and RxPDO (0x0033) category data from SII EEPROM.
@@ -133,8 +133,8 @@ defmodule EtherCAT.Slave.SII do
   Returns `{:ok, []}` if no PDO categories are present.
   """
   @spec read_pdo_configs(pid(), non_neg_integer()) :: {:ok, [pdo_config()]} | {:error, atom()}
-  def read_pdo_configs(link, station),
-    do: find_pdo_categories(link, station, @category_start, [])
+  def read_pdo_configs(bus, station),
+    do: find_pdo_categories(bus, station, @category_start, [])
 
   @doc """
   Read the valid SII contents by walking the category structure.
@@ -145,9 +145,9 @@ defmodule EtherCAT.Slave.SII do
   Returns `{:ok, binary}` or `{:error, reason}`.
   """
   @spec dump(pid(), non_neg_integer()) :: {:ok, binary()} | {:error, atom()}
-  def dump(link, station) do
-    with {:ok, end_word} <- find_end(link, station) do
-      read(link, station, 0x0000, end_word)
+  def dump(bus, station) do
+    with {:ok, end_word} <- find_end(bus, station) do
+      read(bus, station, 0x0000, end_word)
     end
   end
 
@@ -158,9 +158,9 @@ defmodule EtherCAT.Slave.SII do
   """
   @spec read(pid(), non_neg_integer(), non_neg_integer(), pos_integer()) ::
           {:ok, binary()} | {:error, atom()}
-  def read(link, station, word_address, word_count) do
-    with {:ok, chunk_words} <- read_data_register_size(link, station) do
-      read_chunks(link, station, word_address, word_count, chunk_words, [])
+  def read(bus, station, word_address, word_count) do
+    with {:ok, chunk_words} <- read_data_register_size(bus, station) do
+      read_chunks(bus, station, word_address, word_count, chunk_words, [])
     end
   end
 
@@ -174,8 +174,8 @@ defmodule EtherCAT.Slave.SII do
   """
   @spec write(pid(), non_neg_integer(), non_neg_integer(), binary()) ::
           :ok | {:error, atom()}
-  def write(link, station, word_address, data) when rem(byte_size(data), 2) == 0 do
-    write_words(link, station, word_address, data)
+  def write(bus, station, word_address, data) when rem(byte_size(data), 2) == 0 do
+    write_words(bus, station, word_address, data)
   end
 
   @doc """
@@ -188,11 +188,11 @@ defmodule EtherCAT.Slave.SII do
   Returns `:ok` or `{:error, reason}`.
   """
   @spec reload(pid(), non_neg_integer()) :: :ok | {:error, atom()}
-  def reload(link, station) do
-    with :ok <- ensure_ready(link, station),
-         :ok <- write_reg(link, station, Registers.eeprom_control(), @cmd_reload),
-         :ok <- wait_busy(link, station) do
-      check_errors(link, station)
+  def reload(bus, station) do
+    with :ok <- ensure_ready(bus, station),
+         :ok <- write_reg(bus, station, Registers.eeprom_control(), @cmd_reload),
+         :ok <- wait_busy(bus, station) do
+      check_errors(bus, station)
     end
   end
 
@@ -200,18 +200,18 @@ defmodule EtherCAT.Slave.SII do
 
   # Walk SII categories from @category_start to find type 0x0029 (SyncManager).
   # Category header: [type::16-little, size::16-little] (size in WORDS = size*2 bytes of data)
-  defp find_sm_category(link, station, addr) do
-    case read(link, station, addr, 2) do
+  defp find_sm_category(bus, station, addr) do
+    case read(bus, station, addr, 2) do
       {:ok, <<0xFFFF::16-little, _::16>>} ->
         {:ok, []}
 
       {:ok, <<0x0029::16-little, size::16-little>>} ->
-        with {:ok, data} <- read(link, station, addr + 2, size) do
+        with {:ok, data} <- read(bus, station, addr + 2, size) do
           {:ok, parse_sm_entries(data, 0, [])}
         end
 
       {:ok, <<_type::16-little, size::16-little>>} ->
-        find_sm_category(link, station, addr + 2 + size)
+        find_sm_category(bus, station, addr + 2 + size)
 
       {:error, _} = err ->
         err
@@ -234,21 +234,21 @@ defmodule EtherCAT.Slave.SII do
   # -- PDO category reading (0x0032 TxPDO=input, 0x0033 RxPDO=output) --------
 
   # Walk all categories; collect 0x0032 and 0x0033 entries.
-  defp find_pdo_categories(link, station, addr, acc) do
-    case read(link, station, addr, 2) do
+  defp find_pdo_categories(bus, station, addr, acc) do
+    case read(bus, station, addr, 2) do
       {:ok, <<0xFFFF::16-little, _::16>>} ->
         {:ok, assign_bit_offsets(acc)}
 
       {:ok, <<cat::16-little, size::16-little>>} when cat in [0x0032, 0x0033] ->
         dir = if cat == 0x0032, do: :input, else: :output
 
-        with {:ok, data} <- read(link, station, addr + 2, size) do
+        with {:ok, data} <- read(bus, station, addr + 2, size) do
           pdos = parse_pdo_category(data, dir, [])
-          find_pdo_categories(link, station, addr + 2 + size, acc ++ pdos)
+          find_pdo_categories(bus, station, addr + 2 + size, acc ++ pdos)
         end
 
       {:ok, <<_::16, size::16-little>>} ->
-        find_pdo_categories(link, station, addr + 2 + size, acc)
+        find_pdo_categories(bus, station, addr + 2 + size, acc)
 
       {:error, _} = err ->
         err
@@ -300,16 +300,16 @@ defmodule EtherCAT.Slave.SII do
   # Walk category headers from word 0x40 to find the end of valid SII data.
   # Each category: [type::16-little, size::16-little, data::size*2 bytes]
   # End marker: type == 0xFFFF
-  defp find_end(link, station), do: find_end(link, station, @category_start)
+  defp find_end(bus, station), do: find_end(bus, station, @category_start)
 
-  defp find_end(link, station, addr) do
-    case read(link, station, addr, 2) do
+  defp find_end(bus, station, addr) do
+    case read(bus, station, addr, 2) do
       {:ok, <<0xFFFF::16-little, _::16>>} ->
         # End marker — include it in the dump
         {:ok, addr + 1}
 
       {:ok, <<_type::16-little, size::16-little>>} ->
-        find_end(link, station, addr + 2 + size)
+        find_end(bus, station, addr + 2 + size)
 
       {:error, _} = err ->
         err
@@ -320,13 +320,13 @@ defmodule EtherCAT.Slave.SII do
     {:ok, :erlang.iolist_to_binary(Enum.reverse(acc))}
   end
 
-  defp read_chunks(link, station, addr, remaining, chunk_words, acc) do
-    with {:ok, chunk_data} <- read_one(link, station, addr, chunk_words) do
+  defp read_chunks(bus, station, addr, remaining, chunk_words, acc) do
+    with {:ok, chunk_data} <- read_one(bus, station, addr, chunk_words) do
       take = min(remaining, chunk_words)
       <<used::binary-size(take * 2), _::binary>> = chunk_data
 
       read_chunks(
-        link,
+        bus,
         station,
         addr + chunk_words,
         remaining - take,
@@ -336,15 +336,15 @@ defmodule EtherCAT.Slave.SII do
     end
   end
 
-  defp read_one(link, station, word_address, chunk_words) do
+  defp read_one(bus, station, word_address, chunk_words) do
     retry_on_ack(@max_ack_retries, fn ->
-      with :ok <- ensure_ready(link, station),
+      with :ok <- ensure_ready(bus, station),
            :ok <-
-             write_reg(link, station, Registers.eeprom_address(), <<word_address::32-little>>),
-           :ok <- write_reg(link, station, Registers.eeprom_control(), @cmd_read),
-           :ok <- wait_busy(link, station),
-           :ok <- check_errors(link, station) do
-        read_reg(link, station, {Registers.eeprom_data(), chunk_words * 2})
+             write_reg(bus, station, Registers.eeprom_address(), <<word_address::32-little>>),
+           :ok <- write_reg(bus, station, Registers.eeprom_control(), @cmd_read),
+           :ok <- wait_busy(bus, station),
+           :ok <- check_errors(bus, station) do
+        read_reg(bus, station, {Registers.eeprom_data(), chunk_words * 2})
       end
     end)
   end
@@ -353,57 +353,57 @@ defmodule EtherCAT.Slave.SII do
 
   defp write_words(_link, _station, _addr, <<>>), do: :ok
 
-  defp write_words(link, station, addr, <<word::binary-size(2), rest::binary>>) do
-    with :ok <- write_one(link, station, addr, word) do
-      write_words(link, station, addr + 1, rest)
+  defp write_words(bus, station, addr, <<word::binary-size(2), rest::binary>>) do
+    with :ok <- write_one(bus, station, addr, word) do
+      write_words(bus, station, addr + 1, rest)
     end
   end
 
-  defp write_one(link, station, word_address, <<_::binary-size(2)>> = word) do
+  defp write_one(bus, station, word_address, <<_::binary-size(2)>> = word) do
     retry_on_ack(@max_ack_retries, fn ->
-      with :ok <- ensure_ready(link, station),
+      with :ok <- ensure_ready(bus, station),
            :ok <-
-             write_reg(link, station, Registers.eeprom_address(), <<word_address::32-little>>),
-           :ok <- write_reg(link, station, {Registers.eeprom_data(), 2}, word),
+             write_reg(bus, station, Registers.eeprom_address(), <<word_address::32-little>>),
+           :ok <- write_reg(bus, station, {Registers.eeprom_data(), 2}, word),
            # Write-enable (bit 0) + write command (bits 10:8) in the same frame
-           :ok <- write_reg(link, station, Registers.eeprom_control(), @cmd_write),
-           :ok <- wait_busy(link, station) do
-        check_errors(link, station)
+           :ok <- write_reg(bus, station, Registers.eeprom_control(), @cmd_write),
+           :ok <- wait_busy(bus, station) do
+        check_errors(bus, station)
       end
     end)
   end
 
   # -- Protocol helpers -------------------------------------------------------
 
-  defp ensure_ready(link, station) do
-    with :ok <- wait_busy(link, station) do
-      clear_errors_if_needed(link, station)
+  defp ensure_ready(bus, station) do
+    with :ok <- wait_busy(bus, station) do
+      clear_errors_if_needed(bus, station)
     end
   end
 
-  defp wait_busy(link, station), do: wait_busy(link, station, @busy_poll_limit)
+  defp wait_busy(bus, station), do: wait_busy(bus, station, @busy_poll_limit)
 
   defp wait_busy(_link, _station, 0), do: {:error, :busy_timeout}
 
-  defp wait_busy(link, station, remaining) do
-    case read_reg(link, station, Registers.eeprom_control()) do
+  defp wait_busy(bus, station, remaining) do
+    case read_reg(bus, station, Registers.eeprom_control()) do
       {:ok, <<_lo, busy::1, _::7>>} when busy == 0 ->
         :ok
 
       {:ok, _} ->
         Process.sleep(@busy_poll_interval_ms)
-        wait_busy(link, station, remaining - 1)
+        wait_busy(bus, station, remaining - 1)
 
       {:error, _} = err ->
         err
     end
   end
 
-  defp clear_errors_if_needed(link, station) do
-    case read_reg(link, station, Registers.eeprom_control()) do
+  defp clear_errors_if_needed(bus, station) do
+    case read_reg(bus, station, Registers.eeprom_control()) do
       {:ok, <<_lo, hi::binary-size(1)>>} ->
         if has_errors?(hi) do
-          write_reg(link, station, Registers.eeprom_control(), @cmd_nop)
+          write_reg(bus, station, Registers.eeprom_control(), @cmd_nop)
         else
           :ok
         end
@@ -413,8 +413,8 @@ defmodule EtherCAT.Slave.SII do
     end
   end
 
-  defp check_errors(link, station) do
-    case read_reg(link, station, Registers.eeprom_control()) do
+  defp check_errors(bus, station) do
+    case read_reg(bus, station, Registers.eeprom_control()) do
       {:ok, <<_lo, hi::binary-size(1)>>} -> check_error_bits(hi)
       {:error, _} = err -> err
     end
@@ -458,8 +458,8 @@ defmodule EtherCAT.Slave.SII do
 
   # Data register size: bit 6 of control/status.
   # 0 = 4 bytes (2 words), 1 = 8 bytes (4 words)
-  defp read_data_register_size(link, station) do
-    case read_reg(link, station, Registers.eeprom_control()) do
+  defp read_data_register_size(bus, station) do
+    case read_reg(bus, station, Registers.eeprom_control()) do
       {:ok, <<_lo_rest::7, size_bit::1, _hi>>} ->
         if size_bit == 1, do: {:ok, 4}, else: {:ok, 2}
 
@@ -470,16 +470,16 @@ defmodule EtherCAT.Slave.SII do
 
   # -- Register I/O -----------------------------------------------------------
 
-  defp read_reg(link, station, {_addr, _size} = reg) do
-    case Bus.transaction_queue(link, &Transaction.fprd(&1, station, reg)) do
+  defp read_reg(bus, station, {_addr, _size} = reg) do
+    case Bus.transaction_queue(bus, &Transaction.fprd(&1, station, reg)) do
       {:ok, [%{data: data, wkc: wkc}]} when wkc > 0 -> {:ok, data}
       {:ok, [%{wkc: 0}]} -> {:error, :no_response}
       {:error, _} = err -> err
     end
   end
 
-  defp write_reg(link, station, {addr, _size}, data) do
-    case Bus.transaction_queue(link, &Transaction.fpwr(&1, station, {addr, data})) do
+  defp write_reg(bus, station, {addr, _size}, data) do
+    case Bus.transaction_queue(bus, &Transaction.fpwr(&1, station, {addr, data})) do
       {:ok, [%{wkc: wkc}]} when wkc > 0 -> :ok
       {:ok, [%{wkc: 0}]} -> {:error, :no_response}
       {:error, _} = err -> err

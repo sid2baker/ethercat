@@ -6,7 +6,7 @@ defmodule EtherCAT.Slave.Registers do
   sites never need to hard-code a size separately:
 
       {addr, size} = Registers.al_status()
-      Link.transaction(link, &Transaction.fprd(&1, station, addr, size))
+      Bus.transaction_queue(bus, &Transaction.fprd(&1, station, {addr, size}))
 
   Registers whose size is determined at runtime return a bare address integer.
   Array-indexed registers (SyncManager, FMMU) provide a base-offset function

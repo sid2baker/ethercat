@@ -8,7 +8,7 @@ defmodule EtherCAT.DomainTest do
 
     {:ok, _pid} =
       start_supervised(
-        {Domain, [id: domain_id, link: self(), period: 60_000, miss_threshold: 500]}
+        {Domain, [id: domain_id, bus: self(), period: 60_000, miss_threshold: 500]}
       )
 
     %{domain_id: domain_id}

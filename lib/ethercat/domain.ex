@@ -60,7 +60,7 @@ defmodule EtherCAT.Domain do
 
   defstruct [
     :id,
-    :link,
+    :bus,
     :period_us,
     :logical_base,
     :next_cycle_at,
@@ -99,7 +99,7 @@ defmodule EtherCAT.Domain do
 
   Options:
     - `:id` (required) — atom, also ETS table name and Registry key
-    - `:link` (required) — Link pid
+    - `:bus` (required) — bus pid
     - `:period` (required) — cycle period in milliseconds
     - `:logical_base` — LRW logical address base, default `0`
     - `:miss_threshold` — stop after N consecutive misses, default `100`
@@ -183,7 +183,7 @@ defmodule EtherCAT.Domain do
   @impl true
   def init(opts) do
     id = Keyword.fetch!(opts, :id)
-    link = Keyword.fetch!(opts, :link)
+    bus = Keyword.fetch!(opts, :bus)
     period_ms = Keyword.fetch!(opts, :period)
     logical_base = Keyword.get(opts, :logical_base, 0)
     miss_threshold = Keyword.get(opts, :miss_threshold, 100)
@@ -201,7 +201,7 @@ defmodule EtherCAT.Domain do
 
     data = %__MODULE__{
       id: id,
-      link: link,
+      bus: bus,
       period_us: period_ms * 1000,
       logical_base: logical_base,
       next_cycle_at: nil,
@@ -306,7 +306,7 @@ defmodule EtherCAT.Domain do
 
     result =
       Bus.transaction(
-        data.link,
+        data.bus,
         &Transaction.lrw(&1, {data.logical_base, image}),
         cycle_transaction_timeout_us(data.period_us)
       )

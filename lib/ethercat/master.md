@@ -87,7 +87,7 @@ Runs synchronously before transitioning to `:running`.
 If no activatable slaves are configured (dynamic startup mode), activation is skipped and slaves remain in `:preop`.
 
 **Step 1: Start DC gen_statem**
-`DC.start_link(link: bus, ref_station: ref_station, period_ms: 10)` — starts cyclic ARMW ticker.
+`DC.start_link(bus: bus, ref_station: ref_station, period_ms: 10)` — starts cyclic ARMW ticker.
 Started *after* all slaves reach `:preop` so DC ticks don't compete with slave SM transitions on the socket.
 
 **Step 2: Start domain cycling**
@@ -107,7 +107,7 @@ If any activatable slave fails SafeOp/Op, master enters `:degraded` and retries 
 
 Master accepts `stop/0`, `slaves/0`, `bus/0`, `state/0`, and `await_running/1`.
 Ignores `{:slave_ready, ...}` (stale from restart race).
-On bus crash (`{:DOWN, ref, ...}`): calls `stop_session/1`, replies `{:error, {:link_down, reason}}` to blocked callers, returns to `:idle`.
+On bus crash (`{:DOWN, ref, ...}`): calls `stop_session/1`, replies `{:error, {:bus_down, reason}}` to blocked callers, returns to `:idle`.
 
 ## Degraded Phase
 
@@ -158,7 +158,6 @@ Telemetry: `[:ethercat, :dc, :tick]` with `%{wkc: wkc}` on each tick.
   dc_ref_station:  non_neg_integer() | nil,  # Station of reference clock slave
   slave_config:    list(),               # Raw slave config entries from start/1
   domain_config:   list(),               # Raw domain config entries from start/1
-  domain_pids:     [pid()],              # Session-scoped Domain processes
   dc_cycle_ns:     pos_integer() | nil,  # SYNC0 period; nil if no DC
   frame_timeout_override_ms: pos_integer() | nil, # Optional fixed bus frame timeout
   base_station:    non_neg_integer(),    # Default 0x1000

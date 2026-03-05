@@ -114,7 +114,7 @@ record     : {key, value, slave_pid}
 ```elixir
 %EtherCAT.Domain{
   id:               atom(),              # Domain ID; also ETS table name
-  link:             pid(),               # Bus server reference
+  bus:              pid(),               # Bus server reference
   period_us:        pos_integer(),       # Cycle period in microseconds
   logical_base:     non_neg_integer(),   # LRW logical address base (default 0)
   next_cycle_at:    integer() | nil,     # Monotonic target time for next tick

@@ -69,7 +69,7 @@ via the `@paths` map. `walk_path/2` calls `do_transition/2` for each intermediat
 
 ```elixir
 %EtherCAT.Slave{
-  link:              pid(),              # Bus server reference
+  bus:               pid(),              # Bus server reference
   station:           non_neg_integer(),  # Configured station address (e.g. 0x1000)
   name:              atom(),             # Slave name atom
   driver:            module(),           # Module implementing EtherCAT.Slave.Driver (default: EtherCAT.Slave.Driver.Default)
