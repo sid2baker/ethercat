@@ -59,8 +59,8 @@ rounded up). On each `:tick`:
    output values from ETS into a zero-filled frame without intermediate allocation.
 2. **LRW transaction** (`Bus.transaction/3`): sends the frame with a timeout budget slightly below cycle period; stale ticks are dropped.
 3. **Dispatch inputs** (`dispatch_inputs/4`): for each input slice, compares new value
-   against ETS; on change, updates ETS and sends `{:domain_input, domain_id, key, raw}` to
-   the slave pid.
+   against ETS; on change, updates ETS and sends
+   `{:domain_input, domain_id, key, old_raw | :unset, new_raw}` to the slave pid.
 4. **Schedule next tick**: uses `next_cycle_at + period_us` drift-compensated schedule
    (not `now + period_us`) to prevent period drift accumulation.
 

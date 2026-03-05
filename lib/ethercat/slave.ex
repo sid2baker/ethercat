@@ -392,24 +392,36 @@ defmodule EtherCAT.Slave do
   # SM-grouped key: {slave_name, {:sm, idx}} — unpack per-PDO bits and dispatch.
   def handle_event(
         :info,
-        {:domain_input, _domain_id, {_slave_name, {:sm, _} = sm_key}, sm_bytes},
+        {:domain_input, _domain_id, {_slave_name, {:sm, _} = sm_key}, old_sm_bytes, new_sm_bytes},
         _state,
         data
       ) do
-    data.pdo_registrations
-    |> Enum.filter(fn {_pdo_name, reg} -> reg.sm_key == sm_key end)
-    |> Enum.each(fn {pdo_name, %{bit_offset: bit_offset, bit_size: bit_size}} ->
-      raw = extract_sm_bits(sm_bytes, bit_offset, bit_size)
+    notifications =
+      data.pdo_registrations
+      |> Enum.filter(fn {_pdo_name, reg} -> reg.sm_key == sm_key end)
+      |> Enum.reduce([], fn {pdo_name, %{bit_offset: bit_offset, bit_size: bit_size}}, acc ->
+        if pdo_changed?(old_sm_bytes, new_sm_bytes, bit_offset, bit_size) do
+          raw = extract_sm_bits(new_sm_bytes, bit_offset, bit_size)
 
-      decoded =
-        if data.driver != nil do
-          data.driver.decode_inputs(pdo_name, data.config, raw)
+          decoded =
+            if data.driver != nil do
+              data.driver.decode_inputs(pdo_name, data.config, raw)
+            else
+              raw
+            end
+
+          data.pdo_subscriptions
+          |> Map.get(pdo_name, [])
+          |> Enum.reduce(acc, fn pid, pid_acc ->
+            [{pid, pdo_name, decoded} | pid_acc]
+          end)
         else
-          raw
+          acc
         end
+      end)
 
-      subs = Map.get(data.pdo_subscriptions, pdo_name, [])
-      Enum.each(subs, &send(&1, {:slave_input, data.name, pdo_name, decoded}))
+    Enum.each(Enum.reverse(notifications), fn {pid, pdo_name, decoded} ->
+      send(pid, {:slave_input, data.name, pdo_name, decoded})
     end)
 
     :keep_state_and_data
@@ -1040,6 +1052,13 @@ defmodule EtherCAT.Slave do
 
       <<encoded_value::unsigned-little-size(encoded_bits)>>
     end
+  end
+
+  defp pdo_changed?(:unset, _new_sm_bytes, _bit_offset, _bit_size), do: true
+
+  defp pdo_changed?(old_sm_bytes, new_sm_bytes, bit_offset, bit_size) do
+    extract_sm_bits(old_sm_bytes, bit_offset, bit_size) !=
+      extract_sm_bits(new_sm_bytes, bit_offset, bit_size)
   end
 
   # Write `bit_size` bits from `encoded` into `sm_bytes` at `bit_offset`.
