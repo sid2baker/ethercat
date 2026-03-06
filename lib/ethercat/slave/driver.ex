@@ -138,8 +138,28 @@ defmodule EtherCAT.Slave.Driver do
   Return the driver's logical signal model.
 
   Each signal maps to either a whole PDO index or a `%ProcessDataSignal{}` slice.
+
+  An optional 2-arity version `process_data_model/2` receives the SII PDO configs
+  as its second argument. When exported, the runtime calls it instead of `/1`, giving
+  the driver access to hardware layout for dynamic model generation. The `Default`
+  driver uses this to auto-discover all PDOs without any hand-written mapping.
   """
   @callback process_data_model(config()) ::
+              %{signal_name() => non_neg_integer() | ProcessDataSignal.t()}
+
+  @doc """
+  Optional 2-arity variant of `process_data_model/1` that receives SII PDO configs.
+
+  Each entry in `sii_pdo_configs` is a map with keys:
+    - `:index` — PDO object index (e.g. `0x1A00`)
+    - `:direction` — `:input` or `:output`
+    - `:sm_index` — SyncManager index
+    - `:bit_size` — total PDO size in bits
+    - `:bit_offset` — PDO offset within its SyncManager image in bits
+
+  When this callback is exported, it takes precedence over `process_data_model/1`.
+  """
+  @callback process_data_model(config(), sii_pdo_configs :: [map()]) ::
               %{signal_name() => non_neg_integer() | ProcessDataSignal.t()}
 
   @doc "Encode one logical output signal into raw bytes for the process image."
@@ -190,6 +210,7 @@ defmodule EtherCAT.Slave.Driver do
   @callback on_latch(atom(), config(), 0 | 1, latch_edge(), non_neg_integer()) :: :ok
 
   @optional_callbacks [
+    process_data_model: 2,
     on_preop: 2,
     on_safeop: 2,
     on_op: 2,

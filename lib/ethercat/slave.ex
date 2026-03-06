@@ -684,7 +684,7 @@ defmodule EtherCAT.Slave do
          {:ok, sm_groups} <-
            ProcessDataPlan.build(
              requested_signals,
-             mailbox_data.driver.process_data_model(mailbox_data.config),
+             call_process_data_model(mailbox_data),
              mailbox_data.sii_pdo_configs,
              mailbox_data.sii_sm_configs
            ),
@@ -1151,6 +1151,14 @@ defmodule EtherCAT.Slave do
   end
 
   # -- Driver invocation -----------------------------------------------------
+
+  defp call_process_data_model(data) do
+    if function_exported?(data.driver, :process_data_model, 2) do
+      data.driver.process_data_model(data.config, data.sii_pdo_configs)
+    else
+      data.driver.process_data_model(data.config)
+    end
+  end
 
   defp invoke_driver(data, cb), do: invoke_driver(data, cb, [])
 
