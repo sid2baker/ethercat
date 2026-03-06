@@ -175,6 +175,39 @@ defmodule EtherCAT do
   def slaves, do: Master.slaves()
 
   @doc """
+  Return a diagnostic snapshot for a slave.
+
+  Keys:
+    - `:name` — slave atom name
+    - `:station` — assigned bus station address
+    - `:al_state` — current ESM state: `:init | :preop | :safeop | :op`
+    - `:identity` — `%{vendor_id, product_code, revision, serial_number}` from SII, or `nil`
+    - `:driver` — driver module in use
+    - `:coe` — `true` if the slave has a mailbox (CoE-capable)
+    - `:signals` — list of `%{name, domain, direction, bit_offset, bit_size}` for registered signals
+    - `:configuration_error` — last configuration failure atom, or `nil`
+
+  ## Example
+
+      iex> EtherCAT.info(:sensor)
+      %{
+        name: :sensor,
+        station: 0x1001,
+        al_state: :op,
+        identity: %{vendor_id: 0x2, product_code: 0x07111389, revision: 0x00190000, serial_number: 0},
+        driver: MyApp.EL1809,
+        coe: false,
+        signals: [
+          %{name: :ch1, domain: :main, direction: :input, bit_offset: 0, bit_size: 1},
+          ...
+        ],
+        configuration_error: nil
+      }
+  """
+  @spec info(atom()) :: map()
+  def info(slave_name), do: Slave.info(slave_name)
+
+  @doc """
   Subscribe to named slave events.
 
   `name` may refer to:

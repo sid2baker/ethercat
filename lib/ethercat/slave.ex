@@ -179,6 +179,22 @@ defmodule EtherCAT.Slave do
   def error(slave_name), do: :gen_statem.call(via(slave_name), :error)
 
   @doc """
+  Return a diagnostic snapshot for the slave.
+
+  Keys:
+    - `:name` — slave atom name
+    - `:station` — assigned bus station address
+    - `:al_state` — current ESM state: `:init | :preop | :safeop | :op`
+    - `:identity` — `%{vendor_id, product_code, revision, serial_number}` from SII, or `nil`
+    - `:driver` — driver module in use
+    - `:coe` — `true` if the slave has a mailbox (CoE-capable)
+    - `:signals` — list of `%{name, domain, direction, bit_offset, bit_size}` for registered signals
+    - `:configuration_error` — last configuration failure atom, or `nil`
+  """
+  @spec info(atom()) :: map()
+  def info(slave_name), do: :gen_statem.call(via(slave_name), :info)
+
+  @doc """
   Read the decoded input value for an input signal. Equivalent to the value
   delivered via `subscribe/3` for normal process-data signals.
 
@@ -300,6 +316,38 @@ defmodule EtherCAT.Slave do
 
   def handle_event({:call, from}, :error, _state, data) do
     {:keep_state_and_data, [{:reply, from, data.error_code}]}
+  end
+
+  def handle_event({:call, from}, :info, state, data) do
+    signals =
+      case data.signal_registrations do
+        nil ->
+          []
+
+        regs ->
+          Enum.map(regs, fn {name, reg} ->
+            %{
+              name: name,
+              domain: reg.domain_id,
+              direction: reg.direction,
+              bit_offset: reg.bit_offset,
+              bit_size: reg.bit_size
+            }
+          end)
+      end
+
+    info = %{
+      name: data.name,
+      station: data.station,
+      al_state: state,
+      identity: data.identity,
+      driver: data.driver,
+      coe: match?(%{recv_size: n} when n > 0, data.mailbox_config),
+      signals: signals,
+      configuration_error: data.configuration_error
+    }
+
+    {:keep_state_and_data, [{:reply, from, info}]}
   end
 
   def handle_event({:call, from}, {:request, target}, state, _data) when state == target do
