@@ -39,10 +39,22 @@ defmodule Example.EL1809 do
   @impl true
   def process_data_profile(_config) do
     %{
-      ch1:  0x1A00, ch2:  0x1A01, ch3:  0x1A02, ch4:  0x1A03,
-      ch5:  0x1A04, ch6:  0x1A05, ch7:  0x1A06, ch8:  0x1A07,
-      ch9:  0x1A08, ch10: 0x1A09, ch11: 0x1A0A, ch12: 0x1A0B,
-      ch13: 0x1A0C, ch14: 0x1A0D, ch15: 0x1A0E, ch16: 0x1A0F
+      ch1: 0x1A00,
+      ch2: 0x1A01,
+      ch3: 0x1A02,
+      ch4: 0x1A03,
+      ch5: 0x1A04,
+      ch6: 0x1A05,
+      ch7: 0x1A06,
+      ch8: 0x1A07,
+      ch9: 0x1A08,
+      ch10: 0x1A09,
+      ch11: 0x1A0A,
+      ch12: 0x1A0B,
+      ch13: 0x1A0C,
+      ch14: 0x1A0D,
+      ch15: 0x1A0E,
+      ch16: 0x1A0F
     }
   end
 
@@ -63,10 +75,22 @@ defmodule Example.EL2809 do
     # SM0 (0x0F00): channels 1–8, SM1 (0x0F01): channels 9–16.
     # Each is a 1-bit RxPDO; master uses bit-level FMMUs to pack into SM bytes.
     %{
-      ch1:  0x1600, ch2:  0x1601, ch3:  0x1602, ch4:  0x1603,
-      ch5:  0x1604, ch6:  0x1605, ch7:  0x1606, ch8:  0x1607,
-      ch9:  0x1608, ch10: 0x1609, ch11: 0x160A, ch12: 0x160B,
-      ch13: 0x160C, ch14: 0x160D, ch15: 0x160E, ch16: 0x160F
+      ch1: 0x1600,
+      ch2: 0x1601,
+      ch3: 0x1602,
+      ch4: 0x1603,
+      ch5: 0x1604,
+      ch6: 0x1605,
+      ch7: 0x1606,
+      ch8: 0x1607,
+      ch9: 0x1608,
+      ch10: 0x1609,
+      ch11: 0x160A,
+      ch12: 0x160B,
+      ch13: 0x160C,
+      ch14: 0x160D,
+      ch15: 0x160E,
+      ch16: 0x160F
     }
   end
 
@@ -90,8 +114,10 @@ defmodule Example.EL3202 do
   @impl true
   def sdo_config(_config) do
     [
-      {0x8000, 0x19, 8, 2},   # ch1 RTD element = ohm_1_16 (resistance, 1/16 Ω/bit)
-      {0x8010, 0x19, 8, 2}    # ch2 RTD element = ohm_1_16
+      # ch1 RTD element = ohm_1_16 (resistance, 1/16 Ω/bit)
+      {0x8000, 0x19, 8, 2},
+      # ch2 RTD element = ohm_1_16
+      {0x8010, 0x19, 8, 2}
     ]
   end
 
@@ -100,17 +126,49 @@ defmodule Example.EL3202 do
 
   @impl true
   def decode_inputs(:channel1, _config, <<
-        _::1, error::1, _::2, _::2, overrange::1, underrange::1,
-        toggle::1, state::1, _::6, value::16-little>>) do
-    %{ohms: value / 16.0, overrange: overrange == 1, underrange: underrange == 1,
-      error: error == 1, invalid: state == 1, toggle: toggle}
+        _::1,
+        error::1,
+        _::2,
+        _::2,
+        overrange::1,
+        underrange::1,
+        toggle::1,
+        state::1,
+        _::6,
+        value::16-little
+      >>) do
+    %{
+      ohms: value / 16.0,
+      overrange: overrange == 1,
+      underrange: underrange == 1,
+      error: error == 1,
+      invalid: state == 1,
+      toggle: toggle
+    }
   end
+
   def decode_inputs(:channel2, _config, <<
-        _::1, error::1, _::2, _::2, overrange::1, underrange::1,
-        toggle::1, state::1, _::6, value::16-little>>) do
-    %{ohms: value / 16.0, overrange: overrange == 1, underrange: underrange == 1,
-      error: error == 1, invalid: state == 1, toggle: toggle}
+        _::1,
+        error::1,
+        _::2,
+        _::2,
+        overrange::1,
+        underrange::1,
+        toggle::1,
+        state::1,
+        _::6,
+        value::16-little
+      >>) do
+    %{
+      ohms: value / 16.0,
+      overrange: overrange == 1,
+      underrange: underrange == 1,
+      error: error == 1,
+      invalid: state == 1,
+      toggle: toggle
+    }
   end
+
   def decode_inputs(_pdo, _config, _), do: nil
 end
 
@@ -139,7 +197,20 @@ defmodule Example.PhaseLoop do
   end
 
   # State: ticks, pprev_out, prev_out, last_out, mismatches, last_print, sensor_ch, thermo1, thermo2
-  defp loop(set_fn, phase_ref, mask, ticks, pprev_out, prev_out, last_out, mismatches, last_print, sensor_ch, thermo1, thermo2) do
+  defp loop(
+         set_fn,
+         phase_ref,
+         mask,
+         ticks,
+         pprev_out,
+         prev_out,
+         last_out,
+         mismatches,
+         last_print,
+         sensor_ch,
+         thermo1,
+         thermo2
+       ) do
     receive do
       {:phase_done, ^phase_ref} ->
         {ticks, mismatches}
@@ -155,37 +226,110 @@ defmodule Example.PhaseLoop do
         new_print =
           if last_print == 0 or ticks - last_print >= 250 do
             actual = rebuild_channels(sensor_ch)
-            mark = if loopback_ok?(actual, pprev_out, prev_out, last_out, mask), do: "ok", else: "MISMATCH"
+
+            mark =
+              if loopback_ok?(actual, pprev_out, prev_out, last_out, mask),
+                do: "ok",
+                else: "MISMATCH"
+
             IO.puts(
               "    tick=#{String.pad_leading(to_string(ticks), 5)}  " <>
-              "out=0x#{Integer.to_string(expected, 16) |> String.pad_leading(4, "0")}  " <>
-              "in=0x#{Integer.to_string(actual, 16) |> String.pad_leading(4, "0")}  #{mark}"
+                "out=0x#{Integer.to_string(expected, 16) |> String.pad_leading(4, "0")}  " <>
+                "in=0x#{Integer.to_string(actual, 16) |> String.pad_leading(4, "0")}  #{mark}"
             )
+
             if thermo1 != nil or thermo2 != nil do
-              v1_str = if thermo1, do: "#{:erlang.float_to_binary(thermo1.ohms, decimals: 2)}Ω#{if thermo1.error, do: " ERR", else: ""}", else: "?"
-              v2_str = if thermo2, do: "#{:erlang.float_to_binary(thermo2.ohms, decimals: 2)}Ω#{if thermo2.error, do: " ERR", else: ""}", else: "?"
+              v1_str =
+                if thermo1,
+                  do:
+                    "#{:erlang.float_to_binary(thermo1.ohms, decimals: 2)}Ω#{if thermo1.error, do: " ERR", else: ""}",
+                  else: "?"
+
+              v2_str =
+                if thermo2,
+                  do:
+                    "#{:erlang.float_to_binary(thermo2.ohms, decimals: 2)}Ω#{if thermo2.error, do: " ERR", else: ""}",
+                  else: "?"
+
               IO.puts("    thermo: ch1=#{v1_str}  ch2=#{v2_str}")
             end
+
             ticks
           else
             last_print
           end
 
-        loop(set_fn, phase_ref, mask, ticks + 1, prev_out, last_out, expected, mismatches, new_print, sensor_ch, thermo1, thermo2)
+        loop(
+          set_fn,
+          phase_ref,
+          mask,
+          ticks + 1,
+          prev_out,
+          last_out,
+          expected,
+          mismatches,
+          new_print,
+          sensor_ch,
+          thermo1,
+          thermo2
+        )
 
       {:slave_input, :sensor, ch, bit_val} when is_map_key(@ch_bits, ch) ->
         new_sensor_ch = Map.put(sensor_ch, ch, bit_val)
         actual = rebuild_channels(new_sensor_ch)
         stable? = pprev_out != nil and pprev_out == prev_out and prev_out == last_out
+
         mismatch =
-          if stable? and Bitwise.band(actual, mask) != Bitwise.band(pprev_out, mask), do: 1, else: 0
-        loop(set_fn, phase_ref, mask, ticks, pprev_out, prev_out, last_out, mismatches + mismatch, last_print, new_sensor_ch, thermo1, thermo2)
+          if stable? and Bitwise.band(actual, mask) != Bitwise.band(pprev_out, mask),
+            do: 1,
+            else: 0
+
+        loop(
+          set_fn,
+          phase_ref,
+          mask,
+          ticks,
+          pprev_out,
+          prev_out,
+          last_out,
+          mismatches + mismatch,
+          last_print,
+          new_sensor_ch,
+          thermo1,
+          thermo2
+        )
 
       {:slave_input, :thermo, :channel1, ch} ->
-        loop(set_fn, phase_ref, mask, ticks, pprev_out, prev_out, last_out, mismatches, last_print, sensor_ch, ch, thermo2)
+        loop(
+          set_fn,
+          phase_ref,
+          mask,
+          ticks,
+          pprev_out,
+          prev_out,
+          last_out,
+          mismatches,
+          last_print,
+          sensor_ch,
+          ch,
+          thermo2
+        )
 
       {:slave_input, :thermo, :channel2, ch} ->
-        loop(set_fn, phase_ref, mask, ticks, pprev_out, prev_out, last_out, mismatches, last_print, sensor_ch, thermo1, ch)
+        loop(
+          set_fn,
+          phase_ref,
+          mask,
+          ticks,
+          pprev_out,
+          prev_out,
+          last_out,
+          mismatches,
+          last_print,
+          sensor_ch,
+          thermo1,
+          ch
+        )
     end
   end
 
@@ -205,7 +349,7 @@ end
 # Helpers
 # ---------------------------------------------------------------------------
 
-hex  = fn n -> "0x#{String.pad_leading(Integer.to_string(n, 16), 4, "0")}" end
+hex = fn n -> "0x#{String.pad_leading(Integer.to_string(n, 16), 4, "0")}" end
 hex8 = fn n -> "0x#{String.pad_leading(Integer.to_string(n, 16), 8, "0")}" end
 
 banner = fn title ->
@@ -214,8 +358,14 @@ end
 
 check = fn label, result ->
   case result do
-    :ok              -> IO.puts("  ✓ #{label}"); :ok
-    {:ok, val}       -> IO.puts("  ✓ #{label}: #{inspect(val)}"); val
+    :ok ->
+      IO.puts("  ✓ #{label}")
+      :ok
+
+    {:ok, val} ->
+      IO.puts("  ✓ #{label}: #{inspect(val)}")
+      val
+
     {:error, reason} ->
       IO.puts("  ✗ #{label}: #{inspect(reason)}")
       raise "FAIL: #{label} — #{inspect(reason)}"
@@ -224,7 +374,11 @@ end
 
 drain_mailbox = fn ->
   Stream.repeatedly(fn ->
-    receive do _ -> true after 0 -> false end
+    receive do
+      _ -> true
+    after
+      0 -> false
+    end
   end)
   |> Stream.take_while(& &1)
   |> Stream.run()
@@ -232,6 +386,7 @@ end
 
 parse_ip = fn s ->
   parts = String.split(s, ".") |> Enum.map(&String.to_integer/1)
+
   case parts do
     [a, b, c, d] -> {a, b, c, d}
     _ -> raise "invalid IP: #{s}"
@@ -244,8 +399,13 @@ end
 
 {opts, _, _} =
   OptionParser.parse(System.argv(),
-    switches: [interface: :string, period_ms: :integer, loopback_mask: :string,
-               udp: :boolean, udp_host: :string]
+    switches: [
+      interface: :string,
+      period_ms: :integer,
+      loopback_mask: :string,
+      udp: :boolean,
+      udp_host: :string
+    ]
   )
 
 interface = opts[:interface] || raise "pass --interface, e.g. --interface enp0s31f6"
@@ -253,7 +413,9 @@ period_ms = Keyword.get(opts, :period_ms, 4)
 
 loopback_mask =
   case opts[:loopback_mask] do
-    nil -> 0xFFFF
+    nil ->
+      0xFFFF
+
     s ->
       s = String.trim_leading(s, "0x")
       String.to_integer(s, 16)
@@ -298,7 +460,7 @@ EtherCAT hardware stress test
   interface     : #{interface}
   period        : #{period_ms} ms
   loopback mask : 0x#{Integer.to_string(loopback_mask, 16) |> String.pad_leading(4, "0")}
-  udp host      : #{if udp_host, do: "#{:inet.ntoa(udp_host)} (broadcast=#{udp_host == {255,255,255,255}})", else: "(skipped — pass --udp to enable)"}
+  udp host      : #{if udp_host, do: "#{:inet.ntoa(udp_host)} (broadcast=#{udp_host == {255, 255, 255, 255}})", else: "(skipped — pass --udp to enable)"}
 """)
 
 # ---------------------------------------------------------------------------
@@ -311,18 +473,21 @@ Telemetry.attach()
 EtherCAT.stop()
 Process.sleep(300)
 
-check.("EtherCAT.start", EtherCAT.start(
-  interface: interface,
-  domains: [
-    %EtherCAT.Domain.Config{id: :main, period: period_ms, miss_threshold: 500}
-  ],
-  slaves: [
-    %EtherCAT.Slave.Config{name: :coupler},
-    %EtherCAT.Slave.Config{name: :sensor, driver: Example.EL1809, domain: :main},
-    %EtherCAT.Slave.Config{name: :valve,  driver: Example.EL2809, domain: :main},
-    %EtherCAT.Slave.Config{name: :thermo, driver: Example.EL3202, domain: :main}
-  ]
-))
+check.(
+  "EtherCAT.start",
+  EtherCAT.start(
+    interface: interface,
+    domains: [
+      %EtherCAT.Domain.Config{id: :main, period_ms: period_ms, miss_threshold: 500}
+    ],
+    slaves: [
+      %EtherCAT.Slave.Config{name: :coupler},
+      %EtherCAT.Slave.Config{name: :sensor, driver: Example.EL1809, domain: :main},
+      %EtherCAT.Slave.Config{name: :valve, driver: Example.EL2809, domain: :main},
+      %EtherCAT.Slave.Config{name: :thermo, driver: Example.EL3202, domain: :main}
+    ]
+  )
+)
 
 check.("EtherCAT.await_running", EtherCAT.await_running(10_000))
 
@@ -335,9 +500,14 @@ slaves = EtherCAT.slaves()
 IO.puts("  #{length(slaves)} named slave(s):")
 
 for {name, station, _pid} <- slaves do
-  id    = Slave.identity(name)
+  id = Slave.identity(name)
   state = Slave.state(name)
-  id_str = if id, do: "vendor=#{hex8.(id.vendor_id)} product=#{hex8.(id.product_code)}", else: "(no identity)"
+
+  id_str =
+    if id,
+      do: "vendor=#{hex8.(id.vendor_id)} product=#{hex8.(id.product_code)}",
+      else: "(no identity)"
+
   IO.puts("  #{inspect(name)} @ #{hex.(station)}: #{state}  #{id_str}")
 end
 
@@ -379,7 +549,7 @@ lfsr = :atomics.new(1, [])
 
 lfsr_fn = fn _tick ->
   s = :atomics.get(lfsr, 1)
-  lsb  = rem(s, 2)
+  lsb = rem(s, 2)
   next = div(s, 2)
   next = if lsb == 1, do: Bitwise.bxor(next, 0xB400), else: next
   :atomics.put(lfsr, 1, next)
@@ -397,17 +567,18 @@ end
 
 banner.("2. Stress phases  (#{phase_ms} ms each)")
 
-results = [
-  {"Walking-one (1 bit, 16-step cycle)",   walking_one,  phase_ms, period_ms},
-  {"Checkerboard toggle  (every tick)",    checkerboard, phase_ms, period_ms},
-  {"All-ON / ALL-OFF  (hold 20 ticks)",    slow_toggle,  phase_ms, period_ms},
-  {"Pseudo-random LFSR",                   lfsr_fn,      phase_ms, period_ms},
-  {"Burst: max toggle  (period=1 ms)",     burst_toggle, phase_ms, 1}
-]
-|> Enum.map(fn {label, set_fn, dur, per} ->
-  r = run_phase.(label, set_fn, dur, per)
-  {label, r}
-end)
+results =
+  [
+    {"Walking-one (1 bit, 16-step cycle)", walking_one, phase_ms, period_ms},
+    {"Checkerboard toggle  (every tick)", checkerboard, phase_ms, period_ms},
+    {"All-ON / ALL-OFF  (hold 20 ticks)", slow_toggle, phase_ms, period_ms},
+    {"Pseudo-random LFSR", lfsr_fn, phase_ms, period_ms},
+    {"Burst: max toggle  (period=1 ms)", burst_toggle, phase_ms, 1}
+  ]
+  |> Enum.map(fn {label, set_fn, dur, per} ->
+    r = run_phase.(label, set_fn, dur, per)
+    {label, r}
+  end)
 
 # ---------------------------------------------------------------------------
 # 3. Zero outputs + stop cyclic
@@ -415,7 +586,7 @@ end)
 
 Enum.each(1..16, fn i -> EtherCAT.set_output(:valve, :"ch#{i}", 0) end)
 Process.sleep(2 * period_ms)
-Domain.stop_cyclic(:main)
+Domain.stop_cycling(:main)
 
 # ---------------------------------------------------------------------------
 # 4. Final report
@@ -435,7 +606,11 @@ all_ok =
     miss_mark = if r.miss_delta == 0, do: "✓", else: "✗"
     loop_mark = if r.mismatches == 0, do: "✓", else: "✗"
     IO.puts("    #{label}")
-    IO.puts("      #{miss_mark} frame misses : #{r.miss_delta}  #{loop_mark} loopback err : #{r.mismatches}")
+
+    IO.puts(
+      "      #{miss_mark} frame misses : #{r.miss_delta}  #{loop_mark} loopback err : #{r.mismatches}"
+    )
+
     ok and r.miss_delta == 0 and r.mismatches == 0
   end)
 
@@ -448,7 +623,10 @@ for {name, station, _} <- slaves do
   case Bus.transaction_queue(bus, &Transaction.fprd(&1, station, Registers.rx_error_counter())) do
     {:ok, [%{data: <<p0::16-little, p1::16-little, p2::16-little, p3::16-little>>, wkc: wkc}]}
     when wkc > 0 ->
-      IO.puts("    #{inspect(name)} @ #{hex.(station)}: port0=#{p0} port1=#{p1} port2=#{p2} port3=#{p3}")
+      IO.puts(
+        "    #{inspect(name)} @ #{hex.(station)}: port0=#{p0} port1=#{p1} port2=#{p2} port3=#{p3}"
+      )
+
     _ ->
       IO.puts("    #{inspect(name)} @ #{hex.(station)}: could not read")
   end
@@ -503,7 +681,10 @@ if udp_host do
 
         fprd_results =
           Enum.map(1..50, fn _ ->
-            Bus.transaction_queue(udp_bus, &Transaction.fprd(&1, first_station, Registers.al_status()))
+            Bus.transaction_queue(
+              udp_bus,
+              &Transaction.fprd(&1, first_station, Registers.al_status())
+            )
           end)
 
         fprd_ok_count = Enum.count(fprd_results, &match?({:ok, [%{wkc: 1}]}, &1))
@@ -524,20 +705,26 @@ if udp_host do
           end)
 
         batch_results = Task.await_many(batch_tasks, 5_000)
-        batch_ok_count = Enum.count(batch_results, fn
-          {:ok, [%{wkc: n}]} when n > 0 -> true
-          {:error, :discarded_cyclic} -> true   # BRD is non-cyclic but counts as fine
-          _ -> false
-        end)
+
+        batch_ok_count =
+          Enum.count(batch_results, fn
+            {:ok, [%{wkc: n}]} when n > 0 -> true
+            # BRD is non-cyclic but counts as fine
+            {:error, :discarded_cyclic} -> true
+            _ -> false
+          end)
+
         batch_ok = batch_ok_count == 5
 
         if batch_ok do
           IO.puts("  ✓ Batched BRD ×5: all completed")
         else
-          details = Enum.map(batch_results, fn
-            {:ok, [%{wkc: n}]} -> "wkc=#{n}"
-            {:error, r} -> inspect(r)
-          end)
+          details =
+            Enum.map(batch_results, fn
+              {:ok, [%{wkc: n}]} -> "wkc=#{n}"
+              {:error, r} -> inspect(r)
+            end)
+
           IO.puts("  ✗ Batched BRD ×5: #{inspect(details)}")
         end
 

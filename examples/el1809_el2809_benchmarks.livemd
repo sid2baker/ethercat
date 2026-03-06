@@ -474,7 +474,7 @@ defmodule Example.Bench do
         domains: [
           %DomainConfig{
             id: opts.domain_id,
-            period: opts.period_ms,
+            period_ms: opts.period_ms,
             miss_threshold: opts.miss_threshold
           }
         ],

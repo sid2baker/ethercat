@@ -17,13 +17,13 @@ Master in `do_configure/1` before any slave is spawned, so slaves can call
 
 ```
 :open → :cycling  (via start_cycling/1 call)
-:cycling → :stopped  (consecutive miss threshold, or stop_cyclic/1)
+:cycling → :stopped  (consecutive miss threshold, or stop_cycling/1)
 :stopped → :cycling  (via start_cycling/1 call — miss_count resets)
 ```
 
 | State | Description |
 |-------|-------------|
-| `:open` | Accepting PDO registrations. Not yet cycling. |
+| `:open` | Accepting PDO registrations. Not yet cycling. `stop_cycling/1` is a no-op. |
 | `:cycling` | Self-timed LRW tick active. Process image exchanged each period. |
 | `:stopped` | Cycling halted (too many misses or manual stop). PDO registrations preserved. |
 
@@ -118,10 +118,8 @@ record     : {key, value, slave_pid}
   period_us:        pos_integer(),       # Cycle period in microseconds
   logical_base:     non_neg_integer(),   # LRW logical address base (default 0)
   next_cycle_at:    integer() | nil,     # Monotonic target time for next tick
-  image_size:       non_neg_integer(),   # Total LRW frame byte count
-  output_patches:   [{offset, size, key}],         # Ordered output slices
-  input_slices:     [{offset, size, key, slave_pid}],  # Ordered input slices
-  expected_wkc:     non_neg_integer(),   # LRW expected working counter (output_slaves*2 + input_slaves)
+  layout:           EtherCAT.Domain.Layout.t(),          # Mutable registration-time layout
+  cycle_plan:       EtherCAT.Domain.Layout.CyclePlan.t() | nil, # Frozen cycle plan
   miss_count:       non_neg_integer(),   # Consecutive misses (resets on success)
   miss_threshold:   pos_integer(),       # Stop after this many consecutive misses
   total_miss_count: non_neg_integer(),   # Lifetime miss count (never resets)
@@ -147,7 +145,7 @@ record     : {key, value, slave_pid}
 |----------|-------------|
 | `register_pdo/4` | Register a PDO slice. Returns `{:ok, logical_offset}`. Only valid in `:open`. |
 | `start_cycling/1` | Begin the self-timed LRW cycle. Transitions `:open`/`:stopped` → `:cycling`. |
-| `stop_cyclic/1` | Halt cycling. Transitions `:cycling` → `:stopped`. |
+| `stop_cycling/1` | Halt cycling. Idempotent in `:open`/`:stopped`; `:cycling` → `:stopped`. |
 | `write/3` | Direct ETS output write. No gen_statem hop. |
 | `read/2` | Direct ETS read of any PDO. No gen_statem hop. |
 | `stats/1` | Returns `{:ok, %{state, cycle_count, miss_count, total_miss_count, image_size, expected_wkc}}`. |
@@ -180,8 +178,8 @@ implicitly cancels the pending tick — no manual cleanup needed.
   slow, input change messages queue in its mailbox without flow control.
 - **Single LRW per domain**: all registered PDOs must fit in one LRW frame. Very large process
   images require splitting into multiple domains.
-- **No fragmenting/segmenting**: if `image_size` exceeds max EtherCAT datagram size (~1486
-  bytes), the frame will fail silently. No guard exists for this.
+- **Single-frame guard only**: oversized LRW images are now rejected before cycling starts,
+  but the domain still cannot segment one logical image across multiple datagrams.
 - **Sub-byte PDO limitation**: `image_size` is byte-granular. Sub-byte (1-bit) PDOs are
   padded to 1 byte by the slave before registration; the domain does not handle bit-level
   packing natively.

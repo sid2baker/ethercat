@@ -18,7 +18,7 @@ defmodule EtherCAT.Master do
 
       EtherCAT.start(
         interface: "eth0",
-        domains: [%EtherCAT.Domain.Config{id: :main, period: 1}],
+        domains: [%EtherCAT.Domain.Config{id: :main, period_ms: 1}],
         slaves: [
           %EtherCAT.Slave.Config{name: :coupler},
           %EtherCAT.Slave.Config{name: :sensor, driver: MyApp.EL1809, domain: :main},
@@ -102,7 +102,7 @@ defmodule EtherCAT.Master do
       If omitted, dynamic default slaves are started for all discovered stations and
       held in `:preop` for runtime configuration.
     - `:domains` — list of domain specs, default `[]`. Each entry is a keyword list with
-      keys `:id` (atom, required) and `:period` (ms, required), plus any Domain options
+      keys `:id` (atom, required) and `:period_ms` (required), plus any Domain options
     - `:base_station` — starting station address, default `0x1000`
     - `:dc_cycle_ns` — SYNC0 cycle time in ns for DC-capable slaves (default `1_000_000`)
     - `:frame_timeout_ms` — optional fixed bus frame response timeout (ms); if omitted,
@@ -257,7 +257,12 @@ defmodule EtherCAT.Master do
               {:error, reason, failed_data} ->
                 Logger.error("[Master] activation failed: #{inspect(reason)}")
                 stop_session(failed_data)
-                reply_await_callers(failed_data.await_callers, {:error, {:activation_failed, reason}})
+
+                reply_await_callers(
+                  failed_data.await_callers,
+                  {:error, {:activation_failed, reason}}
+                )
+
                 {:next_state, :idle, %__MODULE__{}}
             end
           else
@@ -267,7 +272,12 @@ defmodule EtherCAT.Master do
         {:error, reason, failed_data} ->
           Logger.error("[Master] configuration failed: #{inspect(reason)}")
           stop_session(failed_data)
-          reply_await_callers(failed_data.await_callers, {:error, {:configuration_failed, reason}})
+
+          reply_await_callers(
+            failed_data.await_callers,
+            {:error, {:configuration_failed, reason}}
+          )
+
           {:next_state, :idle, %__MODULE__{}}
       end
     else
@@ -308,6 +318,7 @@ defmodule EtherCAT.Master do
         {:error, reason, failed_data} ->
           Logger.error("[Master] activation failed: #{inspect(reason)}")
           stop_session(failed_data)
+
           reply_await_callers(
             failed_data.await_callers,
             {:error, {:activation_failed, reason}}
@@ -504,7 +515,7 @@ defmodule EtherCAT.Master do
   defp normalize_domain_config(%EtherCAT.Domain.Config{} = cfg) do
     [
       id: cfg.id,
-      period: cfg.period,
+      period_ms: cfg.period_ms,
       miss_threshold: cfg.miss_threshold,
       logical_base: cfg.logical_base
     ]
@@ -791,7 +802,8 @@ defmodule EtherCAT.Master do
   defp start_slaves(data, bus_count, dc_cycle_ns) do
     with {:ok, effective_config} <- effective_slave_config(data.slave_config || [], bus_count) do
       Enum.with_index(effective_config)
-      |> Enum.reduce_while({:ok, [], [], []}, fn {entry, pos}, {:ok, slave_acc, pending_acc, activatable_acc} ->
+      |> Enum.reduce_while({:ok, [], [], []}, fn {entry, pos},
+                                                 {:ok, slave_acc, pending_acc, activatable_acc} ->
         station = station_for_position(data, pos)
         slave_opts = normalize_slave_config(entry)
         name = Keyword.fetch!(slave_opts, :name)
@@ -816,10 +828,12 @@ defmodule EtherCAT.Master do
                 activatable_acc
               end
 
-            {:cont, {:ok, [{name, station, pid} | slave_acc], [name | pending_acc], next_activatable}}
+            {:cont,
+             {:ok, [{name, station, pid} | slave_acc], [name | pending_acc], next_activatable}}
 
           {:error, reason} ->
-            {:halt, {:error, {:slave_start_failed, name, station, reason}, Enum.reverse(slave_acc)}}
+            {:halt,
+             {:error, {:slave_start_failed, name, station, reason}, Enum.reverse(slave_acc)}}
         end
       end)
       |> case do

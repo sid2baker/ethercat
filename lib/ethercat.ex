@@ -7,7 +7,7 @@ defmodule EtherCAT do
       EtherCAT.start(
         interface: "eth0",
         domains: [
-          %EtherCAT.Domain.Config{id: :main, period: 1}
+          %EtherCAT.Domain.Config{id: :main, period_ms: 1}
         ],
         slaves: [
           %EtherCAT.Slave.Config{name: :coupler},

@@ -23,8 +23,10 @@ defmodule El3202Driver do
       # RTD element (0x80n0:0x19) controls the measurement mode:
       #   0=PT100  1=Ni100  2=PT1000 ... 8=ohm_1_16  9=ohm_1_64
       # Resistance output (1/16 Ω/bit, 0–4096 Ω range) = element 8.
-      {0x8000, 0x19, 8, 2},  # ch1 RTD element = ohm_1_16
-      {0x8010, 0x19, 8, 2}   # ch2 RTD element = ohm_1_16
+      # ch1 RTD element = ohm_1_16
+      {0x8000, 0x19, 8, 2},
+      # ch2 RTD element = ohm_1_16
+      {0x8010, 0x19, 8, 2}
     ]
   end
 
@@ -37,17 +39,49 @@ defmodule El3202Driver do
   #   byte 1 — [toggle(1), state(1), gap(6)]
   #   bytes 2–3 — UINT16 LE resistance (1/16 Ω/bit, unsigned in resistance mode)
   def decode_inputs(:channel1, _config, <<
-        _::1, error::1, _limit2::2, _limit1::2, overrange::1, underrange::1,
-        toggle::1, state::1, _::6, value::16-little>>) do
-    %{ohms: value / 16.0, overrange: overrange == 1, underrange: underrange == 1,
-      error: error == 1, invalid: state == 1, toggle: toggle}
+        _::1,
+        error::1,
+        _limit2::2,
+        _limit1::2,
+        overrange::1,
+        underrange::1,
+        toggle::1,
+        state::1,
+        _::6,
+        value::16-little
+      >>) do
+    %{
+      ohms: value / 16.0,
+      overrange: overrange == 1,
+      underrange: underrange == 1,
+      error: error == 1,
+      invalid: state == 1,
+      toggle: toggle
+    }
   end
+
   def decode_inputs(:channel2, _config, <<
-        _::1, error::1, _limit2::2, _limit1::2, overrange::1, underrange::1,
-        toggle::1, state::1, _::6, value::16-little>>) do
-    %{ohms: value / 16.0, overrange: overrange == 1, underrange: underrange == 1,
-      error: error == 1, invalid: state == 1, toggle: toggle}
+        _::1,
+        error::1,
+        _limit2::2,
+        _limit1::2,
+        overrange::1,
+        underrange::1,
+        toggle::1,
+        state::1,
+        _::6,
+        value::16-little
+      >>) do
+    %{
+      ohms: value / 16.0,
+      overrange: overrange == 1,
+      underrange: underrange == 1,
+      error: error == 1,
+      invalid: state == 1,
+      toggle: toggle
+    }
   end
+
   def decode_inputs(_pdo, _config, _), do: nil
 end
 
@@ -59,7 +93,7 @@ Process.sleep(300)
 
 EtherCAT.start(
   interface: interface,
-  domains: [[id: :main, period: 10]],
+  domains: [[id: :main, period_ms: 10]],
   slaves: [
     [name: :coupler],
     [name: :bridge_1],
