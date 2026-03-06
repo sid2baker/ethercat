@@ -191,8 +191,8 @@ defmodule EtherCAT.Slave do
     - `:signals` — list of `%{name, domain, direction, bit_offset, bit_size}` for registered signals
     - `:configuration_error` — last configuration failure atom, or `nil`
   """
-  @spec info(atom()) :: map()
-  def info(slave_name), do: :gen_statem.call(via(slave_name), :info)
+  @spec slave_info(atom()) :: map()
+  def slave_info(slave_name), do: :gen_statem.call(via(slave_name), :info)
 
   @doc """
   Read the decoded input value for an input signal. Equivalent to the value

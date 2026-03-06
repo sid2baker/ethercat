@@ -58,7 +58,7 @@ defmodule EtherCAT do
   domain stats, and direct frame transactions.
   """
 
-  alias EtherCAT.{Master, Slave}
+  alias EtherCAT.{Domain, Master, Slave}
 
   @doc "Return the bus pid for direct frame transactions."
   @spec bus() :: pid()
@@ -193,7 +193,7 @@ defmodule EtherCAT do
 
   ## Example
 
-      iex> EtherCAT.info(:sensor)
+      iex> EtherCAT.slave_info(:sensor)
       %{
         name: :sensor,
         station: 0x1001,
@@ -208,8 +208,38 @@ defmodule EtherCAT do
         configuration_error: nil
       }
   """
-  @spec info(atom()) :: map()
-  def info(slave_name), do: Slave.info(slave_name)
+  @spec slave_info(atom()) :: map()
+  def slave_info(slave_name), do: Slave.slave_info(slave_name)
+
+  @doc """
+  Return a diagnostic snapshot for a domain.
+
+  Keys:
+    - `:id` — domain atom identifier
+    - `:cycle_time_us` — current cycle period in microseconds
+    - `:state` — `:open | :cycling | :stopped`
+    - `:cycle_count` — successful LRW cycles since last start
+    - `:miss_count` — consecutive missed cycles (resets on success)
+    - `:total_miss_count` — cumulative missed cycles since last start
+    - `:image_size` — PDO image size in bytes
+    - `:expected_wkc` — expected working counter for a healthy bus
+
+  ## Example
+
+      iex> EtherCAT.domain_info(:main)
+      %{
+        id: :main,
+        cycle_time_us: 1_000,
+        state: :cycling,
+        cycle_count: 12345,
+        miss_count: 0,
+        total_miss_count: 2,
+        image_size: 4,
+        expected_wkc: 3
+      }
+  """
+  @spec domain_info(atom()) :: {:ok, map()} | {:error, term()}
+  def domain_info(domain_id), do: Domain.info(domain_id)
 
   @doc """
   Subscribe to named slave events.

@@ -146,6 +146,28 @@ defmodule EtherCAT.Domain do
     :gen_statem.call(via(domain_id), :stats)
   end
 
+  @doc """
+  Return a diagnostic snapshot for a domain.
+
+  Returns `{:ok, map}` with keys: `:id`, `:cycle_time_us`, `:state`,
+  `:cycle_count`, `:miss_count`, `:total_miss_count`, `:image_size`, `:expected_wkc`.
+  """
+  @spec info(domain_id()) :: {:ok, map()} | {:error, term()}
+  def info(domain_id) do
+    :gen_statem.call(via(domain_id), :info)
+  end
+
+  @doc """
+  Update the cycle period for a running domain.
+
+  Takes effect on the next tick. Safe to call in any state.
+  """
+  @spec update_cycle_time(domain_id(), pos_integer()) :: :ok | {:error, term()}
+  def update_cycle_time(domain_id, cycle_time_us)
+      when is_integer(cycle_time_us) and cycle_time_us > 0 do
+    :gen_statem.call(via(domain_id), {:update_cycle_time, cycle_time_us})
+  end
+
   @impl true
   def callback_mode, do: [:handle_event_function, :state_enter]
 
@@ -290,6 +312,25 @@ defmodule EtherCAT.Domain do
     }
 
     {:keep_state_and_data, [{:reply, from, {:ok, stats}}]}
+  end
+
+  def handle_event({:call, from}, :info, state, data) do
+    info = %{
+      id: data.id,
+      cycle_time_us: data.period_us,
+      state: state,
+      cycle_count: data.cycle_count,
+      miss_count: data.miss_count,
+      total_miss_count: data.total_miss_count,
+      image_size: Layout.image_size(data.layout),
+      expected_wkc: Layout.expected_wkc(data.layout)
+    }
+
+    {:keep_state_and_data, [{:reply, from, {:ok, info}}]}
+  end
+
+  def handle_event({:call, from}, {:update_cycle_time, new_us}, _state, data) do
+    {:keep_state, %{data | period_us: new_us}, [{:reply, from, :ok}]}
   end
 
   def handle_event(_type, _event, _state, _data), do: :keep_state_and_data
