@@ -34,7 +34,7 @@ via the `@paths` map. `walk_path/2` calls `do_transition/2` for each intermediat
 
 ### State Entry Actions
 
-**`:init` enter**: no-op. The init callback calls `do_auto_advance/1` immediately.
+**`:init` enter**: no-op. The init callback starts `initialize_to_preop/1` immediately.
 
 **Auto-advance (`:init` → `:preop`):**
 1. Read SII EEPROM (identity, mailbox config, SM configs, PDO configs).
@@ -45,7 +45,8 @@ via the `@paths` map. `walk_path/2` calls `do_transition/2` for each intermediat
 **`:preop` enter** (synchronous, blocks until complete):
 1. `invoke_driver(data, :on_preop)` — optional driver callback.
 2. `run_mailbox_config/1` — if driver exports `mailbox_config/1`, execute each
-   `{:sdo_download, index, subindex, binary}` mailbox step in order.
+   `{:sdo_download, index, subindex, binary}` mailbox step in order, using
+   expedited or segmented CoE transfer as needed.
 3. `configure_preop_process_data/1` — resolve the configured `process_data` request, register each SM group with its Domain, then write process-data SyncManagers and FMMUs.
 4. Send `{:slave_ready, name, :preop}` to `EtherCAT.Master`.
 
@@ -79,6 +80,7 @@ via the `@paths` map. `walk_path/2` calls `do_transition/2` for each intermediat
   configuration_error: term() | nil,     # PREOP-local process-data configuration failure
   identity:          map() | nil,        # vendor_id, product_code, revision, serial from SII
   mailbox_config:    map() | nil,        # recv_offset, recv_size, send_offset, send_size
+  mailbox_counter:   0..7,               # last used mailbox session counter for CoE traffic
   dc_cycle_ns:       pos_integer() | nil, # SYNC0 cycle time; nil disables DC
   sii_sm_configs:    list(),             # [{sm_index, phys_start, length, ctrl}] from SII
   sii_pdo_configs:   list(),             # [%{index, direction, sm_index, bit_size, bit_offset}]
@@ -105,7 +107,7 @@ All callbacks receive `(config :: map())` or `(slave_name :: atom(), config :: m
 | `on_preop/2` | optional | `(name, config) -> :ok` | Called on PreOp entry. |
 | `on_safeop/2` | optional | `(name, config) -> :ok` | Called on SafeOp entry. |
 | `on_op/2` | optional | `(name, config) -> :ok` | Called on Op entry. |
-| `mailbox_config/1` | optional | `config -> [{:sdo_download, index, subindex, binary}]` | PREOP mailbox configuration steps. Used for CoE parameterization and PDO remapping before SM/FMMU config. |
+| `mailbox_config/1` | optional | `config -> [{:sdo_download, index, subindex, binary}]` | PREOP mailbox configuration steps. Used for CoE parameterization and PDO remapping before SM/FMMU config. `binary` may be any non-empty size; the runtime chooses expedited or segmented CoE transfer automatically. |
 | `distributed_clocks/1` | optional | `config -> %{sync0_pulse_ns: pos_integer(), optional(:sync1_cycle_ns) => pos_integer(), optional(:latches) => [%{latch_id: 0\|1, edge: :pos\|:neg}]} \| nil` | DC signal parameters. Return `nil` to disable DC config on this slave. |
 | `on_latch/5` | optional | `(name, config, latch_id, edge, timestamp_ns) -> :ok` | Called when a configured ESC LATCH event is captured during `:op`. |
 
@@ -187,6 +189,9 @@ ETG.1020 §6.3.2 requires DC SYNC configuration after the slave has confirmed Sa
 Configuration and mailbox writes use `Bus.transaction/2` because delivery matters more than strict timing.
 Runtime latch polling in `:op` uses `Bus.transaction/3` with a timeout budget slightly below poll/cycle period so stale polls are dropped instead of queued, preventing recurring latch polls from building backlog on the bus.
 
+**Where do ad-hoc SDO uploads/downloads live?**
+`Slave.download_sdo/4` and `Slave.upload_sdo/3` run through the same mailbox counter and CoE transfer core used by PREOP `mailbox_config/1`. That keeps all mailbox sequencing in the slave process rather than exposing counter management to callers.
+
 **Why send `{:slave_ready, name, :preop}` to `EtherCAT.Master`?**
 Master waits for all named slaves to report `:preop` before advancing any slave to SafeOp/Op. This ensures all FMMUs and SM registers are written before the first LRW cycle starts. The master uses `Process.send(__MODULE__, ...)` so it doesn't need the slave's pid.
 
@@ -206,5 +211,5 @@ Master waits for all named slaves to report `:preop` before advancing any slave 
 - No DC lock detection before advancing to Op.
 - No per-slave health monitoring (AL status polling, error counter reads) after reaching Op.
 - No IRQ-based input change detection; relying on cyclic LRW from Domain.
-- Mailbox configuration currently supports expedited CoE downloads only (1, 2, or 4 bytes).
+- No public object-dictionary browsing helpers beyond direct SDO upload/download calls.
 - No over-sampling support (multiple input samples per SYNC0 period).

@@ -74,6 +74,7 @@ defmodule EtherCAT.Slave do
     :configuration_error,
     :identity,
     :mailbox_config,
+    :mailbox_counter,
     # SYNC0 cycle time in ns — set from start_link opts; nil = no DC
     :dc_cycle_ns,
     # [{sm_index, phys_start, length, ctrl}] from SII category 0x0029
@@ -178,6 +179,31 @@ defmodule EtherCAT.Slave do
     :gen_statem.call(via(slave_name), {:read_input, signal_name})
   end
 
+  @doc """
+  Download a CoE SDO value via the mailbox SyncManagers.
+
+  This is a blocking mailbox transaction. It requires the slave mailbox to be
+  configured, so it is only valid from PREOP onward.
+  """
+  @spec download_sdo(atom(), non_neg_integer(), non_neg_integer(), binary()) ::
+          :ok | {:error, term()}
+  def download_sdo(slave_name, index, subindex, data)
+      when is_binary(data) and byte_size(data) > 0 do
+    :gen_statem.call(via(slave_name), {:download_sdo, index, subindex, data})
+  end
+
+  @doc """
+  Upload a CoE SDO value via the mailbox SyncManagers.
+
+  This is a blocking mailbox transaction. It requires the slave mailbox to be
+  configured, so it is only valid from PREOP onward.
+  """
+  @spec upload_sdo(atom(), non_neg_integer(), non_neg_integer()) ::
+          {:ok, binary()} | {:error, term()}
+  def upload_sdo(slave_name, index, subindex) do
+    :gen_statem.call(via(slave_name), {:upload_sdo, index, subindex})
+  end
+
   @doc "Subscribe `pid` to LATCH hardware events (`{:slave_latch, slave, id, edge, timestamp_ns}`)."
   @spec subscribe_latch(atom(), 0 | 1, :pos | :neg, pid()) :: :ok
   def subscribe_latch(slave_name, latch_id, edge, pid) do
@@ -210,6 +236,7 @@ defmodule EtherCAT.Slave do
       config: config,
       configuration_error: nil,
       dc_cycle_ns: dc_cycle_ns,
+      mailbox_counter: 0,
       sii_sm_configs: [],
       sii_pdo_configs: [],
       process_data_request: process_data_request,
@@ -392,6 +419,36 @@ defmodule EtherCAT.Slave do
     {:keep_state_and_data, [{:reply, from, result}]}
   end
 
+  def handle_event({:call, from}, {:download_sdo, index, subindex, sdo_data}, state, data)
+      when state in [:preop, :safeop, :op] do
+    case mailbox_download(data, index, subindex, sdo_data) do
+      {:ok, new_data} ->
+        {:keep_state, new_data, [{:reply, from, :ok}]}
+
+      {:error, reason} ->
+        {:keep_state_and_data, [{:reply, from, {:error, reason}}]}
+    end
+  end
+
+  def handle_event({:call, from}, {:download_sdo, _index, _subindex, _sdo_data}, _state, _data) do
+    {:keep_state_and_data, [{:reply, from, {:error, :mailbox_not_ready}}]}
+  end
+
+  def handle_event({:call, from}, {:upload_sdo, index, subindex}, state, data)
+      when state in [:preop, :safeop, :op] do
+    case mailbox_upload(data, index, subindex) do
+      {:ok, value, new_data} ->
+        {:keep_state, new_data, [{:reply, from, {:ok, value}}]}
+
+      {:error, reason} ->
+        {:keep_state_and_data, [{:reply, from, {:error, reason}}]}
+    end
+  end
+
+  def handle_event({:call, from}, {:upload_sdo, _index, _subindex}, _state, _data) do
+    {:keep_state_and_data, [{:reply, from, {:error, :mailbox_not_ready}}]}
+  end
+
   # -- Domain input change notification (sent by Domain on cycle) ------------
 
   # SM-grouped key: {slave_name, {:sm, idx}} — unpack per-signal bits and dispatch.
@@ -548,18 +605,22 @@ defmodule EtherCAT.Slave do
     Logger.debug("[Slave #{data.name}] preop: running mailbox configuration")
     Logger.debug("[Slave #{data.name}] preop: configuring process-data SyncManagers/FMMUs")
 
-    with :ok <- run_mailbox_config(data),
+    with {:ok, mailbox_data} <- run_mailbox_config(data),
          {:ok, requested_signals} <-
-           ProcessDataPlan.normalize_request(data.process_data_request, data.driver, data.config),
+           ProcessDataPlan.normalize_request(
+             data.process_data_request,
+             mailbox_data.driver,
+             mailbox_data.config
+           ),
          {:ok, sm_groups} <-
            ProcessDataPlan.build(
              requested_signals,
-             data.driver.process_data_model(data.config),
-             data.sii_pdo_configs,
-             data.sii_sm_configs
+             mailbox_data.driver.process_data_model(mailbox_data.config),
+             mailbox_data.sii_pdo_configs,
+             mailbox_data.sii_sm_configs
            ),
-         {:ok, registrations} <- apply_process_data_groups(data, sm_groups) do
-      %{clear_configuration_error(data) | signal_registrations: registrations}
+         {:ok, registrations} <- apply_process_data_groups(mailbox_data, sm_groups) do
+      %{clear_configuration_error(mailbox_data) | signal_registrations: registrations}
     else
       {:error, reason} ->
         log_process_data_error(data, reason)
@@ -898,19 +959,19 @@ defmodule EtherCAT.Slave do
 
   # -- PREOP mailbox configuration (called from :preop enter) ----------------
 
-  defp run_mailbox_config(%{driver: nil}), do: :ok
+  defp run_mailbox_config(%{driver: nil} = data), do: {:ok, data}
 
   defp run_mailbox_config(data) do
     if function_exported?(data.driver, :mailbox_config, 1) do
       data.driver.mailbox_config(data.config)
-      |> Enum.reduce_while(:ok, fn step, :ok ->
-        case run_mailbox_step(data, step) do
-          :ok -> {:cont, :ok}
+      |> Enum.reduce_while({:ok, data}, fn step, {:ok, current_data} ->
+        case run_mailbox_step(current_data, step) do
+          {:ok, next_data} -> {:cont, {:ok, next_data}}
           {:error, _} = err -> {:halt, err}
         end
       end)
     else
-      :ok
+      {:ok, data}
     end
   end
 
@@ -921,8 +982,8 @@ defmodule EtherCAT.Slave do
        when is_integer(index) and index >= 0 and is_integer(subindex) and subindex >= 0 and
               is_binary(sdo_data) and byte_size(sdo_data) > 0 do
     case write_mailbox_sdo(data, index, subindex, sdo_data) do
-      :ok ->
-        :ok
+      {:ok, new_data} ->
+        {:ok, new_data}
 
       {:error, reason} ->
         {:error, {:mailbox_config_failed, index, subindex, reason}}
@@ -932,21 +993,49 @@ defmodule EtherCAT.Slave do
   defp run_mailbox_step(_data, step), do: {:error, {:invalid_mailbox_step, step}}
 
   defp write_mailbox_sdo(data, index, subindex, sdo_data) do
-    case byte_size(sdo_data) do
-      1 ->
-        <<value::8>> = sdo_data
-        CoE.write_sdo(data.bus, data.station, data.mailbox_config, index, subindex, value, 1)
+    mailbox_download(data, index, subindex, sdo_data)
+  end
 
-      2 ->
-        <<value::16-little>> = sdo_data
-        CoE.write_sdo(data.bus, data.station, data.mailbox_config, index, subindex, value, 2)
+  defp mailbox_download(%{mailbox_config: nil}, _index, _subindex, _sdo_data) do
+    {:error, :mailbox_not_ready}
+  end
 
-      4 ->
-        <<value::32-little>> = sdo_data
-        CoE.write_sdo(data.bus, data.station, data.mailbox_config, index, subindex, value, 4)
+  defp mailbox_download(data, index, subindex, sdo_data) do
+    case CoE.download_sdo(
+           data.bus,
+           data.station,
+           data.mailbox_config,
+           data.mailbox_counter,
+           index,
+           subindex,
+           sdo_data
+         ) do
+      {:ok, mailbox_counter} ->
+        {:ok, %{data | mailbox_counter: mailbox_counter}}
 
-      size ->
-        {:error, {:unsupported_sdo_download_size, size}}
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp mailbox_upload(%{mailbox_config: nil}, _index, _subindex) do
+    {:error, :mailbox_not_ready}
+  end
+
+  defp mailbox_upload(data, index, subindex) do
+    case CoE.upload_sdo(
+           data.bus,
+           data.station,
+           data.mailbox_config,
+           data.mailbox_counter,
+           index,
+           subindex
+         ) do
+      {:ok, value, mailbox_counter} ->
+        {:ok, value, %{data | mailbox_counter: mailbox_counter}}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 

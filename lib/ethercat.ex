@@ -180,4 +180,26 @@ defmodule EtherCAT do
   @spec read_input(atom(), atom()) :: {:ok, term()} | {:error, term()}
   def read_input(slave_name, pdo_name),
     do: Slave.read_input(slave_name, pdo_name)
+
+  @doc """
+  Download a CoE SDO value to a slave mailbox object entry.
+
+  This is a blocking acyclic mailbox transfer and is only valid once the slave
+  mailbox is configured, typically from PREOP onward.
+  """
+  @spec download_sdo(atom(), non_neg_integer(), non_neg_integer(), binary()) ::
+          :ok | {:error, term()}
+  def download_sdo(slave_name, index, subindex, data),
+    do: Slave.download_sdo(slave_name, index, subindex, data)
+
+  @doc """
+  Upload a CoE SDO value from a slave mailbox object entry.
+
+  This is a blocking acyclic mailbox transfer and is only valid once the slave
+  mailbox is configured, typically from PREOP onward.
+  """
+  @spec upload_sdo(atom(), non_neg_integer(), non_neg_integer()) ::
+          {:ok, binary()} | {:error, term()}
+  def upload_sdo(slave_name, index, subindex),
+    do: Slave.upload_sdo(slave_name, index, subindex)
 end

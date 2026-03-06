@@ -173,4 +173,24 @@ defmodule EtherCAT.SlaveTest do
 
     assert updated.configuration_error == {:invalid_mailbox_step, :bad_step}
   end
+
+  test "sdo upload and download reject calls before mailbox setup" do
+    from = {self(), make_ref()}
+
+    assert {:keep_state_and_data, [{:reply, ^from, {:error, :mailbox_not_ready}}]} =
+             EtherCAT.Slave.handle_event(
+               {:call, from},
+               {:download_sdo, 0x2000, 0x01, <<1, 2, 3>>},
+               :init,
+               %EtherCAT.Slave{}
+             )
+
+    assert {:keep_state_and_data, [{:reply, ^from, {:error, :mailbox_not_ready}}]} =
+             EtherCAT.Slave.handle_event(
+               {:call, from},
+               {:upload_sdo, 0x2000, 0x01},
+               :init,
+               %EtherCAT.Slave{}
+             )
+  end
 end

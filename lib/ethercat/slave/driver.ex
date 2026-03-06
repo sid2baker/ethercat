@@ -165,8 +165,8 @@ defmodule EtherCAT.Slave.Driver do
   can perform dynamic PDO remapping (`0x1600+`, `0x1A00+`, `0x1C12`, `0x1C13`)
   or any other CoE parameterization required before SAFEOP.
 
-  The current CoE implementation supports expedited downloads only, so `data`
-  must be 1, 2, or 4 bytes long.
+  `data` may be any non-empty binary. The runtime selects expedited or
+  segmented CoE transfer mode automatically.
   """
   @callback mailbox_config(config()) :: [mailbox_step()]
 
