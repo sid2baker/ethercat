@@ -33,15 +33,15 @@ restarted on individual slave crashes.
 Entry action: immediately schedule `{:timeout, :scan_poll}` with 0 ms delay.
 
 On each scan poll:
-1. `Bus.transaction(bus, Transaction.brd({0x0000, 1}))` — BRD to register 0 (any accessible byte). WKC = number of responding slaves.
+1. `Bus.transaction(bus, Transaction.brd(Registers.esc_type()))` — BRD to the ESC type register (`0x0000`). WKC = number of responding slaves.
 2. Append `{monotonic_ms, wkc}` to sliding window; trim entries older than `scan_stable_ms + scan_poll_ms` (1100 ms window).
 3. Stable when: window spans ≥ 1000 ms, ≥ 2 readings, all readings identical, count > 0.
-4. On stability: tune bus frame timeout (`Bus.set_frame_timeout/2`) from slave count and cycle budget, then call `do_configure/1` synchronously and transition to `:configuring` or `:running` (the latter if no named slaves).
+4. On stability: tune bus frame timeout (`Bus.set_frame_timeout/2`) from slave count and cycle budget, then call `configure_network/1` synchronously and transition to `:configuring` or `:running` (the latter if no named slaves).
 5. On BRD failure: reset window, reschedule after `scan_poll_ms` (100 ms).
 
 ---
 
-## Configuration Phase (`do_configure/1`)
+## Configuration Phase (`configure_network/1`)
 
 Runs synchronously inside the scan poll handler before any state transition.
 
@@ -51,22 +51,30 @@ APWR to each slave by auto-increment position (0 to count-1), writing `base_stat
 **Step 2: Read DL status**
 FPRD `0x0110–0x0111` from each slave — 2-byte DL status. Passed to `DC.initialize_clocks/2` to determine topology (which ports are open).
 
-**Step 3: DC initialization**
+**Step 3: Reset and verify Init**
+`BWR 0x0120 = 0x0011` broadcasts an Init request with Error Acknowledge set.
+Then the master polls each slave's `0x0130` until every node reports clean
+Init state before any PREOP startup work begins.
+
+**Step 4: DC initialization**
 `DC.initialize_clocks(bus, slave_stations)` — see DC section below. Returns `{:ok, ref_station}` or `{:error, reason}`.
 
 If DC init fails, master proceeds without DC: `dc_cycle_ns` is set to `nil`, no SYNC0 will be configured on any slave.
 
-**Step 4: Start domains**
-`start_domains/2` starts one `EtherCAT.Domain` gen_statem per domain config entry via `EtherCAT.SessionSupervisor` (session-scoped lifecycle, torn down by `stop_session/1`). Domains must exist before slaves call `Domain.register_pdo/4` in their `:preop` enter handler. Each domain registers itself in `EtherCAT.Registry` under `{:domain, id}`.
+**Step 5: Start domains**
+`start_domains/1` starts one `EtherCAT.Domain` gen_statem per domain config entry via `EtherCAT.SessionSupervisor` (session-scoped lifecycle, torn down by `stop_session/1`). Domains must exist before slaves call `Domain.register_pdo/4` in their `:preop` enter handler. Each domain registers itself in `EtherCAT.Registry` under `{:domain, id}`.
 
-**Step 5: Start slaves**
-`start_slaves/5` — one `EtherCAT.Slave` gen_statem per config entry via `EtherCAT.SlaveSupervisor`. `nil` config entries are rejected at `start/1`. Missing drivers use `EtherCAT.Slave.Driver.Default`.
+**Step 6: Start slaves**
+`start_slaves/3` — one `EtherCAT.Slave` gen_statem per config entry via `EtherCAT.SlaveSupervisor`. `nil` config entries are rejected at `start/1`. Missing drivers use `EtherCAT.Slave.Driver.Default`.
 
 If `slaves: []` (or omitted), the master auto-creates one default slave config per discovered station (`:coupler`, `:slave_1`, ...), starts all of them, and tracks them in `pending_preop` so each process still executes INIT→PREOP.
 
 Slaves receive `dc_cycle_ns` only if DC init succeeded (otherwise `nil`).
 
 Each slave auto-advances to `:preop` concurrently in its own init. When it reaches `:preop`, it sends `{:slave_ready, name, :preop}` to the `EtherCAT.Master` process.
+
+If the configured slave count exceeds the discovered slave count, startup fails
+before any slave process is started.
 
 ---
 
@@ -76,11 +84,12 @@ Waits for all entries in `pending_preop` to be removed by `{:slave_ready, name, 
 
 30-second timeout (`@configuring_timeout_ms`). On timeout: log error, call `stop_session/1`, reply `{:error, :configuring_timeout}` to any blocked `await_running` callers, return to `:idle`.
 
-When `pending_preop` empties: call `do_activate/1` and transition to `:running` when all activatable slaves reach OP, otherwise `:degraded`.
+When `pending_preop` empties: call `activate_network/1` and transition to
+`:running` when all activatable slaves reach OP, otherwise `:degraded`.
 
 ---
 
-## Activation (`do_activate/1`)
+## Activation (`activate_network/1`)
 
 Runs synchronously before transitioning to `:running`.
 

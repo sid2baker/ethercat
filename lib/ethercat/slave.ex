@@ -230,7 +230,7 @@ defmodule EtherCAT.Slave do
       latch_subscriptions: %{}
     }
 
-    do_auto_advance(data)
+    initialize_to_preop(data)
   end
 
   # -- State enter -----------------------------------------------------------
@@ -276,12 +276,12 @@ defmodule EtherCAT.Slave do
 
   def handle_event(:enter, _old, :bootstrap, _data), do: :keep_state_and_data
 
-  # -- Auto-advance :init → :preop ------------------------------------------
+  # -- Spec init → preop sequence -------------------------------------------
 
   @auto_advance_retry_ms 200
 
   def handle_event({:timeout, :auto_advance}, nil, :init, data) do
-    case do_auto_advance(data) do
+    case initialize_to_preop(data) do
       {:ok, :preop, new_data} -> {:next_state, :preop, new_data}
       {:ok, :init, new_data, actions} -> {:keep_state, new_data, actions}
     end
@@ -462,10 +462,10 @@ defmodule EtherCAT.Slave do
   # Reads SII EEPROM, arms mailbox SMs, and requests PREOP from the ESC.
   # Full PREOP setup (SDO config, FMMU registration, :slave_ready) runs
   # asynchronously in the :preop enter handler — slaves init concurrently.
-  defp do_auto_advance(data) do
+  defp initialize_to_preop(data) do
     case do_transition(data, :init) do
       {:ok, init_data} ->
-        continue_auto_advance(init_data)
+        read_sii_and_enter_preop(init_data)
 
       {:error, reason, init_data} ->
         Logger.warning(
@@ -476,7 +476,7 @@ defmodule EtherCAT.Slave do
     end
   end
 
-  defp continue_auto_advance(data) do
+  defp read_sii_and_enter_preop(data) do
     t0 = System.monotonic_time(:millisecond)
 
     Logger.debug(

@@ -59,6 +59,10 @@ defmodule EtherCAT.Master do
   @frame_timeout_min_us 500
   @frame_timeout_max_ms 10
   @degraded_retry_ms 1_000
+  @init_poll_limit 50
+  @init_poll_interval_ms 10
+
+  @master_option_keys [:slaves, :domains, :base_station, :dc_cycle_ns, :frame_timeout_ms]
 
   defstruct [
     :bus_pid,
@@ -103,6 +107,7 @@ defmodule EtherCAT.Master do
     - `:dc_cycle_ns` — SYNC0 cycle time in ns for DC-capable slaves (default `1_000_000`)
     - `:frame_timeout_ms` — optional fixed bus frame response timeout (ms); if omitted,
       master auto-tunes from slave count + cycle time
+    - any other option is forwarded to `Bus.start_link/1` unchanged
   """
   @spec start(keyword()) :: :ok | {:error, term()}
   def start(opts \\ []), do: :gen_statem.call(__MODULE__, {:start, opts})
@@ -166,45 +171,28 @@ defmodule EtherCAT.Master do
   def handle_event(:enter, _old, :idle, _data), do: :keep_state_and_data
 
   def handle_event({:call, from}, {:start, opts}, :idle, data) do
-    interface = Keyword.fetch!(opts, :interface)
-    base = Keyword.get(opts, :base_station, @base_station)
-    slave_config = Keyword.get(opts, :slaves, [])
-    domain_config = Keyword.get(opts, :domains, [])
-    dc_cycle_ns = Keyword.get(opts, :dc_cycle_ns, 1_000_000)
-    frame_timeout_override_ms = Keyword.get(opts, :frame_timeout_ms)
+    with {:ok, start_config} <- normalize_start_options(opts),
+         {:ok, bus_pid} <- start_session_bus(start_config.bus_opts) do
+      bus_ref = Process.monitor(bus_pid)
 
-    with :ok <- validate_slave_start_config(slave_config) do
-      bus_opts =
-        [interface: interface, name: EtherCAT.Bus]
-        |> maybe_put_frame_timeout(frame_timeout_override_ms)
+      new_data = %{
+        data
+        | bus_pid: bus_pid,
+          bus_ref: bus_ref,
+          base_station: start_config.base_station,
+          slave_config: start_config.slave_config,
+          domain_config: start_config.domain_config,
+          dc_cycle_ns: start_config.dc_cycle_ns,
+          frame_timeout_override_ms: start_config.frame_timeout_override_ms,
+          activatable_slaves: [],
+          slaves: [],
+          scan_window: [],
+          pending_preop: MapSet.new(),
+          activation_failures: %{},
+          await_callers: []
+      }
 
-      case DynamicSupervisor.start_child(
-             EtherCAT.SessionSupervisor,
-             {Bus, bus_opts}
-           ) do
-        {:ok, bus_pid} ->
-          bus_ref = Process.monitor(bus_pid)
-
-          new_data = %{
-            data
-            | bus_pid: bus_pid,
-              bus_ref: bus_ref,
-              base_station: base,
-              slave_config: slave_config,
-              domain_config: domain_config,
-              dc_cycle_ns: dc_cycle_ns,
-              frame_timeout_override_ms: frame_timeout_override_ms,
-              activatable_slaves: [],
-              slaves: [],
-              scan_window: [],
-              activation_failures: %{}
-          }
-
-          {:next_state, :scanning, new_data, [{:reply, from, :ok}]}
-
-        {:error, _} = err ->
-          {:keep_state_and_data, [{:reply, from, err}]}
-      end
+      {:next_state, :scanning, new_data, [{:reply, from, :ok}]}
     else
       {:error, _} = err ->
         {:keep_state_and_data, [{:reply, from, err}]}
@@ -237,7 +225,7 @@ defmodule EtherCAT.Master do
     now_ms = System.monotonic_time(:millisecond)
 
     new_window =
-      case Bus.transaction(data.bus_pid, Transaction.brd({0x0000, 1})) do
+      case Bus.transaction(data.bus_pid, Transaction.brd(Registers.esc_type())) do
         {:ok, [%{wkc: n}]} ->
           # Prepend new reading; keep enough history to measure a full stable span
           window = [{now_ms, n} | data.scan_window]
@@ -252,17 +240,35 @@ defmodule EtherCAT.Master do
       [{_, slave_count} | _] = new_window
       tune_bus_frame_timeout(data, slave_count)
       Logger.info("[Master] bus stable — #{slave_count} slave(s)")
-      configured = do_configure(%{data | scan_window: [], slave_count: slave_count})
+      config_data = %{data | scan_window: [], slave_count: slave_count}
 
-      if MapSet.size(configured.pending_preop) == 0 do
-        Logger.info("[Master] all slaves in :preop — activating")
+      case configure_network(config_data) do
+        {:ok, configured} ->
+          if MapSet.size(configured.pending_preop) == 0 do
+            Logger.info("[Master] all slaves in :preop — activating")
 
-        case do_activate(configured) do
-          {:ok, active_data} -> {:next_state, :running, active_data}
-          {:degraded, degraded_data} -> {:next_state, :degraded, degraded_data}
-        end
-      else
-        {:next_state, :configuring, configured}
+            case activate_network(configured) do
+              {:ok, active_data} ->
+                {:next_state, :running, active_data}
+
+              {:degraded, degraded_data} ->
+                {:next_state, :degraded, degraded_data}
+
+              {:error, reason, failed_data} ->
+                Logger.error("[Master] activation failed: #{inspect(reason)}")
+                stop_session(failed_data)
+                reply_await_callers(failed_data.await_callers, {:error, {:activation_failed, reason}})
+                {:next_state, :idle, %__MODULE__{}}
+            end
+          else
+            {:next_state, :configuring, configured}
+          end
+
+        {:error, reason, failed_data} ->
+          Logger.error("[Master] configuration failed: #{inspect(reason)}")
+          stop_session(failed_data)
+          reply_await_callers(failed_data.await_callers, {:error, {:configuration_failed, reason}})
+          {:next_state, :idle, %__MODULE__{}}
       end
     else
       {:keep_state, %{data | scan_window: new_window},
@@ -292,12 +298,22 @@ defmodule EtherCAT.Master do
     if MapSet.size(new_pending) == 0 do
       Logger.info("[Master] all slaves in :preop — activating")
 
-      case do_activate(%{data | pending_preop: new_pending}) do
+      case activate_network(%{data | pending_preop: new_pending}) do
         {:ok, active_data} ->
           {:next_state, :running, active_data, [{{:timeout, :configuring}, :cancel}]}
 
         {:degraded, degraded_data} ->
           {:next_state, :degraded, degraded_data, [{{:timeout, :configuring}, :cancel}]}
+
+        {:error, reason, failed_data} ->
+          Logger.error("[Master] activation failed: #{inspect(reason)}")
+          stop_session(failed_data)
+          reply_await_callers(
+            failed_data.await_callers,
+            {:error, {:activation_failed, reason}}
+          )
+
+          {:next_state, :idle, %__MODULE__{}, [{{:timeout, :configuring}, :cancel}]}
       end
     else
       {:keep_state, %{data | pending_preop: new_pending}}
@@ -430,43 +446,56 @@ defmodule EtherCAT.Master do
       hd(counts) > 0
   end
 
-  # -- Bus setup helpers -----------------------------------------------------
+  # -- Startup normalization -------------------------------------------------
 
-  defp assign_stations(bus, base, count) do
-    Enum.each(0..(count - 1), fn pos ->
-      station = base + pos
+  defp normalize_start_options(opts) when is_list(opts) do
+    slave_config = Keyword.get(opts, :slaves, [])
+    domain_config = Keyword.get(opts, :domains, [])
+    frame_timeout_override_ms = Keyword.get(opts, :frame_timeout_ms)
 
-      case Bus.transaction(bus, Transaction.apwr(pos, Registers.station_address(station))) do
-        {:ok, [%{wkc: 1}]} ->
-          :ok
-
-        {:ok, [%{wkc: wkc}]} ->
-          Logger.warning("[Master] station assign pos=#{pos} wkc=#{wkc} (expected 1)")
-
-        _ ->
-          :ok
-      end
-    end)
+    with {:ok, _interface} <- Keyword.fetch(opts, :interface),
+         :ok <- validate_slave_start_config(slave_config) do
+      {:ok,
+       %{
+         base_station: Keyword.get(opts, :base_station, @base_station),
+         bus_opts: build_bus_start_opts(opts, frame_timeout_override_ms),
+         dc_cycle_ns: Keyword.get(opts, :dc_cycle_ns, 1_000_000),
+         domain_config: domain_config,
+         slave_config: slave_config,
+         frame_timeout_override_ms: frame_timeout_override_ms
+       }}
+    else
+      :error -> {:error, :missing_interface}
+      {:error, _} = err -> err
+    end
   end
 
-  defp read_dl_status_all(bus, base, count) do
-    Enum.map(0..(count - 1), fn pos ->
-      station = base + pos
+  defp normalize_start_options(_opts), do: {:error, :invalid_start_options}
 
-      case Bus.transaction(bus, Transaction.fprd(station, Registers.dl_status())) do
-        {:ok, [%{data: status, wkc: 1}]} -> {station, status}
-        _ -> {station, <<0, 0>>}
-      end
-    end)
+  defp build_bus_start_opts(opts, frame_timeout_override_ms) do
+    opts
+    |> Keyword.drop(@master_option_keys)
+    |> Keyword.put_new(:name, EtherCAT.Bus)
+    |> maybe_put_frame_timeout(frame_timeout_override_ms)
+  end
+
+  defp start_session_bus(bus_opts) do
+    DynamicSupervisor.start_child(EtherCAT.SessionSupervisor, {Bus, bus_opts})
   end
 
   defp validate_slave_start_config(slave_config) when is_list(slave_config) do
-    case Enum.find_index(slave_config, &is_nil/1) do
-      nil ->
-        :ok
-
-      idx ->
+    cond do
+      idx = Enum.find_index(slave_config, &is_nil/1) ->
         {:error, {:invalid_slave_config, {:nil_entry, idx}}}
+
+      idx =
+          Enum.find_index(slave_config, fn entry ->
+            not (is_list(entry) or is_struct(entry, EtherCAT.Slave.Config))
+          end) ->
+        {:error, {:invalid_slave_config, {:invalid_entry, idx}}}
+
+      true ->
+        :ok
     end
   end
 
@@ -584,94 +613,236 @@ defmodule EtherCAT.Master do
     div(value + divisor - 1, divisor)
   end
 
-  defp start_domains(bus, domain_config) do
-    Enum.each(domain_config, fn entry ->
+  defp station_for_position(data, pos), do: data.base_station + pos
+
+  # -- Spec-aligned startup phases ------------------------------------------
+
+  defp configure_network(data) do
+    count = data.slave_count
+    Logger.info("[Master] configuring #{count} slave(s)")
+
+    with {:ok, stations} <- assign_station_addresses(data, count),
+         {:ok, slave_topology} <- read_topology_statuses(data, stations),
+         :ok <- reset_slaves_to_init(data, stations),
+         {:ok, dc_ref_station} <- initialize_distributed_clocks(data, slave_topology),
+         :ok <- start_domains(data),
+         {:ok, slaves, pending_preop, activatable_slaves} <-
+           start_slaves(data, count, if(dc_ref_station, do: data.dc_cycle_ns, else: nil)) do
+      {:ok,
+       %{
+         data
+         | dc_ref_station: dc_ref_station,
+           slaves: slaves,
+           pending_preop: MapSet.new(pending_preop),
+           activatable_slaves: activatable_slaves,
+           activation_failures: %{}
+       }}
+    else
+      {:error, reason} ->
+        {:error, reason, data}
+
+      {:error, reason, started_slaves} ->
+        {:error, reason, %{data | slaves: started_slaves}}
+    end
+  end
+
+  defp assign_station_addresses(data, count) do
+    stations = Enum.map(0..(count - 1), &station_for_position(data, &1))
+
+    result =
+      Enum.reduce_while(0..(count - 1), :ok, fn pos, :ok ->
+        station = station_for_position(data, pos)
+
+        case Bus.transaction(
+               data.bus_pid,
+               Transaction.apwr(pos, Registers.station_address(station))
+             ) do
+          {:ok, [%{wkc: 1}]} ->
+            {:cont, :ok}
+
+          {:ok, [%{wkc: wkc}]} ->
+            {:halt, {:error, {:station_assign_failed, pos, station, {:unexpected_wkc, wkc}}}}
+
+          {:error, reason} ->
+            {:halt, {:error, {:station_assign_failed, pos, station, reason}}}
+        end
+      end)
+
+    case result do
+      :ok -> {:ok, stations}
+      {:error, _} = err -> err
+    end
+  end
+
+  defp read_topology_statuses(data, stations) do
+    Enum.reduce_while(stations, {:ok, []}, fn station, {:ok, acc} ->
+      case Bus.transaction(data.bus_pid, Transaction.fprd(station, Registers.dl_status())) do
+        {:ok, [%{data: status, wkc: 1}]} ->
+          {:cont, {:ok, [{station, status} | acc]}}
+
+        {:ok, [%{wkc: wkc}]} ->
+          {:halt, {:error, {:topology_read_failed, station, {:unexpected_wkc, wkc}}}}
+
+        {:error, reason} ->
+          {:halt, {:error, {:topology_read_failed, station, reason}}}
+      end
+    end)
+    |> case do
+      {:ok, topology_rev} -> {:ok, Enum.reverse(topology_rev)}
+      {:error, _} = err -> err
+    end
+  end
+
+  defp reset_slaves_to_init(data, stations) do
+    count = length(stations)
+
+    with {:ok, [%{wkc: ^count}]} <-
+           Bus.transaction(data.bus_pid, Transaction.bwr(Registers.al_control(0x11))),
+         :ok <- verify_init_states(data, stations, @init_poll_limit) do
+      :ok
+    else
+      {:ok, [%{wkc: wkc}]} ->
+        {:error, {:init_reset_failed, {:unexpected_wkc, wkc, count}}}
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  defp verify_init_states(_data, _stations, 0), do: {:error, :init_verification_exhausted}
+
+  defp verify_init_states(data, stations, attempts_left) do
+    statuses = Enum.map(stations, &read_init_status(data, &1))
+
+    if Enum.all?(statuses, &init_ready?/1) do
+      :ok
+    else
+      if attempts_left == 1 do
+        {:error, {:init_verification_failed, Enum.reject(statuses, &init_ready?/1)}}
+      else
+        Process.sleep(@init_poll_interval_ms)
+        verify_init_states(data, stations, attempts_left - 1)
+      end
+    end
+  end
+
+  defp read_init_status(data, station) do
+    case Bus.transaction(data.bus_pid, Transaction.fprd(station, Registers.al_status())) do
+      {:ok, [%{data: <<_::3, error::1, state::4, _::8>>, wkc: 1}]} ->
+        %{
+          station: station,
+          state: state,
+          error: error,
+          error_code: if(error == 1, do: read_al_status_code(data, station), else: nil)
+        }
+
+      {:ok, [%{wkc: wkc}]} ->
+        %{station: station, state: nil, error: nil, error_code: nil, wkc: wkc}
+
+      {:error, reason} ->
+        %{station: station, state: nil, error: nil, error_code: nil, error_reason: reason}
+    end
+  end
+
+  defp read_al_status_code(data, station) do
+    case Bus.transaction(data.bus_pid, Transaction.fprd(station, Registers.al_status_code())) do
+      {:ok, [%{data: <<code::16-little>>, wkc: 1}]} -> code
+      _ -> nil
+    end
+  end
+
+  defp init_ready?(%{state: 0x01, error: 0}), do: true
+  defp init_ready?(_), do: false
+
+  defp initialize_distributed_clocks(data, slave_topology) do
+    case DC.initialize_clocks(data.bus_pid, slave_topology) do
+      {:ok, ref_station} ->
+        Logger.info("[Master] DC initialized, ref=0x#{Integer.to_string(ref_station, 16)}")
+        {:ok, ref_station}
+
+      {:error, reason} ->
+        Logger.warning("[Master] DC init failed (#{inspect(reason)}) — running without DC")
+        {:ok, nil}
+    end
+  end
+
+  defp start_domains(data) do
+    Enum.reduce_while(data.domain_config || [], :ok, fn entry, :ok ->
       domain_opts = normalize_domain_config(entry)
       id = Keyword.fetch!(domain_opts, :id)
 
       case DynamicSupervisor.start_child(
              EtherCAT.SessionSupervisor,
-             {Domain, [{:id, id}, {:bus, bus} | domain_opts]}
+             {Domain, [{:id, id}, {:bus, data.bus_pid} | domain_opts]}
            ) do
         {:ok, _pid} ->
-          :ok
+          {:cont, :ok}
 
         {:error, {:already_started, _pid}} ->
-          Logger.warning("[Master] domain #{inspect(id)} already started")
-          :ok
+          {:cont, :ok}
 
         {:error, reason} ->
-          Logger.error("[Master] failed to start domain #{inspect(id)}: #{inspect(reason)}")
-          :ok
+          {:halt, {:error, {:domain_start_failed, id, reason}}}
       end
     end)
   end
 
   # Returns {:ok, slaves_list, pending_preop_names, activatable_names}
-  # slaves_list: [{name, station, pid}] for named slaves
-  # pending_preop_names: [name] — names to track in pending_preop
-  # activatable_names: [name] — names the master should move PREOP→OP
-  defp start_slaves(bus, base, bus_count, slave_config, extra_opts) do
-    dc_cycle_ns = Keyword.get(extra_opts, :dc_cycle_ns)
-    effective_config = if(slave_config == [], do: dynamic_slave_configs(bus_count), else: [])
+  defp start_slaves(data, bus_count, dc_cycle_ns) do
+    with {:ok, effective_config} <- effective_slave_config(data.slave_config || [], bus_count) do
+      Enum.with_index(effective_config)
+      |> Enum.reduce_while({:ok, [], [], []}, fn {entry, pos}, {:ok, slave_acc, pending_acc, activatable_acc} ->
+        station = station_for_position(data, pos)
+        slave_opts = normalize_slave_config(entry)
+        name = Keyword.fetch!(slave_opts, :name)
 
-    {slaves, pending_names, activatable_names} =
-      effective_config
-      |> Kernel.++(Enum.take(slave_config, bus_count))
-      |> Enum.with_index()
-      |> Enum.reduce({[], [], []}, fn {entry, pos}, {slave_acc, pending_acc, activatable_acc} ->
-        station = base + pos
+        opts = [
+          bus: data.bus_pid,
+          station: station,
+          name: name,
+          driver: Keyword.get(slave_opts, :driver),
+          config: Keyword.get(slave_opts, :config, %{}),
+          pdos: Keyword.get(slave_opts, :pdos, []),
+          domain: Keyword.get(slave_opts, :domain),
+          dc_cycle_ns: dc_cycle_ns
+        ]
 
-        case entry do
-          entry when is_list(entry) or is_struct(entry, EtherCAT.Slave.Config) ->
-            slave_opts = normalize_slave_config(entry)
-            name = Keyword.fetch!(slave_opts, :name)
-            driver = Keyword.get(slave_opts, :driver)
-            config = Keyword.get(slave_opts, :config, %{})
-            pdos = Keyword.get(slave_opts, :pdos, [])
-            domain = Keyword.get(slave_opts, :domain)
-            auto_activate? = Keyword.get(slave_opts, :auto_activate?, true)
+        case DynamicSupervisor.start_child(EtherCAT.SlaveSupervisor, {Slave, opts}) do
+          {:ok, pid} ->
+            next_activatable =
+              if Keyword.get(slave_opts, :auto_activate?, true) do
+                [name | activatable_acc]
+              else
+                activatable_acc
+              end
 
-            opts = [
-              bus: bus,
-              station: station,
-              name: name,
-              driver: driver,
-              config: config,
-              pdos: pdos,
-              domain: domain,
-              dc_cycle_ns: dc_cycle_ns
-            ]
+            {:cont, {:ok, [{name, station, pid} | slave_acc], [name | pending_acc], next_activatable}}
 
-            case DynamicSupervisor.start_child(EtherCAT.SlaveSupervisor, {Slave, opts}) do
-              {:ok, pid} ->
-                activatable_acc =
-                  if auto_activate? do
-                    [name | activatable_acc]
-                  else
-                    activatable_acc
-                  end
-
-                {[{name, station, pid} | slave_acc], [name | pending_acc], activatable_acc}
-
-              {:error, reason} ->
-                Logger.error(
-                  "[Master] failed to start slave #{inspect(name)} at 0x#{Integer.to_string(station, 16)}: #{inspect(reason)}"
-                )
-
-                {slave_acc, pending_acc, activatable_acc}
-            end
-
-          invalid_entry ->
-            Logger.warning(
-              "[Master] invalid slave config at position #{pos}: #{inspect(invalid_entry)}"
-            )
-
-            {slave_acc, pending_acc, activatable_acc}
+          {:error, reason} ->
+            {:halt, {:error, {:slave_start_failed, name, station, reason}, Enum.reverse(slave_acc)}}
         end
       end)
+      |> case do
+        {:ok, slaves, pending, activatable} ->
+          {:ok, Enum.reverse(slaves), Enum.reverse(pending), Enum.reverse(activatable)}
 
-    {:ok, Enum.reverse(slaves), Enum.reverse(pending_names), Enum.reverse(activatable_names)}
+        {:error, reason, started_slaves} ->
+          {:error, reason, started_slaves}
+
+        {:error, _} = err ->
+          err
+      end
+    end
+  end
+
+  defp effective_slave_config([], bus_count), do: {:ok, dynamic_slave_configs(bus_count)}
+
+  defp effective_slave_config(slave_config, bus_count) when length(slave_config) <= bus_count do
+    {:ok, Enum.take(slave_config, bus_count)}
+  end
+
+  defp effective_slave_config(slave_config, bus_count) do
+    {:error, {:configured_slaves_exceed_bus, length(slave_config), bus_count}}
   end
 
   defp get_domain_ids(domain_config) do
@@ -681,100 +852,41 @@ defmodule EtherCAT.Master do
     end)
   end
 
-  # Runs synchronously in the scan handler before transitioning to :configuring/:running.
-  defp do_configure(data) do
-    bus = data.bus_pid
-    count = data.slave_count
-
-    Logger.info("[Master] configuring #{count} slave(s)")
-
-    assign_stations(bus, data.base_station, count)
-    slave_stations = read_dl_status_all(bus, data.base_station, count)
-
-    # DC hardware init (delays, offsets, PLL filter reset) before INIT→PREOP.
-    # The DC gen_statem (cyclic ARMW) is started later in do_activate, after
-    # all slaves reach PREOP, so its ticks don't compete with slave init.
-    dc_ref_station =
-      case DC.initialize_clocks(bus, slave_stations) do
-        {:ok, ref_station} ->
-          Logger.info("[Master] DC initialized, ref=0x#{Integer.to_string(ref_station, 16)}")
-          ref_station
-
-        {:error, reason} ->
-          Logger.warning("[Master] DC init failed (#{inspect(reason)}) — running without DC")
-          nil
-      end
-
-    # Start domains before slaves so domains are registered in the Registry
-    # when slaves call Domain.register_pdo/4 in their :preop enter.
-    start_domains(bus, data.domain_config || [])
-
-    {:ok, slaves, pending_preop, activatable_slaves} =
-      start_slaves(bus, data.base_station, count, data.slave_config || [],
-        dc_cycle_ns: if(dc_ref_station, do: data.dc_cycle_ns, else: nil)
-      )
-
-    %{
-      data
-      | dc_ref_station: dc_ref_station,
-        slaves: slaves,
-        pending_preop: MapSet.new(pending_preop),
-        activatable_slaves: activatable_slaves,
-        activation_failures: %{}
-    }
-  end
-
   # Runs synchronously in the scan/configuring handler before transitioning to :running.
-  defp do_activate(%{activatable_slaves: []} = data) do
+  defp activate_network(%{activatable_slaves: []} = data) do
     Logger.info("[Master] dynamic startup: slaves held in :preop for runtime configuration")
     {:ok, %{data | activation_failures: %{}}}
   end
 
-  defp do_activate(data) do
+  defp activate_network(data) do
     Logger.info("[Master] activating — starting DC, domains, and advancing slaves to :op")
 
-    # Start DC cyclic ARMW now — all slaves are in PREOP so the socket is clean
-    # and DC ticks won't compete with slave state transitions.
-    dc_pid =
-      if data.dc_ref_station do
-        case DynamicSupervisor.start_child(
-               EtherCAT.SessionSupervisor,
-               {DC, bus: data.bus_pid, ref_station: data.dc_ref_station, period_ms: 10}
-             ) do
-          {:ok, pid} ->
-            pid
+    case start_dc_runtime(data) do
+      {:ok, dc_pid} ->
+        activation_data = %{data | dc_pid: dc_pid}
+
+        case start_domain_cycles(activation_data) do
+          :ok ->
+            activation_failures = activate_required_slaves(activation_data.activatable_slaves)
+
+            activated_data = %{activation_data | activation_failures: activation_failures}
+
+            if map_size(activation_failures) == 0 do
+              {:ok, activated_data}
+            else
+              Logger.warning(
+                "[Master] activation incomplete; degraded mode for #{inspect(Map.keys(activation_failures))}"
+              )
+
+              {:degraded, activated_data}
+            end
 
           {:error, reason} ->
-            Logger.warning("[Master] DC gen_statem failed to start: #{inspect(reason)}")
-            nil
+            {:error, reason, activation_data}
         end
-      end
 
-    domain_ids = get_domain_ids(data.domain_config || [])
-
-    Enum.each(domain_ids, fn id ->
-      case Domain.start_cycling(id) do
-        :ok ->
-          :ok
-
-        {:error, reason} ->
-          Logger.warning(
-            "[Master] domain #{inspect(id)} start_cycling failed: #{inspect(reason)}"
-          )
-      end
-    end)
-
-    activation_failures = activate_required_slaves(data.activatable_slaves)
-    activated_data = %{data | dc_pid: dc_pid, activation_failures: activation_failures}
-
-    if map_size(activation_failures) == 0 do
-      {:ok, activated_data}
-    else
-      Logger.warning(
-        "[Master] activation incomplete; degraded mode for #{inspect(Map.keys(activation_failures))}"
-      )
-
-      {:degraded, activated_data}
+      {:error, reason} ->
+        {:error, reason, data}
     end
   end
 
@@ -797,6 +909,33 @@ defmodule EtherCAT.Master do
     if data.bus_pid do
       DynamicSupervisor.terminate_child(EtherCAT.SessionSupervisor, data.bus_pid)
     end
+  end
+
+  defp start_dc_runtime(%{dc_ref_station: nil}), do: {:ok, nil}
+
+  defp start_dc_runtime(data) do
+    case DynamicSupervisor.start_child(
+           EtherCAT.SessionSupervisor,
+           {DC, bus: data.bus_pid, ref_station: data.dc_ref_station, period_ms: 10}
+         ) do
+      {:ok, pid} ->
+        {:ok, pid}
+
+      {:error, reason} ->
+        {:error, {:dc_start_failed, reason}}
+    end
+  end
+
+  defp start_domain_cycles(data) do
+    Enum.reduce_while(get_domain_ids(data.domain_config || []), :ok, fn id, :ok ->
+      case Domain.start_cycling(id) do
+        :ok ->
+          {:cont, :ok}
+
+        {:error, reason} ->
+          {:halt, {:error, {:domain_cycle_start_failed, id, reason}}}
+      end
+    end)
   end
 
   defp activate_required_slaves(slave_names) do
