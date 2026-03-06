@@ -156,10 +156,10 @@ record     : {key, value, slave_pid}
 
 ## Key Design Decisions
 
-**Why `Bus.transaction/3` instead of `Bus.transaction_queue/2` for the LRW?**
+**Why `Bus.transaction/3` for the LRW?**
 The domain cycle is the only operation running during Op — no other concurrent writes.
-`transaction/3` (direct, blocking with period-derived staleness budget) is appropriate here. `transaction_queue/2` is for
-batching multiple register writes into one frame (slave init path).
+`transaction/3` (period-derived staleness budget) is appropriate here. Reliable configuration
+traffic uses `Bus.transaction/2`; cyclic LRW should not share frames with it.
 
 **Why drift-compensated scheduling (`next_cycle_at + period_us`, not `now + period_us`)?**
 `now + period_us` accumulates jitter because each cycle is scheduled relative to when the

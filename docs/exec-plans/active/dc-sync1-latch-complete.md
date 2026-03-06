@@ -152,14 +152,15 @@ defp configure_dc_signals(data) do
       activation = if sync1_ns > 0, do: 0x07, else: 0x03
       start_time = System.os_time(:nanosecond) - @ethercat_epoch_offset_ns + 100_000
 
-      Bus.transaction_queue(data.link, fn tx ->
-        tx
+      Bus.transaction(
+        data.bus,
+        Transaction.new()
         |> Transaction.fpwr(data.station, Registers.dc_sync0_cycle_time(cycle_ns))
         |> Transaction.fpwr(data.station, Registers.dc_sync1_cycle_time(sync1_ns))
         |> Transaction.fpwr(data.station, Registers.dc_pulse_length(pulse_ns))
         |> Transaction.fpwr(data.station, Registers.dc_sync0_start_time(start_time))
         |> Transaction.fpwr(data.station, Registers.dc_activation(activation))
-      end)
+      )
 
       latches = Map.get(dc_spec, :latches, [])
       active = if latches == [], do: nil, else: Enum.map(latches, &{&1.latch_id, &1.edge})
@@ -208,9 +209,7 @@ end
 }
 
 def handle_event(:state_timeout, :latch_poll, :op, data) do
-  case Bus.transaction_queue(data.link, fn tx ->
-    Transaction.fprd(tx, data.station, Registers.dc_latch_event_status())
-  end) do
+  case Bus.transaction(data.bus, Transaction.fprd(data.station, Registers.dc_latch_event_status()), data.latch_poll_ms * 1_000) do
     {:ok, [%{data: <<status::16-little>>, wkc: wkc}]} when wkc > 0 ->
       dispatch_latch_events(data, status)
     _ ->
@@ -222,10 +221,10 @@ end
 defp dispatch_latch_events(data, status) do
   Enum.each(data.active_latches, fn {latch_id, edge} = key ->
     mask = @latch_masks[key]
-    if Bitwise.band(status, mask) != 0 do
+    if latch_event_set?(status, key) do
       # Reading timestamp register clears the event bit in hardware
       reg = latch_time_register(latch_id, edge)
-      case Bus.transaction_queue(data.link, fn tx -> Transaction.fprd(tx, data.station, reg) end) do
+      case Bus.transaction(data.bus, Transaction.fprd(data.station, reg), data.latch_poll_ms * 1_000) do
         {:ok, [%{data: <<ts::64-little>>, wkc: wkc}]} when wkc > 0 ->
           msg = {:slave_latch, data.name, latch_id, edge, ts}
           data.latch_subscriptions
@@ -242,6 +241,11 @@ defp latch_time_register(0, :pos), do: Registers.dc_latch0_pos_time()
 defp latch_time_register(0, :neg), do: Registers.dc_latch0_neg_time()
 defp latch_time_register(1, :pos), do: Registers.dc_latch1_pos_time()
 defp latch_time_register(1, :neg), do: Registers.dc_latch1_neg_time()
+
+defp latch_event_set?(status, {0, :pos}), do: match?(<<_::4, 1::1, _::11>>, <<status::16-little>>)
+defp latch_event_set?(status, {0, :neg}), do: match?(<<_::5, 1::1, _::10>>, <<status::16-little>>)
+defp latch_event_set?(status, {1, :pos}), do: match?(<<_::8, 1::1, _::7>>, <<status::16-little>>)
+defp latch_event_set?(status, {1, :neg}), do: match?(<<_::9, 1::1, _::6>>, <<status::16-little>>)
 ```
 
 ---

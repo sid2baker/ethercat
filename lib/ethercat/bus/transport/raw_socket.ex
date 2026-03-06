@@ -127,33 +127,6 @@ defmodule EtherCAT.Bus.Transport.RawSocket do
   end
 
   @impl true
-  @doc """
-  Warm up the NIC's transmit path by sending one dummy EtherCAT frame.
-
-  On some NICs (e.g. bcmgenet on Raspberry Pi 4) the very first `sendto`
-  after `open/1` takes ~105 ms due to DMA descriptor initialization. Calling
-  `warmup/1` right after `open/1` pays that cost eagerly.
-  """
-  @spec warmup(t()) :: :ok | {:error, term()}
-  def warmup(%__MODULE__{} = sock) do
-    # Minimal EtherCAT payload: header (2 bytes) + one NOP datagram (12 bytes).
-    # The NOP (cmd=0) is not processed by slaves — it's a NIC TX-path probe.
-    alias EtherCAT.Bus.{Datagram, Frame}
-    {:ok, payload} = Frame.encode([%Datagram{}])
-
-    case send(sock, payload) do
-      {:ok, _tx_at} ->
-        # Sleep 150 ms to absorb bcmgenet cold-start latency.
-        # Do NOT drain here — see original Socket.warmup/1 for rationale.
-        :timer.sleep(150)
-        :ok
-
-      {:error, _} = err ->
-        err
-    end
-  end
-
-  @impl true
   @doc "Close the underlying socket. Returns the struct with `raw` set to `nil`."
   @spec close(t()) :: t()
   def close(%__MODULE__{raw: nil} = sock), do: sock

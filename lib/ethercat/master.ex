@@ -237,7 +237,7 @@ defmodule EtherCAT.Master do
     now_ms = System.monotonic_time(:millisecond)
 
     new_window =
-      case Bus.transaction_queue(data.bus_pid, &Transaction.brd(&1, {0x0000, 1})) do
+      case Bus.transaction(data.bus_pid, Transaction.brd({0x0000, 1})) do
         {:ok, [%{wkc: n}]} ->
           # Prepend new reading; keep enough history to measure a full stable span
           window = [{now_ms, n} | data.scan_window]
@@ -436,10 +436,7 @@ defmodule EtherCAT.Master do
     Enum.each(0..(count - 1), fn pos ->
       station = base + pos
 
-      case Bus.transaction_queue(
-             bus,
-             &Transaction.apwr(&1, pos, Registers.station_address(station))
-           ) do
+      case Bus.transaction(bus, Transaction.apwr(pos, Registers.station_address(station))) do
         {:ok, [%{wkc: 1}]} ->
           :ok
 
@@ -456,7 +453,7 @@ defmodule EtherCAT.Master do
     Enum.map(0..(count - 1), fn pos ->
       station = base + pos
 
-      case Bus.transaction_queue(bus, &Transaction.fprd(&1, station, Registers.dl_status())) do
+      case Bus.transaction(bus, Transaction.fprd(station, Registers.dl_status())) do
         {:ok, [%{data: status, wkc: 1}]} -> {station, status}
         _ -> {station, <<0, 0>>}
       end

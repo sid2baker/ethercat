@@ -30,13 +30,14 @@ Differences:
 {eep_addr, _} = Registers.eeprom_address()
 {eep_ctl, _} = Registers.eeprom_control()
 
-Bus.transaction_queue(link, fn tx ->
-  tx
+Bus.transaction(
+  bus,
+  Transaction.new()
   |> Transaction.fpwr(station, {eep_addr, <<word_addr::32-little>>})
   |> Transaction.fpwr(station, {eep_ctl, cmd_bin})
   |> Transaction.fprd(station, Registers.eeprom_control())
   |> Transaction.fprd(station, {Registers.eeprom_data(), data_width})
-end)
+)
 ```
 
 Suggested `gen_statem` names:

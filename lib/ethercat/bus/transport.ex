@@ -69,15 +69,6 @@ defmodule EtherCAT.Bus.Transport do
   @callback open?(t()) :: boolean()
 
   @doc """
-  Warm up the transport's transmit path.
-
-  Called after `open/1` to pay any cold-start latency (e.g. DMA descriptor
-  initialization on some NICs) before real transactions begin.
-  Should be a no-op for transports that don't need it.
-  """
-  @callback warmup(t()) :: :ok | {:error, term()}
-
-  @doc """
   Returns a human-readable transport identifier for telemetry and logging.
 
   - `RawSocket`: returns the interface name (e.g. `"eth0"`)

@@ -133,7 +133,7 @@ defmodule EtherCAT.DC do
     result =
       Bus.transaction(
         data.bus,
-        &Transaction.armw(&1, data.ref_station, Registers.dc_system_time()),
+        Transaction.armw(data.ref_station, Registers.dc_system_time()),
         drift_tick_timeout_us(data.period_ms)
       )
 
@@ -166,7 +166,7 @@ defmodule EtherCAT.DC do
   # -- Init helpers ----------------------------------------------------------
 
   defp trigger_recv_latch(bus) do
-    case Bus.transaction_queue(bus, &Transaction.bwr(&1, Registers.dc_recv_time_latch())) do
+    case Bus.transaction(bus, Transaction.bwr(Registers.dc_recv_time_latch())) do
       {:ok, _} -> :ok
       {:error, _} = err -> err
     end
@@ -176,28 +176,19 @@ defmodule EtherCAT.DC do
     results =
       Enum.map(stations, fn station ->
         ecat =
-          case Bus.transaction_queue(
-                 bus,
-                 &Transaction.fprd(&1, station, Registers.dc_recv_time_ecat())
-               ) do
+          case Bus.transaction(bus, Transaction.fprd(station, Registers.dc_recv_time_ecat())) do
             {:ok, [%{data: <<t::64-little>>, wkc: 1}]} -> t
             _ -> nil
           end
 
         p0 =
-          case Bus.transaction_queue(
-                 bus,
-                 &Transaction.fprd(&1, station, Registers.dc_recv_time(0))
-               ) do
+          case Bus.transaction(bus, Transaction.fprd(station, Registers.dc_recv_time(0))) do
             {:ok, [%{data: <<t::32-little>>, wkc: 1}]} -> t
             _ -> nil
           end
 
         p1 =
-          case Bus.transaction_queue(
-                 bus,
-                 &Transaction.fprd(&1, station, Registers.dc_recv_time(1))
-               ) do
+          case Bus.transaction(bus, Transaction.fprd(station, Registers.dc_recv_time(1))) do
             {:ok, [%{data: <<t::32-little>>, wkc: 1}]} -> t
             _ -> nil
           end
@@ -241,7 +232,7 @@ defmodule EtherCAT.DC do
   defp write_delays(bus, stations, delays) do
     Enum.zip(stations, delays)
     |> Enum.each(fn {station, delay} ->
-      bus_tx(bus, &Transaction.fpwr(&1, station, Registers.dc_system_time_delay(delay)))
+      bus_tx(bus, Transaction.fpwr(station, Registers.dc_system_time_delay(delay)))
     end)
   end
 
@@ -259,7 +250,7 @@ defmodule EtherCAT.DC do
             ref_ecat_ns - ecat_ns + ref_offset
           end
 
-        bus_tx(bus, &Transaction.fpwr(&1, station, Registers.dc_system_time_offset(offset)))
+        bus_tx(bus, Transaction.fpwr(station, Registers.dc_system_time_offset(offset)))
       end
     end)
   end
@@ -269,26 +260,20 @@ defmodule EtherCAT.DC do
     |> Enum.each(fn {station, {ecat_ns, _, _}} ->
       if ecat_ns != nil do
         # Read current value and write it back — this resets the filter
-        case Bus.transaction_queue(
-               bus,
-               &Transaction.fprd(&1, station, Registers.dc_speed_counter_start())
-             ) do
+        case Bus.transaction(bus, Transaction.fprd(station, Registers.dc_speed_counter_start())) do
           {:ok, [%{data: <<v::16-little>>, wkc: 1}]} ->
-            bus_tx(bus, &Transaction.fpwr(&1, station, Registers.dc_speed_counter_start(v)))
+            bus_tx(bus, Transaction.fpwr(station, Registers.dc_speed_counter_start(v)))
 
           _ ->
-            bus_tx(
-              bus,
-              &Transaction.fpwr(&1, station, Registers.dc_speed_counter_start(0x1000))
-            )
+            bus_tx(bus, Transaction.fpwr(station, Registers.dc_speed_counter_start(0x1000)))
         end
       end
     end)
   end
 
   # Thin wrapper — ignore result (init writes may get no wkc if slaves not yet ready)
-  defp bus_tx(bus, fun) do
-    Bus.transaction_queue(bus, fun)
+  defp bus_tx(bus, tx) do
+    Bus.transaction(bus, tx)
   end
 
   defp drift_tick_timeout_us(period_ms) when is_integer(period_ms) and period_ms > 0 do

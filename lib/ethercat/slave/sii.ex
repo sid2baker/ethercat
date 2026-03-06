@@ -471,7 +471,7 @@ defmodule EtherCAT.Slave.SII do
   # -- Register I/O -----------------------------------------------------------
 
   defp read_reg(bus, station, {_addr, _size} = reg) do
-    case Bus.transaction_queue(bus, &Transaction.fprd(&1, station, reg)) do
+    case Bus.transaction(bus, Transaction.fprd(station, reg)) do
       {:ok, [%{data: data, wkc: wkc}]} when wkc > 0 -> {:ok, data}
       {:ok, [%{wkc: 0}]} -> {:error, :no_response}
       {:error, _} = err -> err
@@ -479,7 +479,7 @@ defmodule EtherCAT.Slave.SII do
   end
 
   defp write_reg(bus, station, {addr, _size}, data) do
-    case Bus.transaction_queue(bus, &Transaction.fpwr(&1, station, {addr, data})) do
+    case Bus.transaction(bus, Transaction.fpwr(station, {addr, data})) do
       {:ok, [%{wkc: wkc}]} when wkc > 0 -> :ok
       {:ok, [%{wkc: 0}]} -> {:error, :no_response}
       {:error, _} = err -> err

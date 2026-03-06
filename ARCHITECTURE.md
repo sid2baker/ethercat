@@ -16,7 +16,10 @@ EtherCAT.Application
 ├── EtherCAT.Master              (singleton gen_statem — bus lifecycle coordinator)
 │
 ├── EtherCAT.SessionSupervisor   (dynamic supervisor for session-scoped runtime processes)
-│   ├── EtherCAT.Bus             (raw socket server — all frame I/O goes here)
+│   ├── EtherCAT.Bus             (bus scheduler — all frame I/O goes here)
+│   │   └── EtherCAT.Bus.Link    (topology adapter selected by Bus)
+│   │       ├── EtherCAT.Bus.Link.SinglePort
+│   │       └── EtherCAT.Bus.Link.Redundant
 │   ├── EtherCAT.DC              (gen_statem — periodic ARMW drift ticker)
 │   └── EtherCAT.Domain          (gen_statem per domain — cyclic LRW exchange)
 │
@@ -80,13 +83,20 @@ Application
 
 ### Bus as single serialization point
 
-All frame I/O goes through `EtherCAT.Bus`. The bus has two entry points:
-- `Bus.transaction/2` — direct, blocking. Used by DC tick and Domain cycle where
-  ordering relative to other ops matters.
-- `Bus.transaction_queue/2` — queues datagrams into the next frame send. Used during
-  slave init (register writes) to batch multiple FPWR ops without per-write round-trips.
+All frame I/O goes through `EtherCAT.Bus`. `Bus` is the scheduler `gen_statem`:
+- `Bus.transaction/2` — reliable work. Delivery matters more than timing; reliable
+  submissions may batch with other reliable submissions when the bus is already busy.
+- `Bus.transaction/3` — realtime work with a staleness deadline. Realtime submissions
+  are dropped if stale, always take priority over reliable backlog, and never share a
+  frame with reliable traffic.
 
-This prevents multiple gen_stams from racing on the socket.
+Callers define transaction boundaries with `EtherCAT.Bus.Transaction`; the bus decides
+frame boundaries. This prevents multiple gen_statems from racing on the socket while
+keeping frame packing policy out of slave/domain/master call sites.
+
+`Bus` delegates topology-specific wire behavior to `EtherCAT.Bus.Link`:
+- `EtherCAT.Bus.Link.SinglePort` for one interface
+- `EtherCAT.Bus.Link.Redundant` for duplicated send + merged receive across two interfaces
 
 ### ETS hot path for I/O
 
@@ -113,7 +123,7 @@ calls `{:next_state, ...}`.
 
 ## Startup Sequence Detail
 
-1. `Bus.open_link/1` — opens raw Ethernet socket on named interface
+1. `Bus.start_link/1` — starts the bus scheduler and opens the selected `Bus.Link` + `Bus.Transport`
 2. `DC.initialize_clocks/2` — BWR latch, read receive times, compute propagation delays, write offsets
 3. `Domain.start_link` per config — creates ETS tables, enters `:open`
 4. `Slave.start_link` per config — starts SII read, mailbox SM config, auto-advances to `:preop`

@@ -114,11 +114,6 @@ defmodule EtherCAT.Bus.Transport.UdpSocket do
   def open?(%__MODULE__{}), do: true
 
   @impl true
-  @doc "No-op — UDP has no NIC DMA cold-start issue."
-  @spec warmup(t()) :: :ok
-  def warmup(%__MODULE__{}), do: :ok
-
-  @impl true
   @doc "Returns a string identifier for telemetry: `\"host:port\"`."
   @spec name(t()) :: String.t()
   def name(%__MODULE__{host: host, port: port}) do

@@ -431,9 +431,7 @@ defmodule EtherCAT.Slave do
     if data.active_latches do
       case Bus.transaction(
              data.bus,
-             fn tx ->
-               Transaction.fprd(tx, data.station, Registers.dc_latch_event_status())
-             end,
+             Transaction.fprd(data.station, Registers.dc_latch_event_status()),
              latch_poll_timeout_us(data)
            ) do
         {:ok, [%{data: <<latch0_status::8, latch1_status::8>>, wkc: wkc}]} when wkc > 0 ->
@@ -624,11 +622,12 @@ defmodule EtherCAT.Slave do
             # SM register: full SM size, byte-aligned. Keep SM deactivated while reprogramming.
             sm_reg = <<phys::16-little, total_sm_size::16-little, ctrl::8, 0::8, 0x00::8, 0::8>>
 
-            case Bus.transaction_queue(data.bus, fn tx ->
-                   tx
+            case Bus.transaction(
+                   data.bus,
+                   Transaction.new()
                    |> Transaction.fpwr(data.station, Registers.sm_activate(sm_idx, 0))
                    |> Transaction.fpwr(data.station, Registers.sm(sm_idx, sm_reg))
-                 end) do
+                 ) do
               {:ok, replies} ->
                 if all_wkc_positive?(replies) do
                   # One FMMU covers the entire SM, byte-aligned (start_bit=0, stop_bit=7)
@@ -636,14 +635,14 @@ defmodule EtherCAT.Slave do
                     <<offset::32-little, total_sm_size::16-little, 0::8, 7::8, phys::16-little,
                       0::8, fmmu_type::8, 0x01::8, 0::24>>
 
-                  case Bus.transaction_queue(
+                  case Bus.transaction(
                          data.bus,
-                         &Transaction.fpwr(&1, data.station, Registers.fmmu(fmmu_idx, fmmu_reg))
+                         Transaction.fpwr(data.station, Registers.fmmu(fmmu_idx, fmmu_reg))
                        ) do
                     {:ok, [%{wkc: wkc}]} when wkc > 0 ->
-                      case Bus.transaction_queue(
+                      case Bus.transaction(
                              data.bus,
-                             &Transaction.fpwr(&1, data.station, Registers.sm_activate(sm_idx, 1))
+                             Transaction.fpwr(data.station, Registers.sm_activate(sm_idx, 1))
                            ) do
                         {:ok, [%{wkc: activate_wkc}]} when activate_wkc > 0 ->
                           # Record bit position metadata for each PDO in this SM group
@@ -707,10 +706,7 @@ defmodule EtherCAT.Slave do
     Logger.debug("[Slave #{data.name}] AL → #{target} (code=0x#{Integer.to_string(code, 16)})")
 
     with {:ok, [%{wkc: wkc}]} when wkc > 0 <-
-           Bus.transaction_queue(
-             data.bus,
-             &Transaction.fpwr(&1, data.station, Registers.al_control(code))
-           ) do
+           Bus.transaction(data.bus, Transaction.fpwr(data.station, Registers.al_control(code))) do
       poll_al(data, code, @poll_limit)
     else
       {:ok, [%{wkc: 0}]} ->
@@ -726,10 +722,7 @@ defmodule EtherCAT.Slave do
   defp poll_al(data, _code, 0), do: {:error, :transition_timeout, data}
 
   defp poll_al(data, code, n) do
-    case Bus.transaction_queue(
-           data.bus,
-           &Transaction.fprd(&1, data.station, Registers.al_status())
-         ) do
+    case Bus.transaction(data.bus, Transaction.fprd(data.station, Registers.al_status())) do
       {:ok, [%{data: <<_::3, _err::1, state::4, _::8>>, wkc: wkc}]}
       when wkc > 0 and state == code ->
         {:ok, data}
@@ -752,29 +745,20 @@ defmodule EtherCAT.Slave do
 
   defp ack_error(data) do
     err_code =
-      case Bus.transaction_queue(
-             data.bus,
-             &Transaction.fprd(&1, data.station, Registers.al_status_code())
-           ) do
+      case Bus.transaction(data.bus, Transaction.fprd(data.station, Registers.al_status_code())) do
         {:ok, [%{data: <<c::16-little>>, wkc: wkc}]} when wkc > 0 -> c
         _ -> nil
       end
 
     state_code =
-      case Bus.transaction_queue(
-             data.bus,
-             &Transaction.fprd(&1, data.station, Registers.al_status())
-           ) do
+      case Bus.transaction(data.bus, Transaction.fprd(data.station, Registers.al_status())) do
         {:ok, [%{data: <<_::3, _err::1, state::4, _::8>>, wkc: wkc}]} when wkc > 0 -> state
         _ -> 0x01
       end
 
     ack_value = state_code + 0x10
 
-    Bus.transaction_queue(
-      data.bus,
-      &Transaction.fpwr(&1, data.station, Registers.al_control(ack_value))
-    )
+    Bus.transaction(data.bus, Transaction.fpwr(data.station, Registers.al_control(ack_value)))
 
     {err_code, %{data | error_code: err_code}}
   end
@@ -870,8 +854,9 @@ defmodule EtherCAT.Slave do
         {active_latches, latch0_ctrl, latch1_ctrl} =
           build_latch_config(Map.get(dc_spec, :latches, []))
 
-        Bus.transaction_queue(data.bus, fn tx ->
-          tx
+        Bus.transaction(
+          data.bus,
+          Transaction.new()
           |> Transaction.fpwr(data.station, Registers.dc_sync0_cycle_time(cycle_ns))
           |> Transaction.fpwr(data.station, Registers.dc_sync1_cycle_time(sync1_cycle_ns))
           |> Transaction.fpwr(data.station, Registers.dc_pulse_length(pulse_ns))
@@ -879,7 +864,7 @@ defmodule EtherCAT.Slave do
           |> Transaction.fpwr(data.station, Registers.dc_latch0_control(latch0_ctrl))
           |> Transaction.fpwr(data.station, Registers.dc_latch1_control(latch1_ctrl))
           |> Transaction.fpwr(data.station, Registers.dc_activation(activation))
-        end)
+        )
 
         active_latches_or_nil =
           if active_latches == [] do
@@ -967,9 +952,7 @@ defmodule EtherCAT.Slave do
 
     case Bus.transaction(
            data.bus,
-           fn tx ->
-             Transaction.fprd(tx, data.station, reg)
-           end,
+           Transaction.fprd(data.station, reg),
            latch_poll_timeout_us(data)
          ) do
       {:ok, [%{data: <<timestamp_ns::64-little>>, wkc: wkc}]} when wkc > 0 ->
@@ -1017,15 +1000,16 @@ defmodule EtherCAT.Slave do
     sm0 = <<ro::16-little, rs::16-little, 0x26::8, 0::8, 0x00::8, 0::8>>
     sm1 = <<so::16-little, ss::16-little, 0x22::8, 0::8, 0x00::8, 0::8>>
 
-    Bus.transaction_queue(data.bus, fn tx ->
-      tx
+    Bus.transaction(
+      data.bus,
+      Transaction.new()
       |> Transaction.fpwr(data.station, Registers.sm_activate(0, 0))
       |> Transaction.fpwr(data.station, Registers.sm_activate(1, 0))
       |> Transaction.fpwr(data.station, Registers.sm(0, sm0))
       |> Transaction.fpwr(data.station, Registers.sm(1, sm1))
       |> Transaction.fpwr(data.station, Registers.sm_activate(0, 1))
       |> Transaction.fpwr(data.station, Registers.sm_activate(1, 1))
-    end)
+    )
   end
 
   # -- Bit-level SM packing helpers ------------------------------------------

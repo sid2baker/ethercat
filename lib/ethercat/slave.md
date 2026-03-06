@@ -165,7 +165,7 @@ EtherCAT epoch offset: `946_684_800_000_000_000` ns (difference between Unix epo
 ETG.1020 §6.3.2 requires DC SYNC configuration after the slave has confirmed SafeOp. At this point FMMUs are already written (done in `:preop`) and the PDI is armed. Configuring earlier risks a race where the first SYNC0 pulse fires before the slave PDI is ready.
 
 **Which bus transaction mode is used where?**
-Configuration and mailbox writes use `Bus.transaction_queue/2` because delivery matters more than strict timing.
+Configuration and mailbox writes use `Bus.transaction/2` because delivery matters more than strict timing.
 Runtime latch polling in `:op` uses `Bus.transaction/3` with a timeout budget slightly below poll/cycle period so stale polls are dropped instead of queued, preventing recurring latch polls from building backlog on the bus.
 
 **Why send `{:slave_ready, name, :preop}` to `EtherCAT.Master`?**

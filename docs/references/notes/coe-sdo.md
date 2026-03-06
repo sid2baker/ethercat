@@ -18,7 +18,7 @@ Differences:
 ## Elixir translation
 | C pattern | Elixir equivalent |
 |-----------|-------------------|
-| Mailbox send then poll | `Bus.transaction_queue` write to mailbox window, then repeated `fprd` mailbox status checks |
+| Mailbox send then poll | `Bus.transaction/2` write to mailbox window, then repeated reliable `fprd` mailbox status checks |
 | Validate CoE response header | Binary match mailbox payload before decode |
 | Segmented SDO transfer | `gen_statem` loop with toggled segment flag in state data |
 
@@ -28,12 +28,13 @@ Differences:
 ```
 
 ```elixir
-Bus.transaction_queue(link, fn tx ->
-  tx
+Bus.transaction(
+  bus,
+  Transaction.new()
   |> Transaction.fpwr(station, {mailbox_rx_offset, coe_request_frame})
   |> Transaction.fprd(station, Registers.sm_status(1))
   |> Transaction.fprd(station, {mailbox_tx_offset, mailbox_tx_size})
-end)
+)
 ```
 
 Suggested `gen_statem` names:

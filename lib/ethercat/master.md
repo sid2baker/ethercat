@@ -33,7 +33,7 @@ restarted on individual slave crashes.
 Entry action: immediately schedule `{:timeout, :scan_poll}` with 0 ms delay.
 
 On each scan poll:
-1. `Bus.transaction_queue(bus, &Transaction.brd(&1, {0x0000, 1}))` — BRD to register 0 (any accessible byte). WKC = number of responding slaves.
+1. `Bus.transaction(bus, Transaction.brd({0x0000, 1}))` — BRD to register 0 (any accessible byte). WKC = number of responding slaves.
 2. Append `{monotonic_ms, wkc}` to sliding window; trim entries older than `scan_stable_ms + scan_poll_ms` (1100 ms window).
 3. Stable when: window spans ≥ 1000 ms, ≥ 2 readings, all readings identical, count > 0.
 4. On stability: tune bus frame timeout (`Bus.set_frame_timeout/2`) from slave count and cycle budget, then call `do_configure/1` synchronously and transition to `:configuring` or `:running` (the latter if no named slaves).
@@ -138,7 +138,7 @@ Implements ESC datasheet §9.1.3.6 (clock synchronization initialization):
 
 `DC` is a `gen_statem` in state `:running`. On each tick (default 10 ms):
 ```
-Bus.transaction(bus, &Transaction.armw(&1, ref_station, Registers.dc_system_time()))
+Bus.transaction(bus, Transaction.armw(ref_station, Registers.dc_system_time()))
 ```
 ARMW to `0x0910` of reference clock: the reference clock's 64-bit system time is read into the datagram; all downstream slaves in the ring write the datagram value to their own `0x0910`. Each slave's PLL computes `Δt` and adjusts clock speed.
 
@@ -181,4 +181,6 @@ Telemetry: `[:ethercat, :dc, :tick]` with `%{wkc: wkc}` on each tick.
 - **No static drift pre-compensation**: the datasheet recommends sending ~15,000 ARMW frames before operation to eliminate static drift. The DC gen_statem starts periodic ticking immediately without this warm-up phase.
 - **No IRQ-based slave event detection**: master cannot receive slave-initiated events (AL state changes, error flags) without polling. The ECAT event request (`0x0210`) IRQ field in datagrams is not monitored.
 - **Topology limited to linear chain**: DC delay calculation assumes a simple chain topology. Tree topologies with slaves having 3+ ports require the full formula from datasheet §9.1.2.2.
-- **No redundancy support**: assumes single-segment bus without redundancy ports.
+- **No master-level redundancy state API yet**: redundant links are handled inside the
+  bus/link layer, but the master does not yet expose domain or link redundancy status
+  as a first-class runtime API.

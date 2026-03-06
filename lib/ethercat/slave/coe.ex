@@ -87,7 +87,7 @@ defmodule EtherCAT.Slave.CoE do
   # -- Transport helpers -------------------------------------------------------
 
   defp write_mailbox(bus, station, recv_offset, frame) do
-    case Bus.transaction_queue(bus, &Transaction.fpwr(&1, station, {recv_offset, frame})) do
+    case Bus.transaction(bus, Transaction.fpwr(station, {recv_offset, frame})) do
       {:ok, [%{wkc: wkc}]} when wkc > 0 -> :ok
       {:ok, [%{wkc: 0}]} -> {:error, :no_response}
       {:error, _} = err -> err
@@ -99,7 +99,7 @@ defmodule EtherCAT.Slave.CoE do
   defp wait_response(_bus, _station, 0), do: {:error, :response_timeout}
 
   defp wait_response(bus, station, remaining) do
-    case Bus.transaction_queue(bus, &Transaction.fprd(&1, station, Registers.sm_status(1))) do
+    case Bus.transaction(bus, Transaction.fprd(station, Registers.sm_status(1))) do
       {:ok, [%{data: <<status::8>>, wkc: wkc}]} when wkc > 0 ->
         case <<status::8>> do
           <<_::4, 1::1, _::3>> ->
@@ -120,7 +120,7 @@ defmodule EtherCAT.Slave.CoE do
   end
 
   defp read_mailbox(bus, station, send_offset, send_size) do
-    case Bus.transaction_queue(bus, &Transaction.fprd(&1, station, {send_offset, send_size})) do
+    case Bus.transaction(bus, Transaction.fprd(station, {send_offset, send_size})) do
       {:ok, [%{data: data, wkc: wkc}]} when wkc > 0 -> {:ok, data}
       {:ok, [%{wkc: 0}]} -> {:error, :no_response}
       {:error, _} = err -> err

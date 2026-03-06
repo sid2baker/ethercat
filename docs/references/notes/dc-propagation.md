@@ -18,7 +18,7 @@ Differences:
 ## Elixir translation
 | C pattern | Elixir equivalent |
 |-----------|-------------------|
-| Latch all DC receive times before per-slave reads | `Bus.transaction_queue(link, &Transaction.bwr(&1, Registers.dc_recv_time_latch()))` |
+| Latch all DC receive times before per-slave reads | `Bus.transaction(bus, Transaction.bwr(Registers.dc_recv_time_latch()))` |
 | Read receive-time + local DC time | `Transaction.fprd(tx, station, Registers.dc_recv_time(port))` and `Transaction.fprd(tx, station, Registers.dc_recv_time_ecat())` |
 | Write computed offset + delay | `Transaction.fpwr(tx, station, Registers.dc_system_time_offset(offset_ns))` then `Transaction.fpwr(tx, station, Registers.dc_system_time_delay(delay_ns))` |
 | Reset speed counter/PLL seed | `fprd` + same-value `fpwr` on `Registers.dc_speed_counter_start()` |
@@ -29,12 +29,13 @@ Differences:
 ```
 
 ```elixir
-Bus.transaction_queue(link, fn tx ->
-  tx
+Bus.transaction(
+  bus,
+  Transaction.new()
   |> Transaction.fprd(ref_station, Registers.dc_recv_time_ecat())
   |> Transaction.fpwr(ref_station, Registers.dc_system_time_offset(offset_ns))
   |> Transaction.fpwr(ref_station, Registers.dc_system_time_delay(delay_ns))
-end)
+)
 ```
 
 Suggested `gen_statem` placement:

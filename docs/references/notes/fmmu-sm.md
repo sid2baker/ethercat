@@ -27,11 +27,12 @@ Differences:
 ```
 
 ```elixir
-Bus.transaction_queue(link, fn tx ->
-  tx
+Bus.transaction(
+  bus,
+  Transaction.new()
   |> Transaction.fpwr(station, Registers.sm(sm_index, sm_page))
   |> Transaction.fpwr(station, Registers.fmmu(fmmu_index, fmmu_page))
-end)
+)
 ```
 
 Suggested `gen_statem` names:

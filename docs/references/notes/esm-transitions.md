@@ -16,7 +16,7 @@ Differences:
 ## Elixir translation
 | C pattern | Elixir equivalent |
 |-----------|-------------------|
-| AL control write | `Bus.transaction_queue(link, &Transaction.fpwr(&1, station, Registers.al_control(code)))` |
+| AL control write | `Bus.transaction(bus, Transaction.fpwr(station, Registers.al_control(code)))` |
 | AL status poll | retry loop with `Transaction.fprd(tx, station, Registers.al_status())` |
 | AL error code fetch + ack | `fprd Registers.al_status_code()` then `fpwr Registers.al_control(current_state_with_ack)` |
 
@@ -26,12 +26,13 @@ Differences:
 ```
 
 ```elixir
-Bus.transaction_queue(link, fn tx ->
-  tx
+Bus.transaction(
+  bus,
+  Transaction.new()
   |> Transaction.fpwr(station, Registers.al_control(target_code))
   |> Transaction.fprd(station, Registers.al_status())
   |> Transaction.fprd(station, Registers.al_status_code())
-end)
+)
 ```
 
 Suggested `gen_statem` names:

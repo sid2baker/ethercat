@@ -383,19 +383,24 @@ Application
     │               └── EtherCAT.Slave.SII     EEPROM read/write/reload
     │
     ├── EtherCAT.Slave.Registers  compile-time ESC register map
-    └── EtherCAT.Link             raw Ethernet frame transport
+    └── EtherCAT.Bus             scheduler + frame coordinator
             │
-            ├── EtherCAT.Link.SinglePort   one interface
-            └── EtherCAT.Link.Redundant    two interfaces
+            └── EtherCAT.Bus.Link
+                    ├── EtherCAT.Bus.Link.SinglePort   one interface
+                    └── EtherCAT.Bus.Link.Redundant    two interfaces
 ```
 
 ### Layer responsibilities
 
-**Link layer** (`EtherCAT.Link`): Pure transport. Sends one Ethernet frame, waits
-for the response, returns datagrams with their WKC values. Uses raw sockets via
-`:socket` at `AF_PACKET` level. The `transaction/2` API takes a closure that builds
-the datagram list; this prevents partial frame sends. Concurrent callers are serialised
-by the Link gen_statem's `:postpone` mechanism — no external mutex needed.
+**Bus layer** (`EtherCAT.Bus`): The only scheduler. It accepts `Transaction` values,
+serializes all EtherCAT I/O, prioritizes realtime work over reliable backlog, packs
+reliable submissions opportunistically, and slices one frame response back to the
+original callers.
+
+**Link layer** (`EtherCAT.Bus.Link`): Topology-specific roundtrip adapter. It owns
+wire behavior, per-port send/receive, degradation, and reconnect logic. `SinglePort`
+maps one transport directly. `Redundant` sends the same frame on both ports and merges
+responses by higher WKC.
 
 **Slave layer** (`EtherCAT.Slave`): One gen_statem per physical slave. Manages the
 ESM state machine (Init → PreOp → SafeOp → Op and backward). Reads SII EEPROM at
@@ -410,7 +415,7 @@ raw binary slices per station.
 
 **Domain** (`EtherCAT.Domain`): Self-timed cyclic gen_statem. Drives the LRW period
 via `state_timeout`. Owns one ETS table per domain for zero-overhead output/input
-exchange. Multiple domains can run independently at different rates on the same Link.
+exchange. Multiple domains can run independently at different rates on the same Bus.
 
 **Driver behaviour** (`EtherCAT.Slave.Driver`): Implemented by the user for each
 slave type. Three mandatory callbacks:

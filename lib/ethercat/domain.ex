@@ -307,7 +307,7 @@ defmodule EtherCAT.Domain do
     result =
       Bus.transaction(
         data.bus,
-        &Transaction.lrw(&1, {data.logical_base, image}),
+        Transaction.lrw({data.logical_base, image}),
         cycle_transaction_timeout_us(data.period_us)
       )
 

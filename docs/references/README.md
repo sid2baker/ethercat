@@ -87,12 +87,12 @@ When implementing a feature:
 
 | C pattern | Elixir equivalent |
 |-----------|-------------------|
-| `ecrt_master_send` / `EC_WRITE_S8` register write | `Bus.transaction_queue(link, &Transaction.fpwr(&1, station, Registers.xxx(val)))` |
-| `ec_datagram_fprd` + send + receive | `Bus.transaction_queue(link, &Transaction.fprd(&1, station, Registers.xxx()))` |
-| `ecrt_domain_process` LRW loop | `Bus.transaction(link, &Transaction.lrw(&1, {base, image}))` |
+| `ecrt_master_send` / `EC_WRITE_S8` register write | `Bus.transaction(bus, Transaction.fpwr(station, Registers.xxx(val)))` |
+| `ec_datagram_fprd` + send + receive | `Bus.transaction(bus, Transaction.fprd(station, Registers.xxx()))` |
+| `ecrt_domain_process` LRW loop | `Bus.transaction(bus, Transaction.lrw({base, image}), deadline_us)` |
 | polling `while(status != target)` | `state_timeout` tick in gen_statem |
 | `Bitwise.band(reg, 0x0F)` | `<<_::4, val::4, _::8>> = bytes` (binary pattern match) |
-| ARMW drift correction | `Bus.transaction(link, &Transaction.armw(&1, ref_station, Registers.dc_system_time()))` |
+| ARMW drift correction | `Bus.transaction(bus, Transaction.armw(ref_station, Registers.dc_system_time()), deadline_us)` |
 
 4. **Never import Bitwise** — always binary pattern matching for bit fields.
 5. **Register addresses** come from `lib/ethercat/slave/registers.ex` — add new ones there, never hardcode.

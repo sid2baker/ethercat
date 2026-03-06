@@ -7,57 +7,66 @@ defmodule EtherCAT.Telemetry do
 
   ## Events
 
-  ### Transaction span (emitted by `Bus.transaction/2`)
+  ### Transaction span (emitted by `Bus.transaction/2|3`)
 
       [:ethercat, :bus, :transact, :start]
         measurements: %{system_time: integer(), monotonic_time: integer()}
-        metadata:     %{datagram_count: integer()}
+        metadata:     %{datagram_count: integer(), class: :realtime | :reliable}
 
       [:ethercat, :bus, :transact, :stop]
         measurements: %{duration: integer()}
-        metadata:     %{datagram_count: integer(), total_wkc: integer()}
+        metadata:     %{datagram_count: integer(), total_wkc: integer(), class: :realtime | :reliable}
 
       [:ethercat, :bus, :transact, :exception]
         measurements: %{duration: integer()}
         metadata:     %{kind: atom(), reason: term(), stacktrace: list()}
 
-  ### Frame-level events
+  ### Submission events
+
+      [:ethercat, :bus, :submission, :enqueued]
+        measurements: %{queue_depth: non_neg_integer()}
+        metadata:     %{link: String.t(), class: :realtime | :reliable, state: :idle | :awaiting}
+
+  `queue_depth` is the depth of that submission class immediately after
+  admission and before any immediate dispatch on an idle bus.
+
+      [:ethercat, :bus, :submission, :expired]
+        measurements: %{age_us: non_neg_integer()}
+        metadata:     %{link: String.t(), class: :realtime}
+
+  ### Dispatch events
+
+      [:ethercat, :bus, :dispatch, :sent]
+        measurements: %{transaction_count: pos_integer(), datagram_count: pos_integer()}
+        metadata:     %{link: String.t(), class: :realtime | :reliable}
+
+  ### Frame events
 
       [:ethercat, :bus, :frame, :sent]
         measurements: %{size: integer(), tx_timestamp: integer() | nil}
-        metadata:     %{transport: String.t(), port: :primary | :secondary}
+        metadata:     %{link: String.t(), port: :primary | :secondary}
 
       [:ethercat, :bus, :frame, :received]
         measurements: %{size: integer(), rx_timestamp: integer() | nil}
-        metadata:     %{transport: String.t(), port: :primary | :secondary}
+        metadata:     %{link: String.t(), port: :primary | :secondary}
 
       [:ethercat, :bus, :frame, :dropped]
         measurements: %{size: integer()}
-        metadata:     %{transport: String.t(), reason: atom()}
+        metadata:     %{link: String.t(), reason: atom()}
 
       [:ethercat, :bus, :frame, :ignored]
         measurements: %{}
-        metadata:     %{transport: String.t()}
+        metadata:     %{link: String.t()}
 
-  ### Transaction queueing
+  ### Link lifecycle events
 
-      [:ethercat, :bus, :transact, :discarded]
+      [:ethercat, :bus, :link, :down]
         measurements: %{}
-        metadata:     %{transport: String.t()}
+        metadata:     %{link: String.t(), reason: term()}
 
-      [:ethercat, :bus, :transact, :batch_sent]
-        measurements: %{transaction_count: integer()}
-        metadata:     %{transport: String.t()}
-
-  ### Transport lifecycle events
-
-      [:ethercat, :bus, :transport, :down]
+      [:ethercat, :bus, :link, :reconnected]
         measurements: %{}
-        metadata:     %{transport: String.t(), reason: term()}
-
-      [:ethercat, :bus, :transport, :reconnected]
-        measurements: %{}
-        metadata:     %{transport: String.t()}
+        metadata:     %{link: String.t()}
 
   ### DC drift maintenance
 
@@ -86,7 +95,7 @@ defmodule EtherCAT.Telemetry do
 
       :telemetry.attach_many("ethercat-log", [
         [:ethercat, :bus, :transact, :stop],
-        [:ethercat, :bus, :transport, :down]
+        [:ethercat, :bus, :link, :down]
       ], &MyHandler.handle_event/4, nil)
   """
 
@@ -101,89 +110,83 @@ defmodule EtherCAT.Telemetry do
   end
 
   # ---------------------------------------------------------------------------
-  # Convenience emitters — called from Bus.Transport.SinglePort and Bus.Transport.Redundant
+  # Convenience emitters — called from Bus, link adapters, and runtime workers.
   # ---------------------------------------------------------------------------
 
   @doc false
-  def frame_sent(transport, port, size, tx_timestamp \\ nil) do
+  def submission_enqueued(link, class, state, queue_depth) do
+    execute(
+      [:ethercat, :bus, :submission, :enqueued],
+      %{queue_depth: queue_depth},
+      %{link: link, class: class, state: state}
+    )
+  end
+
+  @doc false
+  def submission_expired(link, class, age_us) do
+    execute(
+      [:ethercat, :bus, :submission, :expired],
+      %{age_us: age_us},
+      %{link: link, class: class}
+    )
+  end
+
+  @doc false
+  def dispatch_sent(link, class, transaction_count, datagram_count) do
+    execute(
+      [:ethercat, :bus, :dispatch, :sent],
+      %{transaction_count: transaction_count, datagram_count: datagram_count},
+      %{link: link, class: class}
+    )
+  end
+
+  @doc false
+  def frame_sent(link, port, size, tx_timestamp \\ nil) do
     execute(
       [:ethercat, :bus, :frame, :sent],
       %{size: size, tx_timestamp: tx_timestamp},
-      %{transport: transport, port: port}
+      %{link: link, port: port}
     )
   end
 
   @doc false
-  def frame_received(transport, port, size, rx_timestamp \\ nil) do
+  def frame_received(link, port, size, rx_timestamp \\ nil) do
     execute(
       [:ethercat, :bus, :frame, :received],
       %{size: size, rx_timestamp: rx_timestamp},
-      %{transport: transport, port: port}
+      %{link: link, port: port}
     )
   end
 
   @doc false
-  def frame_dropped(transport, size, reason) do
+  def frame_dropped(link, size, reason) do
     execute(
       [:ethercat, :bus, :frame, :dropped],
       %{size: size},
-      %{transport: transport, reason: reason}
+      %{link: link, reason: reason}
     )
   end
 
   @doc false
-  def frame_ignored(transport) do
-    execute([:ethercat, :bus, :frame, :ignored], %{}, %{transport: transport})
+  def frame_ignored(link) do
+    execute([:ethercat, :bus, :frame, :ignored], %{}, %{link: link})
   end
 
   @doc false
-  def transact_discarded(transport) do
+  def link_down(link, reason) do
     execute(
-      [:ethercat, :bus, :transact, :discarded],
+      [:ethercat, :bus, :link, :down],
       %{},
-      %{transport: transport}
+      %{link: link, reason: reason}
     )
   end
 
   @doc false
-  def batch_sent(transport, transaction_count) do
+  def link_reconnected(link) do
     execute(
-      [:ethercat, :bus, :transact, :batch_sent],
-      %{transaction_count: transaction_count},
-      %{transport: transport}
-    )
-  end
-
-  @doc false
-  def transact_direct(transport) do
-    execute([:ethercat, :bus, :transact, :direct], %{}, %{transport: transport})
-  end
-
-  @doc false
-  def transact_postponed(transport) do
-    execute([:ethercat, :bus, :transact, :postponed], %{}, %{transport: transport})
-  end
-
-  @doc false
-  def transact_queued(transport) do
-    execute([:ethercat, :bus, :transact, :queued], %{}, %{transport: transport})
-  end
-
-  @doc false
-  def socket_down(transport, reason) do
-    execute(
-      [:ethercat, :bus, :transport, :down],
+      [:ethercat, :bus, :link, :reconnected],
       %{},
-      %{transport: transport, reason: reason}
-    )
-  end
-
-  @doc false
-  def socket_reconnected(transport) do
-    execute(
-      [:ethercat, :bus, :transport, :reconnected],
-      %{},
-      %{transport: transport}
+      %{link: link}
     )
   end
 
@@ -224,17 +227,15 @@ defmodule EtherCAT.Telemetry do
     [:ethercat, :bus, :transact, :start],
     [:ethercat, :bus, :transact, :stop],
     [:ethercat, :bus, :transact, :exception],
-    [:ethercat, :bus, :transact, :discarded],
-    [:ethercat, :bus, :transact, :batch_sent],
-    [:ethercat, :bus, :transact, :direct],
-    [:ethercat, :bus, :transact, :postponed],
-    [:ethercat, :bus, :transact, :queued],
+    [:ethercat, :bus, :submission, :enqueued],
+    [:ethercat, :bus, :submission, :expired],
+    [:ethercat, :bus, :dispatch, :sent],
     [:ethercat, :bus, :frame, :sent],
     [:ethercat, :bus, :frame, :received],
     [:ethercat, :bus, :frame, :dropped],
     [:ethercat, :bus, :frame, :ignored],
-    [:ethercat, :bus, :transport, :down],
-    [:ethercat, :bus, :transport, :reconnected],
+    [:ethercat, :bus, :link, :down],
+    [:ethercat, :bus, :link, :reconnected],
     [:ethercat, :dc, :tick],
     [:ethercat, :domain, :cycle, :done],
     [:ethercat, :domain, :cycle, :missed]
@@ -255,6 +256,7 @@ defmodule EtherCAT.Telemetry do
       EtherCAT.Telemetry.reset()
   """
   def attach do
+    detach()
     ref = :counters.new(length(@all_events), [:write_concurrency])
     :persistent_term.put({__MODULE__, :counters}, ref)
 
@@ -274,16 +276,30 @@ defmodule EtherCAT.Telemetry do
   end
 
   @doc """
+  Return current counters as `{event, count}` tuples.
+  """
+  @spec snapshot() :: [{[atom()], non_neg_integer()}]
+  def snapshot do
+    case :persistent_term.get({__MODULE__, :counters}, nil) do
+      nil ->
+        []
+
+      ref ->
+        Enum.map(@all_events, fn event ->
+          idx = Map.fetch!(@event_index, event)
+          {event, :counters.get(ref, idx + 1)}
+        end)
+    end
+  end
+
+  @doc """
   Print event counts.
   """
   def stats do
-    ref = :persistent_term.get({__MODULE__, :counters}, nil)
+    snapshot = snapshot()
 
-    if ref do
-      @all_events
-      |> Enum.with_index()
-      |> Enum.each(fn {event, idx} ->
-        count = :counters.get(ref, idx + 1)
+    if snapshot != [] do
+      Enum.each(snapshot, fn {event, count} ->
         name = event |> Enum.drop(1) |> Enum.join(".")
         IO.puts("  #{String.pad_trailing(name, 30)} #{count}")
       end)

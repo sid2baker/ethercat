@@ -16,7 +16,7 @@ Differences:
 ## Elixir translation
 | C pattern | Elixir equivalent |
 |-----------|-------------------|
-| Poll latch status register | `Bus.transaction_queue(link, &Transaction.fprd(&1, station, Registers.dc_latch_event_status()))` (helper missing today) |
+| Poll latch status register | `Bus.transaction(bus, Transaction.fprd(station, Registers.dc_latch_event_status()), deadline_us)` (helper missing today) |
 | Read and clear timestamp source | `Transaction.fprd(tx, station, Registers.dc_latch0_pos_time())` etc. (helpers missing today) |
 | Poll loop | Slave `gen_statem` `:op` + `{:state_timeout, :latch_poll}` event |
 
@@ -26,11 +26,12 @@ Differences:
 ```
 
 ```elixir
-Bus.transaction_queue(link, fn tx ->
-  tx
+Bus.transaction(
+  bus,
+  Transaction.new()
   |> Transaction.fprd(station, Registers.dc_latch_event_status())
   |> Transaction.fprd(station, Registers.dc_latch0_pos_time())
-end)
+)
 ```
 
 Suggested `gen_statem` names:

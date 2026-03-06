@@ -24,11 +24,12 @@ Tracks ESC register helpers needed by the reference-note translations that are n
 ```
 
 ```elixir
-Bus.transaction_queue(link, fn tx ->
-  tx
+Bus.transaction(
+  bus,
+  Transaction.new()
   |> Transaction.fpwr(station, Registers.dc_sync0_cycle_time(sync0_ns))
   |> Transaction.fpwr(station, Registers.dc_assign_activate(assign_code))
-end)
+)
 ```
 
 Suggested `gen_statem` integration points:

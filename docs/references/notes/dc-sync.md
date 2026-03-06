@@ -17,7 +17,7 @@ Differences:
 ## Elixir translation
 | C pattern | Elixir equivalent |
 |-----------|-------------------|
-| Write cycle parameters before activation | Queue `Transaction.fpwr` with `Registers.dc_sync0_cycle_time/1` and missing helper `Registers.dc_sync1_cycle_time/1` |
+| Write cycle parameters before activation | Build one reliable `Transaction` with `Registers.dc_sync0_cycle_time/1` and missing helper `Registers.dc_sync1_cycle_time/1` |
 | Check sync quality before start | `Transaction.fprd(tx, station, Registers.dc_system_time_diff())` with retry loop in `gen_statem` event handler |
 | Start-time arm then assign/activate | `Transaction.fpwr(tx, station, Registers.dc_sync0_start_time(start_ns))` followed by missing helper `Registers.dc_assign_activate(code)` |
 
@@ -27,12 +27,13 @@ Differences:
 ```
 
 ```elixir
-Bus.transaction_queue(link, fn tx ->
-  tx
+Bus.transaction(
+  bus,
+  Transaction.new()
   |> Transaction.fpwr(station, Registers.dc_sync0_cycle_time(sync0_ns))
   |> Transaction.fpwr(station, Registers.dc_sync0_start_time(start_ns))
   |> Transaction.fpwr(station, Registers.dc_activation(activation_code))
-end)
+)
 ```
 
 Suggested `gen_statem` names:
@@ -40,7 +41,7 @@ Suggested `gen_statem` names:
 2. Internal events: `:dc_sync_check`, `:dc_sync_start`, `:dc_sync_activate`.
 
 ## Gotchas
-- Activation must be written last in the same queued frame as final parameters.
+- Activation must be written last in the same transaction as the final parameters.
 - SYNC1 in both stacks is derived from SYNC0 timing, not an independent clock source.
 - Register helpers currently missing for full parity: `dc_sync1_cycle_time`, `dc_assign_activate`.
 - See `docs/references/notes/missing-registers.md` for exact helper list.

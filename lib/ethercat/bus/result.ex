@@ -16,7 +16,7 @@ defmodule EtherCAT.Bus.Result do
   ## Example
 
       {:ok, [%Result{data: <<status::16-little>>, wkc: 1}]} =
-        Bus.transaction(bus, &Transaction.fprd(&1, 0x1001, Registers.al_status()))
+        Bus.transaction(bus, Transaction.fprd(0x1001, Registers.al_status()))
   """
 
   @type t :: %__MODULE__{

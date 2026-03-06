@@ -1,8 +1,34 @@
-# EtherCAT Link Transaction API Refactor
+# Historical Plan: Link Transaction API Refactor
+
+## Status: COMPLETED AND SUPERSEDED
+
+## Historical Note
+
+This document describes the earlier transaction-API refactor that introduced
+`Transaction` and `Result` as public concepts. The implementation later moved
+from the old `EtherCAT.Link` naming and module layout to the current
+`EtherCAT.Bus` architecture.
+
+Current equivalents:
+
+- `EtherCAT.Link` -> `EtherCAT.Bus`
+- `EtherCAT.Link.Transaction` -> `EtherCAT.Bus.Transaction`
+- `EtherCAT.Link.Result` -> `EtherCAT.Bus.Result`
+- `lib/ethercat/link/normal.ex` -> `lib/ethercat/bus/link/single_port.ex`
+- old redundant path references -> `lib/ethercat/bus/link/redundant.ex`
+
+Current public API:
+
+```elixir
+Bus.transaction(bus, tx)
+Bus.transaction(bus, tx, deadline_us)
+```
 
 ## Goal
 
-Refactor `EtherCAT.Link` public API from 15+ per-command convenience functions to 3 public items: `start_link/1`, `transaction/2`, and `Transaction` builder module, with a `Result` struct replacing raw `%Datagram{}` in responses.
+Refactor the old `EtherCAT.Link` public API from 15+ per-command convenience
+functions to a smaller transaction-based surface, with a `Result` struct
+replacing raw `%Datagram{}` in responses.
 
 ## Key Decisions
 
