@@ -83,9 +83,13 @@ defmodule EtherCAT.Domain do
   end
 
   @doc """
-  Register a PDO slice. Returns `{:ok, logical_offset}` immediately.
+  Register a PDO slice. Returns `{:ok, logical_address}` immediately.
 
-  Called by Slave in its `:preop` enter handler. The returned offset is
+  `logical_address` is the **absolute** logical bus address for the FMMU:
+  `domain.logical_base + relative_offset_within_image`. The slave must use
+  this value directly as the FMMU logical start address.
+
+  Called by Slave in its `:preop` enter handler. The returned address is
   used to write the FMMU register in the same enter callback — no async
   coordination required.
 
@@ -202,7 +206,7 @@ defmodule EtherCAT.Domain do
 
     new_data = %{data | layout: layout}
 
-    {:keep_state, new_data, [{:reply, from, {:ok, offset}}]}
+    {:keep_state, new_data, [{:reply, from, {:ok, data.logical_base + offset}}]}
   end
 
   def handle_event({:call, from}, {:register_pdo, _, _, _, _}, _state, _data) do
