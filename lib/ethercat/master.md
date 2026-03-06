@@ -235,8 +235,8 @@ Telemetry:
   dc_pid:          pid() | nil,          # DC gen_statem pid
   dc_ref_station:  non_neg_integer() | nil,  # Station of reference clock slave
   dc_stations:     [non_neg_integer()],  # DC-capable stations monitored via 0x092C
-  slave_config:    [EtherCAT.Slave.Config.t()],  # normalized slave configs
-  domain_config:   [EtherCAT.Domain.Config.t()], # normalized domain configs
+  slave_configs:   [EtherCAT.Slave.Config.t()],  # normalized slave configs
+  domain_configs:  [EtherCAT.Domain.Config.t()], # normalized domain configs
   dc_config:       EtherCAT.DC.Config.t() | nil,  # master-wide DC config; nil disables DC
   frame_timeout_override_ms: pos_integer() | nil, # Optional fixed bus frame timeout
   base_station:    non_neg_integer(),    # Default 0x1000

@@ -5,9 +5,8 @@
 `EtherCAT.Slave` is a `gen_statem` (`:handle_event_function` + `:state_enter` mode) that
 manages the EtherCAT State Machine (ESM) lifecycle for one physical slave device.
 
-One Slave process per named slave. Registered in `EtherCAT.Registry` under two keys:
+One Slave process per named slave. Registered in `EtherCAT.Registry` under:
 - `{:slave, name}` — atom name, used by public API
-- `{:slave_station, station}` — integer station address, used for internal lookup
 
 The Slave is supervised under `EtherCAT.SlaveSupervisor` as `:temporary` (not restarted on crash).
 
@@ -96,7 +95,7 @@ via the `@paths` map. `walk_path/2` calls `do_transition/2` for each intermediat
   latch_names:       map(),              # %{{0|1, :pos|:neg} => latch_name}
   active_latches:    list() | nil,       # [{0|1, :pos|:neg}] derived from sync.latches
   latch_poll_ms:     pos_integer() | nil, # latch poll interval while in :op
-  signal_registrations: map(),          # %{signal_name => %{domain_id, sm_key, bit_offset, bit_size}}
+  signal_registrations: map(),          # %{signal_name => %{domain_id, sm_key, direction, bit_offset, bit_size}}
   signal_registrations_by_sm: map(),    # %{sm_key => [{signal_name, %{bit_offset, bit_size}}]}
   subscriptions:     map(),             # %{signal_or_latch_name => MapSet.t(pid())}
   subscriber_refs:   map(),             # %{pid => monitor_ref}

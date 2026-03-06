@@ -191,15 +191,16 @@ defmodule EtherCAT do
   @doc """
   Stage `value` into a slave output PDO for the next domain cycle.
 
-  This does not toggle hardware immediately. It encodes via the driver and writes
-  to the domain output buffer directly (no gen_statem hop).
+  This confirms the value was staged into the master's domain output buffer for
+  the next cycle. It does not prove the slave has already applied the value on
+  hardware.
   """
   @spec write_output(atom(), atom(), term()) :: :ok | {:error, term()}
   def write_output(slave_name, pdo_name, value),
     do: Slave.write_output(slave_name, pdo_name, value)
 
   @doc """
-  Read the latest decoded input sample for a slave PDO.
+  Read the latest decoded input sample for a slave input signal.
 
   This returns the last process-image value observed by the master, not a direct
   wire read and not an exact hardware-edge timestamp. Exact event timing requires

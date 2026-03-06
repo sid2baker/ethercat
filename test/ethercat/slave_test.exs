@@ -17,6 +17,22 @@ defmodule EtherCAT.SlaveTest do
     def decode_signal(_signal, _config, _raw), do: 0
   end
 
+  defmodule BitDriver do
+    @behaviour EtherCAT.Slave.Driver
+
+    @impl true
+    def process_data_model(_config), do: %{}
+
+    @impl true
+    def encode_signal(_signal, _config, value), do: <<value::8>>
+
+    @impl true
+    def decode_signal(_signal, _config, <<_::7, bit::1>>), do: bit
+
+    @impl true
+    def decode_signal(_signal, _config, _raw), do: 0
+  end
+
   defmodule InvalidMailboxDriver do
     @behaviour EtherCAT.Slave.Driver
 
@@ -216,6 +232,82 @@ defmodule EtherCAT.SlaveTest do
              )
 
     assert updated.configuration_error == {:invalid_mailbox_step, :bad_step}
+  end
+
+  test "write_output rejects registered input signals" do
+    from = {self(), make_ref()}
+
+    assert {:keep_state_and_data, [{:reply, ^from, {:error, {:not_output, :ch1}}}]} =
+             EtherCAT.Slave.handle_event(
+               {:call, from},
+               {:write_output, :ch1, 1},
+               :op,
+               %EtherCAT.Slave{
+                 signal_registrations: %{
+                   ch1: %{
+                     domain_id: :main,
+                     sm_key: {:sm, 0},
+                     direction: :input,
+                     bit_offset: 0,
+                     bit_size: 1
+                   }
+                 }
+               }
+             )
+  end
+
+  test "read_input rejects registered output signals" do
+    from = {self(), make_ref()}
+
+    assert {:keep_state_and_data, [{:reply, ^from, {:error, {:not_input, :ch1}}}]} =
+             EtherCAT.Slave.handle_event(
+               {:call, from},
+               {:read_input, :ch1},
+               :op,
+               %EtherCAT.Slave{
+                 signal_registrations: %{
+                   ch1: %{
+                     domain_id: :main,
+                     sm_key: {:sm, 1},
+                     direction: :output,
+                     bit_offset: 0,
+                     bit_size: 1
+                   }
+                 }
+               }
+             )
+  end
+
+  test "write_output verifies the staged bytes in the domain buffer" do
+    domain_id = :"domain_#{System.unique_integer([:positive])}"
+    key = {:valve, {:sm, 1}}
+    table = :ets.new(domain_id, [:set, :public, :named_table])
+    :ets.insert(table, {key, <<0>>, nil})
+
+    from = {self(), make_ref()}
+
+    assert {:keep_state_and_data, [{:reply, ^from, :ok}]} =
+             EtherCAT.Slave.handle_event(
+               {:call, from},
+               {:write_output, :ch1, 1},
+               :op,
+               %EtherCAT.Slave{
+                 name: :valve,
+                 driver: BitDriver,
+                 config: %{},
+                 signal_registrations: %{
+                   ch1: %{
+                     domain_id: domain_id,
+                     sm_key: {:sm, 1},
+                     direction: :output,
+                     bit_offset: 0,
+                     bit_size: 1
+                   }
+                 }
+               }
+             )
+
+    assert [{^key, <<1>>, nil}] = :ets.lookup(domain_id, key)
   end
 
   test "subscriptions are deduplicated and removed when subscribers exit" do

@@ -83,8 +83,8 @@ defmodule EtherCAT.Master do
     # station address of the DC reference clock slave (nil if no DC)
     :dc_ref_station,
     :dc_stations,
-    :domain_config,
-    :slave_config,
+    :domain_configs,
+    :slave_configs,
     :dc_config,
     :frame_timeout_override_ms,
     activation_phase: :preop_ready,
@@ -280,8 +280,8 @@ defmodule EtherCAT.Master do
           dc_pid: nil,
           base_station: start_config.base_station,
           dc_stations: [],
-          slave_config: start_config.slave_config,
-          domain_config: start_config.domain_config,
+          slave_configs: start_config.slave_config,
+          domain_configs: start_config.domain_config,
           dc_config: start_config.dc_config,
           frame_timeout_override_ms: start_config.frame_timeout_override_ms,
           activation_phase: :preop_ready,
@@ -718,25 +718,25 @@ defmodule EtherCAT.Master do
 
   defp configure_discovered_slave(data, slave_name, spec) do
     with {:ok, current_config, config_idx} <-
-           Config.fetch_slave_config(data.slave_config || [], slave_name),
+           Config.fetch_slave_config(data.slave_configs || [], slave_name),
          {:ok, normalized_config} <-
            Config.normalize_runtime_slave_config(slave_name, spec, current_config),
          :ok <- ensure_known_domains(data, normalized_config),
          :ok <- ensure_slave_in_preop(slave_name),
          :ok <- maybe_apply_slave_configuration(slave_name, current_config, normalized_config) do
-      updated_slave_config = List.replace_at(data.slave_config, config_idx, normalized_config)
+      updated_slave_configs = List.replace_at(data.slave_configs, config_idx, normalized_config)
 
       {:ok,
        %{
          data
-         | slave_config: updated_slave_config,
-           activatable_slaves: Config.activatable_slave_names(updated_slave_config)
+         | slave_configs: updated_slave_configs,
+           activatable_slaves: Config.activatable_slave_names(updated_slave_configs)
        }}
     end
   end
 
   defp ensure_known_domains(data, slave_config) do
-    unknown_domains = Config.unknown_domain_ids(data.domain_config || [], slave_config)
+    unknown_domains = Config.unknown_domain_ids(data.domain_configs || [], slave_config)
 
     case unknown_domains do
       [] -> :ok
@@ -840,14 +840,14 @@ defmodule EtherCAT.Master do
          :ok <- reset_slaves_to_init(data, stations),
          {:ok, dc_ref_station, dc_stations} <- initialize_distributed_clocks(data, slave_topology),
          :ok <- start_domains(data, dc_ref_station),
-         {:ok, effective_slave_config, slaves, pending_preop, activatable_slaves} <-
+         {:ok, effective_slave_configs, slaves, pending_preop, activatable_slaves} <-
            start_slaves(data, count, if(dc_ref_station, do: dc_cycle_ns(data), else: nil)) do
       {:ok,
        %{
          data
          | dc_ref_station: dc_ref_station,
            dc_stations: dc_stations,
-           slave_config: effective_slave_config,
+           slave_configs: effective_slave_configs,
            slaves: slaves,
            pending_preop: MapSet.new(pending_preop),
            activatable_slaves: activatable_slaves,
@@ -1059,7 +1059,7 @@ defmodule EtherCAT.Master do
   end
 
   defp start_domains(data, _dc_ref_station) do
-    Enum.reduce_while(data.domain_config || [], :ok, fn entry, :ok ->
+    Enum.reduce_while(data.domain_configs || [], :ok, fn entry, :ok ->
       domain_opts = Config.domain_start_opts(entry)
 
       id = entry.id
@@ -1083,7 +1083,7 @@ defmodule EtherCAT.Master do
   # Returns {:ok, effective_config, slaves_list, pending_preop_names, activatable_names}
   defp start_slaves(data, bus_count, dc_cycle_ns) do
     with {:ok, effective_config} <-
-           Config.effective_slave_config(data.slave_config || [], bus_count) do
+           Config.effective_slave_config(data.slave_configs || [], bus_count) do
       Enum.with_index(effective_config)
       |> Enum.reduce_while({:ok, [], [], []}, fn {entry, pos},
                                                  {:ok, slave_acc, pending_acc, activatable_acc} ->
@@ -1182,7 +1182,7 @@ defmodule EtherCAT.Master do
       DynamicSupervisor.terminate_child(EtherCAT.SlaveSupervisor, pid)
     end)
 
-    Enum.each(Config.domain_ids(data.domain_config || []), fn domain_id ->
+    Enum.each(Config.domain_ids(data.domain_configs || []), fn domain_id ->
       terminate_domain(domain_id)
     end)
 
@@ -1211,7 +1211,7 @@ defmodule EtherCAT.Master do
   end
 
   defp start_domain_cycles(data) do
-    Enum.reduce_while(Config.domain_ids(data.domain_config || []), :ok, fn id, :ok ->
+    Enum.reduce_while(Config.domain_ids(data.domain_configs || []), :ok, fn id, :ok ->
       case Domain.start_cycling(id) do
         :ok ->
           {:cont, :ok}

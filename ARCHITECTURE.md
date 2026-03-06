@@ -31,8 +31,8 @@ EtherCAT.Application
 │       └── EtherCAT.Slave.Registers (ESC register address map — pure functions)
 ```
 
-Registry: `EtherCAT.Registry` (local). Slaves register as `{:slave, name}` and
-`{:slave_station, station}`; Domains register as `{:domain, id}`.
+Registry: `EtherCAT.Registry` (local). Slaves register as `{:slave, name}`;
+Domains register as `{:domain, id}`.
 
 ---
 

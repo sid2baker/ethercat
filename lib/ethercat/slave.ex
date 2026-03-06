@@ -2,8 +2,7 @@ defmodule EtherCAT.Slave do
   @moduledoc """
   gen_statem managing the ESM (EtherCAT State Machine) lifecycle for one physical slave.
 
-  Registered in EtherCAT.Registry under both `{:slave, name}` (atom name) and
-  `{:slave_station, station}` (integer station address).
+  Registered in EtherCAT.Registry under `{:slave, name}` (atom name) for the public API.
 
   ## Lifecycle
 
@@ -89,7 +88,7 @@ defmodule EtherCAT.Slave do
     :active_latches,
     # poll period for hardware latch event registers while in :op
     :latch_poll_ms,
-    # %{signal_name => %{domain_id, sm_key, bit_offset, bit_size}}
+    # %{signal_name => %{domain_id, sm_key, bit_offset, bit_size, direction}}
     :signal_registrations,
     # %{{:sm, idx} => [{signal_name, %{bit_offset, bit_size}}]}
     :signal_registrations_by_sm,
@@ -139,8 +138,11 @@ defmodule EtherCAT.Slave do
   end
 
   @doc """
-  Encode `value` via the driver and write it to the domain ETS output slot.
-  Direct ETS write via Domain — no gen_statem hop.
+  Encode `value`, stage it into the domain ETS output slot, and verify the
+  staged bytes were written.
+
+  This confirms the next process-image value held by the master. It does not
+  prove the slave has already applied the value on hardware.
   """
   @spec write_output(atom(), atom(), term()) :: :ok | {:error, term()}
   def write_output(slave_name, signal_name, value) do
@@ -177,8 +179,8 @@ defmodule EtherCAT.Slave do
   def error(slave_name), do: :gen_statem.call(via(slave_name), :error)
 
   @doc """
-  Read the decoded input value for a signal. Equivalent to the value delivered
-  via `subscribe/3` for normal process-data signals.
+  Read the decoded input value for an input signal. Equivalent to the value
+  delivered via `subscribe/3` for normal process-data signals.
 
   Returns `{:error, :not_ready}` until the first domain cycle completes.
   """
@@ -227,9 +229,6 @@ defmodule EtherCAT.Slave do
     dc_cycle_ns = Keyword.get(opts, :dc_cycle_ns)
     process_data_request = Keyword.get(opts, :process_data, :none)
     sync_config = Keyword.get(opts, :sync)
-
-    # Also register by station address for internal lookups
-    Registry.register(EtherCAT.Registry, {:slave_station, station}, name)
 
     data = %__MODULE__{
       bus: bus,
@@ -355,14 +354,31 @@ defmodule EtherCAT.Slave do
       nil ->
         {:keep_state_and_data, [{:reply, from, {:error, {:not_registered, signal_name}}}]}
 
-      %{domain_id: domain_id, sm_key: sm_key, bit_offset: bit_offset, bit_size: bit_size} ->
+      %{direction: :input} ->
+        {:keep_state_and_data, [{:reply, from, {:error, {:not_output, signal_name}}}]}
+
+      %{
+        domain_id: domain_id,
+        sm_key: sm_key,
+        bit_offset: bit_offset,
+        bit_size: bit_size,
+        direction: :output
+      } ->
         key = {data.name, sm_key}
         encoded = data.driver.encode_signal(signal_name, data.config, value)
 
         result =
           case Domain.read(domain_id, key) do
             {:ok, current} ->
-              Domain.write(domain_id, key, set_sm_bits(current, bit_offset, bit_size, encoded))
+              next_value = set_sm_bits(current, bit_offset, bit_size, encoded)
+
+              with :ok <- Domain.write(domain_id, key, next_value),
+                   {:ok, ^next_value} <- Domain.read(domain_id, key) do
+                :ok
+              else
+                {:ok, _other} -> {:error, {:staging_verification_failed, signal_name}}
+                {:error, _} = err -> err
+              end
 
             {:error, _} = err ->
               err
@@ -380,7 +396,16 @@ defmodule EtherCAT.Slave do
         nil ->
           {:error, {:not_registered, signal_name}}
 
-        %{domain_id: domain_id, sm_key: sm_key, bit_offset: bit_offset, bit_size: bit_size} ->
+        %{direction: :output} ->
+          {:error, {:not_input, signal_name}}
+
+        %{
+          domain_id: domain_id,
+          sm_key: sm_key,
+          bit_offset: bit_offset,
+          bit_size: bit_size,
+          direction: :input
+        } ->
           case Domain.read(domain_id, {data.name, sm_key}) do
             {:ok, sm_bytes} ->
               raw = extract_sm_bits(sm_bytes, bit_offset, bit_size)
@@ -801,6 +826,7 @@ defmodule EtherCAT.Slave do
       Map.put(acc, registration.signal_name, %{
         domain_id: registration.domain_id,
         sm_key: sm_group.sm_key,
+        direction: sm_group.direction,
         bit_offset: registration.bit_offset,
         bit_size: registration.bit_size
       })
