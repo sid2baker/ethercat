@@ -405,8 +405,8 @@ responses by higher WKC.
 **Slave layer** (`EtherCAT.Slave`): One gen_statem per physical slave. Manages the
 ESM state machine (Init → PreOp → SafeOp → Op and backward). Reads SII EEPROM at
 startup to get identity and mailbox config. Looks up the driver module by
-`{vendor_id, product_code}`. At SafeOp entry, calls the driver's
-`process_data_profile/0` and registers each PDO group with its target domain.
+`{vendor_id, product_code}`. In PreOp, executes the driver's mailbox plan, then
+resolves its `process_data_model/1` into SM/FMMU registrations for the target domains.
 
 **ProcessImage** (`EtherCAT.Slave.ProcessImage`): Stateless utility. Given a list
 of `{station, pid}` pairs and a profile map, writes SM and FMMU registers. Builds
@@ -419,9 +419,9 @@ exchange. Multiple domains can run independently at different rates on the same 
 
 **Driver behaviour** (`EtherCAT.Slave.Driver`): Implemented by the user for each
 slave type. Three mandatory callbacks:
-- `process_data_profile/0` — SM/FMMU hardware config + domain assignment
-- `encode_outputs/1` — domain terms → raw binary
-- `decode_inputs/1` — raw binary → domain terms
+- `process_data_model/1` — logical signal declarations over the slave's PDO layout
+- `encode_signal/3` — application terms → raw signal binary
+- `decode_signal/3` — raw signal binary → application terms
 
 ---
 
@@ -501,8 +501,8 @@ Domain.subscribe(:fast)
 receive do
   {:ethercat_domain, :fast, :cycle_done} ->
     {:ok, raw, _} = Domain.get_inputs(:fast, 0x1001)
-    decoded = MyDriver.decode_inputs(raw)
-    outputs = MyDriver.encode_outputs(compute_next(decoded))
+    decoded = MyDriver.decode_signal(:actual_position, %{}, raw)
+    outputs = MyDriver.encode_signal(:target_position, %{}, compute_next(decoded))
     Domain.put_outputs(:fast, 0x1002, outputs)
 end
 ```

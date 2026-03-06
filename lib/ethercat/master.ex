@@ -8,11 +8,12 @@ defmodule EtherCAT.Master do
     - `:scanning` — bus open, polling for a stable slave count
     - `:configuring` — stations assigned, DC initialised, slaves spawned;
       waiting for all named slaves to reach `:preop`
-    - `:running` — fully operational
+    - `:running` — startup finished; either operational or waiting for explicit activation
     - `:degraded` — startup completed partially; failed slave promotions are retried
 
-  The state machine is fully self-driving. Call `start/1` once, then either
-  poll `state/0` or block on `await_running/1`.
+  The state machine is fully self-driving for static startup. For dynamic startup,
+  call `configure_slave/2` while discovered slaves are held in PREOP, then call
+  `activate/0` to start cyclic operation.
 
   ## Example
 
@@ -21,8 +22,16 @@ defmodule EtherCAT.Master do
         domains: [%EtherCAT.Domain.Config{id: :main, period_ms: 1}],
         slaves: [
           %EtherCAT.Slave.Config{name: :coupler},
-          %EtherCAT.Slave.Config{name: :sensor, driver: MyApp.EL1809, domain: :main},
-          %EtherCAT.Slave.Config{name: :valve,  driver: MyApp.EL2809, domain: :main}
+          %EtherCAT.Slave.Config{
+            name: :sensor,
+            driver: MyApp.EL1809,
+            process_data: {:all, :main}
+          },
+          %EtherCAT.Slave.Config{
+            name: :valve,
+            driver: MyApp.EL2809,
+            process_data: {:all, :main}
+          }
         ]
       )
       :ok = EtherCAT.await_running()
@@ -74,6 +83,7 @@ defmodule EtherCAT.Master do
     :slave_config,
     :dc_cycle_ns,
     :frame_timeout_override_ms,
+    activation_phase: :preop_ready,
     base_station: @base_station,
     activatable_slaves: [],
     slaves: [],
@@ -85,7 +95,9 @@ defmodule EtherCAT.Master do
     # %{slave_name => {target_state, reason}} for startup activation failures
     activation_failures: %{},
     # blocked await_running callers — replied when :running is entered
-    await_callers: []
+    await_callers: [],
+    # blocked await_operational callers — replied when cyclic operation is live
+    await_operational_callers: []
   ]
 
   # -- Public API ------------------------------------------------------------
@@ -97,10 +109,14 @@ defmodule EtherCAT.Master do
     - `:interface` (required) — e.g. `"eth0"`
     - `:slaves` — list of slave config entries, default `[]`. Each entry is a
       `%EtherCAT.Slave.Config{}` (or equivalent keyword list) with keys: `:name`, `:driver`,
-      `:config`, and `:pdos` (`[{pdo_name, domain_id}]` pairs — passed to the slave
-      which self-registers in its `:preop` enter handler). `nil` entries are rejected.
-      If omitted, dynamic default slaves are started for all discovered stations and
-      held in `:preop` for runtime configuration.
+      `:config`, `:process_data`, and `:target_state`. `process_data` declares what
+      the slave should register while in PREOP:
+      - `:none`
+      - `{:all, domain_id}`
+      - `[{pdo_name, domain_id}]`
+      `target_state` is `:op` or `:preop`. `nil` entries are rejected. If omitted,
+      dynamic default slaves are started for all discovered stations and held in
+      `:preop` for runtime configuration.
     - `:domains` — list of domain specs, default `[]`. Each entry is a keyword list with
       keys `:id` (atom, required) and `:period_ms` (required), plus any Domain options
     - `:base_station` — starting station address, default `0x1000`
@@ -129,6 +145,37 @@ defmodule EtherCAT.Master do
   def state, do: :gen_statem.call(__MODULE__, :state)
 
   @doc """
+  Return the current session phase.
+
+  Unlike `state/0`, this is the public lifecycle view and distinguishes between
+  PREOP-ready startup and fully operational cyclic runtime.
+  """
+  @spec phase() :: :idle | :scanning | :configuring | :preop_ready | :operational | :degraded
+  def phase, do: :gen_statem.call(__MODULE__, :phase)
+
+  @doc """
+  Configure a discovered slave while the session is still in PREOP.
+
+  Keyword-list updates merge into the current config. `%EtherCAT.Slave.Config{}`
+  replaces the current declarative config for that slave.
+  """
+  @spec configure_slave(atom(), keyword() | EtherCAT.Slave.Config.t()) :: :ok | {:error, term()}
+  def configure_slave(slave_name, spec) do
+    :gen_statem.call(__MODULE__, {:configure_slave, slave_name, spec})
+  end
+
+  @doc """
+  Start cyclic operation after dynamic PREOP configuration.
+
+  This starts DC runtime, starts all domains cycling, and advances every slave
+  whose `target_state` is `:op`.
+  """
+  @spec activate() :: :ok | {:error, term()}
+  def activate do
+    :gen_statem.call(__MODULE__, :activate)
+  end
+
+  @doc """
   Block until the master reaches `:running`, then return `:ok`.
 
   Returns immediately if already `:running`. Returns `{:error, :timeout}` if
@@ -138,6 +185,18 @@ defmodule EtherCAT.Master do
   @spec await_running(timeout_ms :: pos_integer()) :: :ok | {:error, term()}
   def await_running(timeout_ms \\ 10_000) do
     :gen_statem.call(__MODULE__, :await_running, timeout_ms)
+  end
+
+  @doc """
+  Block until the master reaches operational cyclic runtime, then return `:ok`.
+
+  This waits for DC/domain runtime to start and for `:op` promotion to complete.
+  Returns `{:error, :not_started}` if the master is idle.
+  Returns `{:error, {:activation_failed, failures}}` if activation falls into degraded mode.
+  """
+  @spec await_operational(timeout_ms :: pos_integer()) :: :ok | {:error, term()}
+  def await_operational(timeout_ms \\ 10_000) do
+    :gen_statem.call(__MODULE__, :await_operational, timeout_ms)
   end
 
   # -- child_spec / start_link -----------------------------------------------
@@ -184,12 +243,14 @@ defmodule EtherCAT.Master do
           domain_config: start_config.domain_config,
           dc_cycle_ns: start_config.dc_cycle_ns,
           frame_timeout_override_ms: start_config.frame_timeout_override_ms,
+          activation_phase: :preop_ready,
           activatable_slaves: [],
           slaves: [],
           scan_window: [],
           pending_preop: MapSet.new(),
           activation_failures: %{},
-          await_callers: []
+          await_callers: [],
+          await_operational_callers: []
       }
 
       {:next_state, :scanning, new_data, [{:reply, from, :ok}]}
@@ -207,7 +268,15 @@ defmodule EtherCAT.Master do
     {:keep_state_and_data, [{:reply, from, :idle}]}
   end
 
+  def handle_event({:call, from}, :phase, :idle, _data) do
+    {:keep_state_and_data, [{:reply, from, :idle}]}
+  end
+
   def handle_event({:call, from}, :await_running, :idle, _data) do
+    {:keep_state_and_data, [{:reply, from, {:error, :not_started}}]}
+  end
+
+  def handle_event({:call, from}, :await_operational, :idle, _data) do
     {:keep_state_and_data, [{:reply, from, {:error, :not_started}}]}
   end
 
@@ -263,6 +332,11 @@ defmodule EtherCAT.Master do
                   {:error, {:activation_failed, reason}}
                 )
 
+                reply_await_callers(
+                  failed_data.await_operational_callers,
+                  {:error, {:activation_failed, reason}}
+                )
+
                 {:next_state, :idle, %__MODULE__{}}
             end
           else
@@ -278,6 +352,11 @@ defmodule EtherCAT.Master do
             {:error, {:configuration_failed, reason}}
           )
 
+          reply_await_callers(
+            failed_data.await_operational_callers,
+            {:error, {:configuration_failed, reason}}
+          )
+
           {:next_state, :idle, %__MODULE__{}}
       end
     else
@@ -288,11 +367,16 @@ defmodule EtherCAT.Master do
 
   def handle_event({:call, from}, :stop, :scanning, data) do
     stop_session(data)
+    reply_await_callers(data.await_operational_callers, {:error, :stopped})
     {:next_state, :idle, %__MODULE__{}, [{:reply, from, :ok}]}
   end
 
   def handle_event({:call, from}, :await_running, :scanning, data) do
     {:keep_state, %{data | await_callers: [from | data.await_callers]}}
+  end
+
+  def handle_event({:call, from}, :await_operational, :scanning, data) do
+    {:keep_state, %{data | await_operational_callers: [from | data.await_operational_callers]}}
   end
 
   # :configuring -------------------------------------------------------------
@@ -324,6 +408,11 @@ defmodule EtherCAT.Master do
             {:error, {:activation_failed, reason}}
           )
 
+          reply_await_callers(
+            failed_data.await_operational_callers,
+            {:error, {:activation_failed, reason}}
+          )
+
           {:next_state, :idle, %__MODULE__{}, [{{:timeout, :configuring}, :cancel}]}
       end
     else
@@ -336,12 +425,14 @@ defmodule EtherCAT.Master do
     Logger.error("[Master] configuring timed out; slaves not in :preop: #{inspect(remaining)}")
     stop_session(data)
     reply_await_callers(data.await_callers, {:error, :configuring_timeout})
+    reply_await_callers(data.await_operational_callers, {:error, :configuring_timeout})
     {:next_state, :idle, %__MODULE__{}}
   end
 
   def handle_event({:call, from}, :stop, :configuring, data) do
     stop_session(data)
     reply_await_callers(data.await_callers, {:error, :stopped})
+    reply_await_callers(data.await_operational_callers, {:error, :stopped})
     {:next_state, :idle, %__MODULE__{}, [{:reply, from, :ok}]}
   end
 
@@ -349,21 +440,70 @@ defmodule EtherCAT.Master do
     {:keep_state, %{data | await_callers: [from | data.await_callers]}}
   end
 
+  def handle_event({:call, from}, :await_operational, :configuring, data) do
+    {:keep_state, %{data | await_operational_callers: [from | data.await_operational_callers]}}
+  end
+
   # :running -----------------------------------------------------------------
 
-  def handle_event(:enter, _old, :running, data) do
-    Logger.info("[Master] running")
+  def handle_event(:enter, _old, :running, %{activation_phase: :preop_ready} = data) do
+    Logger.info("[Master] running — slaves ready in PREOP, waiting for explicit activate/0")
     reply_await_callers(data.await_callers, :ok)
     {:keep_state, %{data | await_callers: []}}
   end
 
+  def handle_event(:enter, _old, :running, data) do
+    Logger.info("[Master] running")
+    reply_await_callers(data.await_callers, :ok)
+    reply_await_callers(data.await_operational_callers, :ok)
+    {:keep_state, %{data | await_callers: [], await_operational_callers: []}}
+  end
+
   def handle_event({:call, from}, :stop, :running, data) do
     stop_session(data)
+    reply_await_callers(data.await_operational_callers, {:error, :stopped})
     {:next_state, :idle, %__MODULE__{}, [{:reply, from, :ok}]}
   end
 
   def handle_event({:call, from}, :await_running, :running, _data) do
     {:keep_state_and_data, [{:reply, from, :ok}]}
+  end
+
+  def handle_event({:call, from}, :await_operational, :running, %{activation_phase: :operational}) do
+    {:keep_state_and_data, [{:reply, from, :ok}]}
+  end
+
+  def handle_event({:call, from}, :await_operational, :running, data) do
+    {:keep_state, %{data | await_operational_callers: [from | data.await_operational_callers]}}
+  end
+
+  def handle_event({:call, from}, {:configure_slave, slave_name, spec}, :running, data) do
+    case configure_discovered_slave(data, slave_name, spec) do
+      {:ok, new_data} ->
+        {:keep_state, new_data, [{:reply, from, :ok}]}
+
+      {:error, reason} ->
+        {:keep_state_and_data, [{:reply, from, {:error, reason}}]}
+    end
+  end
+
+  def handle_event({:call, from}, :activate, :running, %{activation_phase: :operational}) do
+    {:keep_state_and_data, [{:reply, from, {:error, :already_activated}}]}
+  end
+
+  def handle_event({:call, from}, :activate, :running, %{activation_phase: :preop_ready} = data) do
+    case activate_network(data) do
+      {:ok, active_data} ->
+        reply_await_callers(active_data.await_operational_callers, :ok)
+
+        {:keep_state, %{active_data | await_operational_callers: []}, [{:reply, from, :ok}]}
+
+      {:degraded, degraded_data} ->
+        {:next_state, :degraded, degraded_data, [{:reply, from, :ok}]}
+
+      {:error, reason, _failed_data} ->
+        {:keep_state_and_data, [{:reply, from, {:error, reason}}]}
+    end
   end
 
   # :degraded ----------------------------------------------------------------
@@ -376,7 +516,12 @@ defmodule EtherCAT.Master do
       {:error, {:activation_failed, data.activation_failures}}
     )
 
-    {:keep_state, %{data | await_callers: []},
+    reply_await_callers(
+      data.await_operational_callers,
+      {:error, {:activation_failed, data.activation_failures}}
+    )
+
+    {:keep_state, %{data | await_callers: [], await_operational_callers: []},
      [{{:timeout, :degraded_retry}, @degraded_retry_ms, nil}]}
   end
 
@@ -392,6 +537,7 @@ defmodule EtherCAT.Master do
 
   def handle_event({:call, from}, :stop, :degraded, data) do
     stop_session(data)
+    reply_await_callers(data.await_operational_callers, {:error, :stopped})
     {:next_state, :idle, %__MODULE__{}, [{:reply, from, :ok}]}
   end
 
@@ -400,11 +546,28 @@ defmodule EtherCAT.Master do
      [{:reply, from, {:error, {:activation_failed, data.activation_failures}}}]}
   end
 
+  def handle_event({:call, from}, :await_operational, :degraded, data) do
+    {:keep_state_and_data,
+     [{:reply, from, {:error, {:activation_failed, data.activation_failures}}}]}
+  end
+
+  def handle_event({:call, from}, {:configure_slave, _slave_name, _spec}, :degraded, _data) do
+    {:keep_state_and_data, [{:reply, from, {:error, :activation_in_progress}}]}
+  end
+
+  def handle_event({:call, from}, :activate, :degraded, _data) do
+    {:keep_state_and_data, [{:reply, from, {:error, :activation_in_progress}}]}
+  end
+
   # -- Shared handlers (all non-idle states) ---------------------------------
 
   # Query handlers — work in all active states
   def handle_event({:call, from}, :state, state, _data) do
     {:keep_state_and_data, [{:reply, from, state}]}
+  end
+
+  def handle_event({:call, from}, :phase, state, data) do
+    {:keep_state_and_data, [{:reply, from, phase_for(state, data)}]}
   end
 
   def handle_event({:call, from}, :slaves, _state, data) do
@@ -425,6 +588,7 @@ defmodule EtherCAT.Master do
       when ref == data.bus_ref and not is_nil(ref) do
     Logger.error("[Master] bus crashed (#{inspect(reason)}) — returning to idle")
     reply_await_callers(data.await_callers, {:error, {:bus_down, reason}})
+    reply_await_callers(data.await_operational_callers, {:error, {:bus_down, reason}})
     stop_session(%{data | bus_pid: nil})
     {:next_state, :idle, %__MODULE__{}}
   end
@@ -495,22 +659,78 @@ defmodule EtherCAT.Master do
   end
 
   defp validate_slave_start_config(slave_config) when is_list(slave_config) do
-    cond do
-      idx = Enum.find_index(slave_config, &is_nil/1) ->
+    case Enum.find_index(slave_config, &is_nil/1) do
+      idx when is_integer(idx) ->
         {:error, {:invalid_slave_config, {:nil_entry, idx}}}
 
-      idx =
-          Enum.find_index(slave_config, fn entry ->
-            not (is_list(entry) or is_struct(entry, EtherCAT.Slave.Config))
-          end) ->
-        {:error, {:invalid_slave_config, {:invalid_entry, idx}}}
+      nil ->
+        case Enum.find_index(slave_config, fn entry ->
+               not (is_list(entry) or is_struct(entry, EtherCAT.Slave.Config))
+             end) do
+          idx when is_integer(idx) ->
+            {:error, {:invalid_slave_config, {:invalid_entry, idx}}}
 
-      true ->
-        :ok
+          nil ->
+            case find_invalid_slave_entry(slave_config) do
+              {idx, reason} -> {:error, {:invalid_slave_config, {:invalid_options, idx, reason}}}
+              nil -> :ok
+            end
+        end
     end
   end
 
   defp validate_slave_start_config(_), do: {:error, {:invalid_slave_config, :invalid_list}}
+
+  defp find_invalid_slave_entry(slave_config) do
+    Enum.with_index(slave_config)
+    |> Enum.find_value(fn {entry, idx} ->
+      case validate_slave_entry(entry) do
+        :ok -> nil
+        {:error, reason} -> {idx, reason}
+      end
+    end)
+  end
+
+  defp validate_slave_entry(%EtherCAT.Slave.Config{} = cfg) do
+    validate_slave_options(cfg.process_data, cfg.target_state)
+  end
+
+  defp validate_slave_entry(opts) when is_list(opts) do
+    validate_slave_options(
+      Keyword.get(opts, :process_data, :none),
+      Keyword.get(opts, :target_state, :op)
+    )
+  end
+
+  defp validate_slave_options(process_data, target_state) do
+    with :ok <- validate_process_data_request(process_data),
+         :ok <- validate_target_state(target_state) do
+      :ok
+    end
+  end
+
+  defp validate_process_data_request(:none), do: :ok
+
+  defp validate_process_data_request({:all, domain_id}) when is_atom(domain_id), do: :ok
+
+  defp validate_process_data_request(requested_pdos) when is_list(requested_pdos) do
+    if Enum.all?(requested_pdos, &valid_requested_pdo?/1) do
+      :ok
+    else
+      {:error, :invalid_process_data}
+    end
+  end
+
+  defp validate_process_data_request(_process_data), do: {:error, :invalid_process_data}
+
+  defp validate_target_state(:op), do: :ok
+  defp validate_target_state(:preop), do: :ok
+  defp validate_target_state(_target_state), do: {:error, :invalid_target_state}
+
+  defp valid_requested_pdo?({pdo_name, domain_id}) when is_atom(pdo_name) and is_atom(domain_id),
+    do: true
+
+  defp valid_requested_pdo?(_), do: false
 
   defp normalize_domain_config(%EtherCAT.Domain.Config{} = cfg) do
     [
@@ -528,9 +748,8 @@ defmodule EtherCAT.Master do
       name: cfg.name,
       driver: normalize_slave_driver(cfg.driver),
       config: cfg.config,
-      domain: cfg.domain,
-      pdos: cfg.pdos,
-      auto_activate?: true
+      process_data: cfg.process_data,
+      target_state: normalize_slave_target_state(cfg.target_state)
     ]
   end
 
@@ -539,14 +758,69 @@ defmodule EtherCAT.Master do
       name: Keyword.fetch!(opts, :name),
       driver: normalize_slave_driver(Keyword.get(opts, :driver)),
       config: Keyword.get(opts, :config, %{}),
-      domain: Keyword.get(opts, :domain),
-      pdos: Keyword.get(opts, :pdos, []),
-      auto_activate?: Keyword.get(opts, :auto_activate?, true)
+      process_data: Keyword.get(opts, :process_data, :none),
+      target_state: normalize_slave_target_state(Keyword.get(opts, :target_state, :op))
     ]
   end
 
   defp normalize_slave_driver(nil), do: DefaultSlaveDriver
   defp normalize_slave_driver(driver), do: driver
+
+  defp normalize_slave_target_state(:op), do: :op
+  defp normalize_slave_target_state(:preop), do: :preop
+
+  defp normalize_runtime_slave_config(
+         slave_name,
+         %EtherCAT.Slave.Config{} = cfg,
+         _current_config
+       ) do
+    if cfg.name not in [nil, slave_name] do
+      {:error, :name_mismatch}
+    else
+      normalized = [
+        name: slave_name,
+        driver: normalize_slave_driver(cfg.driver),
+        config: cfg.config,
+        process_data: cfg.process_data,
+        target_state: normalize_slave_target_state(cfg.target_state)
+      ]
+
+      validate_runtime_slave_config(normalized)
+    end
+  end
+
+  defp normalize_runtime_slave_config(slave_name, opts, current_config) when is_list(opts) do
+    normalized = [
+      name: slave_name,
+      driver:
+        normalize_slave_driver(
+          Keyword.get(opts, :driver, Keyword.fetch!(current_config, :driver))
+        ),
+      config: Keyword.get(opts, :config, Keyword.fetch!(current_config, :config)),
+      process_data:
+        Keyword.get(opts, :process_data, Keyword.fetch!(current_config, :process_data)),
+      target_state:
+        normalize_slave_target_state(
+          Keyword.get(opts, :target_state, Keyword.fetch!(current_config, :target_state))
+        )
+    ]
+
+    validate_runtime_slave_config(normalized)
+  end
+
+  defp normalize_runtime_slave_config(_slave_name, _spec, _current_config) do
+    {:error, :invalid_slave_config_update}
+  end
+
+  defp validate_runtime_slave_config(normalized) do
+    case validate_slave_options(
+           Keyword.fetch!(normalized, :process_data),
+           Keyword.fetch!(normalized, :target_state)
+         ) do
+      :ok -> {:ok, normalized}
+      {:error, reason} -> {:error, reason}
+    end
+  end
 
   defp dynamic_slave_configs(0), do: []
 
@@ -556,15 +830,114 @@ defmodule EtherCAT.Master do
         name: dynamic_slave_name(pos),
         driver: DefaultSlaveDriver,
         config: %{},
-        domain: nil,
-        pdos: [],
-        auto_activate?: false
+        process_data: :none,
+        target_state: :preop
       ]
     end)
   end
 
   defp dynamic_slave_name(0), do: :coupler
   defp dynamic_slave_name(pos), do: :"slave_#{pos}"
+
+  defp configure_discovered_slave(%{activation_phase: :operational}, _slave_name, _spec) do
+    {:error, :activation_already_started}
+  end
+
+  defp configure_discovered_slave(data, slave_name, spec) do
+    with {:ok, current_config, config_idx} <-
+           fetch_slave_config(data.slave_config || [], slave_name),
+         {:ok, normalized_config} <-
+           normalize_runtime_slave_config(slave_name, spec, current_config),
+         :ok <- ensure_known_domains(data, normalized_config),
+         :ok <- ensure_slave_in_preop(slave_name),
+         :ok <- maybe_apply_slave_configuration(slave_name, current_config, normalized_config) do
+      updated_slave_config = List.replace_at(data.slave_config, config_idx, normalized_config)
+
+      {:ok,
+       %{
+         data
+         | slave_config: updated_slave_config,
+           activatable_slaves: activatable_slave_names(updated_slave_config)
+       }}
+    end
+  end
+
+  defp fetch_slave_config(slave_config, slave_name) do
+    case Enum.find_index(slave_config, fn entry ->
+           Keyword.fetch!(normalize_slave_config(entry), :name) == slave_name
+         end) do
+      nil ->
+        {:error, {:unknown_slave, slave_name}}
+
+      idx ->
+        {:ok, normalize_slave_config(Enum.at(slave_config, idx)), idx}
+    end
+  end
+
+  defp ensure_known_domains(data, slave_config) do
+    known_domains = MapSet.new(get_domain_ids(data.domain_config || []))
+
+    unknown_domains =
+      slave_config
+      |> Keyword.fetch!(:process_data)
+      |> requested_domain_ids()
+      |> Enum.reject(&MapSet.member?(known_domains, &1))
+
+    case unknown_domains do
+      [] -> :ok
+      domains -> {:error, {:unknown_domains, domains}}
+    end
+  end
+
+  defp requested_domain_ids(:none), do: []
+  defp requested_domain_ids({:all, domain_id}), do: [domain_id]
+
+  defp requested_domain_ids(requested_pdos) when is_list(requested_pdos) do
+    requested_pdos
+    |> Enum.map(fn {_pdo_name, domain_id} -> domain_id end)
+    |> Enum.uniq()
+  end
+
+  defp ensure_slave_in_preop(slave_name) do
+    case Slave.state(slave_name) do
+      :preop -> :ok
+      state -> {:error, {:not_preop, state}}
+    end
+  end
+
+  defp maybe_apply_slave_configuration(slave_name, current_config, updated_config) do
+    if slave_local_config(current_config) == slave_local_config(updated_config) do
+      :ok
+    else
+      Slave.configure(
+        slave_name,
+        driver: Keyword.fetch!(updated_config, :driver),
+        config: Keyword.fetch!(updated_config, :config),
+        process_data: Keyword.fetch!(updated_config, :process_data)
+      )
+    end
+  end
+
+  defp slave_local_config(config) do
+    [
+      driver: Keyword.fetch!(config, :driver),
+      config: Keyword.fetch!(config, :config),
+      process_data: Keyword.fetch!(config, :process_data)
+    ]
+  end
+
+  defp activatable_slave_names(slave_config) do
+    Enum.reduce(slave_config, [], fn entry, acc ->
+      normalized = normalize_slave_config(entry)
+
+      if Keyword.fetch!(normalized, :target_state) == :op do
+        [Keyword.fetch!(normalized, :name) | acc]
+      else
+        acc
+      end
+    end)
+    |> Enum.reverse()
+  end
 
   defp maybe_put_frame_timeout(opts, timeout_ms) when is_integer(timeout_ms) and timeout_ms > 0 do
     Keyword.put(opts, :frame_timeout_ms, timeout_ms)
@@ -637,16 +1010,18 @@ defmodule EtherCAT.Master do
          :ok <- reset_slaves_to_init(data, stations),
          {:ok, dc_ref_station} <- initialize_distributed_clocks(data, slave_topology),
          :ok <- start_domains(data),
-         {:ok, slaves, pending_preop, activatable_slaves} <-
+         {:ok, effective_slave_config, slaves, pending_preop, activatable_slaves} <-
            start_slaves(data, count, if(dc_ref_station, do: data.dc_cycle_ns, else: nil)) do
       {:ok,
        %{
          data
          | dc_ref_station: dc_ref_station,
+           slave_config: effective_slave_config,
            slaves: slaves,
            pending_preop: MapSet.new(pending_preop),
            activatable_slaves: activatable_slaves,
-           activation_failures: %{}
+           activation_failures: %{},
+           activation_phase: :preop_ready
        }}
     else
       {:error, reason} ->
@@ -798,7 +1173,7 @@ defmodule EtherCAT.Master do
     end)
   end
 
-  # Returns {:ok, slaves_list, pending_preop_names, activatable_names}
+  # Returns {:ok, effective_config, slaves_list, pending_preop_names, activatable_names}
   defp start_slaves(data, bus_count, dc_cycle_ns) do
     with {:ok, effective_config} <- effective_slave_config(data.slave_config || [], bus_count) do
       Enum.with_index(effective_config)
@@ -814,15 +1189,14 @@ defmodule EtherCAT.Master do
           name: name,
           driver: Keyword.get(slave_opts, :driver),
           config: Keyword.get(slave_opts, :config, %{}),
-          pdos: Keyword.get(slave_opts, :pdos, []),
-          domain: Keyword.get(slave_opts, :domain),
+          process_data: Keyword.get(slave_opts, :process_data, :none),
           dc_cycle_ns: dc_cycle_ns
         ]
 
         case DynamicSupervisor.start_child(EtherCAT.SlaveSupervisor, {Slave, opts}) do
           {:ok, pid} ->
             next_activatable =
-              if Keyword.get(slave_opts, :auto_activate?, true) do
+              if Keyword.get(slave_opts, :target_state, :op) == :op do
                 [name | activatable_acc]
               else
                 activatable_acc
@@ -838,7 +1212,8 @@ defmodule EtherCAT.Master do
       end)
       |> case do
         {:ok, slaves, pending, activatable} ->
-          {:ok, Enum.reverse(slaves), Enum.reverse(pending), Enum.reverse(activatable)}
+          {:ok, effective_config, Enum.reverse(slaves), Enum.reverse(pending),
+           Enum.reverse(activatable)}
 
         {:error, reason, started_slaves} ->
           {:error, reason, started_slaves}
@@ -869,7 +1244,7 @@ defmodule EtherCAT.Master do
   # Runs synchronously in the scan/configuring handler before transitioning to :running.
   defp activate_network(%{activatable_slaves: []} = data) do
     Logger.info("[Master] dynamic startup: slaves held in :preop for runtime configuration")
-    {:ok, %{data | activation_failures: %{}}}
+    {:ok, %{data | activation_failures: %{}, activation_phase: :preop_ready}}
   end
 
   defp activate_network(data) do
@@ -886,13 +1261,13 @@ defmodule EtherCAT.Master do
             activated_data = %{activation_data | activation_failures: activation_failures}
 
             if map_size(activation_failures) == 0 do
-              {:ok, activated_data}
+              {:ok, %{activated_data | activation_phase: :operational}}
             else
               Logger.warning(
                 "[Master] activation incomplete; degraded mode for #{inspect(Map.keys(activation_failures))}"
               )
 
-              {:degraded, activated_data}
+              {:degraded, %{activated_data | activation_phase: :operational}}
             end
 
           {:error, reason} ->
@@ -1000,6 +1375,13 @@ defmodule EtherCAT.Master do
       {:degraded, %{data | activation_failures: retried_failures}}
     end
   end
+
+  defp phase_for(:idle, _data), do: :idle
+  defp phase_for(:scanning, _data), do: :scanning
+  defp phase_for(:configuring, _data), do: :configuring
+  defp phase_for(:degraded, _data), do: :degraded
+  defp phase_for(:running, %{activation_phase: :operational}), do: :operational
+  defp phase_for(:running, _data), do: :preop_ready
 
   defp reply_await_callers(callers, reply) do
     Enum.each(callers, fn from -> :gen_statem.reply(from, reply) end)

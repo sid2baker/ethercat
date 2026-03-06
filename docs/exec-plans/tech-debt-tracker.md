@@ -26,7 +26,6 @@ Known gaps and deferred work. Add entries when identified; move to `completed/` 
 
 | Gap | Location | Impact | Notes |
 |-----|----------|--------|-------|
-| SDO config failures masked | `slave.ex:run_sdo_config` | Logged as warning but state transition proceeds | Could mask silent misconfiguration on servo drives |
 | No SYNC0 status acknowledgement | `slave.ex` | Pulse-mode slaves (`pulse_ns=0`) require reading `0x098E` to release each pulse | Affects acknowledge-mode operation |
 | No over-sampling support | `slave.ex` | Cannot capture multiple input samples per SYNC0 period | Requires multiple SM channels per PDO |
 | No backward ESM transition on error | `slave.ex` | If SafeOp→Op fails, slave may be left in unknown state | Should auto-retreat to PreOp |

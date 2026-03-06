@@ -9,11 +9,11 @@ defmodule EtherCAT.Slave.Driver.Default do
   @behaviour EtherCAT.Slave.Driver
 
   @impl true
-  def process_data_profile(_config), do: %{}
+  def process_data_model(_config), do: %{}
 
   @impl true
-  def encode_outputs(_pdo_name, _config, _value), do: <<>>
+  def encode_signal(_signal_name, _config, _value), do: <<>>
 
   @impl true
-  def decode_inputs(_pdo_name, _config, raw), do: raw
+  def decode_signal(_signal_name, _config, raw), do: raw
 end

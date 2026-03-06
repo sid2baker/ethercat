@@ -20,7 +20,7 @@ It measures three things separately:
 
 ## What the numbers mean
 
-- `single_channel_latency` measures `EtherCAT.set_output/3` to the matching
+- `single_channel_latency` measures `EtherCAT.write_output/3` to the matching
   `{:slave_input, ...}` notification on `:sensor, :ch1`
 - `full_width_loopback` alternates `0x0000 <-> 0xFFFF`, waits until all 16
   looped-back inputs match, and reports pattern rate and channel-transition rate
@@ -79,7 +79,7 @@ defmodule Example.EL1809 do
   @behaviour EtherCAT.Slave.Driver
 
   @impl true
-  def process_data_profile(_config) do
+  def process_data_model(_config) do
     %{
       ch1: 0x1A00,
       ch2: 0x1A01,
@@ -101,18 +101,18 @@ defmodule Example.EL1809 do
   end
 
   @impl true
-  def encode_outputs(_pdo, _config, _), do: <<>>
+  def encode_signal(_pdo, _config, _), do: <<>>
 
   @impl true
-  def decode_inputs(_ch, _config, <<_::7, bit::1>>), do: bit
-  def decode_inputs(_pdo, _config, _), do: 0
+  def decode_signal(_ch, _config, <<_::7, bit::1>>), do: bit
+  def decode_signal(_pdo, _config, _), do: 0
 end
 
 defmodule Example.EL2809 do
   @behaviour EtherCAT.Slave.Driver
 
   @impl true
-  def process_data_profile(_config) do
+  def process_data_model(_config) do
     %{
       ch1: 0x1600,
       ch2: 0x1601,
@@ -134,33 +134,33 @@ defmodule Example.EL2809 do
   end
 
   @impl true
-  def encode_outputs(_ch, _config, value), do: <<value::8>>
+  def encode_signal(_ch, _config, value), do: <<value::8>>
 
   @impl true
-  def decode_inputs(_pdo, _config, _), do: nil
+  def decode_signal(_pdo, _config, _), do: nil
 end
 
 defmodule Example.EL3202 do
   @behaviour EtherCAT.Slave.Driver
 
   @impl true
-  def process_data_profile(_config) do
+  def process_data_model(_config) do
     %{channel1: 0x1A00, channel2: 0x1A01}
   end
 
   @impl true
-  def sdo_config(_config) do
+  def mailbox_config(_config) do
     [
-      {0x8000, 0x19, 8, 2},
-      {0x8010, 0x19, 8, 2}
+      {:sdo_download, 0x8000, 0x19, <<8::16-little>>},
+      {:sdo_download, 0x8010, 0x19, <<8::16-little>>}
     ]
   end
 
   @impl true
-  def encode_outputs(_pdo, _config, _value), do: <<>>
+  def encode_signal(_pdo, _config, _value), do: <<>>
 
   @impl true
-  def decode_inputs(:channel1, _config, <<
+  def decode_signal(:channel1, _config, <<
         _::1,
         error::1,
         _::2,
@@ -182,7 +182,7 @@ defmodule Example.EL3202 do
     }
   end
 
-  def decode_inputs(:channel2, _config, <<
+  def decode_signal(:channel2, _config, <<
         _::1,
         error::1,
         _::2,
@@ -204,7 +204,7 @@ defmodule Example.EL3202 do
     }
   end
 
-  def decode_inputs(_pdo, _config, _), do: nil
+  def decode_signal(_pdo, _config, _), do: nil
 end
 ```
 
@@ -241,7 +241,7 @@ defmodule Example.Bench.Observer do
   @impl true
   def init(opts) do
     sensor_name = Keyword.fetch!(opts, :sensor_name)
-    Enum.each(@channels, &EtherCAT.subscribe(sensor_name, &1, self()))
+    Enum.each(@channels, &EtherCAT.subscribe_input(sensor_name, &1, self()))
 
     {:ok,
      %{
@@ -536,7 +536,7 @@ defmodule Example.Bench do
                                                                           {latencies_rev, source_counts, timeout_count} ->
           expected = rem(idx, 2)
           started_at = System.monotonic_time()
-          :ok = EtherCAT.set_output(ctx.config.valve_name, channel, expected)
+          :ok = EtherCAT.write_output(ctx.config.valve_name, channel, expected)
 
           case await_channel_value(ctx, channel, expected, timeout_ms) do
             {:ok, observed_at, source} ->
@@ -732,7 +732,7 @@ defmodule Example.Bench do
   def set_mask(valve_name, mask) do
     Enum.each(1..16, fn idx ->
       value = rem(div(mask, Integer.pow(2, idx - 1)), 2)
-      :ok = EtherCAT.set_output(valve_name, :"ch#{idx}", value)
+      :ok = EtherCAT.write_output(valve_name, :"ch#{idx}", value)
     end)
 
     :ok
@@ -992,12 +992,27 @@ defmodule Example.Bench do
   defp slave_configs(opts) do
     base = [
       %SlaveConfig{name: opts.coupler_name},
-      %SlaveConfig{name: opts.sensor_name, driver: Example.EL1809, domain: opts.domain_id},
-      %SlaveConfig{name: opts.valve_name, driver: Example.EL2809, domain: opts.domain_id}
+      %SlaveConfig{
+        name: opts.sensor_name,
+        driver: Example.EL1809,
+        process_data: {:all, opts.domain_id}
+      },
+      %SlaveConfig{
+        name: opts.valve_name,
+        driver: Example.EL2809,
+        process_data: {:all, opts.domain_id}
+      }
     ]
 
     if opts.include_thermo? do
-      base ++ [%SlaveConfig{name: opts.thermo_name, driver: Example.EL3202, domain: opts.domain_id}]
+      base ++
+        [
+          %SlaveConfig{
+            name: opts.thermo_name,
+            driver: Example.EL3202,
+            process_data: {:all, opts.domain_id}
+          }
+        ]
     else
       base
     end

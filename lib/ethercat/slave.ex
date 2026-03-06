@@ -1,25 +1,3 @@
-defmodule EtherCAT.Slave.Config do
-  @moduledoc """
-  Declarative configuration struct for a Slave.
-
-  Fields:
-    - `:name` (required) — atom identifying this slave
-    - `:driver` — module implementing `EtherCAT.Slave.Driver`,
-      defaults to `EtherCAT.Slave.Driver.Default`
-    - `:config` — driver-specific configuration map, default `%{}`
-    - `:domain` — when set (and `:pdos` is empty), all PDO names from the
-      driver's `process_data_profile/1` are auto-registered against this domain id
-    - `:pdos` — explicit `[{pdo_name, domain_id}]` override list; when non-empty,
-      `:domain` is ignored and this list is used verbatim
-  """
-  @enforce_keys [:name]
-  defstruct name: nil,
-            driver: EtherCAT.Slave.Driver.Default,
-            domain: nil,
-            config: %{},
-            pdos: []
-end
-
 defmodule EtherCAT.Slave do
   @moduledoc """
   gen_statem managing the ESM (EtherCAT State Machine) lifecycle for one physical slave.
@@ -29,19 +7,19 @@ defmodule EtherCAT.Slave do
 
   ## Lifecycle
 
-  Master starts a Slave with `{name, driver, config, station, pdos}` from the `slaves:`
-  config list. The slave auto-advances to `:preop`: reads SII EEPROM, then self-registers
-  its PDOs against the configured domains (getting logical offsets back immediately),
-  writes SM and FMMU registers, then notifies the Master. The master drives the slave
-  to `:safeop` and `:op` once all slaves have reached `:preop`.
+  Master starts a Slave with one declarative process-data request from the `slaves:`
+  config list. The slave auto-advances to `:preop`: reads SII EEPROM, configures
+  mailbox SyncManagers, enters PREOP, then applies any requested mailbox and process-data
+  configuration. The master drives the slave to `:safeop` and `:op` once all slaves
+  have reached `:preop`.
 
   ## Usage
 
       # Subscribe to decoded input changes
-      Slave.subscribe(:sensor, :channels, self())
+      Slave.subscribe_input(:sensor, :channels, self())
 
       # Write outputs
-      Slave.set_output(:valve, :outputs, 0xFFFF)
+      Slave.write_output(:valve, :outputs, 0xFFFF)
 
   ## States
 
@@ -57,6 +35,8 @@ defmodule EtherCAT.Slave do
 
   alias EtherCAT.{Domain, Bus, Slave.CoE, Slave.SII}
   alias EtherCAT.Bus.Transaction
+  alias EtherCAT.Slave.ProcessDataPlan
+  alias EtherCAT.Slave.ProcessDataPlan.SmGroup
   alias EtherCAT.Slave.Registers
 
   # ns between Unix epoch (1970) and EtherCAT epoch (2000-01-01 00:00:00)
@@ -90,8 +70,8 @@ defmodule EtherCAT.Slave do
     :name,
     :driver,
     :config,
-    :domain,
     :error_code,
+    :configuration_error,
     :identity,
     :mailbox_config,
     # SYNC0 cycle time in ns — set from start_link opts; nil = no DC
@@ -100,16 +80,16 @@ defmodule EtherCAT.Slave do
     :sii_sm_configs,
     # [%{index, direction, sm_index, bit_size, bit_offset}] from SII categories 0x0032/0x0033
     :sii_pdo_configs,
-    # [{pdo_name, domain_id}] — PDOs to register in :preop enter
-    :pdos,
-    # [{latch_id, edge}] from driver dc_config/1; nil = latch polling disabled
+    # one of :none | {:all, domain_id} | [{signal_name, domain_id}]
+    :process_data_request,
+    # [{latch_id, edge}] from driver distributed_clocks/1; nil = latch polling disabled
     :active_latches,
     # poll period for hardware latch event registers while in :op
     :latch_poll_ms,
-    # %{pdo_name => %{domain_id, offset}}
-    :pdo_registrations,
-    # %{pdo_name => [pid]}
-    :pdo_subscriptions,
+    # %{signal_name => %{domain_id, sm_key, bit_offset, bit_size}}
+    :signal_registrations,
+    # %{signal_name => [pid]}
+    :input_subscriptions,
     # %{{latch_id, edge} => [pid]}
     latch_subscriptions: %{}
   ]
@@ -141,27 +121,38 @@ defmodule EtherCAT.Slave do
   # -- Public API ------------------------------------------------------------
 
   @doc """
-  Subscribe `pid` to receive `{:slave_input, slave_name, pdo_name, decoded_value}`
-  whenever the input value changes after a domain cycle.
+  Subscribe `pid` to receive `{:slave_input, slave_name, signal_name, decoded_value}`
+  whenever the input signal changes after a domain cycle.
   """
-  @spec subscribe(atom(), atom(), pid()) :: :ok
-  def subscribe(slave_name, pdo_name, pid) do
-    :gen_statem.call(via(slave_name), {:subscribe, pdo_name, pid})
+  @spec subscribe_input(atom(), atom(), pid()) :: :ok
+  def subscribe_input(slave_name, signal_name, pid) do
+    :gen_statem.call(via(slave_name), {:subscribe, signal_name, pid})
   end
 
   @doc """
   Encode `value` via the driver and write it to the domain ETS output slot.
   Direct ETS write via Domain — no gen_statem hop.
   """
-  @spec set_output(atom(), atom(), term()) :: :ok | {:error, term()}
-  def set_output(slave_name, pdo_name, value) do
-    :gen_statem.call(via(slave_name), {:set_output, pdo_name, value})
+  @spec write_output(atom(), atom(), term()) :: :ok | {:error, term()}
+  def write_output(slave_name, signal_name, value) do
+    :gen_statem.call(via(slave_name), {:write_output, signal_name, value})
   end
 
   @doc "Request an ESM state transition. Walks multi-step paths automatically."
   @spec request(atom(), atom()) :: :ok | {:error, term()}
   def request(slave_name, target) do
     :gen_statem.call(via(slave_name), {:request, target})
+  end
+
+  @doc """
+  Apply PREOP-local configuration to an already discovered slave.
+
+  Only valid while the slave is in `:preop`. This updates driver/config/process-data
+  intent and reruns the local PREOP configuration sequence.
+  """
+  @spec configure(atom(), keyword()) :: :ok | {:error, term()}
+  def configure(slave_name, opts) when is_list(opts) do
+    :gen_statem.call(via(slave_name), {:configure, opts})
   end
 
   @doc "Return the current ESM state atom."
@@ -177,14 +168,14 @@ defmodule EtherCAT.Slave do
   def error(slave_name), do: :gen_statem.call(via(slave_name), :error)
 
   @doc """
-  Read the decoded input value for a PDO. Equivalent to the value delivered
-  via `subscribe/3`.
+  Read the decoded input value for a signal. Equivalent to the value delivered
+  via `subscribe_input/3`.
 
   Returns `{:error, :not_ready}` until the first domain cycle completes.
   """
   @spec read_input(atom(), atom()) :: {:ok, term()} | {:error, term()}
-  def read_input(slave_name, pdo_name) do
-    :gen_statem.call(via(slave_name), {:read_input, pdo_name})
+  def read_input(slave_name, signal_name) do
+    :gen_statem.call(via(slave_name), {:read_input, signal_name})
   end
 
   @doc "Subscribe `pid` to LATCH hardware events (`{:slave_latch, slave, id, edge, timestamp_ns}`)."
@@ -206,8 +197,7 @@ defmodule EtherCAT.Slave do
     driver = Keyword.get(opts, :driver, EtherCAT.Slave.Driver.Default)
     config = Keyword.get(opts, :config, %{})
     dc_cycle_ns = Keyword.get(opts, :dc_cycle_ns)
-    pdos = Keyword.get(opts, :pdos, [])
-    domain = Keyword.get(opts, :domain)
+    process_data_request = Keyword.get(opts, :process_data, :none)
 
     # Also register by station address for internal lookups
     Registry.register(EtherCAT.Registry, {:slave_station, station}, name)
@@ -218,15 +208,15 @@ defmodule EtherCAT.Slave do
       name: name,
       driver: driver,
       config: config,
-      domain: domain,
+      configuration_error: nil,
       dc_cycle_ns: dc_cycle_ns,
       sii_sm_configs: [],
       sii_pdo_configs: [],
-      pdos: pdos,
+      process_data_request: process_data_request,
       active_latches: nil,
       latch_poll_ms: nil,
-      pdo_registrations: %{},
-      pdo_subscriptions: %{},
+      signal_registrations: %{},
+      input_subscriptions: %{},
       latch_subscriptions: %{}
     }
 
@@ -239,14 +229,10 @@ defmodule EtherCAT.Slave do
   def handle_event(:enter, _old, :init, _data), do: :keep_state_and_data
 
   def handle_event(:enter, _old, :preop, data) do
-    invoke_driver(data, :on_preop)
-    Logger.debug("[Slave #{data.name}] preop: running SDO config")
-    run_sdo_config(data)
-    Logger.debug("[Slave #{data.name}] preop: registering PDOs/FMMUs")
-    new_data = register_pdos_and_fmmus(data)
+    new_data = configure_preop_process_data(data)
 
     Logger.debug(
-      "[Slave #{data.name}] preop: ready (#{map_size(new_data.pdo_registrations)} PDO(s) registered)"
+      "[Slave #{data.name}] preop: ready (#{map_size(new_data.signal_registrations)} signal(s) registered)"
     )
 
     send(EtherCAT.Master, {:slave_ready, data.name, :preop})
@@ -305,6 +291,11 @@ defmodule EtherCAT.Slave do
     {:keep_state_and_data, [{:reply, from, :ok}]}
   end
 
+  def handle_event({:call, from}, {:request, target}, :preop, %{configuration_error: reason})
+      when target in [:safeop, :op] and not is_nil(reason) do
+    {:keep_state_and_data, [{:reply, from, {:error, {:preop_configuration_failed, reason}}}]}
+  end
+
   def handle_event({:call, from}, {:request, target}, state, data) do
     case Map.get(@paths, {state, target}) do
       nil ->
@@ -321,12 +312,26 @@ defmodule EtherCAT.Slave do
     end
   end
 
+  def handle_event({:call, from}, {:configure, opts}, :preop, data) do
+    case maybe_reconfigure_preop(data, opts) do
+      {:ok, new_data} ->
+        {:keep_state, new_data, [{:reply, from, :ok}]}
+
+      {:error, reason, new_data} ->
+        {:keep_state, new_data, [{:reply, from, {:error, reason}}]}
+    end
+  end
+
+  def handle_event({:call, from}, {:configure, _opts}, _state, _data) do
+    {:keep_state_and_data, [{:reply, from, {:error, :not_preop}}]}
+  end
+
   # -- Subscribe -------------------------------------------------------------
 
-  def handle_event({:call, from}, {:subscribe, pdo_name, pid}, _state, data) do
-    subs = Map.get(data.pdo_subscriptions, pdo_name, [])
-    new_subs = Map.put(data.pdo_subscriptions, pdo_name, [pid | subs])
-    {:keep_state, %{data | pdo_subscriptions: new_subs}, [{:reply, from, :ok}]}
+  def handle_event({:call, from}, {:subscribe, signal_name, pid}, _state, data) do
+    subs = Map.get(data.input_subscriptions, signal_name, [])
+    new_subs = Map.put(data.input_subscriptions, signal_name, [pid | subs])
+    {:keep_state, %{data | input_subscriptions: new_subs}, [{:reply, from, :ok}]}
   end
 
   def handle_event({:call, from}, {:subscribe_latch, latch_id, edge, pid}, _state, data)
@@ -343,14 +348,14 @@ defmodule EtherCAT.Slave do
 
   # -- Set output ------------------------------------------------------------
 
-  def handle_event({:call, from}, {:set_output, pdo_name, value}, _state, data) do
-    case Map.get(data.pdo_registrations, pdo_name) do
+  def handle_event({:call, from}, {:write_output, signal_name, value}, _state, data) do
+    case Map.get(data.signal_registrations, signal_name) do
       nil ->
-        {:keep_state_and_data, [{:reply, from, {:error, {:not_registered, pdo_name}}}]}
+        {:keep_state_and_data, [{:reply, from, {:error, {:not_registered, signal_name}}}]}
 
       %{domain_id: domain_id, sm_key: sm_key, bit_offset: bit_offset, bit_size: bit_size} ->
         key = {data.name, sm_key}
-        encoded = data.driver.encode_outputs(pdo_name, data.config, value)
+        encoded = data.driver.encode_signal(signal_name, data.config, value)
 
         result =
           case Domain.read(domain_id, key) do
@@ -367,17 +372,17 @@ defmodule EtherCAT.Slave do
 
   # -- Read input ------------------------------------------------------------
 
-  def handle_event({:call, from}, {:read_input, pdo_name}, _state, data) do
+  def handle_event({:call, from}, {:read_input, signal_name}, _state, data) do
     result =
-      case Map.get(data.pdo_registrations, pdo_name) do
+      case Map.get(data.signal_registrations, signal_name) do
         nil ->
-          {:error, {:not_registered, pdo_name}}
+          {:error, {:not_registered, signal_name}}
 
         %{domain_id: domain_id, sm_key: sm_key, bit_offset: bit_offset, bit_size: bit_size} ->
           case Domain.read(domain_id, {data.name, sm_key}) do
             {:ok, sm_bytes} ->
               raw = extract_sm_bits(sm_bytes, bit_offset, bit_size)
-              {:ok, data.driver.decode_inputs(pdo_name, data.config, raw)}
+              {:ok, data.driver.decode_signal(signal_name, data.config, raw)}
 
             {:error, _} = err ->
               err
@@ -389,7 +394,7 @@ defmodule EtherCAT.Slave do
 
   # -- Domain input change notification (sent by Domain on cycle) ------------
 
-  # SM-grouped key: {slave_name, {:sm, idx}} — unpack per-PDO bits and dispatch.
+  # SM-grouped key: {slave_name, {:sm, idx}} — unpack per-signal bits and dispatch.
   def handle_event(
         :info,
         {:domain_input, _domain_id, {_slave_name, {:sm, _} = sm_key}, old_sm_bytes, new_sm_bytes},
@@ -397,31 +402,31 @@ defmodule EtherCAT.Slave do
         data
       ) do
     notifications =
-      data.pdo_registrations
-      |> Enum.filter(fn {_pdo_name, reg} -> reg.sm_key == sm_key end)
-      |> Enum.reduce([], fn {pdo_name, %{bit_offset: bit_offset, bit_size: bit_size}}, acc ->
-        if pdo_changed?(old_sm_bytes, new_sm_bytes, bit_offset, bit_size) do
+      data.signal_registrations
+      |> Enum.filter(fn {_signal_name, reg} -> reg.sm_key == sm_key end)
+      |> Enum.reduce([], fn {signal_name, %{bit_offset: bit_offset, bit_size: bit_size}}, acc ->
+        if signal_changed?(old_sm_bytes, new_sm_bytes, bit_offset, bit_size) do
           raw = extract_sm_bits(new_sm_bytes, bit_offset, bit_size)
 
           decoded =
             if data.driver != nil do
-              data.driver.decode_inputs(pdo_name, data.config, raw)
+              data.driver.decode_signal(signal_name, data.config, raw)
             else
               raw
             end
 
-          data.pdo_subscriptions
-          |> Map.get(pdo_name, [])
+          data.input_subscriptions
+          |> Map.get(signal_name, [])
           |> Enum.reduce(acc, fn pid, pid_acc ->
-            [{pid, pdo_name, decoded} | pid_acc]
+            [{pid, signal_name, decoded} | pid_acc]
           end)
         else
           acc
         end
       end)
 
-    Enum.each(Enum.reverse(notifications), fn {pid, pdo_name, decoded} ->
-      send(pid, {:slave_input, data.name, pdo_name, decoded})
+    Enum.each(Enum.reverse(notifications), fn {pid, signal_name, decoded} ->
+      send(pid, {:slave_input, data.name, signal_name, decoded})
     end)
 
     :keep_state_and_data
@@ -505,7 +510,7 @@ defmodule EtherCAT.Slave do
         # Configure mailbox SMs (SM0 recv + SM1 send) while still in INIT so that
         # the slave's PDI finds them armed when it enters PREOP.
         Logger.debug("[Slave #{data.name}] init: setting up mailbox SMs")
-        setup_mailbox_sms(new_data)
+        configure_mailbox_sync_managers(new_data)
 
         Logger.debug("[Slave #{data.name}] init: transitioning to PREOP")
 
@@ -532,162 +537,255 @@ defmodule EtherCAT.Slave do
     end
   end
 
-  # -- PDO self-registration (called from :preop enter) ----------------------
+  # -- PREOP configuration (called from :preop enter) -----------------------
 
-  # Case 1: no driver — skip unconditionally
-  defp register_pdos_and_fmmus(%{driver: nil} = data), do: data
-
-  # Case 3: no explicit pdos, but domain is set — auto-enumerate all profile keys
-  defp register_pdos_and_fmmus(%{pdos: [], domain: domain_id} = data) when domain_id != nil do
-    profile = data.driver.process_data_profile(data.config)
-    auto_pdos = Enum.map(profile, fn {pdo_name, _index} -> {pdo_name, domain_id} end)
-    register_pdos_and_fmmus(%{data | pdos: auto_pdos})
+  defp configure_preop_process_data(%{driver: nil} = data) do
+    clear_configuration_error(data)
   end
 
-  # Case 4: no explicit pdos, no domain — skip
-  defp register_pdos_and_fmmus(%{pdos: []} = data), do: data
+  defp configure_preop_process_data(data) do
+    invoke_driver(data, :on_preop)
+    Logger.debug("[Slave #{data.name}] preop: running mailbox configuration")
+    Logger.debug("[Slave #{data.name}] preop: configuring process-data SyncManagers/FMMUs")
 
-  # Case 2: explicit pdos list provided — resolve and register
-  defp register_pdos_and_fmmus(data) do
-    profile = data.driver.process_data_profile(data.config)
-
-    # Resolve each requested PDO name to its SII PDO config entry.
-    resolved =
-      Enum.flat_map(data.pdos, fn {pdo_name, domain_id} ->
-        case Map.get(profile, pdo_name) do
-          nil ->
-            Logger.warning(
-              "[Slave #{data.name}] #{inspect(pdo_name)} not in driver profile — skipping"
-            )
-
-            []
-
-          pdo_index ->
-            case Enum.find(data.sii_pdo_configs, fn p -> p.index == pdo_index end) do
-              nil ->
-                Logger.warning(
-                  "[Slave #{data.name}] PDO 0x#{Integer.to_string(pdo_index, 16)} not in SII — skipping #{inspect(pdo_name)}"
-                )
-
-                []
-
-              pdo_cfg ->
-                [{pdo_name, domain_id, pdo_cfg}]
-            end
-        end
-      end)
-
-    # Group by SM index — all PDOs on the same SM share one domain region and one FMMU.
-    by_sm = Enum.group_by(resolved, fn {_, _, pdo_cfg} -> pdo_cfg.sm_index end)
-
-    {new_regs, _fmmu_idx} =
-      Enum.reduce(by_sm, {data.pdo_registrations, 0}, fn
-        {sm_idx, sm_pdos}, {regs, fmmu_idx} ->
-          register_sm_group(data, sm_idx, sm_pdos, regs, fmmu_idx)
-      end)
-
-    %{data | pdo_registrations: new_regs}
-  end
-
-  # Register all PDOs that share SM `sm_idx` as one domain region with one FMMU.
-  # Bit-level packing/unpacking is done in software; the FMMU covers the whole SM byte-aligned.
-  defp register_sm_group(data, sm_idx, sm_pdos, regs, fmmu_idx) do
-    {_pdo_name, domain_id, first_cfg} = hd(sm_pdos)
-    direction = first_cfg.direction
-
-    case Enum.find(data.sii_sm_configs, fn {i, _, _, _} -> i == sm_idx end) do
-      nil ->
-        names = Enum.map(sm_pdos, &elem(&1, 0))
-
-        Logger.warning(
-          "[Slave #{data.name}] SM#{sm_idx} not found in SII — skipping #{inspect(names)}"
-        )
-
-        {regs, fmmu_idx}
-
-      {^sm_idx, phys, _sii_len, ctrl} ->
-        # Total SM byte size from all SII PDOs on this SM (driver may only request a subset)
-        total_sm_bits =
-          Enum.reduce(data.sii_pdo_configs, 0, fn
-            %{sm_index: ^sm_idx, bit_size: b}, acc -> acc + b
-            _, acc -> acc
-          end)
-
-        total_sm_size = div(total_sm_bits + 7, 8)
-        fmmu_type = if direction == :input, do: 0x01, else: 0x02
-        sm_key = {:sm, sm_idx}
-
-        case Domain.register_pdo(domain_id, {data.name, sm_key}, total_sm_size, direction) do
-          {:ok, offset} ->
-            # SM register: full SM size, byte-aligned. Keep SM deactivated while reprogramming.
-            sm_reg = <<phys::16-little, total_sm_size::16-little, ctrl::8, 0::8, 0x00::8, 0::8>>
-
-            case Bus.transaction(
-                   data.bus,
-                   Transaction.new()
-                   |> Transaction.fpwr(data.station, Registers.sm_activate(sm_idx, 0))
-                   |> Transaction.fpwr(data.station, Registers.sm(sm_idx, sm_reg))
-                 ) do
-              {:ok, replies} ->
-                if all_wkc_positive?(replies) do
-                  # One FMMU covers the entire SM, byte-aligned (start_bit=0, stop_bit=7)
-                  fmmu_reg =
-                    <<offset::32-little, total_sm_size::16-little, 0::8, 7::8, phys::16-little,
-                      0::8, fmmu_type::8, 0x01::8, 0::24>>
-
-                  case Bus.transaction(
-                         data.bus,
-                         Transaction.fpwr(data.station, Registers.fmmu(fmmu_idx, fmmu_reg))
-                       ) do
-                    {:ok, [%{wkc: wkc}]} when wkc > 0 ->
-                      case Bus.transaction(
-                             data.bus,
-                             Transaction.fpwr(data.station, Registers.sm_activate(sm_idx, 1))
-                           ) do
-                        {:ok, [%{wkc: activate_wkc}]} when activate_wkc > 0 ->
-                          # Record bit position metadata for each PDO in this SM group
-                          new_regs =
-                            Enum.reduce(sm_pdos, regs, fn {pdo_name, _domain_id, pdo_cfg}, acc ->
-                              Map.put(acc, pdo_name, %{
-                                domain_id: domain_id,
-                                sm_key: sm_key,
-                                bit_offset: pdo_cfg.bit_offset,
-                                bit_size: pdo_cfg.bit_size
-                              })
-                            end)
-
-                          {new_regs, fmmu_idx + 1}
-
-                        _ ->
-                          Logger.warning(
-                            "[Slave #{data.name}] SM#{sm_idx} activation failed after reconfigure"
-                          )
-
-                          {regs, fmmu_idx}
-                      end
-
-                    _ ->
-                      Logger.warning("[Slave #{data.name}] FMMU write for SM#{sm_idx} failed")
-                      {regs, fmmu_idx}
-                  end
-                else
-                  Logger.warning("[Slave #{data.name}] SM#{sm_idx} deactivate/reconfigure failed")
-                  {regs, fmmu_idx}
-                end
-
-              _ ->
-                Logger.warning("[Slave #{data.name}] SM#{sm_idx} deactivate/reconfigure failed")
-                {regs, fmmu_idx}
-            end
-
-          {:error, reason} ->
-            Logger.warning(
-              "[Slave #{data.name}] Domain.register_pdo SM#{sm_idx} failed: #{inspect(reason)}"
-            )
-
-            {regs, fmmu_idx}
-        end
+    with :ok <- run_mailbox_config(data),
+         {:ok, requested_signals} <-
+           ProcessDataPlan.normalize_request(data.process_data_request, data.driver, data.config),
+         {:ok, sm_groups} <-
+           ProcessDataPlan.build(
+             requested_signals,
+             data.driver.process_data_model(data.config),
+             data.sii_pdo_configs,
+             data.sii_sm_configs
+           ),
+         {:ok, registrations} <- apply_process_data_groups(data, sm_groups) do
+      %{clear_configuration_error(data) | signal_registrations: registrations}
+    else
+      {:error, reason} ->
+        log_process_data_error(data, reason)
+        %{data | configuration_error: reason}
     end
+  end
+
+  defp clear_configuration_error(data) do
+    %{data | configuration_error: nil}
+  end
+
+  defp maybe_reconfigure_preop(%{signal_registrations: registrations} = data, opts)
+       when map_size(registrations) > 0 do
+    requested_driver = Keyword.get(opts, :driver, data.driver)
+    requested_config = Keyword.get(opts, :config, data.config)
+    requested_process_data = Keyword.get(opts, :process_data, data.process_data_request)
+
+    if requested_driver == data.driver and requested_config == data.config and
+         requested_process_data == data.process_data_request do
+      {:ok, data}
+    else
+      {:error, :already_configured, data}
+    end
+  end
+
+  defp maybe_reconfigure_preop(data, opts) do
+    updated_data = %{
+      data
+      | driver: Keyword.get(opts, :driver, data.driver),
+        config: Keyword.get(opts, :config, data.config),
+        process_data_request: Keyword.get(opts, :process_data, data.process_data_request)
+    }
+
+    configured = configure_preop_process_data(updated_data)
+
+    case configured.configuration_error do
+      nil -> {:ok, configured}
+      reason -> {:error, reason, configured}
+    end
+  end
+
+  defp apply_process_data_groups(data, sm_groups) do
+    sm_groups
+    |> Enum.reduce_while({:ok, data.signal_registrations, 0}, fn sm_group,
+                                                                 {:ok, regs, fmmu_idx} ->
+      case apply_process_data_group(data, sm_group, regs, fmmu_idx) do
+        {:ok, new_regs, next_fmmu_idx} -> {:cont, {:ok, new_regs, next_fmmu_idx}}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+    |> case do
+      {:ok, registrations, _fmmu_idx} -> {:ok, registrations}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp apply_process_data_group(data, %SmGroup{} = sm_group, regs, fmmu_idx) do
+    with {:ok, offset} <-
+           register_process_data_domain(data, sm_group),
+         :ok <- write_process_data_sync_manager(data, sm_group),
+         :ok <- write_process_data_fmmu(data, sm_group, fmmu_idx, offset),
+         :ok <- activate_process_data_sync_manager(data, sm_group) do
+      {:ok, register_sm_group(sm_group, regs), fmmu_idx + 1}
+    end
+  end
+
+  defp register_process_data_domain(data, %SmGroup{} = sm_group) do
+    case Domain.register_pdo(
+           sm_group.domain_id,
+           {data.name, sm_group.sm_key},
+           sm_group.total_sm_size,
+           sm_group.direction
+         ) do
+      {:ok, offset} -> {:ok, offset}
+      {:error, reason} -> {:error, {:domain_register_failed, sm_group.sm_index, reason}}
+    end
+  end
+
+  defp register_sm_group(%SmGroup{} = sm_group, regs) do
+    Enum.reduce(sm_group.registrations, regs, fn registration, acc ->
+      Map.put(acc, registration.signal_name, %{
+        domain_id: registration.domain_id,
+        sm_key: sm_group.sm_key,
+        bit_offset: registration.bit_offset,
+        bit_size: registration.bit_size
+      })
+    end)
+  end
+
+  defp write_process_data_sync_manager(data, %SmGroup{} = sm_group) do
+    sm_reg =
+      <<sm_group.phys::16-little, sm_group.total_sm_size::16-little, sm_group.ctrl::8, 0::8,
+        0x00::8, 0::8>>
+
+    case Bus.transaction(
+           data.bus,
+           Transaction.new()
+           |> Transaction.fpwr(data.station, Registers.sm_activate(sm_group.sm_index, 0))
+           |> Transaction.fpwr(data.station, Registers.sm(sm_group.sm_index, sm_reg))
+         ) do
+      {:ok, replies} ->
+        ensure_positive_wkcs(replies, {:sync_manager_write_failed, sm_group.sm_index})
+
+      {:error, reason} ->
+        {:error, {:sync_manager_write_failed, sm_group.sm_index, reason}}
+    end
+  end
+
+  defp write_process_data_fmmu(data, %SmGroup{} = sm_group, fmmu_idx, offset) do
+    fmmu_reg =
+      <<offset::32-little, sm_group.total_sm_size::16-little, 0::8, 7::8,
+        sm_group.phys::16-little, 0::8, sm_group.fmmu_type::8, 0x01::8, 0::24>>
+
+    case Bus.transaction(
+           data.bus,
+           Transaction.fpwr(data.station, Registers.fmmu(fmmu_idx, fmmu_reg))
+         ) do
+      {:ok, replies} ->
+        ensure_positive_wkcs(replies, {:fmmu_write_failed, sm_group.sm_index})
+
+      {:error, reason} ->
+        {:error, {:fmmu_write_failed, sm_group.sm_index, reason}}
+    end
+  end
+
+  defp activate_process_data_sync_manager(data, %SmGroup{} = sm_group) do
+    case Bus.transaction(
+           data.bus,
+           Transaction.fpwr(data.station, Registers.sm_activate(sm_group.sm_index, 1))
+         ) do
+      {:ok, replies} ->
+        ensure_positive_wkcs(replies, {:sync_manager_activate_failed, sm_group.sm_index})
+
+      {:error, reason} ->
+        {:error, {:sync_manager_activate_failed, sm_group.sm_index, reason}}
+    end
+  end
+
+  defp ensure_positive_wkcs(replies, error_tag) when is_list(replies) and replies != [] do
+    if all_wkc_positive?(replies) do
+      :ok
+    else
+      {:error, error_tag}
+    end
+  end
+
+  defp ensure_positive_wkcs(_replies, error_tag), do: {:error, error_tag}
+
+  defp log_process_data_error(data, :invalid_process_data_request) do
+    Logger.warning("[Slave #{data.name}] invalid process_data request")
+  end
+
+  defp log_process_data_error(data, {:signal_not_in_driver_model, signal_name}) do
+    Logger.warning("[Slave #{data.name}] #{inspect(signal_name)} not in driver model")
+  end
+
+  defp log_process_data_error(data, {:invalid_signal_model, signal_name}) do
+    Logger.warning(
+      "[Slave #{data.name}] #{inspect(signal_name)} has an invalid signal declaration"
+    )
+  end
+
+  defp log_process_data_error(data, {:pdo_not_in_sii, pdo_index}) do
+    Logger.warning("[Slave #{data.name}] PDO 0x#{Integer.to_string(pdo_index, 16)} not in SII")
+  end
+
+  defp log_process_data_error(data, {:signal_range_out_of_bounds, signal_name, pdo_index}) do
+    Logger.warning(
+      "[Slave #{data.name}] #{inspect(signal_name)} exceeds PDO 0x#{Integer.to_string(pdo_index, 16)} bounds"
+    )
+  end
+
+  defp log_process_data_error(data, {:sm_not_in_sii, sm_index}) do
+    Logger.warning("[Slave #{data.name}] SM#{sm_index} not found in SII")
+  end
+
+  defp log_process_data_error(data, {:sync_manager_spans_multiple_domains, sm_index}) do
+    Logger.warning("[Slave #{data.name}] SM#{sm_index} cannot span multiple domains")
+  end
+
+  defp log_process_data_error(data, {:mailbox_config_failed, index, subindex, reason}) do
+    Logger.warning(
+      "[Slave #{data.name}] mailbox step 0x#{Integer.to_string(index, 16)}:0x#{Integer.to_string(subindex, 16)} failed: #{inspect(reason)}"
+    )
+  end
+
+  defp log_process_data_error(data, {:invalid_mailbox_step, step}) do
+    Logger.warning("[Slave #{data.name}] invalid mailbox step: #{inspect(step)}")
+  end
+
+  defp log_process_data_error(data, {:domain_register_failed, sm_index, reason}) do
+    Logger.warning(
+      "[Slave #{data.name}] domain registration for SM#{sm_index} failed: #{inspect(reason)}"
+    )
+  end
+
+  defp log_process_data_error(data, {:sync_manager_write_failed, sm_index, reason}) do
+    Logger.warning("[Slave #{data.name}] SM#{sm_index} write failed: #{inspect(reason)}")
+  end
+
+  defp log_process_data_error(data, {:sync_manager_activate_failed, sm_index, reason}) do
+    Logger.warning("[Slave #{data.name}] SM#{sm_index} activation failed: #{inspect(reason)}")
+  end
+
+  defp log_process_data_error(data, {:fmmu_write_failed, sm_index, reason}) do
+    Logger.warning("[Slave #{data.name}] FMMU write for SM#{sm_index} failed: #{inspect(reason)}")
+  end
+
+  defp log_process_data_error(data, {:sync_manager_write_failed, sm_index}) do
+    Logger.warning("[Slave #{data.name}] SM#{sm_index} write failed")
+  end
+
+  defp log_process_data_error(data, {:sync_manager_activate_failed, sm_index}) do
+    Logger.warning("[Slave #{data.name}] SM#{sm_index} activation failed")
+  end
+
+  defp log_process_data_error(data, {:fmmu_write_failed, sm_index}) do
+    Logger.warning("[Slave #{data.name}] FMMU write for SM#{sm_index} failed")
+  end
+
+  defp log_process_data_error(data, {:error, reason}) do
+    Logger.warning("[Slave #{data.name}] process-data configuration failed: #{inspect(reason)}")
+  end
+
+  defp log_process_data_error(data, reason) do
+    Logger.warning("[Slave #{data.name}] process-data configuration failed: #{inspect(reason)}")
   end
 
   # -- Transition helpers ----------------------------------------------------
@@ -798,34 +896,58 @@ defmodule EtherCAT.Slave do
     end
   end
 
-  # -- CoE SDO configuration (called from :preop enter) ----------------------
+  # -- PREOP mailbox configuration (called from :preop enter) ----------------
 
-  defp run_sdo_config(%{driver: nil}), do: :ok
+  defp run_mailbox_config(%{driver: nil}), do: :ok
 
-  defp run_sdo_config(data) do
-    if function_exported?(data.driver, :sdo_config, 1) do
-      Enum.each(data.driver.sdo_config(data.config), fn {index, subindex, value, size} ->
-        case CoE.write_sdo(
-               data.bus,
-               data.station,
-               data.mailbox_config,
-               index,
-               subindex,
-               value,
-               size
-             ) do
-          :ok ->
-            :ok
-
-          {:error, reason} ->
-            Logger.warning(
-              "[Slave #{data.name}] SDO write 0x#{Integer.to_string(index, 16)}:0x#{Integer.to_string(subindex, 16)} failed: #{inspect(reason)}"
-            )
+  defp run_mailbox_config(data) do
+    if function_exported?(data.driver, :mailbox_config, 1) do
+      data.driver.mailbox_config(data.config)
+      |> Enum.reduce_while(:ok, fn step, :ok ->
+        case run_mailbox_step(data, step) do
+          :ok -> {:cont, :ok}
+          {:error, _} = err -> {:halt, err}
         end
       end)
+    else
+      :ok
     end
+  end
 
-    :ok
+  defp run_mailbox_step(
+         data,
+         {:sdo_download, index, subindex, sdo_data}
+       )
+       when is_integer(index) and index >= 0 and is_integer(subindex) and subindex >= 0 and
+              is_binary(sdo_data) and byte_size(sdo_data) > 0 do
+    case write_mailbox_sdo(data, index, subindex, sdo_data) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        {:error, {:mailbox_config_failed, index, subindex, reason}}
+    end
+  end
+
+  defp run_mailbox_step(_data, step), do: {:error, {:invalid_mailbox_step, step}}
+
+  defp write_mailbox_sdo(data, index, subindex, sdo_data) do
+    case byte_size(sdo_data) do
+      1 ->
+        <<value::8>> = sdo_data
+        CoE.write_sdo(data.bus, data.station, data.mailbox_config, index, subindex, value, 1)
+
+      2 ->
+        <<value::16-little>> = sdo_data
+        CoE.write_sdo(data.bus, data.station, data.mailbox_config, index, subindex, value, 2)
+
+      4 ->
+        <<value::32-little>> = sdo_data
+        CoE.write_sdo(data.bus, data.station, data.mailbox_config, index, subindex, value, 4)
+
+      size ->
+        {:error, {:unsupported_sdo_download_size, size}}
+    end
   end
 
   # -- DC signal configuration -----------------------------------------------
@@ -835,7 +957,7 @@ defmodule EtherCAT.Slave do
   defp configure_dc_signals(%{dc_cycle_ns: nil} = data), do: clear_latch_config(data)
 
   defp configure_dc_signals(data) do
-    case invoke_driver_call(data, :dc_config) do
+    case invoke_driver_call(data, :distributed_clocks) do
       nil ->
         clear_latch_config(data)
 
@@ -992,9 +1114,9 @@ defmodule EtherCAT.Slave do
   # mailbox communication using addresses from SII EEPROM. Called while still
   # in INIT so the slave's PDI firmware finds them armed on PREOP entry.
   # No-op for slaves without a mailbox (recv_size == 0).
-  defp setup_mailbox_sms(%{mailbox_config: %{recv_size: 0}}), do: :ok
+  defp configure_mailbox_sync_managers(%{mailbox_config: %{recv_size: 0}}), do: :ok
 
-  defp setup_mailbox_sms(data) do
+  defp configure_mailbox_sync_managers(data) do
     %{recv_offset: ro, recv_size: rs, send_offset: so, send_size: ss} = data.mailbox_config
 
     sm0 = <<ro::16-little, rs::16-little, 0x26::8, 0::8, 0x00::8, 0::8>>
@@ -1038,9 +1160,9 @@ defmodule EtherCAT.Slave do
     end
   end
 
-  defp pdo_changed?(:unset, _new_sm_bytes, _bit_offset, _bit_size), do: true
+  defp signal_changed?(:unset, _new_sm_bytes, _bit_offset, _bit_size), do: true
 
-  defp pdo_changed?(old_sm_bytes, new_sm_bytes, bit_offset, bit_size) do
+  defp signal_changed?(old_sm_bytes, new_sm_bytes, bit_offset, bit_size) do
     extract_sm_bits(old_sm_bytes, bit_offset, bit_size) !=
       extract_sm_bits(new_sm_bytes, bit_offset, bit_size)
   end

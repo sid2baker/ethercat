@@ -26,7 +26,7 @@ EtherCAT.start(
     [name: :coupler],
     [name: :bridge_1],
     [name: :bridge_2],
-    [name: :thermo, config: %{}, pdos: []]
+    [name: :thermo, config: %{}, process_data: :none]
   ]
 )
 
@@ -41,31 +41,43 @@ IO.puts("station: 0x#{Integer.to_string(station, 16)}\n")
 # ── 1. SII mailbox config ────────────────────────────────────────────────────
 
 {:ok, mbx} = SII.read_mailbox_config(link, station)
-IO.puts("SII mailbox recv : offset=0x#{Integer.to_string(mbx.recv_offset, 16)}  size=#{mbx.recv_size}")
-IO.puts("SII mailbox send : offset=0x#{Integer.to_string(mbx.send_offset, 16)}  size=#{mbx.send_size}")
+
+IO.puts(
+  "SII mailbox recv : offset=0x#{Integer.to_string(mbx.recv_offset, 16)}  size=#{mbx.recv_size}"
+)
+
+IO.puts(
+  "SII mailbox send : offset=0x#{Integer.to_string(mbx.send_offset, 16)}  size=#{mbx.send_size}"
+)
 
 # ── 2. SM register state ─────────────────────────────────────────────────────
 
 for i <- 0..1 do
   {:ok, [%{data: <<phys::16-little, len::16-little, ctrl::8, _::8, act::8, _::8>>, wkc: wkc}]} =
     Bus.transaction_queue(link, &Transaction.fprd(&1, station, {Registers.sm(i), 8}))
-  IO.puts("SM#{i} : phys=0x#{Integer.to_string(phys, 16)}  len=#{len}  ctrl=0x#{Integer.to_string(ctrl, 16)}  activate=#{act}  wkc=#{wkc}")
+
+  IO.puts(
+    "SM#{i} : phys=0x#{Integer.to_string(phys, 16)}  len=#{len}  ctrl=0x#{Integer.to_string(ctrl, 16)}  activate=#{act}  wkc=#{wkc}"
+  )
 end
 
 # ── 3. SM1 status before any write ───────────────────────────────────────────
 
 {:ok, [%{data: <<st::8>>, wkc: wkc}]} =
   Bus.transaction_queue(link, &Transaction.fprd(&1, station, Registers.sm_status(1)))
-IO.puts("\nSM1 status before write : 0x#{Integer.to_string(st, 16)}  bit3(full)=#{Bitwise.band(st, 0x08) != 0}  wkc=#{wkc}")
+
+IO.puts(
+  "\nSM1 status before write : 0x#{Integer.to_string(st, 16)}  bit3(full)=#{Bitwise.band(st, 0x08) != 0}  wkc=#{wkc}"
+)
 
 # ── 4. Build SDO frame: write 0x8000:0x02 = 4 (Presentation = 1/64 Ω) ──────
 
 # Mailbox header (6 B): length=10, address=0, channel=0, priority=0, type=CoE(3)
 # CoE header    (2 B): number=0, service=2 (SDO request)
 # SDO body      (8 B): cmd=0x2F (1-byte expedited), index, subindex, value
-frame = <<10::16-little, 0::16, 0::8, 0x03::8,
-          0x00, 0x20,
-          0x2F::8, 0x8000::16-little, 0x02::8, 4::32-little>>
+frame =
+  <<10::16-little, 0::16, 0::8, 0x03::8, 0x00, 0x20, 0x2F::8, 0x8000::16-little, 0x02::8,
+    4::32-little>>
 
 frame_size = byte_size(frame)
 IO.puts("\nSDO frame size : #{frame_size} bytes  recv_size : #{mbx.recv_size} bytes")
@@ -73,14 +85,20 @@ IO.puts("\nSDO frame size : #{frame_size} bytes  recv_size : #{mbx.recv_size} by
 # ── 5. Test A — unpadded write (current coe.ex behaviour) ────────────────────
 
 IO.puts("\n[A] Unpadded write (#{frame_size} bytes):")
+
 {:ok, [%{wkc: wkc_a}]} =
   Bus.transaction_queue(link, &Transaction.fpwr(&1, station, {mbx.recv_offset, frame}))
+
 IO.puts("    write wkc=#{wkc_a}")
 
 Process.sleep(300)
+
 {:ok, [%{data: <<st_a::8>>}]} =
   Bus.transaction_queue(link, &Transaction.fprd(&1, station, Registers.sm_status(1)))
-IO.puts("    SM1 status : 0x#{Integer.to_string(st_a, 16)}  bit3=#{Bitwise.band(st_a, 0x08) != 0}")
+
+IO.puts(
+  "    SM1 status : 0x#{Integer.to_string(st_a, 16)}  bit3=#{Bitwise.band(st_a, 0x08) != 0}"
+)
 
 # ── 6. Reset SM0 by rewriting its register, then test B ──────────────────────
 
@@ -91,16 +109,23 @@ Process.sleep(50)
 
 IO.puts("\n[B] Padded write (#{mbx.recv_size} bytes — frame + zeros):")
 padded = frame <> :binary.copy(<<0>>, mbx.recv_size - frame_size)
+
 {:ok, [%{wkc: wkc_b}]} =
   Bus.transaction_queue(link, &Transaction.fpwr(&1, station, {mbx.recv_offset, padded}))
+
 IO.puts("    write wkc=#{wkc_b}")
 
 for i <- 1..20 do
   Process.sleep(50)
+
   {:ok, [%{data: <<st::8>>}]} =
     Bus.transaction_queue(link, &Transaction.fprd(&1, station, Registers.sm_status(1)))
+
   full = Bitwise.band(st, 0x08) != 0
-  IO.puts("    poll #{String.pad_leading(to_string(i), 2)} : SM1 status=0x#{Integer.to_string(st, 16)}  bit3=#{full}#{if full, do: "  ← FULL", else: ""}")
+
+  IO.puts(
+    "    poll #{String.pad_leading(to_string(i), 2)} : SM1 status=0x#{Integer.to_string(st, 16)}  bit3=#{full}#{if full, do: "  ← FULL", else: ""}"
+  )
 end
 
 EtherCAT.stop()

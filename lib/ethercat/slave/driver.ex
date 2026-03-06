@@ -9,21 +9,26 @@ defmodule EtherCAT.Slave.Driver do
   That default driver exposes no PDO profile and is intended for couplers or
   dynamically configured devices.
 
-  ## Profile format
+  ## Process-data model
 
-  `process_data_profile/1` returns a map keyed by PDO name (atom) with values
-  being the SII PDO object index (integer). The master reads SII EEPROM categories
-  0x0032 (TxPDO) and 0x0033 (RxPDO) to auto-derive: SM assignment, direction,
-  total SM size, and per-PDO bit offset within the SM.
+  `process_data_model/1` returns a map keyed by logical signal name (atom). Each
+  value declares where that signal lives in the slave's PDO layout:
+
+  - an integer means "this signal spans the whole PDO at that index"
+  - `%EtherCAT.Slave.ProcessDataSignal{}` may select a bit-range inside a PDO
+
+  The master reads SII EEPROM categories 0x0032 (TxPDO) and 0x0033 (RxPDO) to
+  derive SyncManager assignment, direction, total SM size, and each PDO's bit
+  offset within its SyncManager. The driver's signal model sits on top of that
+  hardware description and names the application-facing signals.
 
       %{
         channels: 0x1A00
       }
 
-  Each named PDO gets its own FMMU (with bit-level precision for sub-byte PDOs).
-  `decode_inputs`/`encode_outputs` are called once per named PDO with that PDO's
-  exact bytes. Sub-byte PDOs (e.g. 1-bit channels) receive/return 1 padded byte
-  with the value in bit 0 (LSB).
+  Each signal is encoded and decoded independently. Sub-byte signals (e.g. 1-bit
+  digital channels) receive/return 1 padded byte with the value in bit 0 (LSB).
+  Larger signals receive exactly enough bytes to carry the declared `bit_size`.
 
   ## Example — EL1809 (16-ch digital input, 16 × 1-bit TxPDOs)
 
@@ -31,7 +36,7 @@ defmodule EtherCAT.Slave.Driver do
         @behaviour EtherCAT.Slave.Driver
 
         @impl true
-        def process_data_profile(_config) do
+        def process_data_model(_config) do
           %{
             ch1:  0x1A00, ch2:  0x1A01, ch3:  0x1A02, ch4:  0x1A03,
             ch5:  0x1A04, ch6:  0x1A05, ch7:  0x1A06, ch8:  0x1A07,
@@ -41,13 +46,12 @@ defmodule EtherCAT.Slave.Driver do
         end
 
         @impl true
-        def encode_outputs(_pdo, _config, _value), do: <<>>
+        def encode_signal(_signal, _config, _value), do: <<>>
 
         @impl true
-        # 1-bit PDO: FMMU maps the physical SM bit to logical bit 0.
-        # decode_inputs receives 1 byte; bit 0 (LSB) is the channel value.
-        def decode_inputs(_ch, _config, <<_::7, bit::1>>), do: bit
-        def decode_inputs(_pdo, _config, _), do: 0
+        # 1-bit signal: the runtime extracts one bit and pads it into bit 0.
+        def decode_signal(_ch, _config, <<_::7, bit::1>>), do: bit
+        def decode_signal(_signal, _config, _), do: 0
       end
 
   ## Example — EL2809 (16-ch digital output, 16 × 1-bit RxPDOs)
@@ -56,7 +60,7 @@ defmodule EtherCAT.Slave.Driver do
         @behaviour EtherCAT.Slave.Driver
 
         @impl true
-        def process_data_profile(_config) do
+        def process_data_model(_config) do
           %{
             ch1:  0x1600, ch2:  0x1601, ch3:  0x1602, ch4:  0x1603,
             ch5:  0x1604, ch6:  0x1605, ch7:  0x1606, ch8:  0x1607,
@@ -66,11 +70,11 @@ defmodule EtherCAT.Slave.Driver do
         end
 
         @impl true
-        # 1-bit PDO: return 1 byte; the FMMU places bit 0 into the correct SM bit.
-        def encode_outputs(_ch, _config, v), do: <<v::8>>
+        # 1-bit signal: return 1 byte; bit 0 is written into the correct SM bit.
+        def encode_signal(_ch, _config, v), do: <<v::8>>
 
         @impl true
-        def decode_inputs(_pdo, _config, _), do: nil
+        def decode_signal(_signal, _config, _), do: nil
       end
 
   ## Example — EL3202 (2-ch PT100 input, 2 × 32-bit TxPDOs)
@@ -79,56 +83,70 @@ defmodule EtherCAT.Slave.Driver do
         @behaviour EtherCAT.Slave.Driver
 
         @impl true
-        def process_data_profile(_config) do
+        def process_data_model(_config) do
           # 0x1A00 = channel 1 (SM3, bytes 0–3), 0x1A01 = channel 2 (SM3, bytes 4–7)
           %{channel1: 0x1A00, channel2: 0x1A01}
         end
 
         @impl true
-        def sdo_config(_config) do
-          [{0x8000, 0x19, 8, 2}, {0x8010, 0x19, 8, 2}]
+        def mailbox_config(_config) do
+          [
+            {:sdo_download, 0x8000, 0x19, <<8::16-little>>},
+            {:sdo_download, 0x8010, 0x19, <<8::16-little>>}
+          ]
         end
 
         @impl true
-        def encode_outputs(_pdo, _config, _value), do: <<>>
+        def encode_signal(_signal, _config, _value), do: <<>>
 
         @impl true
-        def decode_inputs(:channel1, _config, <<
+        def decode_signal(:channel1, _config, <<
               _::1, error::1, _::2, _::2, overrange::1, underrange::1,
               toggle::1, state::1, _::6, value::16-little>>) do
           %{ohms: value / 16.0, overrange: overrange == 1, underrange: underrange == 1,
             error: error == 1, invalid: state == 1, toggle: toggle}
         end
-        def decode_inputs(:channel2, _config, <<
+        def decode_signal(:channel2, _config, <<
               _::1, error::1, _::2, _::2, overrange::1, underrange::1,
               toggle::1, state::1, _::6, value::16-little>>) do
           %{ohms: value / 16.0, overrange: overrange == 1, underrange: underrange == 1,
             error: error == 1, invalid: state == 1, toggle: toggle}
         end
-        def decode_inputs(_pdo, _config, _), do: nil
+        def decode_signal(_signal, _config, _), do: nil
       end
   """
 
-  @type pdo_name :: atom()
+  alias EtherCAT.Slave.ProcessDataSignal
+
+  @type signal_name :: atom()
   @type config :: map()
 
   @type latch_edge :: :pos | :neg
   @type latch_config :: %{latch_id: 0 | 1, edge: latch_edge()}
 
-  @type dc_config :: %{
+  @type mailbox_step ::
+          {:sdo_download, index :: non_neg_integer(), subindex :: non_neg_integer(),
+           data :: binary()}
+
+  @type distributed_clocks_spec :: %{
           required(:sync0_pulse_ns) => pos_integer(),
           optional(:sync1_cycle_ns) => pos_integer(),
           optional(:latches) => [latch_config()]
         }
 
-  @doc "Return a map of PDO name → SII PDO object index (e.g. 0x1A00)."
-  @callback process_data_profile(config()) :: %{pdo_name() => non_neg_integer()}
+  @doc """
+  Return the driver's logical signal model.
 
-  @doc "Encode a domain value into raw output bytes for the process image."
-  @callback encode_outputs(pdo_name(), config(), term()) :: binary()
+  Each signal maps to either a whole PDO index or a `%ProcessDataSignal{}` slice.
+  """
+  @callback process_data_model(config()) ::
+              %{signal_name() => non_neg_integer() | ProcessDataSignal.t()}
 
-  @doc "Decode raw input bytes from the process image into a domain value."
-  @callback decode_inputs(pdo_name(), config(), binary()) :: term()
+  @doc "Encode one logical output signal into raw bytes for the process image."
+  @callback encode_signal(signal_name(), config(), term()) :: binary()
+
+  @doc "Decode raw input bytes for one logical signal from the process image."
+  @callback decode_signal(signal_name(), config(), binary()) :: term()
 
   @doc "Called on entry to PreOp state. Optional."
   @callback on_preop(slave_name :: atom(), config()) :: :ok
@@ -140,25 +158,24 @@ defmodule EtherCAT.Slave.Driver do
   @callback on_op(slave_name :: atom(), config()) :: :ok
 
   @doc """
-  Return a list of SDO writes to perform in PreOp before SM/FMMU configuration.
+  Return PREOP mailbox configuration steps.
 
-  Each entry is `{index, subindex, value, size}` where `size` is in bytes (1, 2, or 4).
-  The slave executes them via CoE expedited SDO download. Failures are logged as warnings
-  but do not prevent the slave from advancing to SafeOp/Op.
+  Currently the runtime supports `{:sdo_download, index, subindex, data}` steps.
+  They execute in order before SyncManager/FMMU configuration, so this callback
+  can perform dynamic PDO remapping (`0x1600+`, `0x1A00+`, `0x1C12`, `0x1C13`)
+  or any other CoE parameterization required before SAFEOP.
 
-  SDO writes run before SM and FMMU registers are written, so this callback can perform
-  dynamic PDO remapping (writing to 0x1C12/0x1C13) and the process_data_profile will
-  reflect the resulting SM layout.
+  The current CoE implementation supports expedited downloads only, so `data`
+  must be 1, 2, or 4 bytes long.
   """
-  @callback sdo_config(config()) ::
-              [{index :: integer(), subindex :: integer(), value :: integer(), size :: 1 | 2 | 4}]
+  @callback mailbox_config(config()) :: [mailbox_step()]
 
   @doc """
   Return Distributed Clocks SYNC0 parameters, or `nil` to disable DC on this slave.
 
   Called during SafeOp entry when `dc_cycle_ns` is configured on the master.
   """
-  @callback dc_config(config()) :: dc_config() | nil
+  @callback distributed_clocks(config()) :: distributed_clocks_spec() | nil
 
   @doc """
   Called when an ESC hardware LATCH event is captured during Op.
@@ -171,8 +188,8 @@ defmodule EtherCAT.Slave.Driver do
     on_preop: 2,
     on_safeop: 2,
     on_op: 2,
-    sdo_config: 1,
-    dc_config: 1,
+    mailbox_config: 1,
+    distributed_clocks: 1,
     on_latch: 5
   ]
 end

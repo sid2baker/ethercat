@@ -23,8 +23,17 @@ restarted on individual slave crashes.
 | `:idle` | Not started. Rejects all calls except `start/1`. |
 | `:scanning` | Bus open, polling for a stable slave count via BRD to `0x0000`. |
 | `:configuring` | Stations assigned, DC initialized, slaves spawned. Waiting for all named slaves to send `{:slave_ready, name, :preop}`. |
-| `:running` | Startup sequence complete. Explicitly configured slaves are advanced to `:op`; dynamic defaults may remain in `:preop` for runtime configuration. |
+| `:running` | Startup sequence complete. Either operational, or waiting in PREOP for explicit `configure_slave/2` + `activate/0`. |
 | `:degraded` | Startup is partially complete; at least one slave failed PREOP→SAFEOP/OP. Master retries failed promotions periodically and moves to `:running` once all succeed. |
+
+Public lifecycle code should prefer `phase/0` over raw `state/0`:
+
+- `:idle`
+- `:scanning`
+- `:configuring`
+- `:preop_ready`
+- `:operational`
+- `:degraded`
 
 ---
 
@@ -67,7 +76,7 @@ If DC init fails, master proceeds without DC: `dc_cycle_ns` is set to `nil`, no 
 **Step 6: Start slaves**
 `start_slaves/3` — one `EtherCAT.Slave` gen_statem per config entry via `EtherCAT.SlaveSupervisor`. `nil` config entries are rejected at `start/1`. Missing drivers use `EtherCAT.Slave.Driver.Default`.
 
-If `slaves: []` (or omitted), the master auto-creates one default slave config per discovered station (`:coupler`, `:slave_1`, ...), starts all of them, and tracks them in `pending_preop` so each process still executes INIT→PREOP.
+If `slaves: []` (or omitted), the master auto-creates one default slave config per discovered station (`:coupler`, `:slave_1`, ...), starts all of them with `process_data: :none` and `target_state: :preop`, and tracks them in `pending_preop` so each process still executes INIT→PREOP.
 
 Slaves receive `dc_cycle_ns` only if DC init succeeded (otherwise `nil`).
 
@@ -93,7 +102,10 @@ When `pending_preop` empties: call `activate_network/1` and transition to
 
 Runs synchronously before transitioning to `:running`.
 
-If no activatable slaves are configured (dynamic startup mode), activation is skipped and slaves remain in `:preop`.
+If no activatable slaves are configured, activation is skipped and the master enters `:running` with all slaves held in `:preop`. At that point:
+
+1. call `configure_slave/2` one or more times
+2. call `activate/0` once to start DC/domain runtime and request `SAFEOP -> OP`
 
 **Step 1: Start DC gen_statem**
 `DC.start_link(bus: bus, ref_station: ref_station, period_ms: 10)` — starts cyclic ARMW ticker.
@@ -114,9 +126,13 @@ If any activatable slave fails SafeOp/Op, master enters `:degraded` and retries 
 
 ## Running Phase
 
-Master accepts `stop/0`, `slaves/0`, `bus/0`, `state/0`, and `await_running/1`.
+Master accepts `stop/0`, `slaves/0`, `bus/0`, `state/0`, `await_running/1`, `configure_slave/2`, and `activate/0`.
 Ignores `{:slave_ready, ...}` (stale from restart race).
 On bus crash (`{:DOWN, ref, ...}`): calls `stop_session/1`, replies `{:error, {:bus_down, reason}}` to blocked callers, returns to `:idle`.
+
+`await_running/1` means "startup finished". For static configurations that normally
+also means operational. For dynamic PREOP configuration, use `await_operational/1`
+after `activate/0`.
 
 ## Degraded Phase
 

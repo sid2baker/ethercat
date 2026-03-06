@@ -12,33 +12,33 @@ defmodule El3202Driver do
   @behaviour EtherCAT.Slave.Driver
 
   @impl true
-  def process_data_profile(_config) do
+  def process_data_model(_config) do
     # Two 32-bit TxPDOs on SM3; master derives SM, size, and bit offsets from SII.
     %{channel1: 0x1A00, channel2: 0x1A01}
   end
 
   @impl true
-  def sdo_config(_config) do
+  def mailbox_config(_config) do
     [
       # RTD element (0x80n0:0x19) controls the measurement mode:
       #   0=PT100  1=Ni100  2=PT1000 ... 8=ohm_1_16  9=ohm_1_64
       # Resistance output (1/16 Ω/bit, 0–4096 Ω range) = element 8.
       # ch1 RTD element = ohm_1_16
-      {0x8000, 0x19, 8, 2},
+      {:sdo_download, 0x8000, 0x19, <<8::16-little>>},
       # ch2 RTD element = ohm_1_16
-      {0x8010, 0x19, 8, 2}
+      {:sdo_download, 0x8010, 0x19, <<8::16-little>>}
     ]
   end
 
   @impl true
-  def encode_outputs(_pdo, _config, _), do: <<>>
+  def encode_signal(_pdo, _config, _), do: <<>>
 
   @impl true
   # Each PDO is 4 bytes:
   #   byte 0 — [gap(1), error(1), limit2(2), limit1(2), overrange(1), underrange(1)]
   #   byte 1 — [toggle(1), state(1), gap(6)]
   #   bytes 2–3 — UINT16 LE resistance (1/16 Ω/bit, unsigned in resistance mode)
-  def decode_inputs(:channel1, _config, <<
+  def decode_signal(:channel1, _config, <<
         _::1,
         error::1,
         _limit2::2,
@@ -60,7 +60,7 @@ defmodule El3202Driver do
     }
   end
 
-  def decode_inputs(:channel2, _config, <<
+  def decode_signal(:channel2, _config, <<
         _::1,
         error::1,
         _limit2::2,
@@ -82,7 +82,7 @@ defmodule El3202Driver do
     }
   end
 
-  def decode_inputs(_pdo, _config, _), do: nil
+  def decode_signal(_pdo, _config, _), do: nil
 end
 
 {opts, _, _} = OptionParser.parse(System.argv(), switches: [interface: :string])
@@ -98,7 +98,12 @@ EtherCAT.start(
     [name: :coupler],
     [name: :bridge_1],
     [name: :bridge_2],
-    [name: :thermo, driver: El3202Driver, config: %{}, pdos: [channel1: :main, channel2: :main]]
+    [
+      name: :thermo,
+      driver: El3202Driver,
+      config: %{},
+      process_data: [channel1: :main, channel2: :main]
+    ]
   ]
 )
 
@@ -106,8 +111,8 @@ IO.puts("Waiting for OP...")
 :ok = EtherCAT.await_running(10_000)
 IO.puts("Running.\n")
 
-EtherCAT.subscribe(:thermo, :channel1, self())
-EtherCAT.subscribe(:thermo, :channel2, self())
+EtherCAT.subscribe_input(:thermo, :channel1, self())
+EtherCAT.subscribe_input(:thermo, :channel2, self())
 
 Enum.each(1..60, fn _ ->
   receive do

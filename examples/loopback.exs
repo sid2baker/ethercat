@@ -7,9 +7,9 @@ alias EtherCAT.Slave.SII
 
 defmodule DigitalOut do
   @behaviour EtherCAT.Slave.Driver
-  def process_data_profile(_), do: %{ch1: 0x1600}
-  def encode_outputs(_, _, v), do: <<v::8>>
-  def decode_inputs(_, _, _), do: nil
+  def process_data_model(_), do: %{ch1: 0x1600}
+  def encode_signal(_, _, v), do: <<v::8>>
+  def decode_signal(_, _, _), do: nil
 end
 
 {opts, _, _} = OptionParser.parse(System.argv(), switches: [interface: :string])
@@ -54,7 +54,7 @@ Process.sleep(300)
     slaves: [
       [name: :coupler],
       [name: :bridge_1],
-      [name: :out, driver: DigitalOut, config: %{}, pdos: [ch1: :main]],
+      [name: :out, driver: DigitalOut, config: %{}, process_data: [ch1: :main]],
       [name: :bridge_3]
     ]
   )
@@ -67,16 +67,16 @@ link2 = EtherCAT.link()
 {:ok, stats} = Domain.stats(:main)
 IO.puts("image_size=#{stats.image_size}")
 
-# Read current output ETS value and SM0 before any set_output
+# Read current output ETS value and SM0 before any write_output
 sm0_before =
   case Bus.transaction_queue(link2, &Transaction.fprd(&1, 0x1002, {0x0F00, 2})) do
     {:ok, [%{data: d, wkc: w}]} when w > 0 -> inspect(d, base: :hex)
     _ -> "err"
   end
 
-IO.puts("EL2809 SM0+SM1 before set_output: #{sm0_before}")
+IO.puts("EL2809 SM0+SM1 before write_output: #{sm0_before}")
 
-EtherCAT.set_output(:out, :ch1, 1)
+EtherCAT.write_output(:out, :ch1, 1)
 Process.sleep(20)
 
 # ETS holds the raw encoded value the domain will splice into the frame
@@ -89,7 +89,7 @@ sm0_after =
     _ -> "err"
   end
 
-IO.puts("EL2809 SM0+SM1 after  set_output: #{sm0_after}")
+IO.puts("EL2809 SM0+SM1 after  write_output: #{sm0_after}")
 
 EtherCAT.stop()
 IO.puts("Done.")

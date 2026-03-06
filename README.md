@@ -93,14 +93,14 @@ EtherCAT.start(
 ### Read inputs / write outputs
 
 ```elixir
-# Subscribe to changes (sent as {:ethercat_input, pdo_name, value})
-EtherCAT.subscribe(:el1809, :inputs, self())
+# Subscribe to changes (sent as {:slave_input, :el1809, :input_0, value})
+EtherCAT.subscribe_input(:el1809, :input_0, self())
 
 # Synchronous read
-{:ok, bits} = EtherCAT.read_input(:el1809, :inputs)
+{:ok, bit} = EtherCAT.read_input(:el1809, :input_0)
 
 # Write outputs
-:ok = EtherCAT.set_output(:el2809, :outputs, <<0xFF>>)
+:ok = EtherCAT.write_output(:el2809, :output_0, 1)
 ```
 
 ### Implement a slave driver
@@ -110,16 +110,13 @@ defmodule MyApp.EL2809Driver do
   @behaviour EtherCAT.Slave.Driver
 
   @impl true
-  def process_data_profile(_config), do: %{outputs: 0x1600}
+  def process_data_model(_config), do: %{output_0: 0x1600}
 
   @impl true
-  def encode_outputs(:outputs, _config, value), do: value
+  def encode_signal(:output_0, _config, value), do: <<value::8>>
 
   @impl true
-  def decode_inputs(:outputs, _config, raw), do: raw
-
-  @impl true
-  def dc_config(_config), do: %{sync0_cycle_ns: 1_000_000}
+  def decode_signal(:output_0, _config, _raw), do: nil
 end
 ```
 
@@ -131,11 +128,12 @@ alias EtherCAT.Bus.Transaction
 bus = EtherCAT.bus()
 
 {:ok, result} =
-  EtherCAT.Bus.transaction(bus, fn ->
+  EtherCAT.Bus.transaction(
+    bus,
     Transaction.new()
     |> Transaction.fprd(station_addr, register, 2)    # read 2 bytes
     |> Transaction.fpwr(station_addr, register, data) # write data
-  end, 500_000)  # 500 ms deadline
+  )
 ```
 
 ## Architecture

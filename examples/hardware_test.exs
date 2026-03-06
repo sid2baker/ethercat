@@ -37,7 +37,7 @@ defmodule Example.EL1809 do
   @behaviour EtherCAT.Slave.Driver
 
   @impl true
-  def process_data_profile(_config) do
+  def process_data_model(_config) do
     %{
       ch1: 0x1A00,
       ch2: 0x1A01,
@@ -59,19 +59,19 @@ defmodule Example.EL1809 do
   end
 
   @impl true
-  def encode_outputs(_pdo, _config, _), do: <<>>
+  def encode_signal(_pdo, _config, _), do: <<>>
 
   @impl true
   # 1-bit TxPDO: FMMU places the physical SM bit into logical bit 0 (LSB).
-  def decode_inputs(_ch, _config, <<_::7, bit::1>>), do: bit
-  def decode_inputs(_pdo, _config, _), do: 0
+  def decode_signal(_ch, _config, <<_::7, bit::1>>), do: bit
+  def decode_signal(_pdo, _config, _), do: 0
 end
 
 defmodule Example.EL2809 do
   @behaviour EtherCAT.Slave.Driver
 
   @impl true
-  def process_data_profile(_config) do
+  def process_data_model(_config) do
     # SM0 (0x0F00): channels 1–8, SM1 (0x0F01): channels 9–16.
     # Each is a 1-bit RxPDO; master uses bit-level FMMUs to pack into SM bytes.
     %{
@@ -96,36 +96,36 @@ defmodule Example.EL2809 do
 
   @impl true
   # 1-bit RxPDO: return 1 byte; the FMMU places bit 0 (LSB) into the SM bit.
-  def encode_outputs(_ch, _config, v), do: <<v::8>>
+  def encode_signal(_ch, _config, v), do: <<v::8>>
 
   @impl true
-  def decode_inputs(_pdo, _config, _), do: nil
+  def decode_signal(_pdo, _config, _), do: nil
 end
 
 defmodule Example.EL3202 do
   @behaviour EtherCAT.Slave.Driver
 
   @impl true
-  def process_data_profile(_config) do
+  def process_data_model(_config) do
     # Two 32-bit TxPDOs on SM3: 0x1A00 = channel 1 (bytes 0–3), 0x1A01 = channel 2 (bytes 4–7)
     %{channel1: 0x1A00, channel2: 0x1A01}
   end
 
   @impl true
-  def sdo_config(_config) do
+  def mailbox_config(_config) do
     [
       # ch1 RTD element = ohm_1_16 (resistance, 1/16 Ω/bit)
-      {0x8000, 0x19, 8, 2},
+      {:sdo_download, 0x8000, 0x19, <<8::16-little>>},
       # ch2 RTD element = ohm_1_16
-      {0x8010, 0x19, 8, 2}
+      {:sdo_download, 0x8010, 0x19, <<8::16-little>>}
     ]
   end
 
   @impl true
-  def encode_outputs(_pdo, _config, _value), do: <<>>
+  def encode_signal(_pdo, _config, _value), do: <<>>
 
   @impl true
-  def decode_inputs(:channel1, _config, <<
+  def decode_signal(:channel1, _config, <<
         _::1,
         error::1,
         _::2,
@@ -147,7 +147,7 @@ defmodule Example.EL3202 do
     }
   end
 
-  def decode_inputs(:channel2, _config, <<
+  def decode_signal(:channel2, _config, <<
         _::1,
         error::1,
         _::2,
@@ -169,14 +169,14 @@ defmodule Example.EL3202 do
     }
   end
 
-  def decode_inputs(_pdo, _config, _), do: nil
+  def decode_signal(_pdo, _config, _), do: nil
 end
 
 # ---------------------------------------------------------------------------
 # Phase loop
 #
 # Runs until {:phase_done, ref} arrives.  On each :tick it calls set_fn/1
-# and writes the result to the valve output — one set_output per bit.
+# and writes the result to the valve output — one write_output per bit.
 #
 # On each {:slave_input, :sensor, ch_N, bit} it accumulates the 16 bits into
 # a 16-bit integer and checks against pprev_out (2 ticks ago) for loopback
@@ -220,7 +220,7 @@ defmodule Example.PhaseLoop do
         # Write each channel bit individually; master FMMUs pack into SM bytes
         Enum.each(0..15, fn bit ->
           v = Bitwise.band(Bitwise.bsr(expected, bit), 1)
-          EtherCAT.set_output(:valve, :"ch#{bit + 1}", v)
+          EtherCAT.write_output(:valve, :"ch#{bit + 1}", v)
         end)
 
         new_print =
@@ -482,18 +482,18 @@ check.(
     ],
     slaves: [
       %EtherCAT.Slave.Config{name: :coupler},
-      %EtherCAT.Slave.Config{name: :sensor, driver: Example.EL1809, domain: :main},
-      %EtherCAT.Slave.Config{name: :valve, driver: Example.EL2809, domain: :main},
-      %EtherCAT.Slave.Config{name: :thermo, driver: Example.EL3202, domain: :main}
+      %EtherCAT.Slave.Config{name: :sensor, driver: Example.EL1809, process_data: {:all, :main}},
+      %EtherCAT.Slave.Config{name: :valve, driver: Example.EL2809, process_data: {:all, :main}},
+      %EtherCAT.Slave.Config{name: :thermo, driver: Example.EL3202, process_data: {:all, :main}}
     ]
   )
 )
 
 check.("EtherCAT.await_running", EtherCAT.await_running(10_000))
 
-Enum.each(1..16, fn i -> EtherCAT.subscribe(:sensor, :"ch#{i}", self()) end)
-EtherCAT.subscribe(:thermo, :channel1, self())
-EtherCAT.subscribe(:thermo, :channel2, self())
+Enum.each(1..16, fn i -> EtherCAT.subscribe_input(:sensor, :"ch#{i}", self()) end)
+EtherCAT.subscribe_input(:thermo, :channel1, self())
+EtherCAT.subscribe_input(:thermo, :channel2, self())
 
 slaves = EtherCAT.slaves()
 
@@ -584,7 +584,7 @@ results =
 # 3. Zero outputs + stop cyclic
 # ---------------------------------------------------------------------------
 
-Enum.each(1..16, fn i -> EtherCAT.set_output(:valve, :"ch#{i}", 0) end)
+Enum.each(1..16, fn i -> EtherCAT.write_output(:valve, :"ch#{i}", 0) end)
 Process.sleep(2 * period_ms)
 Domain.stop_cycling(:main)
 

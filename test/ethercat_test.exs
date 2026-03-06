@@ -16,16 +16,45 @@ defmodule EtherCATTest do
     assert EtherCAT.state() == :idle
   end
 
+  test "start rejects invalid process_data requests" do
+    assert {:error, {:invalid_slave_config, {:invalid_options, 0, :invalid_process_data}}} =
+             EtherCAT.start(
+               interface: "eth0",
+               slaves: [
+                 %EtherCAT.Slave.Config{
+                   name: :sensor,
+                   process_data: [{:ch1, "main"}]
+                 }
+               ]
+             )
+
+    assert EtherCAT.state() == :idle
+  end
+
+  test "start rejects invalid slave target states" do
+    assert {:error, {:invalid_slave_config, {:invalid_options, 0, :invalid_target_state}}} =
+             EtherCAT.start(
+               interface: "eth0",
+               slaves: [
+                 [name: :sensor, process_data: :none, target_state: :safeop]
+               ]
+             )
+
+    assert EtherCAT.state() == :idle
+  end
+
   test "slave config defaults to the built-in default driver" do
     cfg = %EtherCAT.Slave.Config{name: :coupler}
     assert cfg.driver == EtherCAT.Slave.Driver.Default
+    assert cfg.process_data == :none
+    assert cfg.target_state == :op
   end
 
   test "default slave driver is a safe no-op profile" do
     driver = EtherCAT.Slave.Driver.Default
 
-    assert driver.process_data_profile(%{}) == %{}
-    assert driver.encode_outputs(:unused, %{}, 1) == <<>>
-    assert driver.decode_inputs(:unused, %{}, <<0xAB, 0xCD>>) == <<0xAB, 0xCD>>
+    assert driver.process_data_model(%{}) == %{}
+    assert driver.encode_signal(:unused, %{}, 1) == <<>>
+    assert driver.decode_signal(:unused, %{}, <<0xAB, 0xCD>>) == <<0xAB, 0xCD>>
   end
 end

@@ -49,7 +49,7 @@ Master :scanning ──── BRD 0x0000, count stable ──── Master :conf
         │
         Slave :init ─── SII read ─── configure mailbox SMs ─── AL 0x02 ─── Slave :preop
               │
-              preop enter: sdo_config → register_pdos_and_fmmus → {:slave_ready, name, :preop}
+              preop enter: mailbox_config → register_signals_and_fmmus → {:slave_ready, name, :preop}
               │
               Master collects all {:slave_ready} →
               (explicit config) DC start → domain cycling → SafeOp → Op
@@ -66,14 +66,14 @@ Domain :cycling
     Bus.transaction LRW → raw socket send → receive → response binary
     dispatch_inputs → compare each slice against ETS → on change:
       ETS update + send {:domain_input, domain_id, key, raw} to slave pid
-      Slave decodes via driver.decode_inputs/3 → notify subscribers
+      Slave decodes via driver.decode_signal/3 → notify subscribers
 ```
 
 ### Output path (application → bus)
 
 ```
 Application
-  Domain.write(domain_id, {slave, pdo}, binary)  ← direct :ets.update_element — no gen_statem
+  Domain.write(domain_id, {slave, signal_group}, binary)  ← direct :ets.update_element — no gen_statem
   next Domain LRW tick picks up the new value and writes it to the slave
 ```
 

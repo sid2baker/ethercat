@@ -44,13 +44,14 @@ via the `@paths` map. `walk_path/2` calls `do_transition/2` for each intermediat
 
 **`:preop` enter** (synchronous, blocks until complete):
 1. `invoke_driver(data, :on_preop)` — optional driver callback.
-2. `run_sdo_config/1` — if driver exports `sdo_config/1`, execute each `{index, subindex, value, size}` as CoE expedited SDO download.
-3. `register_pdos_and_fmmus/1` — resolve PDO names from SII, register with Domain, write SM+FMMU registers.
+2. `run_mailbox_config/1` — if driver exports `mailbox_config/1`, execute each
+   `{:sdo_download, index, subindex, binary}` mailbox step in order.
+3. `configure_preop_process_data/1` — resolve the configured `process_data` request, register each SM group with its Domain, then write process-data SyncManagers and FMMUs.
 4. Send `{:slave_ready, name, :preop}` to `EtherCAT.Master`.
 
 **`:safeop` enter**:
 1. `invoke_driver(data, :on_safeop)`.
-2. `configure_dc_signals/1` — if `dc_cycle_ns` is set and driver exports `dc_config/1`: write SYNC0/SYNC1 parameters, latch controls, start time, and activation byte in one frame.
+2. `configure_dc_signals/1` — if `dc_cycle_ns` is set and driver exports `distributed_clocks/1`: write SYNC0/SYNC1 parameters, latch controls, start time, and activation byte in one frame.
 
 **`:op` enter**:
 1. `invoke_driver(data, :on_op)`.
@@ -74,18 +75,18 @@ via the `@paths` map. `walk_path/2` calls `do_transition/2` for each intermediat
   name:              atom(),             # Slave name atom
   driver:            module(),           # Module implementing EtherCAT.Slave.Driver (default: EtherCAT.Slave.Driver.Default)
   config:            map(),              # Driver-specific config, passed to all callbacks
-  domain:            atom() | nil,       # Default domain id for auto-PDO-registration
   error_code:        non_neg_integer() | nil,  # Last AL status code from ESC
+  configuration_error: term() | nil,     # PREOP-local process-data configuration failure
   identity:          map() | nil,        # vendor_id, product_code, revision, serial from SII
   mailbox_config:    map() | nil,        # recv_offset, recv_size, send_offset, send_size
   dc_cycle_ns:       pos_integer() | nil, # SYNC0 cycle time; nil disables DC
   sii_sm_configs:    list(),             # [{sm_index, phys_start, length, ctrl}] from SII
   sii_pdo_configs:   list(),             # [%{index, direction, sm_index, bit_size, bit_offset}]
-  pdos:              list(),             # [{pdo_name, domain_id}] to register
-  active_latches:    list() | nil,       # [{0|1, :pos|:neg}] from dc_config
+  process_data_request: :none | {:all, atom()} | [{atom(), atom()}],
+  active_latches:    list() | nil,       # [{0|1, :pos|:neg}] from distributed_clocks
   latch_poll_ms:     pos_integer() | nil, # latch poll interval while in :op
-  pdo_registrations: map(),             # %{pdo_name => %{domain_id, sm_key, bit_offset, bit_size}}
-  pdo_subscriptions: map(),             # %{pdo_name => [pid]}
+  signal_registrations: map(),          # %{signal_name => %{domain_id, sm_key, bit_offset, bit_size}}
+  input_subscriptions: map(),           # %{signal_name => [pid]}
   latch_subscriptions: map(),           # %{{latch_id, edge} => [pid]}
 }
 ```
@@ -98,35 +99,53 @@ All callbacks receive `(config :: map())` or `(slave_name :: atom(), config :: m
 
 | Callback | Required | Signature | Description |
 |----------|----------|-----------|-------------|
-| `process_data_profile/1` | yes | `config -> %{pdo_name => sii_index}` | Map of PDO names to SII PDO object indices (e.g. `0x1A00`). Used to resolve SM assignment and bit offsets from SII categories. |
-| `encode_outputs/3` | yes | `(pdo_name, config, value) -> binary` | Encode application value to raw output bytes. Return `<<>>` for input-only PDOs. |
-| `decode_inputs/3` | yes | `(pdo_name, config, binary) -> term` | Decode raw input bytes to application value. Return `nil` for output-only PDOs. |
+| `process_data_model/1` | yes | `config -> %{signal_name => pdo_index \| %ProcessDataSignal{}}` | Map of logical signal names to either a whole PDO index or a bit-range inside a PDO. Used to resolve SM assignment and bit offsets from SII categories. |
+| `encode_signal/3` | yes | `(signal_name, config, value) -> binary` | Encode one logical output signal to raw bytes. Return `<<>>` for input-only signals. |
+| `decode_signal/3` | yes | `(signal_name, config, binary) -> term` | Decode one logical input signal from raw bytes. Return `nil` for output-only signals. |
 | `on_preop/2` | optional | `(name, config) -> :ok` | Called on PreOp entry. |
 | `on_safeop/2` | optional | `(name, config) -> :ok` | Called on SafeOp entry. |
 | `on_op/2` | optional | `(name, config) -> :ok` | Called on Op entry. |
-| `sdo_config/1` | optional | `config -> [{index, subindex, value, size}]` | SDO writes to execute in PreOp before SM/FMMU config. Can perform PDO remapping (0x1C12/0x1C13). |
-| `dc_config/1` | optional | `config -> %{sync0_pulse_ns: pos_integer(), optional(:sync1_cycle_ns) => pos_integer(), optional(:latches) => [%{latch_id: 0\|1, edge: :pos\|:neg}]} \| nil` | DC signal parameters. Return `nil` to disable DC config on this slave. |
+| `mailbox_config/1` | optional | `config -> [{:sdo_download, index, subindex, binary}]` | PREOP mailbox configuration steps. Used for CoE parameterization and PDO remapping before SM/FMMU config. |
+| `distributed_clocks/1` | optional | `config -> %{sync0_pulse_ns: pos_integer(), optional(:sync1_cycle_ns) => pos_integer(), optional(:latches) => [%{latch_id: 0\|1, edge: :pos\|:neg}]} \| nil` | DC signal parameters. Return `nil` to disable DC config on this slave. |
 | `on_latch/5` | optional | `(name, config, latch_id, edge, timestamp_ns) -> :ok` | Called when a configured ESC LATCH event is captured during `:op`. |
 
-Sub-byte PDOs (e.g., 1-bit digital channels): `decode_inputs` receives a 1-byte binary with the value in bit 0 (LSB). `encode_outputs` must return a 1-byte binary with the value in bit 0.
+Sub-byte signals (e.g., 1-bit digital channels): `decode_signal` receives a 1-byte binary with the value in bit 0 (LSB). `encode_signal` must return a 1-byte binary with the value in bit 0.
+
+`ProcessDataSignal` may expose one field inside a larger PDO:
+
+```elixir
+%{
+  status_word: EtherCAT.Slave.ProcessDataSignal.slice(0x1A00, 0, 16),
+  actual_position: EtherCAT.Slave.ProcessDataSignal.slice(0x1A00, 16, 32)
+}
+```
 
 ---
 
-## PDO Registration Mechanics
+## Process Data Configuration
 
-Called from `:preop` enter in `register_pdos_and_fmmus/1`:
+Called from `:preop` enter in `configure_preop_process_data/1`:
 
-1. Resolve each `{pdo_name, domain_id}` from `data.pdos` to a SII PDO config entry via `process_data_profile/1` → SII index → match in `sii_pdo_configs`.
-2. Group resolved PDOs by SM index (`sii_pdo_config.sm_index`).
-3. For each SM group:
+1. Normalize `data.process_data_request`:
+   - `:none`
+   - `{:all, domain_id}`
+   - `[{signal_name, domain_id}]`
+2. Resolve each `{signal_name, domain_id}` to a signal declaration via `process_data_model/1`.
+3. Resolve that declaration to a SII PDO config entry via the declared PDO index.
+4. If the declaration is a slice, add its bit offset inside the PDO to the PDO's bit offset inside the SyncManager.
+5. Group resolved signals by SM index (`sii_pdo_config.sm_index`).
+4. For each SM group:
    a. Look up SM physical address and control byte from `sii_sm_configs`.
    b. Compute total SM byte size from all SII PDOs on that SM (not just driver-requested ones).
    c. Call `Domain.register_pdo(domain_id, {name, {:sm, sm_idx}}, total_sm_size, direction)` → `{:ok, logical_offset}`.
-   d. FPWR SM register: 8 bytes encoding phys_start, size, ctrl, enable=`0x01`.
+   d. FPWR SM register: 8 bytes encoding phys_start, size, ctrl.
    e. FPWR FMMU register: 16 bytes encoding logical_offset, size, start_bit=0, stop_bit=7, phys_start, phys_start_bit=0, type=`0x01`(input)/`0x02`(output), activate=`0x01`.
-   f. Store `%{domain_id, sm_key, bit_offset, bit_size}` per PDO name in `pdo_registrations`.
+   f. FPWR SM activate register with `0x01`.
+   g. Store `%{domain_id, sm_key, bit_offset, bit_size}` per signal name in `signal_registrations`.
+6. Reject any request that tries to place signals from the same SyncManager into multiple domains; this runtime maps one SM to one domain/FMMU span.
+7. If PREOP-local mailbox or process-data configuration fails, `configuration_error` is set and later `SAFEOP/OP` requests are rejected locally.
 
-The domain key is `{slave_name, {:sm, sm_idx}}` — a single ETS entry covers all PDOs sharing an SM.
+The domain key is `{slave_name, {:sm, sm_idx}}` — a single ETS entry covers all signals sharing an SM.
 
 ---
 
@@ -136,7 +155,7 @@ The domain key is `{slave_name, {:sm, sm_idx}}` — a single ETS entry covers al
 
 SYNC0 + optional SYNC1 and LATCH0/1 polling. Configured at `:safeop` entry in `configure_dc_signals/1`:
 
-1. Read `dc_config/1` from driver.
+1. Read `distributed_clocks/1` from driver.
 2. Compute `start_time = System.os_time(:nanosecond) - @ethercat_epoch_offset_ns + 100_000` (100 µs headroom for frame round-trip per §9.2.3.6 step 6).
 3. Send FPWR datagrams in one frame:
    - `Registers.dc_sync0_cycle_time(cycle_ns)` → `0x09A0`
@@ -187,5 +206,5 @@ Master waits for all named slaves to report `:preop` before advancing any slave 
 - No DC lock detection before advancing to Op.
 - No per-slave health monitoring (AL status polling, error counter reads) after reaching Op.
 - No IRQ-based input change detection; relying on cyclic LRW from Domain.
-- SDO config failures are logged as warnings but do not prevent state advancement; could mask misconfiguration.
+- Mailbox configuration currently supports expedited CoE downloads only (1, 2, or 4 bytes).
 - No over-sampling support (multiple input samples per SYNC0 period).

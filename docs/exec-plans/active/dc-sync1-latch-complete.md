@@ -7,7 +7,7 @@
 The current implementation configures SYNC0 only. Three hard gaps prevent SYNC1 or latch
 support even if a driver requests it:
 - `registers.ex` has no SYNC1 or latch registers
-- `driver.ex` `dc_config` type is `%{sync0_pulse_ns: pos_integer()}` only
+- `driver.ex` `distributed_clocks` type is `%{sync0_pulse_ns: pos_integer()}` only
 - `slave.ex` hardcodes activation byte `0x03` (sync_out + SYNC0 only)
 
 EtherCAT's latch mechanism maps naturally to Elixir's process model: the ESC hardware
@@ -87,15 +87,15 @@ Also fix `dc_activation/0` doc:
 
 ---
 
-## Step 2 — `driver.ex`: Extend `dc_config` and Add `on_latch/5`
+## Step 2 — `driver.ex`: Extend `distributed_clocks` and Add `on_latch/5`
 
-Replace `@type dc_config` and update `@optional_callbacks`:
+Replace `@type distributed_clocks` and update `@optional_callbacks`:
 
 ```elixir
 @type latch_edge :: :pos | :neg
 @type latch_config :: %{latch_id: 0 | 1, edge: latch_edge()}
 
-@type dc_config :: %{
+@type distributed_clocks :: %{
   sync0_pulse_ns: pos_integer(),
   optional(:sync1_cycle_ns) => pos_integer(),  # SYNC1 offset ns from SYNC0; 0 or absent = disabled
   optional(:latches) => [latch_config()]        # which LATCH pin edges to poll
@@ -108,7 +108,7 @@ Arguments: slave_name, config, latch_id (0|1), edge (:pos|:neg), timestamp_ns (D
 """
 @callback on_latch(atom(), config(), 0 | 1, latch_edge(), non_neg_integer()) :: :ok
 
-@optional_callbacks [on_preop: 2, on_safeop: 2, on_op: 2, sdo_config: 1, dc_config: 1, on_latch: 5]
+@optional_callbacks [on_preop: 2, on_safeop: 2, on_op: 2, mailbox_config: 1, distributed_clocks: 1, on_latch: 5]
 ```
 
 Backward compatible: existing `%{sync0_pulse_ns: N}` drivers satisfy the new type.
@@ -120,7 +120,7 @@ Backward compatible: existing `%{sync0_pulse_ns: N}` drivers satisfy the new typ
 Add to `defstruct`:
 
 ```elixir
-# [{latch_id, edge}] configured by driver's dc_config; nil if no latches
+# [{latch_id, edge}] configured by driver's distributed_clocks; nil if no latches
 :active_latches,
 # ms between latch polls; nil if active_latches is nil
 :latch_poll_ms,
@@ -143,7 +143,7 @@ Returns `data` (not `:ok`) so latch config is threaded into state.
 
 ```elixir
 defp configure_dc_signals(data) do
-  case data.dc_cycle_ns && invoke_driver_call(data, :dc_config) do
+  case data.dc_cycle_ns && invoke_driver_call(data, :distributed_clocks) do
     nil -> data
     dc_spec ->
       cycle_ns = data.dc_cycle_ns
@@ -296,7 +296,7 @@ mix test
 ```
 
 Hardware smoke test: use a driver that returns `latches: [%{latch_id: 0, edge: :pos}]`
-from `dc_config/1`, subscribe, and verify `{:slave_latch, name, 0, :pos, ts_ns}` messages.
+from `distributed_clocks/1`, subscribe, and verify `{:slave_latch, name, 0, :pos, ts_ns}` messages.
 
 ## Open Questions / Caveats
 
