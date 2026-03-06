@@ -43,7 +43,7 @@ Registry: `EtherCAT.Registry` (local). Slaves register as `{:slave, name}` and
 Master :scanning ──── BRD 0x0000, count stable ──── Master :configuring
   │
   ├── APWR 0x0010 × N        assign station addresses
-  ├── DC.initialize_clocks/2 propagation delay calc + system time offset
+  ├── DC.initialize_clocks/2 snapshot read + init-plan apply
   ├── SessionSupervisor      start Domain gen_stams (must exist before slaves)
   └── SlaveSupervisor        start Slave gen_stams (each auto-advances to PreOp)
         │
@@ -124,7 +124,7 @@ calls `{:next_state, ...}`.
 ## Startup Sequence Detail
 
 1. `Bus.start_link/1` — starts the bus scheduler and opens the selected `Bus.Link` + `Bus.Transport`
-2. `DC.initialize_clocks/2` — BWR latch, read receive times, compute propagation delays, write offsets
+2. `DC.initialize_clocks/2` — BWR latch, read per-slave DC snapshots, build chain init plan, write offsets and delays
 3. `Domain.start_link` per config — creates ETS tables, enters `:open`
 4. `Slave.start_link` per config — starts SII read, mailbox SM config, auto-advances to `:preop`
 5. `Master` waits for all `{:slave_ready, name, :preop}` messages (30 s timeout)

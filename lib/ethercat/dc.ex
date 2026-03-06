@@ -5,14 +5,26 @@ defmodule EtherCAT.DC do
   ## Initialization
 
   `DC.initialize_clocks/2` performs the one-time clock synchronization sequence described in
-  §9.1.3.6 of the ESC datasheet:
+  ETG.1000 §9.1.3.6:
 
   1. Trigger receive-time latch on all slaves (BWR to 0x0900).
-  2. Read per-port receive times from every slave.
-  3. Identify the reference clock (first DC-capable slave).
-  4. Calculate propagation delays and write to each slave.
-  5. Write system time offset to align each slave to master time.
-  6. Reset PLL filters (write speed counter start).
+  2. Read one DC snapshot per slave:
+     - DL-status-derived active ports
+     - receive time port 0..3
+     - ECAT receive time
+     - speed counter start
+  3. Identify the reference clock (first DC-capable slave in bus order).
+  4. Build a deterministic init plan:
+     - chain-only propagation delay estimate from latched receive spans
+     - per-slave system time offset against the EtherCAT epoch
+     - PLL filter reset value
+  5. Apply offset + delay writes to every DC-capable slave.
+  6. Reset PLL filters by writing back the latched speed-counter seed.
+
+  The planning step is pure and testable via `EtherCAT.DC.InitPlan.build/2`.
+  The current topology model is intentionally explicit: it supports a linear
+  bus ordered by scan position. More complex tree-delay propagation needs a
+  richer topology graph than the current master passes into DC init.
 
   ## Drift maintenance
 
@@ -29,6 +41,9 @@ defmodule EtherCAT.DC do
 
   alias EtherCAT.Bus
   alias EtherCAT.Bus.Transaction
+  alias EtherCAT.DC.InitPlan
+  alias EtherCAT.DC.InitStep
+  alias EtherCAT.DC.Snapshot
   alias EtherCAT.Slave.Registers
   alias EtherCAT.Telemetry
 
@@ -41,7 +56,7 @@ defmodule EtherCAT.DC do
   One-time DC initialization. Must be called after `assign_stations` and before
   `start_slaves`.
 
-  `slave_stations` is a list of `{station, dl_status_binary}` tuples — one per
+  `slave_topology` is a list of `{station, dl_status_binary}` tuples — one per
   slave, in bus order. DL status is a 2-byte little-endian value from register
   0x0110, used to determine which ports are open (topology).
 
@@ -50,33 +65,16 @@ defmodule EtherCAT.DC do
   """
   @spec initialize_clocks(Bus.server(), [{non_neg_integer(), binary()}]) ::
           {:ok, non_neg_integer()} | {:error, term()}
-  def initialize_clocks(bus, slave_stations) when slave_stations != [] do
-    stations = Enum.map(slave_stations, &elem(&1, 0))
-
-    # Step 1: trigger receive-time latch on all slaves
+  def initialize_clocks(bus, slave_topology) when slave_topology != [] do
     with :ok <- trigger_recv_latch(bus),
-         # Step 2: read receive times from every slave
-         {:ok, recv_times} <- read_recv_times(bus, stations),
-         # Step 3: identify reference clock
-         {:ok, ref_idx} <- find_ref_clock(recv_times),
-         ref_station = Enum.at(stations, ref_idx) do
-      Logger.debug("[DC] reference clock at station 0x#{Integer.to_string(ref_station, 16)}")
+         {:ok, snapshots} <- read_snapshots(bus, slave_topology),
+         {:ok, plan} <- InitPlan.build(snapshots, ethercat_now_ns()),
+         :ok <- apply_init_plan(bus, plan) do
+      Logger.debug(
+        "[DC] initialized ref=0x#{Integer.to_string(plan.ref_station, 16)} dc_slaves=#{length(plan.steps)}"
+      )
 
-      # Step 4: calculate propagation delays and write to each slave
-      delays = calc_delays(recv_times, slave_stations)
-      write_delays(bus, stations, delays)
-
-      # Step 5: write system time offsets
-      master_ns = System.os_time(:nanosecond) - @ethercat_epoch_offset_ns
-      {ref_ecat_ns, _, _} = Enum.at(recv_times, ref_idx)
-      write_offsets(bus, stations, recv_times, ref_idx, ref_ecat_ns, master_ns)
-
-      # Step 6: reset PLL filters on all DC-capable slaves
-      reset_filters(bus, stations, recv_times)
-
-      # Step 7: static drift pre-compensation is done by the DC gen_statem
-      # on startup so it runs concurrently with slave init and SII reads.
-      {:ok, ref_station}
+      {:ok, plan.ref_station}
     end
   end
 
@@ -167,113 +165,134 @@ defmodule EtherCAT.DC do
 
   defp trigger_recv_latch(bus) do
     case Bus.transaction(bus, Transaction.bwr(Registers.dc_recv_time_latch())) do
-      {:ok, _} -> :ok
+      {:ok, [%{wkc: wkc}]} when wkc > 0 -> :ok
+      {:ok, [%{wkc: 0}]} -> {:error, :dc_latch_not_acknowledged}
+      {:ok, _results} -> {:error, :dc_latch_unexpected_reply}
       {:error, _} = err -> err
     end
   end
 
-  defp read_recv_times(bus, stations) do
-    results =
-      Enum.map(stations, fn station ->
-        ecat =
-          case Bus.transaction(bus, Transaction.fprd(station, Registers.dc_recv_time_ecat())) do
-            {:ok, [%{data: <<t::64-little>>, wkc: 1}]} -> t
-            _ -> nil
-          end
-
-        p0 =
-          case Bus.transaction(bus, Transaction.fprd(station, Registers.dc_recv_time(0))) do
-            {:ok, [%{data: <<t::32-little>>, wkc: 1}]} -> t
-            _ -> nil
-          end
-
-        p1 =
-          case Bus.transaction(bus, Transaction.fprd(station, Registers.dc_recv_time(1))) do
-            {:ok, [%{data: <<t::32-little>>, wkc: 1}]} -> t
-            _ -> nil
-          end
-
-        {ecat, p0, p1}
-      end)
-
-    {:ok, results}
-  end
-
-  # Reference clock = first slave with a valid ECAT receive time (wkc > 0)
-  defp find_ref_clock(recv_times) do
-    case Enum.find_index(recv_times, fn {ecat, _, _} -> ecat != nil end) do
-      nil -> {:error, :no_dc_capable_slave}
-      idx -> {:ok, idx}
+  defp read_snapshots(bus, slave_topology) do
+    Enum.reduce_while(slave_topology, {:ok, []}, fn {station, dl_status}, {:ok, acc} ->
+      case read_snapshot(bus, station, dl_status) do
+        {:ok, snapshot} -> {:cont, {:ok, [snapshot | acc]}}
+        {:error, _} = err -> {:halt, err}
+      end
+    end)
+    |> case do
+      {:ok, snapshots_rev} -> {:ok, Enum.reverse(snapshots_rev)}
+      {:error, _} = err -> err
     end
   end
 
-  # Linear-chain propagation delay calculation.
-  # For a simple chain: delay between adjacent slaves = (port1_time - port0_time) / 2.
-  # Cumulative delay to each slave is the sum of hop delays up to that point.
-  defp calc_delays(recv_times, _slave_stations) do
-    recv_times
-    |> Enum.reduce({[], 0}, fn {_ecat, p0, p1}, {acc, cumulative} ->
-      hop_delay =
-        if p0 != nil and p1 != nil do
-          diff = p1 - p0
-          # Handle 32-bit overflow
-          diff = if diff < 0, do: diff + 0x100_000_000, else: diff
-          div(diff, 2)
-        else
-          0
+  defp read_snapshot(bus, station, dl_status) do
+    tx =
+      Transaction.new()
+      |> Transaction.fprd(station, Registers.dc_recv_time_ecat())
+      |> Transaction.fprd(station, Registers.dc_recv_time(0))
+      |> Transaction.fprd(station, Registers.dc_recv_time(1))
+      |> Transaction.fprd(station, Registers.dc_recv_time(2))
+      |> Transaction.fprd(station, Registers.dc_recv_time(3))
+      |> Transaction.fprd(station, Registers.dc_speed_counter_start())
+
+    case Bus.transaction(bus, tx) do
+      {:ok, [ecat, p0, p1, p2, p3, speed_counter]} ->
+        with {:ok, ecat_time_ns} <- decode_u64(station, :ecat_recv_time, ecat),
+             {:ok, p0_time_ns} <- decode_u32(station, {:recv_time, 0}, p0),
+             {:ok, p1_time_ns} <- decode_u32(station, {:recv_time, 1}, p1),
+             {:ok, p2_time_ns} <- decode_u32(station, {:recv_time, 2}, p2),
+             {:ok, p3_time_ns} <- decode_u32(station, {:recv_time, 3}, p3),
+             {:ok, speed_counter_start} <-
+               decode_u16(station, :speed_counter_start, speed_counter) do
+          {:ok,
+           Snapshot.new(
+             station,
+             dl_status,
+             %{0 => p0_time_ns, 1 => p1_time_ns, 2 => p2_time_ns, 3 => p3_time_ns},
+             ecat_time_ns,
+             speed_counter_start
+           )}
         end
 
-      {[cumulative + hop_delay | acc], cumulative + hop_delay}
-    end)
-    |> elem(0)
-    |> Enum.reverse()
+      {:ok, results} ->
+        {:error, {:dc_snapshot_unexpected_reply, station, length(results)}}
+
+      {:error, reason} ->
+        {:error, {:dc_snapshot_failed, station, reason}}
+    end
   end
 
-  defp write_delays(bus, stations, delays) do
-    Enum.zip(stations, delays)
-    |> Enum.each(fn {station, delay} ->
-      bus_tx(bus, Transaction.fpwr(station, Registers.dc_system_time_delay(delay)))
-    end)
-  end
+  defp decode_u64(_station, _field, %{data: <<value::64-little>>, wkc: 1}), do: {:ok, value}
 
-  defp write_offsets(bus, stations, recv_times, ref_idx, ref_ecat_ns, master_ns) do
-    ref_offset = master_ns - ref_ecat_ns
+  defp decode_u64(station, field, %{wkc: wkc}),
+    do: {:error, {:dc_snapshot_read_failed, station, field, {:unexpected_wkc, wkc}}}
 
-    Enum.zip(stations, recv_times)
-    |> Enum.with_index()
-    |> Enum.each(fn {{station, {ecat_ns, _, _}}, idx} ->
-      if ecat_ns != nil do
-        offset =
-          if idx == ref_idx do
-            ref_offset
-          else
-            ref_ecat_ns - ecat_ns + ref_offset
-          end
+  defp decode_u32(_station, _field, %{data: <<value::32-little>>, wkc: 1}), do: {:ok, value}
 
-        bus_tx(bus, Transaction.fpwr(station, Registers.dc_system_time_offset(offset)))
+  defp decode_u32(station, field, %{wkc: wkc}),
+    do: {:error, {:dc_snapshot_read_failed, station, field, {:unexpected_wkc, wkc}}}
+
+  defp decode_u16(_station, _field, %{data: <<value::16-little>>, wkc: 1}), do: {:ok, value}
+
+  defp decode_u16(station, field, %{wkc: wkc}),
+    do: {:error, {:dc_snapshot_read_failed, station, field, {:unexpected_wkc, wkc}}}
+
+  defp apply_init_plan(bus, %InitPlan{steps: steps}) do
+    Enum.reduce_while(steps, :ok, fn step, :ok ->
+      case apply_init_step(bus, step) do
+        :ok -> {:cont, :ok}
+        {:error, _} = err -> {:halt, err}
       end
     end)
   end
 
-  defp reset_filters(bus, stations, recv_times) do
-    Enum.zip(stations, recv_times)
-    |> Enum.each(fn {station, {ecat_ns, _, _}} ->
-      if ecat_ns != nil do
-        # Read current value and write it back — this resets the filter
-        case Bus.transaction(bus, Transaction.fprd(station, Registers.dc_speed_counter_start())) do
-          {:ok, [%{data: <<v::16-little>>, wkc: 1}]} ->
-            bus_tx(bus, Transaction.fpwr(station, Registers.dc_speed_counter_start(v)))
+  defp apply_init_step(bus, %InitStep{} = step) do
+    tx =
+      Transaction.new()
+      |> Transaction.fpwr(step.station, Registers.dc_system_time_offset(step.offset_ns))
+      |> Transaction.fpwr(step.station, Registers.dc_system_time_delay(step.delay_ns))
 
-          _ ->
-            bus_tx(bus, Transaction.fpwr(station, Registers.dc_speed_counter_start(0x1000)))
-        end
-      end
-    end)
+    with :ok <- write_timing_values(bus, step.station, tx),
+         :ok <- reset_filter(bus, step) do
+      :ok
+    end
   end
 
-  # Thin wrapper — ignore result (init writes may get no wkc if slaves not yet ready)
-  defp bus_tx(bus, tx) do
-    Bus.transaction(bus, tx)
+  defp write_timing_values(bus, station, tx) do
+    case Bus.transaction(bus, tx) do
+      {:ok, [%{wkc: 1}, %{wkc: 1}]} ->
+        :ok
+
+      {:ok, [%{wkc: offset_wkc}, %{wkc: delay_wkc}]} ->
+        {:error,
+         {:dc_apply_failed, station, {:unexpected_wkc, %{offset: offset_wkc, delay: delay_wkc}}}}
+
+      {:error, reason} ->
+        {:error, {:dc_apply_failed, station, reason}}
+    end
+  end
+
+  defp reset_filter(bus, %InitStep{} = step) do
+    case Bus.transaction(
+           bus,
+           Transaction.fpwr(
+             step.station,
+             Registers.dc_speed_counter_start(step.speed_counter_start)
+           )
+         ) do
+      {:ok, [%{wkc: 1}]} ->
+        :ok
+
+      {:ok, [%{wkc: wkc}]} ->
+        {:error, {:dc_filter_reset_failed, step.station, {:unexpected_wkc, wkc}}}
+
+      {:error, reason} ->
+        {:error, {:dc_filter_reset_failed, step.station, reason}}
+    end
+  end
+
+  defp ethercat_now_ns do
+    System.os_time(:nanosecond) - @ethercat_epoch_offset_ns
   end
 
   defp drift_tick_timeout_us(period_ms) when is_integer(period_ms) and period_ms > 0 do

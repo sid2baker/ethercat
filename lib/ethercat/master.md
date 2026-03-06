@@ -132,12 +132,20 @@ transitions to `:running` once failures clear.
 Implements ESC datasheet §9.1.3.6 (clock synchronization initialization):
 
 1. **Trigger receive-time latch**: BWR to `0x0900` — all slaves simultaneously latch local time at all ports.
-2. **Read receive times**: for each slave, FPRD `0x0918–0x091F` (64-bit ECAT processing unit receive time) and `0x0900–0x0903` / `0x0904–0x0907` (port 0 and port 1 32-bit times).
-3. **Find reference clock**: first slave with a valid (non-nil) ECAT processing unit receive time.
-4. **Calculate propagation delays**: linear chain calculation. For adjacent slaves with port 0 and port 1 times: `hop_delay = (port1_time - port0_time) / 2`. Cumulative delay per slave = sum of hop delays from reference. 32-bit overflow handled by adding `0x1_0000_0000` when diff is negative.
-5. **Write delays**: FPWR to `0x0928–0x092B` per slave.
-6. **Write offsets**: `offset_ref = master_ns - ref_ecat_ns` for reference clock; `offset_slave = ref_ecat_ns - slave_ecat_ns + offset_ref` for each other DC-capable slave. Written to `0x0920–0x0927` per slave.
-7. **Reset PLL filters**: for each DC-capable slave, read `0x0930–0x0931` (speed counter start) and write the same value back. This resets internal filter state.
+2. **Read one DC snapshot per slave**: one reliable transaction per station reads:
+   - `0x0918–0x091F` (64-bit ECAT receive time)
+   - `0x0900–0x090F` (receive times for ports 0..3)
+   - `0x0930–0x0931` (speed counter start)
+3. **Derive active ports from DL status**: `EtherCAT.DC.Snapshot` combines the latched receive times with the `0x0110` DL status already read by the master, so the planner only considers ports that actually participate in the topology.
+4. **Find reference clock**: first DC-capable snapshot in bus order.
+5. **Build init plan**: `EtherCAT.DC.InitPlan.build/2` computes:
+   - reference offset against the EtherCAT epoch time
+   - per-slave offset relative to the reference receive time
+   - chain-only cumulative propagation delay from receive spans
+6. **Write offset + delay**: one reliable transaction per DC-capable slave writes:
+   - `0x0920–0x0927` system time offset
+   - `0x0928–0x092B` system time delay
+7. **Reset PLL filters**: FPWR the latched `0x0930–0x0931` value back to each DC-capable slave.
 
 `master_ns = System.os_time(:nanosecond) - 946_684_800_000_000_000` (converts Unix ns to EtherCAT epoch ns).
 
