@@ -19,7 +19,8 @@ defmodule EtherCAT.Master do
 
       EtherCAT.start(
         interface: "eth0",
-        domains: [%EtherCAT.Domain.Config{id: :main, period_ms: 1}],
+        dc: %EtherCAT.DC.Config{cycle_ns: 1_000_000},
+        domains: [%EtherCAT.Domain.Config{id: :main, cycle_time_us: 1_000}],
         slaves: [
           %EtherCAT.Slave.Config{name: :coupler},
           %EtherCAT.Slave.Config{
@@ -47,6 +48,7 @@ defmodule EtherCAT.Master do
 
   alias EtherCAT.{DC, Domain, Bus, Slave}
   alias EtherCAT.Bus.Transaction
+  alias EtherCAT.DC.Status, as: DCStatus
   alias EtherCAT.Master.Config
   alias EtherCAT.Master.InitReset
   alias EtherCAT.Master.InitRecovery
@@ -80,9 +82,10 @@ defmodule EtherCAT.Master do
     :dc_pid,
     # station address of the DC reference clock slave (nil if no DC)
     :dc_ref_station,
+    :dc_stations,
     :domain_config,
     :slave_config,
-    :dc_cycle_ns,
+    :dc_config,
     :frame_timeout_override_ms,
     activation_phase: :preop_ready,
     base_station: @base_station,
@@ -121,9 +124,9 @@ defmodule EtherCAT.Master do
       dynamic default slaves are started for all discovered stations and held in
       `:preop` for runtime configuration.
     - `:domains` — list of domain specs, default `[]`. Each entry is a keyword list with
-      keys `:id` (atom, required) and `:period_ms` (required), plus any Domain options
+      keys `:id` (atom, required) and `:cycle_time_us` (required), plus any Domain options
     - `:base_station` — starting station address, default `0x1000`
-    - `:dc_cycle_ns` — SYNC0 cycle time in ns for DC-capable slaves (default `1_000_000`)
+    - `:dc` — `%EtherCAT.DC.Config{}` for master-wide Distributed Clocks, or `nil` to disable DC
     - `:frame_timeout_ms` — optional fixed bus frame response timeout (ms); if omitted,
       master auto-tunes from slave count + cycle time
     - any other option is forwarded to `Bus.start_link/1` unchanged
@@ -209,6 +212,32 @@ defmodule EtherCAT.Master do
     :gen_statem.call(__MODULE__, :await_operational, timeout_ms)
   end
 
+  @doc "Return a Distributed Clocks status snapshot for the current session."
+  @spec dc_status() :: DCStatus.t()
+  def dc_status do
+    :gen_statem.call(__MODULE__, :dc_status)
+  end
+
+  @doc "Return the current DC reference clock as `%{name, station}`."
+  @spec reference_clock() ::
+          {:ok, %{name: atom() | nil, station: non_neg_integer()}} | {:error, term()}
+  def reference_clock do
+    :gen_statem.call(__MODULE__, :reference_clock)
+  end
+
+  @doc """
+  Wait for DC lock.
+
+  Returns `:ok` once the active DC runtime reports `:locked`.
+  """
+  @spec await_dc_locked(timeout_ms :: pos_integer()) :: :ok | {:error, term()}
+  def await_dc_locked(timeout_ms \\ 5_000) do
+    case :gen_statem.call(__MODULE__, :dc_runtime) do
+      {:ok, dc_pid} -> DC.await_locked(dc_pid, timeout_ms)
+      {:error, _} = err -> err
+    end
+  end
+
   # -- child_spec / start_link -----------------------------------------------
 
   @doc false
@@ -248,10 +277,12 @@ defmodule EtherCAT.Master do
         data
         | bus_pid: bus_pid,
           bus_ref: bus_ref,
+          dc_pid: nil,
           base_station: start_config.base_station,
+          dc_stations: [],
           slave_config: start_config.slave_config,
           domain_config: start_config.domain_config,
-          dc_cycle_ns: start_config.dc_cycle_ns,
+          dc_config: start_config.dc_config,
           frame_timeout_override_ms: start_config.frame_timeout_override_ms,
           activation_phase: :preop_ready,
           activatable_slaves: [],
@@ -292,6 +323,18 @@ defmodule EtherCAT.Master do
   end
 
   def handle_event({:call, from}, :await_operational, :idle, _data) do
+    {:keep_state_and_data, [{:reply, from, {:error, :not_started}}]}
+  end
+
+  def handle_event({:call, from}, :dc_status, :idle, data) do
+    {:keep_state_and_data, [{:reply, from, dc_status_for(data)}]}
+  end
+
+  def handle_event({:call, from}, :reference_clock, :idle, data) do
+    {:keep_state_and_data, [{:reply, from, reference_clock_reply(dc_status_for(data))}]}
+  end
+
+  def handle_event({:call, from}, :dc_runtime, :idle, _data) do
     {:keep_state_and_data, [{:reply, from, {:error, :not_started}}]}
   end
 
@@ -590,6 +633,26 @@ defmodule EtherCAT.Master do
     {:keep_state_and_data, [{:reply, from, data.last_failure}]}
   end
 
+  def handle_event({:call, from}, :dc_status, _state, data) do
+    {:keep_state_and_data, [{:reply, from, dc_status_for(data)}]}
+  end
+
+  def handle_event({:call, from}, :reference_clock, _state, data) do
+    {:keep_state_and_data, [{:reply, from, reference_clock_reply(dc_status_for(data))}]}
+  end
+
+  def handle_event({:call, from}, :dc_runtime, _state, %{dc_config: nil}) do
+    {:keep_state_and_data, [{:reply, from, {:error, :dc_disabled}}]}
+  end
+
+  def handle_event({:call, from}, :dc_runtime, _state, %{dc_pid: dc_pid}) when is_pid(dc_pid) do
+    {:keep_state_and_data, [{:reply, from, {:ok, dc_pid}}]}
+  end
+
+  def handle_event({:call, from}, :dc_runtime, _state, _data) do
+    {:keep_state_and_data, [{:reply, from, {:error, :dc_inactive}}]}
+  end
+
   def handle_event({:call, from}, :slaves, _state, data) do
     {:keep_state_and_data, [{:reply, from, data.slaves}]}
   end
@@ -694,7 +757,8 @@ defmodule EtherCAT.Master do
         slave_name,
         driver: updated_config.driver,
         config: updated_config.config,
-        process_data: updated_config.process_data
+        process_data: updated_config.process_data,
+        sync: updated_config.sync
       )
     else
       :ok
@@ -719,7 +783,7 @@ defmodule EtherCAT.Master do
     case Bus.set_frame_timeout(data.bus_pid, target_ms) do
       :ok ->
         Logger.info(
-          "[Master] bus frame timeout set to #{target_ms}ms (slaves=#{slave_count}, dc_cycle_ns=#{inspect(data.dc_cycle_ns)})"
+          "[Master] bus frame timeout set to #{target_ms}ms (slaves=#{slave_count}, dc_cycle_ns=#{inspect(dc_cycle_ns(data))})"
         )
 
         :ok
@@ -743,7 +807,7 @@ defmodule EtherCAT.Master do
     by_topology_us = @frame_timeout_base_us + slave_count * @frame_timeout_per_slave_us
 
     by_cycle_us =
-      case data.dc_cycle_ns do
+      case dc_cycle_ns(data) do
         cycle_ns when is_integer(cycle_ns) and cycle_ns > 0 ->
           div(cycle_ns * @frame_timeout_cycle_margin_pct, 100)
 
@@ -774,14 +838,15 @@ defmodule EtherCAT.Master do
     with {:ok, stations} <- assign_station_addresses(data, count),
          {:ok, slave_topology} <- read_topology_statuses(data, stations),
          :ok <- reset_slaves_to_init(data, stations),
-         {:ok, dc_ref_station} <- initialize_distributed_clocks(data, slave_topology),
-         :ok <- start_domains(data),
+         {:ok, dc_ref_station, dc_stations} <- initialize_distributed_clocks(data, slave_topology),
+         :ok <- start_domains(data, dc_ref_station),
          {:ok, effective_slave_config, slaves, pending_preop, activatable_slaves} <-
-           start_slaves(data, count, if(dc_ref_station, do: data.dc_cycle_ns, else: nil)) do
+           start_slaves(data, count, if(dc_ref_station, do: dc_cycle_ns(data), else: nil)) do
       {:ok,
        %{
          data
          | dc_ref_station: dc_ref_station,
+           dc_stations: dc_stations,
            slave_config: effective_slave_config,
            slaves: slaves,
            pending_preop: MapSet.new(pending_preop),
@@ -978,20 +1043,25 @@ defmodule EtherCAT.Master do
   end
 
   defp initialize_distributed_clocks(data, slave_topology) do
-    case DC.initialize_clocks(data.bus_pid, slave_topology) do
-      {:ok, ref_station} ->
-        Logger.info("[Master] DC initialized, ref=0x#{Integer.to_string(ref_station, 16)}")
-        {:ok, ref_station}
+    if is_nil(data.dc_config) do
+      {:ok, nil, []}
+    else
+      case DC.initialize_clocks(data.bus_pid, slave_topology) do
+        {:ok, ref_station, dc_stations} ->
+          Logger.info("[Master] DC initialized, ref=0x#{Integer.to_string(ref_station, 16)}")
+          {:ok, ref_station, dc_stations}
 
-      {:error, reason} ->
-        Logger.warning("[Master] DC init failed (#{inspect(reason)}) — running without DC")
-        {:ok, nil}
+        {:error, reason} ->
+          Logger.warning("[Master] DC init failed (#{inspect(reason)}) — running without DC")
+          {:ok, nil, []}
+      end
     end
   end
 
-  defp start_domains(data) do
+  defp start_domains(data, _dc_ref_station) do
     Enum.reduce_while(data.domain_config || [], :ok, fn entry, :ok ->
       domain_opts = Config.domain_start_opts(entry)
+
       id = entry.id
 
       case DynamicSupervisor.start_child(
@@ -1027,7 +1097,8 @@ defmodule EtherCAT.Master do
           driver: entry.driver,
           config: entry.config,
           process_data: entry.process_data,
-          dc_cycle_ns: dc_cycle_ns
+          dc_cycle_ns: dc_cycle_ns,
+          sync: entry.sync
         ]
 
         case DynamicSupervisor.start_child(EtherCAT.SlaveSupervisor, {Slave, opts}) do
@@ -1068,28 +1139,28 @@ defmodule EtherCAT.Master do
   end
 
   defp activate_network(data) do
-    Logger.info("[Master] activating — starting DC, domains, and advancing slaves to :op")
+    Logger.info("[Master] activating — starting DC, cyclic domains, and advancing slaves to :op")
 
     case start_dc_runtime(data) do
       {:ok, dc_pid} ->
         activation_data = %{data | dc_pid: dc_pid}
 
-        case start_domain_cycles(activation_data) do
-          :ok ->
-            activation_failures = activate_required_slaves(activation_data.activatable_slaves)
+        with :ok <- start_domain_cycles(activation_data),
+             :ok <- await_dc_lock_if_requested(activation_data) do
+          activation_failures = activate_required_slaves(activation_data.activatable_slaves)
 
-            activated_data = %{activation_data | activation_failures: activation_failures}
+          activated_data = %{activation_data | activation_failures: activation_failures}
 
-            if map_size(activation_failures) == 0 do
-              {:ok, %{activated_data | activation_phase: :operational}}
-            else
-              Logger.warning(
-                "[Master] activation incomplete; degraded mode for #{inspect(Map.keys(activation_failures))}"
-              )
+          if map_size(activation_failures) == 0 do
+            {:ok, %{activated_data | activation_phase: :operational}}
+          else
+            Logger.warning(
+              "[Master] activation incomplete; degraded mode for #{inspect(Map.keys(activation_failures))}"
+            )
 
-              {:degraded, %{activated_data | activation_phase: :operational}}
-            end
-
+            {:degraded, %{activated_data | activation_phase: :operational}}
+          end
+        else
           {:error, reason} ->
             {:error, reason, activation_data}
         end
@@ -1125,7 +1196,11 @@ defmodule EtherCAT.Master do
   defp start_dc_runtime(data) do
     case DynamicSupervisor.start_child(
            EtherCAT.SessionSupervisor,
-           {DC, bus: data.bus_pid, ref_station: data.dc_ref_station, period_ms: 10}
+           {DC,
+            bus: data.bus_pid,
+            ref_station: data.dc_ref_station,
+            monitored_stations: data.dc_stations,
+            config: data.dc_config}
          ) do
       {:ok, pid} ->
         {:ok, pid}
@@ -1145,6 +1220,31 @@ defmodule EtherCAT.Master do
           {:halt, {:error, {:domain_cycle_start_failed, id, reason}}}
       end
     end)
+  end
+
+  defp await_dc_lock_if_requested(%{dc_config: nil}), do: :ok
+
+  defp await_dc_lock_if_requested(%{dc_config: %{await_lock?: false}}), do: :ok
+
+  defp await_dc_lock_if_requested(data) do
+    timeout_ms = data.dc_config.lock_timeout_ms
+
+    case data.dc_pid do
+      pid when is_pid(pid) ->
+        case DC.await_locked(pid, timeout_ms) do
+          :ok ->
+            :ok
+
+          {:error, :timeout} ->
+            {:error, {:dc_lock_timeout, dc_status_for(data)}}
+
+          {:error, reason} ->
+            {:error, {:dc_lock_failed, reason}}
+        end
+
+      _ ->
+        {:error, {:dc_lock_unavailable, :no_active_dc_runtime}}
+    end
   end
 
   defp activate_required_slaves(slave_names) do
@@ -1202,6 +1302,64 @@ defmodule EtherCAT.Master do
   defp phase_for(:degraded, _data), do: :degraded
   defp phase_for(:running, %{activation_phase: :operational}), do: :operational
   defp phase_for(:running, _data), do: :preop_ready
+
+  defp dc_cycle_ns(%{dc_config: %{cycle_ns: cycle_ns}})
+       when is_integer(cycle_ns) and cycle_ns > 0,
+       do: cycle_ns
+
+  defp dc_cycle_ns(_data), do: nil
+
+  defp dc_status_for(%{dc_config: nil}) do
+    %DCStatus{lock_state: :disabled}
+  end
+
+  defp dc_status_for(data) do
+    base_status = %DCStatus{
+      configured?: true,
+      active?: false,
+      cycle_ns: dc_cycle_ns(data),
+      reference_station: data.dc_ref_station,
+      reference_clock: reference_clock_name(data),
+      lock_state: :inactive
+    }
+
+    case data.dc_pid do
+      pid when is_pid(pid) ->
+        if Process.alive?(pid) do
+          case DC.status(pid) do
+            %DCStatus{} = status ->
+              %{status | reference_clock: reference_clock_name(data)}
+
+            {:error, _reason} ->
+              base_status
+          end
+        else
+          base_status
+        end
+
+      _ ->
+        base_status
+    end
+  end
+
+  defp reference_clock_name(%{dc_ref_station: nil}), do: nil
+
+  defp reference_clock_name(data) do
+    case Enum.find(data.slaves || [], fn {_name, station, _pid} ->
+           station == data.dc_ref_station
+         end) do
+      {name, _station, _pid} -> name
+      nil -> nil
+    end
+  end
+
+  defp reference_clock_reply(%DCStatus{reference_station: station, reference_clock: name})
+       when is_integer(station) do
+    {:ok, %{name: name, station: station}}
+  end
+
+  defp reference_clock_reply(%DCStatus{configured?: false}), do: {:error, :dc_disabled}
+  defp reference_clock_reply(_status), do: {:error, :no_reference_clock}
 
   defp reply_await_callers(callers, reply) do
     Enum.each(callers, fn from -> :gen_statem.reply(from, reply) end)

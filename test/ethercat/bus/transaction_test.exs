@@ -32,6 +32,11 @@ defmodule EtherCAT.Bus.TransactionTest do
       assert [%Datagram{cmd: 14, data: <<0, 0>>}] = Transaction.datagrams(tx)
     end
 
+    test "frmw zero-fills a fixed register length" do
+      tx = Transaction.new() |> Transaction.frmw(0x1001, {0x0910, 8})
+      assert [%Datagram{cmd: 14, data: <<0, 0, 0, 0, 0, 0, 0, 0>>}] = Transaction.datagrams(tx)
+    end
+
     test "aprd appends one datagram with correct cmd" do
       tx = Transaction.new() |> Transaction.aprd(0, {0x0130, 2})
       assert [%Datagram{cmd: 1, data: <<0, 0>>}] = Transaction.datagrams(tx)

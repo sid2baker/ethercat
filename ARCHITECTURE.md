@@ -20,13 +20,14 @@ EtherCAT.Application
 │   │   └── EtherCAT.Bus.Link    (topology adapter selected by Bus)
 │   │       ├── EtherCAT.Bus.Link.SinglePort
 │   │       └── EtherCAT.Bus.Link.Redundant
-│   ├── EtherCAT.DC              (gen_statem — periodic ARMW drift ticker)
+│   ├── EtherCAT.DC              (gen_statem — DC maintenance + lock/status monitor)
 │   └── EtherCAT.Domain          (gen_statem per domain — cyclic LRW exchange)
 │
 ├── EtherCAT.SlaveSupervisor     (simple_one_for_one — :temporary slaves)
-│   └── EtherCAT.Slave           (gen_statem per named slave — ESM lifecycle, checked PREOP setup, checked SAFEOP DC setup)
+│   └── EtherCAT.Slave           (gen_statem per named slave — ESM lifecycle, checked PREOP setup, checked SAFEOP sync/latch setup)
 │       ├── EtherCAT.SII         (EEPROM reader — stateless, called from Slave.init)
 │       ├── EtherCAT.Slave.Driver (behaviour contract for user drivers)
+│       ├── EtherCAT.Slave.Sync.Plan (pure sync/latch register planning)
 │       └── EtherCAT.Slave.Registers (ESC register address map — pure functions)
 ```
 
@@ -54,7 +55,8 @@ Master :scanning ──── BRD 0x0000, count stable ──── Master :conf
                 → build SM-indexed signal decode map → {:slave_ready, name, :preop}
               │
               Master collects all {:slave_ready} →
-              (explicit config) DC start → domain cycling → SafeOp
+              (explicit config) DC runtime start → domain cycling
+              (separate DC frame carries FRMW + diagnostics) → optional DC lock wait → SafeOp
               → checked post-transition DC SYNC/latch setup → Op
               OR (dynamic startup) remain in PreOp for runtime configuration →
               Master :running
@@ -64,13 +66,14 @@ Master :scanning ──── BRD 0x0000, count stable ──── Master :conf
 
 ```
 Domain :cycling
-  state_timeout :tick every period_ms
+  state_timeout :tick every whole-millisecond cycle_time_us
     build_frame  → splice outputs from ETS into zero-filled binary (iodata, no alloc)
-    Bus.transaction LRW → raw socket send → receive → response binary
+    Bus.transaction LRW
+      → raw socket send → receive → response binary
     dispatch_inputs → compare each slice against ETS → on change:
       ETS update + send {:domain_input, domain_id, key, raw} to slave pid
       Slave decodes only the signals registered for that SM via its `sm_key` index
-      → driver.decode_signal/3 → notify subscribers
+      → driver.decode_signal/3 → notify `{:ethercat, :signal, ...}` subscribers
 ```
 
 ### Output path (application → bus)
@@ -113,10 +116,12 @@ input values or write output values directly without a message round-trip.
 ### Jitter compensation via DC
 
 BEAM's scheduler has sub-millisecond jitter. The Distributed Clock layer compensates:
-ESC clocks are synchronized to sub-microsecond precision by the `DC` gen_statem, which
-sends a periodic ARMW to the reference slave's system time register. All slaves lock their
-local clock to this via a PLL. SYNC0 pulses fire from the hardware clock, not the software
-scheduler — PDO exchange timing is hardware-anchored regardless of BEAM scheduling.
+ESC clocks are synchronized to sub-microsecond precision by the dedicated `DC` runtime, which
+sends a realtime FRMW maintenance frame to the reference slave and periodically appends
+`0x092C` diagnostics for lock detection. Per-slave
+SYNC0/SYNC1/latch intent is configured through
+`%EtherCAT.Slave.Config{sync: %EtherCAT.Slave.Sync.Config{...}}`. SYNC0 pulses fire from the hardware
+clock, not the software scheduler — PDO exchange timing is hardware-anchored regardless of BEAM scheduling.
 
 ### gen_statem + :state_enter throughout
 
@@ -134,10 +139,11 @@ calls `{:next_state, ...}`.
 3. `Domain.start_link` per config — creates ETS tables, enters `:open`
 4. `Slave.start_link` per config — starts SII read, checked mailbox SM setup in INIT, auto-advances to `:preop`, then runs explicit PREOP-local mailbox/process-data configuration
 5. `Master` waits for all `{:slave_ready, name, :preop}` messages (30 s timeout). That message means the slave finished its local PREOP setup, not just that AL state reached PREOP.
-6. If activatable slaves exist: `DC.start_link` — starts ARMW ticker (after all slaves are in PreOp)
+6. If activatable slaves exist: `DC.start_link` — starts DC maintenance plus lock/status monitoring (after all slaves are in PreOp)
 7. If activatable slaves exist: `Domain.start_cycling` per domain — begins self-timed LRW
-8. If activatable slaves exist: `Slave.request(:safeop)` per slave — SAFEOP transition completes first, then checked DC SYNC/latch configuration runs as explicit post-transition work
-9. If activatable slaves exist: `Slave.request(:op)` per slave — full process data exchange active
+8. If activatable slaves exist and `dc.await_lock? == true`: wait for the DC monitor to report `:locked`
+9. If activatable slaves exist: `Slave.request(:safeop)` per slave — SAFEOP transition completes first, then checked ESC sync/latch configuration runs as explicit post-transition work (`0x0910/0x092C` snapshot, aligned start-time plan, `0x0980`, `0x0981`)
+10. If activatable slaves exist: `Slave.request(:op)` per slave — full process data exchange active
 
 ---
 

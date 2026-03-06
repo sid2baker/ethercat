@@ -43,6 +43,10 @@ defmodule EtherCAT.Slave.CoE do
 
   This module stays procedural and synchronous because it is currently used from
   slave PREOP configuration paths, not as a standalone mailbox state machine.
+
+  This is the runtime CoE transport/protocol layer. For the small driver-facing
+  helper that builds common `0x1C32` / `0x1C33` mailbox steps, see
+  `EtherCAT.Slave.Sync.CoE`.
   """
 
   alias EtherCAT.Bus

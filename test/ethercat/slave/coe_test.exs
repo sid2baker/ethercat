@@ -56,6 +56,24 @@ defmodule EtherCAT.Slave.CoETest do
     end
   end
 
+  defmodule SyncModeDriver do
+    @behaviour EtherCAT.Slave.Driver
+
+    @impl true
+    def process_data_model(_config), do: %{}
+
+    @impl true
+    def encode_signal(_signal, _config, _value), do: <<>>
+
+    @impl true
+    def decode_signal(_signal, _config, raw), do: raw
+
+    @impl true
+    def sync_mode(_config, _sync) do
+      [{:sdo_download, 0x1C32, 0x01, <<1, 0, 0, 0>>}]
+    end
+  end
+
   @mailbox_config %{recv_offset: 0x1000, recv_size: 20, send_offset: 0x1200, send_size: 32}
   @station 0x1000
 
@@ -222,7 +240,7 @@ defmodule EtherCAT.Slave.CoETest do
                  mailbox_counter: 0,
                  process_data_request: :none,
                  signal_registrations: %{},
-                 input_subscriptions: %{},
+                 subscriptions: %{},
                  sii_pdo_configs: [],
                  sii_sm_configs: []
                }
@@ -230,6 +248,48 @@ defmodule EtherCAT.Slave.CoETest do
 
     assert updated.configuration_error == nil
     assert updated.mailbox_counter == 2
+  end
+
+  test "slave PREOP mailbox configuration appends driver sync_mode steps" do
+    from = {self(), make_ref()}
+
+    bus =
+      start_supervised!({
+        FakeBus,
+        [
+          write_ok(),
+          mailbox_ready(),
+          mailbox_read(download_init_ack(1, 0x1C32, 0x01), @mailbox_config.send_size)
+        ]
+      })
+
+    assert {:keep_state, %EtherCAT.Slave{} = updated, [{:reply, ^from, :ok}]} =
+             EtherCAT.Slave.handle_event(
+               {:call, from},
+               {:configure, []},
+               :preop,
+               %EtherCAT.Slave{
+                 bus: bus,
+                 station: @station,
+                 name: :axis,
+                 driver: SyncModeDriver,
+                 config: %{},
+                 mailbox_config: @mailbox_config,
+                 mailbox_counter: 0,
+                 sync_config: %EtherCAT.Slave.Sync.Config{
+                   mode: :sync0,
+                   sync0: %{pulse_ns: 5_000, shift_ns: 0}
+                 },
+                 process_data_request: :none,
+                 signal_registrations: %{},
+                 subscriptions: %{},
+                 sii_pdo_configs: [],
+                 sii_sm_configs: []
+               }
+             )
+
+    assert updated.configuration_error == nil
+    assert updated.mailbox_counter == 1
   end
 
   defp write_ok, do: {:ok, [reply_datagram(<<>>)]}

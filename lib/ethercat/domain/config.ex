@@ -4,15 +4,15 @@ defmodule EtherCAT.Domain.Config do
 
   Fields:
     - `:id` (required) — atom identifying the domain; also used as the ETS table name
-    - `:period_ms` (required) — cycle period in milliseconds
+    - `:cycle_time_us` (required) — cycle time in microseconds; must be a whole-millisecond value (`>= 1_000`, divisible by `1_000`)
     - `:miss_threshold` — consecutive miss count before domain halts, default `1000`
     - `:logical_base` — LRW logical address base, default `0`
   """
 
-  @enforce_keys [:id, :period_ms]
+  @enforce_keys [:id, :cycle_time_us]
   defstruct [
     :id,
-    :period_ms,
+    :cycle_time_us,
     miss_threshold: 1000,
     logical_base: 0
   ]

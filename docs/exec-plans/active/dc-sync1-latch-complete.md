@@ -1,6 +1,19 @@
 # Plan: Complete EtherCAT DC Signal Implementation (SYNC1 + LATCH0/1)
 
-## Status: ACTIVE — not yet implemented
+## Status: SUPERSEDED
+
+Superseded by:
+
+- `docs/exec-plans/active/distributed-clocks-spec-alignment.md`
+
+Reason:
+
+This older plan only covered SYNC1/latch register and slave wiring. The remaining work is broader:
+
+1. runtime DC datagram correctness
+2. DC lock/status observability
+3. public `dc:` / `sync:` API cleanup
+4. device-specific sync mode support
 
 ## Context
 

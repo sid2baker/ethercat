@@ -68,11 +68,19 @@ defmodule EtherCAT.Telemetry do
         measurements: %{}
         metadata:     %{link: String.t()}
 
-  ### DC drift maintenance
+  ### DC maintenance and lock monitoring
 
       [:ethercat, :dc, :tick]
         measurements: %{wkc: integer()}
         metadata:     %{ref_station: non_neg_integer()}
+
+      [:ethercat, :dc, :sync_diff, :observed]
+        measurements: %{max_sync_diff_ns: non_neg_integer()}
+        metadata:     %{ref_station: non_neg_integer(), station_count: pos_integer()}
+
+      [:ethercat, :dc, :lock, :changed]
+        measurements: %{}
+        metadata:     %{ref_station: non_neg_integer(), from: atom(), to: atom(), max_sync_diff_ns: non_neg_integer() | nil}
 
   ### Domain cycle events
 
@@ -200,6 +208,29 @@ defmodule EtherCAT.Telemetry do
   end
 
   @doc false
+  def dc_sync_diff_observed(ref_station, max_sync_diff_ns, station_count) do
+    execute(
+      [:ethercat, :dc, :sync_diff, :observed],
+      %{max_sync_diff_ns: max_sync_diff_ns},
+      %{ref_station: ref_station, station_count: station_count}
+    )
+  end
+
+  @doc false
+  def dc_lock_changed(ref_station, from_state, to_state, max_sync_diff_ns) do
+    execute(
+      [:ethercat, :dc, :lock, :changed],
+      %{},
+      %{
+        ref_station: ref_station,
+        from: from_state,
+        to: to_state,
+        max_sync_diff_ns: max_sync_diff_ns
+      }
+    )
+  end
+
+  @doc false
   def domain_cycle_done(domain_id, duration_us, cycle_count) do
     execute(
       [:ethercat, :domain, :cycle, :done],
@@ -237,6 +268,8 @@ defmodule EtherCAT.Telemetry do
     [:ethercat, :bus, :link, :down],
     [:ethercat, :bus, :link, :reconnected],
     [:ethercat, :dc, :tick],
+    [:ethercat, :dc, :sync_diff, :observed],
+    [:ethercat, :dc, :lock, :changed],
     [:ethercat, :domain, :cycle, :done],
     [:ethercat, :domain, :cycle, :missed]
   ]

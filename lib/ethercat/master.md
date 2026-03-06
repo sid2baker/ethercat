@@ -94,19 +94,21 @@ acknowledgement ritual on that station (`actual_state | 0x10`) and, if needed,
 re-requests Init before polling again.
 
 **Step 4: DC initialization**
-`DC.initialize_clocks(bus, slave_stations)` — see DC section below. Returns `{:ok, ref_station}` or `{:error, reason}`.
+`DC.initialize_clocks(bus, slave_stations)` — see DC section below. Returns `{:ok, ref_station, monitored_stations}` or `{:error, reason}`.
 
-If DC init fails, master proceeds without DC: `dc_cycle_ns` is set to `nil`, no SYNC0 will be configured on any slave.
+If DC init fails, master proceeds without active DC runtime: `dc_ref_station` stays `nil`,
+the runtime remains inactive, and no SYNC0 will be configured on any slave.
 
 **Step 5: Start domains**
-`start_domains/1` starts one `EtherCAT.Domain` gen_statem per domain config entry via `EtherCAT.SessionSupervisor` (session-scoped lifecycle, torn down by `stop_session/1`). Domains must exist before slaves call `Domain.register_pdo/4` in their `:preop` enter handler. Each domain registers itself in `EtherCAT.Registry` under `{:domain, id}`.
+`start_domains/2` starts one `EtherCAT.Domain` gen_statem per domain config entry via `EtherCAT.SessionSupervisor` (session-scoped lifecycle, torn down by `stop_session/1`). Domains must exist before slaves call `Domain.register_pdo/4` in their `:preop` enter handler. Each domain registers itself in `EtherCAT.Registry` under `{:domain, id}`.
 
 **Step 6: Start slaves**
 `start_slaves/3` — one `EtherCAT.Slave` gen_statem per config entry via `EtherCAT.SlaveSupervisor`. `nil` config entries are rejected at `start/1`. Missing drivers use `EtherCAT.Slave.Driver.Default`.
 
 If `slaves: []` (or omitted), the master auto-creates one default slave config per discovered station (`:coupler`, `:slave_1`, ...), starts all of them with `process_data: :none` and `target_state: :preop`, and tracks them in `pending_preop` so each process still executes INIT→PREOP.
 
-Slaves receive `dc_cycle_ns` only if DC init succeeded (otherwise `nil`).
+Slaves receive the master's effective DC cycle (`dc.cycle_ns`) only if DC init
+succeeded (otherwise `nil`).
 
 Each slave auto-advances to `:preop` concurrently in its own init. After the
 `INIT -> PREOP` transition succeeds, it runs its mailbox/process-data PREOP
@@ -139,16 +141,24 @@ If no activatable slaves are configured, activation is skipped and the master en
 2. call `activate/0` once to start DC/domain runtime and request `SAFEOP -> OP`
 
 **Step 1: Start DC gen_statem**
-`DC.start_link(bus: bus, ref_station: ref_station, period_ms: 10)` — starts cyclic ARMW ticker.
-Started *after* all slaves reach `:preop` so DC ticks don't compete with slave SM transitions on the socket.
+`DC.start_link(bus: bus, ref_station: ref_station, config: %EtherCAT.DC.Config{})`
+— starts DC maintenance plus lock/status monitoring.
+`dc.cycle_ns` currently uses the same BEAM millisecond timer floor as domains, so it
+must be a whole-millisecond value (`>= 1_000_000`, divisible by `1_000_000`).
+Started *after* all slaves reach `:preop` so sync-diff polling does not compete with slave SM transitions on the socket.
 
 **Step 2: Start domain cycling**
 `Domain.start_cycling(id)` for each domain. Domains begin the self-timed LRW cycle.
 
-**Step 3: Advance slaves to SafeOp**
+**Step 3: Optionally wait for DC lock**
+If `dc.await_lock? == true`, the master waits up to `dc.lock_timeout_ms` for the
+DC runtime to report `:locked` from monitored `0x092C` sync-diff readings.
+If the timeout expires, activation fails with `{:dc_lock_timeout, status}`.
+
+**Step 4: Advance slaves to SafeOp**
 `Slave.request(name, :safeop)` sequentially for each named slave. Synchronous — blocks until slave confirms SafeOp (or fails).
 
-**Step 4: Advance slaves to Op**
+**Step 5: Advance slaves to Op**
 `Slave.request(name, :op)` sequentially for each named slave.
 
 If any activatable slave fails SafeOp/Op, master enters `:degraded` and retries failed slaves with `Slave.request(name, :op)` every second until all are in OP.
@@ -198,17 +208,21 @@ Implements ESC datasheet §9.1.3.6 (clock synchronization initialization):
 
 ---
 
-## DC Drift Maintenance (`EtherCAT.DC`)
+## DC Runtime Monitoring (`EtherCAT.DC`)
 
-`DC` is a `gen_statem` in state `:running`. On each tick (default 10 ms):
-```
-Bus.transaction(bus, Transaction.armw(ref_station, Registers.dc_system_time()))
-```
-ARMW to `0x0910` of reference clock: the reference clock's 64-bit system time is read into the datagram; all downstream slaves in the ring write the datagram value to their own `0x0910`. Each slave's PLL computes `Δt` and adjusts clock speed.
+`DC` is a `gen_statem` in state `:running`.
 
-Uses `Bus.transaction/3` (direct, not queued) with a timeout budget derived from the DC tick period, to avoid ordering issues with other concurrent datagrams while dropping stale ticks.
+On each runtime tick, `DC` sends its own realtime frame:
+- always: configured-address FRMW to `0x0910` on the reference clock
+- every diagnostic interval: append configured-address reads of `0x092C` on the known DC-capable stations
 
-Telemetry: `[:ethercat, :dc, :tick]` with `%{wkc: wkc}` on each tick.
+`DC` classifies the current lock state from those `0x092C` samples and replies to
+`await_dc_locked/1` once the monitored sync diff converges below `lock_threshold_ns`.
+
+Telemetry:
+- FRMW maintenance WKC: `[:ethercat, :dc, :tick]`
+- sync-diff observations: `[:ethercat, :dc, :sync_diff, :observed]`
+- lock transitions: `[:ethercat, :dc, :lock, :changed]`
 
 ---
 
@@ -220,9 +234,10 @@ Telemetry: `[:ethercat, :dc, :tick]` with `%{wkc: wkc}` on each tick.
   bus_ref:         reference() | nil,    # Process.monitor ref for bus crash detection
   dc_pid:          pid() | nil,          # DC gen_statem pid
   dc_ref_station:  non_neg_integer() | nil,  # Station of reference clock slave
+  dc_stations:     [non_neg_integer()],  # DC-capable stations monitored via 0x092C
   slave_config:    [EtherCAT.Slave.Config.t()],  # normalized slave configs
   domain_config:   [EtherCAT.Domain.Config.t()], # normalized domain configs
-  dc_cycle_ns:     pos_integer() | nil,  # SYNC0 period; nil if no DC
+  dc_config:       EtherCAT.DC.Config.t() | nil,  # master-wide DC config; nil disables DC
   frame_timeout_override_ms: pos_integer() | nil, # Optional fixed bus frame timeout
   base_station:    non_neg_integer(),    # Default 0x1000
   slaves:          [{name, station, pid}], # Named slave tuples
@@ -241,8 +256,8 @@ Telemetry: `[:ethercat, :dc, :tick]` with `%{wkc: wkc}` on each tick.
 
 - **No per-slave monitoring after Op**: master does not poll AL status or error counters on running slaves. Slave crashes are not detected by the master (only bus crashes trigger recovery).
 - **Sequential slave activation**: slaves are advanced to SafeOp then Op one at a time via synchronous `Slave.request/2`. For large slave counts this can be slow. Parallel advancement (async + barrier) is not implemented.
-- **No DC lock detection**: master does not wait for DC PLL to lock (read `0x092C` converging to 0) before advancing slaves to Op. Slaves enter Op before clocks are fully synchronized.
-- **No static drift pre-compensation**: the datasheet recommends sending ~15,000 ARMW frames before operation to eliminate static drift. The DC gen_statem starts periodic ticking immediately without this warm-up phase.
+- **DC lock gating is opt-in**: the master only waits for lock during activation when `dc.await_lock? == true`. The default remains `false`, so applications that need strict lock-before-OP semantics must request it explicitly.
+- **No static drift pre-compensation**: the datasheet recommends sending ~15,000 DC compensation frames before operation to eliminate static drift. The DC gen_statem starts periodic ticking immediately without this warm-up phase.
 - **No IRQ-based slave event detection**: master cannot receive slave-initiated events (AL state changes, error flags) without polling. The ECAT event request (`0x0210`) IRQ field in datagrams is not monitored.
 - **Topology limited to linear chain**: DC delay calculation assumes a simple chain topology. Tree topologies with slaves having 3+ ports require the full formula from datasheet §9.1.2.2.
 - **No master-level redundancy state API yet**: redundant links are handled inside the

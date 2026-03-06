@@ -73,13 +73,21 @@ defmodule EtherCAT.Bus.Transaction do
   @spec fprw(non_neg_integer(), {non_neg_integer(), binary()}) :: t()
   def fprw(station, reg), do: new() |> fprw(station, reg)
 
-  @doc "Configured address read multiple write (FRMW). `reg` is `{offset, data}`."
-  @spec frmw(t(), non_neg_integer(), {non_neg_integer(), binary()}) :: t()
+  @doc """
+  Configured address read multiple write (FRMW). `reg` is `{offset, length_or_data}`.
+  When `length` is an integer, a zero-filled binary of that size is used as the
+  write payload.
+  """
+  @spec frmw(t(), non_neg_integer(), {non_neg_integer(), pos_integer() | binary()}) :: t()
+  def frmw(%__MODULE__{} = tx, station, {offset, length}) when is_integer(length) do
+    append(tx, fixed_write(@frmw, station, offset, :binary.copy(<<0>>, length)))
+  end
+
   def frmw(%__MODULE__{} = tx, station, {offset, data}) when is_binary(data) do
     append(tx, fixed_write(@frmw, station, offset, data))
   end
 
-  @spec frmw(non_neg_integer(), {non_neg_integer(), binary()}) :: t()
+  @spec frmw(non_neg_integer(), {non_neg_integer(), pos_integer() | binary()}) :: t()
   def frmw(station, reg), do: new() |> frmw(station, reg)
 
   @doc "Auto-increment read. `position` is 0-based. `reg` is `{offset, length}`."

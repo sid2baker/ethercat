@@ -51,12 +51,9 @@ defmodule EtherCAT.Domain do
     miss_count: 0,
     miss_threshold: 100,
     cycle_count: 0,
-    # total accumulated misses since domain started (never resets)
     total_miss_count: 0,
     table: nil
   ]
-
-  # -- child_spec / start_link -----------------------------------------------
 
   @doc false
   def child_spec(opts) do
@@ -76,7 +73,7 @@ defmodule EtherCAT.Domain do
   Options:
     - `:id` (required) — atom, also ETS table name and Registry key
     - `:bus` (required) — bus pid
-    - `:period_ms` (required) — cycle period in milliseconds
+    - `:cycle_time_us` (required) — cycle period in microseconds
     - `:logical_base` — LRW logical address base, default `0`
     - `:miss_threshold` — stop after N consecutive misses, default `100`
   """
@@ -84,8 +81,6 @@ defmodule EtherCAT.Domain do
   def start_link(opts) do
     :gen_statem.start_link(__MODULE__, opts, [])
   end
-
-  # -- Public API ------------------------------------------------------------
 
   @doc """
   Register a PDO slice. Returns `{:ok, logical_offset}` immediately.
@@ -147,8 +142,6 @@ defmodule EtherCAT.Domain do
     :gen_statem.call(via(domain_id), :stats)
   end
 
-  # -- :gen_statem callbacks -------------------------------------------------
-
   @impl true
   def callback_mode, do: [:handle_event_function, :state_enter]
 
@@ -156,7 +149,7 @@ defmodule EtherCAT.Domain do
   def init(opts) do
     id = Keyword.fetch!(opts, :id)
     bus = Keyword.fetch!(opts, :bus)
-    period_ms = Keyword.fetch!(opts, :period_ms)
+    cycle_time_us = Keyword.fetch!(opts, :cycle_time_us)
     logical_base = Keyword.get(opts, :logical_base, 0)
     miss_threshold = Keyword.get(opts, :miss_threshold, 100)
 
@@ -174,7 +167,7 @@ defmodule EtherCAT.Domain do
     data = %__MODULE__{
       id: id,
       bus: bus,
-      period_us: period_ms * 1000,
+      period_us: cycle_time_us,
       logical_base: logical_base,
       next_cycle_at: nil,
       layout: Layout.new(),
@@ -189,8 +182,6 @@ defmodule EtherCAT.Domain do
     {:ok, :open, data}
   end
 
-  # -- State enter -----------------------------------------------------------
-
   @impl true
   def handle_event(:enter, _old, :open, _data), do: :keep_state_and_data
 
@@ -202,8 +193,6 @@ defmodule EtherCAT.Domain do
   end
 
   def handle_event(:enter, _old, :stopped, _data), do: :keep_state_and_data
-
-  # -- :open handlers --------------------------------------------------------
 
   def handle_event({:call, from}, {:register_pdo, key, size, direction, slave_pid}, :open, data) do
     {offset, layout} = Layout.register(data.layout, key, size, direction, slave_pid)
@@ -230,8 +219,6 @@ defmodule EtherCAT.Domain do
   def handle_event({:call, from}, :stop_cycling, state, _data) when state in [:open, :stopped] do
     {:keep_state_and_data, [{:reply, from, :ok}]}
   end
-
-  # -- :cycling — self-timed LRW exchange ------------------------------------
 
   def handle_event(:state_timeout, :tick, :cycling, data) do
     t0 = System.monotonic_time(:microsecond)
@@ -272,8 +259,10 @@ defmodule EtherCAT.Domain do
         reason = {:wkc_mismatch, %{expected: data.cycle_plan.expected_wkc, actual: wkc}}
         mark_cycle_missed(data, reason, next_at, next_timeout)
 
-      other ->
-        reason = if match?({:ok, _}, other), do: :no_response, else: elem(other, 1)
+      {:ok, results} ->
+        mark_cycle_missed(data, {:unexpected_reply, length(results)}, next_at, next_timeout)
+
+      {:error, reason} ->
         mark_cycle_missed(data, reason, next_at, next_timeout)
     end
   end
@@ -301,10 +290,6 @@ defmodule EtherCAT.Domain do
 
   def handle_event(_type, _event, _state, _data), do: :keep_state_and_data
 
-  # -- Frame assembly --------------------------------------------------------
-
-  # Build the LRW frame using iodata: splice output values from ETS into a
-  # zero-filled frame without allocating an intermediate flat binary.
   defp build_frame(image_size, output_patches, table) do
     zeros = :binary.copy(<<0>>, image_size)
     iodata = build_iodata(zeros, output_patches, table, 0)
@@ -327,7 +312,6 @@ defmodule EtherCAT.Domain do
     ]
   end
 
-  # Extract inputs from LRW response, compare with stored, notify slave on change.
   defp dispatch_inputs(response, input_slices, table, domain_id) do
     Enum.each(input_slices, fn {offset, size, key, slave_pid} ->
       new_val = binary_part(response, offset, size)
@@ -359,15 +343,19 @@ defmodule EtherCAT.Domain do
   defp reset_miss_count?(:open), do: false
 
   defp prepare_cycle(data) do
-    with {:ok, cycle_plan} <- Layout.prepare(data.layout) do
-      now = System.monotonic_time(:microsecond)
+    case Layout.prepare(data.layout) do
+      {:ok, cycle_plan} ->
+        now = System.monotonic_time(:microsecond)
 
-      {:ok,
-       %{
-         data
-         | cycle_plan: cycle_plan,
-           next_cycle_at: now + data.period_us
-       }}
+        {:ok,
+         %{
+           data
+           | cycle_plan: cycle_plan,
+             next_cycle_at: now + data.period_us
+         }}
+
+      {:error, _} = err ->
+        err
     end
   end
 

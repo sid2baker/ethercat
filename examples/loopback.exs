@@ -50,7 +50,7 @@ Process.sleep(300)
 :ok =
   EtherCAT.start(
     interface: interface,
-    domains: [[id: :main, period_ms: 4]],
+    domains: [[id: :main, cycle_time_us: 4_000]],
     slaves: [
       [name: :coupler],
       [name: :bridge_1],

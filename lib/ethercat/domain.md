@@ -4,8 +4,8 @@
 
 `EtherCAT.Domain` is a `gen_statem` (`:handle_event_function` + `:state_enter` mode) that
 owns one flat LRW process image and runs the self-timed cyclic exchange for all slaves
-registered to it. One Domain per configured domain ID. Registered in `EtherCAT.Registry`
-under `{:domain, id}` and creates an ETS table named after `id`.
+registered to it. One Domain per configured domain ID. Domains register in
+`EtherCAT.Registry` under `{:domain, id}` and create an ETS table named after `id`.
 
 Supervised under `EtherCAT.SessionSupervisor` as `:temporary` (session-scoped). Started by
 Master in `do_configure/1` before any slave is spawned, so slaves can call
@@ -52,19 +52,21 @@ registration order.
 
 ## Cycle Mechanics
 
-Entry into `:cycling` arms a `state_timeout` for `period_us` microseconds (converted to ms,
-rounded up). On each `:tick`:
+Entry into `:cycling` arms a `state_timeout` for `period_us` microseconds. The current
+runtime uses BEAM millisecond timers, so `cycle_time_us` must be a whole-millisecond
+value (`>= 1_000`, divisible by `1_000`). On each `:tick`:
 
 1. **Build frame** (`build_frame/3`): constructs output binary using iodata — patches
    output values from ETS into a zero-filled frame without intermediate allocation.
-2. **LRW transaction** (`Bus.transaction/3`): sends the frame with a timeout budget slightly below cycle period; stale ticks are dropped.
-3. **Dispatch inputs** (`dispatch_inputs/4`): for each input slice, compares new value
+2. **Build transaction**: one LRW datagram for the full process image.
+3. **Realtime transaction** (`Bus.transaction/3`): sends the cycle transaction with a timeout budget slightly below cycle period; stale ticks are dropped.
+4. **Dispatch inputs** (`dispatch_inputs/4`): for each input slice, compares new value
    against ETS; on change, updates ETS and sends
    `{:domain_input, domain_id, key, old_raw | :unset, new_raw}` to the slave pid.
-4. **Schedule next tick**: uses `next_cycle_at + period_us` drift-compensated schedule
+5. **Schedule next tick**: uses `next_cycle_at + period_us` drift-compensated schedule
    (not `now + period_us`) to prevent period drift accumulation.
 
-On LRW failure (WKC mismatch, WKC=0, or transport error):
+On cycle failure (LRW mismatch or transport error):
 - Increments `miss_count` and `total_miss_count`.
 - Emits `:telemetry` event `[:ethercat, :domain, :cycle, :missed]`.
 - If `miss_count >= miss_threshold`: logs error, transitions to `:stopped`.
@@ -115,11 +117,11 @@ record     : {key, value, slave_pid}
 %EtherCAT.Domain{
   id:               atom(),              # Domain ID; also ETS table name
   bus:              pid(),               # Bus server reference
-  period_us:        pos_integer(),       # Cycle period in microseconds
+  period_us:        pos_integer(),       # Cycle period in microseconds (whole milliseconds only)
   logical_base:     non_neg_integer(),   # LRW logical address base (default 0)
   next_cycle_at:    integer() | nil,     # Monotonic target time for next tick
   layout:           EtherCAT.Domain.Layout.t(),          # Mutable registration-time layout
-  cycle_plan:       EtherCAT.Domain.Layout.CyclePlan.t() | nil, # Frozen cycle plan
+  cycle_plan:       EtherCAT.Domain.Layout.CyclePlan.t(), # Frozen LRW plan
   miss_count:       non_neg_integer(),   # Consecutive misses (resets on success)
   miss_threshold:   pos_integer(),       # Stop after this many consecutive misses
   total_miss_count: non_neg_integer(),   # Lifetime miss count (never resets)
@@ -136,9 +138,6 @@ record     : {key, value, slave_pid}
 |-------|-------------|---------|
 | `[:ethercat, :domain, :cycle, :done]` | `%{duration_us: us, cycle_count: n}` | `%{domain: id}` |
 | `[:ethercat, :domain, :cycle, :missed]` | `%{miss_count: n}` | `%{domain: id, reason: term}` |
-
----
-
 ## Public API Summary
 
 | Function | Description |
@@ -154,10 +153,10 @@ record     : {key, value, slave_pid}
 
 ## Key Design Decisions
 
-**Why `Bus.transaction/3` for the LRW?**
-The domain cycle is the only operation running during Op — no other concurrent writes.
-`transaction/3` (period-derived staleness budget) is appropriate here. Reliable configuration
-traffic uses `Bus.transaction/2`; cyclic LRW should not share frames with it.
+**Why `Bus.transaction/3` for the cycle frame?**
+The domain cycle is realtime work. `transaction/3` (period-derived staleness budget) is
+appropriate for the LRW frame. Reliable configuration traffic uses `Bus.transaction/2`;
+cyclic frames should not share frames with it.
 
 **Why drift-compensated scheduling (`next_cycle_at + period_us`, not `now + period_us`)?**
 `now + period_us` accumulates jitter because each cycle is scheduled relative to when the

@@ -48,6 +48,7 @@ defmodule EtherCATTest do
     assert cfg.driver == EtherCAT.Slave.Driver.Default
     assert cfg.process_data == :none
     assert cfg.target_state == :op
+    assert cfg.sync == nil
   end
 
   test "default slave driver is a safe no-op profile" do

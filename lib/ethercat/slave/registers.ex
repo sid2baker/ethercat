@@ -311,6 +311,20 @@ defmodule EtherCAT.Slave.Registers do
   def dc_time_filter(v), do: {0x0934, <<v::16-little>>}
 
   @doc """
+  DC Cyclic Unit Control / AssignActivate register.
+
+  Generic userspace masters typically write `0x0000` here to keep SYNC unit
+  control on the EtherCAT side before enabling `0x0981`. Vendor-specific
+  AssignActivate words are not modeled by the generic public API.
+  """
+  @spec dc_cyclic_unit_control() :: reg()
+  def dc_cyclic_unit_control, do: {0x0980, 2}
+
+  @doc "DC Cyclic Unit Control write — encodes `code` as a 16-bit little-endian value."
+  @spec dc_cyclic_unit_control(non_neg_integer()) :: reg_write()
+  def dc_cyclic_unit_control(code), do: {0x0980, <<code::16-little>>}
+
+  @doc """
   DC Activation register.
 
   Bit layout:

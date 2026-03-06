@@ -9,6 +9,12 @@ defmodule EtherCAT.Slave.Driver do
   That default driver exposes no PDO profile and is intended for couplers or
   dynamically configured devices.
 
+  Generic SYNC0/SYNC1/latch intent does not live in the driver. It belongs on
+  `%EtherCAT.Slave.Config{sync: %EtherCAT.Slave.Sync.Config{...}}`. Drivers only own
+  device-specific translation through the optional `sync_mode/2` callback when a
+  slave application needs additional mailbox objects beyond the generic ESC DC
+  registers.
+
   ## Process-data model
 
   `process_data_model/1` returns a map keyed by logical signal name (atom). Each
@@ -117,22 +123,16 @@ defmodule EtherCAT.Slave.Driver do
   """
 
   alias EtherCAT.Slave.ProcessDataSignal
+  alias EtherCAT.Slave.Sync.Config, as: SyncConfig
 
   @type signal_name :: atom()
   @type config :: map()
 
   @type latch_edge :: :pos | :neg
-  @type latch_config :: %{latch_id: 0 | 1, edge: latch_edge()}
 
   @type mailbox_step ::
           {:sdo_download, index :: non_neg_integer(), subindex :: non_neg_integer(),
            data :: binary()}
-
-  @type distributed_clocks_spec :: %{
-          required(:sync0_pulse_ns) => pos_integer(),
-          optional(:sync1_cycle_ns) => pos_integer(),
-          optional(:latches) => [latch_config()]
-        }
 
   @doc """
   Return the driver's logical signal model.
@@ -171,11 +171,16 @@ defmodule EtherCAT.Slave.Driver do
   @callback mailbox_config(config()) :: [mailbox_step()]
 
   @doc """
-  Return Distributed Clocks SYNC0 parameters, or `nil` to disable DC on this slave.
+  Translate public sync intent into device-specific PREOP mailbox steps.
 
-  Called during SafeOp entry when `dc_cycle_ns` is configured on the master.
+  Use this for slaves that need object-dictionary sync-mode configuration
+  (for example `0x1C32` / `0x1C33`) in addition to the generic ESC SYNC setup
+  handled by the runtime.
+
+  `EtherCAT.Slave.Sync.CoE` provides helpers for the common synchronization mode and
+  cycle-time objects when a driver wants to avoid hand-writing raw SDO tuples.
   """
-  @callback distributed_clocks(config()) :: distributed_clocks_spec() | nil
+  @callback sync_mode(config(), SyncConfig.t()) :: [mailbox_step()]
 
   @doc """
   Called when an ESC hardware LATCH event is captured during Op.
@@ -189,7 +194,7 @@ defmodule EtherCAT.Slave.Driver do
     on_safeop: 2,
     on_op: 2,
     mailbox_config: 1,
-    distributed_clocks: 1,
+    sync_mode: 2,
     on_latch: 5
   ]
 end

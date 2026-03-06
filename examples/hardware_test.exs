@@ -178,7 +178,7 @@ end
 # Runs until {:phase_done, ref} arrives.  On each :tick it calls set_fn/1
 # and writes the result to the valve output — one write_output per bit.
 #
-# On each {:slave_input, :sensor, ch_N, bit} it accumulates the 16 bits into
+# On each {:ethercat, :signal, :sensor, ch_N, bit} it accumulates the 16 bits into
 # a 16-bit integer and checks against pprev_out (2 ticks ago) for loopback
 # fidelity.
 #
@@ -274,7 +274,7 @@ defmodule Example.PhaseLoop do
           thermo2
         )
 
-      {:slave_input, :sensor, ch, bit_val} when is_map_key(@ch_bits, ch) ->
+      {:ethercat, :signal, :sensor, ch, bit_val} when is_map_key(@ch_bits, ch) ->
         new_sensor_ch = Map.put(sensor_ch, ch, bit_val)
         actual = rebuild_channels(new_sensor_ch)
         stable? = pprev_out != nil and pprev_out == prev_out and prev_out == last_out
@@ -299,7 +299,7 @@ defmodule Example.PhaseLoop do
           thermo2
         )
 
-      {:slave_input, :thermo, :channel1, ch} ->
+      {:ethercat, :signal, :thermo, :channel1, ch} ->
         loop(
           set_fn,
           phase_ref,
@@ -315,7 +315,7 @@ defmodule Example.PhaseLoop do
           thermo2
         )
 
-      {:slave_input, :thermo, :channel2, ch} ->
+      {:ethercat, :signal, :thermo, :channel2, ch} ->
         loop(
           set_fn,
           phase_ref,
@@ -478,7 +478,7 @@ check.(
   EtherCAT.start(
     interface: interface,
     domains: [
-      %EtherCAT.Domain.Config{id: :main, period_ms: period_ms, miss_threshold: 500}
+      %EtherCAT.Domain.Config{id: :main, cycle_time_us: period_ms * 1_000, miss_threshold: 500}
     ],
     slaves: [
       %EtherCAT.Slave.Config{name: :coupler},
@@ -491,9 +491,9 @@ check.(
 
 check.("EtherCAT.await_running", EtherCAT.await_running(10_000))
 
-Enum.each(1..16, fn i -> EtherCAT.subscribe_input(:sensor, :"ch#{i}", self()) end)
-EtherCAT.subscribe_input(:thermo, :channel1, self())
-EtherCAT.subscribe_input(:thermo, :channel2, self())
+Enum.each(1..16, fn i -> EtherCAT.subscribe(:sensor, :"ch#{i}", self()) end)
+EtherCAT.subscribe(:thermo, :channel1, self())
+EtherCAT.subscribe(:thermo, :channel2, self())
 
 slaves = EtherCAT.slaves()
 

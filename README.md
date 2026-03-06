@@ -77,13 +77,14 @@ sudo setcap cap_net_raw+ep _build/dev/lib/ethercat/priv/raw_socket
 ```elixir
 EtherCAT.start(
   interface: "enp0s31f6",
+  dc: %EtherCAT.DC.Config{cycle_ns: 1_000_000},
   slaves: [
     %EtherCAT.Slave.Config{name: :coupler},
     %EtherCAT.Slave.Config{name: :el1809, driver: MyApp.EL1809Driver},
     %EtherCAT.Slave.Config{name: :el2809, driver: MyApp.EL2809Driver}
   ],
   domains: [
-    %EtherCAT.Domain.Config{id: :io, cycle_us: 1000}
+    %EtherCAT.Domain.Config{id: :io, cycle_time_us: 1_000}
   ]
 )
 
@@ -93,8 +94,8 @@ EtherCAT.start(
 ### Read inputs / write outputs
 
 ```elixir
-# Subscribe to changes (sent as {:slave_input, :el1809, :input_0, value})
-EtherCAT.subscribe_input(:el1809, :input_0, self())
+# Subscribe to changes (sent as {:ethercat, :signal, :el1809, :input_0, value})
+EtherCAT.subscribe(:el1809, :input_0, self())
 
 # Synchronous read
 {:ok, bit} = EtherCAT.read_input(:el1809, :input_0)
@@ -143,8 +144,8 @@ EtherCAT.Application
 ├── EtherCAT.Master              ← bus scan → config → running state machine
 ├── EtherCAT.SessionSupervisor
 │   ├── EtherCAT.Bus             ← raw Ethernet (AF_PACKET) or UDP transport
-│   ├── EtherCAT.DC              ← drift maintenance via periodic ARMW
-│   └── EtherCAT.Domain          ← cyclic LRW loop; ETS-backed process image (session-scoped)
+│   ├── EtherCAT.DC              ← DC maintenance + lock/status monitoring
+│   └── EtherCAT.Domain          ← cyclic LRW loop
 ├── EtherCAT.SlaveSupervisor
 │   └── EtherCAT.Slave           ← per-slave ESM (INIT→PREOP→SAFEOP→OP)
 │       ├── EtherCAT.Slave.SII   ← EEPROM identity + PDO map

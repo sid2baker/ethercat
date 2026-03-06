@@ -56,6 +56,26 @@ defmodule EtherCAT.TelemetryTest do
     assert_receive {:telemetry_event, ^event_name, %{wkc: 3}, %{ref_station: 0x1000}}
   end
 
+  test "dc_sync_diff_observed/3 emits the DC sync-diff telemetry event" do
+    event_name = [:ethercat, :dc, :sync_diff, :observed]
+    attach_event(event_name, self())
+
+    Telemetry.dc_sync_diff_observed(0x1000, 42, 3)
+
+    assert_receive {:telemetry_event, ^event_name, %{max_sync_diff_ns: 42},
+                    %{ref_station: 0x1000, station_count: 3}}
+  end
+
+  test "dc_lock_changed/4 emits the DC lock transition telemetry event" do
+    event_name = [:ethercat, :dc, :lock, :changed]
+    attach_event(event_name, self())
+
+    Telemetry.dc_lock_changed(0x1000, :locking, :locked, 15)
+
+    assert_receive {:telemetry_event, ^event_name, %{},
+                    %{ref_station: 0x1000, from: :locking, to: :locked, max_sync_diff_ns: 15}}
+  end
+
   test "domain_cycle_done/3 emits the domain done telemetry event" do
     event_name = [:ethercat, :domain, :cycle, :done]
     attach_event(event_name, self())

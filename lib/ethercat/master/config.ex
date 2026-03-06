@@ -1,18 +1,19 @@
 defmodule EtherCAT.Master.Config do
   @moduledoc false
 
+  alias EtherCAT.DC.Config, as: DCConfig
   alias EtherCAT.Domain.Config, as: DomainConfig
   alias EtherCAT.Slave.Config, as: SlaveConfig
   alias EtherCAT.Slave.Driver.Default, as: DefaultSlaveDriver
+  alias EtherCAT.Slave.Sync.Config, as: SyncConfig
 
   @default_base_station 0x1000
-  @default_dc_cycle_ns 1_000_000
-  @master_option_keys [:slaves, :domains, :base_station, :dc_cycle_ns, :frame_timeout_ms]
+  @master_option_keys [:slaves, :domains, :base_station, :dc, :dc_cycle_ns, :frame_timeout_ms]
 
   @type t :: %__MODULE__{
           base_station: non_neg_integer(),
           bus_opts: keyword(),
-          dc_cycle_ns: pos_integer() | nil,
+          dc_config: DCConfig.t() | nil,
           domain_config: [DomainConfig.t()],
           slave_config: [SlaveConfig.t()],
           frame_timeout_override_ms: pos_integer() | nil
@@ -20,7 +21,7 @@ defmodule EtherCAT.Master.Config do
 
   defstruct base_station: @default_base_station,
             bus_opts: [],
-            dc_cycle_ns: @default_dc_cycle_ns,
+            dc_config: %DCConfig{},
             domain_config: [],
             slave_config: [],
             frame_timeout_override_ms: nil
@@ -30,20 +31,21 @@ defmodule EtherCAT.Master.Config do
     slave_config = Keyword.get(opts, :slaves, [])
     domain_config = Keyword.get(opts, :domains, [])
     base_station = Keyword.get(opts, :base_station, @default_base_station)
-    dc_cycle_ns = Keyword.get(opts, :dc_cycle_ns, @default_dc_cycle_ns)
+    dc = Keyword.get(opts, :dc, %DCConfig{})
     frame_timeout_override_ms = Keyword.get(opts, :frame_timeout_ms)
 
     with {:ok, _interface} <- Keyword.fetch(opts, :interface),
+         :ok <- reject_legacy_start_options(opts),
          :ok <- validate_base_station(base_station),
-         :ok <- validate_dc_cycle_ns(dc_cycle_ns),
+         {:ok, dc_config} <- normalize_dc_config(dc),
          :ok <- validate_frame_timeout_override_ms(frame_timeout_override_ms),
-         {:ok, normalized_domains} <- normalize_domain_configs(domain_config),
+         {:ok, normalized_domains} <- normalize_domain_configs(domain_config, dc_config),
          {:ok, normalized_slaves} <- normalize_slave_configs(slave_config) do
       {:ok,
        %__MODULE__{
          base_station: base_station,
          bus_opts: build_bus_start_opts(opts, frame_timeout_override_ms),
-         dc_cycle_ns: dc_cycle_ns,
+         dc_config: dc_config,
          domain_config: normalized_domains,
          slave_config: normalized_slaves,
          frame_timeout_override_ms: frame_timeout_override_ms
@@ -74,7 +76,8 @@ defmodule EtherCAT.Master.Config do
         driver: normalize_slave_driver(Keyword.get(opts, :driver, current_config.driver)),
         config: Keyword.get(opts, :config, current_config.config),
         process_data: Keyword.get(opts, :process_data, current_config.process_data),
-        target_state: Keyword.get(opts, :target_state, current_config.target_state)
+        target_state: Keyword.get(opts, :target_state, current_config.target_state),
+        sync: Keyword.get(opts, :sync, current_config.sync)
       }
 
     validate_normalized_slave(normalized)
@@ -130,14 +133,15 @@ defmodule EtherCAT.Master.Config do
   def local_config_changed?(%SlaveConfig{} = current_config, %SlaveConfig{} = updated_config) do
     current_config.driver != updated_config.driver or
       current_config.config != updated_config.config or
-      current_config.process_data != updated_config.process_data
+      current_config.process_data != updated_config.process_data or
+      current_config.sync != updated_config.sync
   end
 
   @spec domain_start_opts(DomainConfig.t()) :: keyword()
   def domain_start_opts(%DomainConfig{} = config) do
     [
       id: config.id,
-      period_ms: config.period_ms,
+      cycle_time_us: config.cycle_time_us,
       miss_threshold: config.miss_threshold,
       logical_base: config.logical_base
     ]
@@ -156,12 +160,41 @@ defmodule EtherCAT.Master.Config do
   defp validate_base_station(_base_station),
     do: {:error, {:invalid_start_options, :invalid_base_station}}
 
-  defp validate_dc_cycle_ns(nil), do: :ok
+  defp reject_legacy_start_options(opts) do
+    if Keyword.has_key?(opts, :dc_cycle_ns) do
+      {:error, {:invalid_start_options, :legacy_dc_cycle_ns}}
+    else
+      :ok
+    end
+  end
 
-  defp validate_dc_cycle_ns(dc_cycle_ns) when is_integer(dc_cycle_ns) and dc_cycle_ns > 0, do: :ok
+  defp normalize_dc_config(nil), do: {:ok, nil}
 
-  defp validate_dc_cycle_ns(_dc_cycle_ns),
-    do: {:error, {:invalid_start_options, :invalid_dc_cycle_ns}}
+  defp normalize_dc_config(%DCConfig{} = dc_config), do: validate_dc_config(dc_config)
+
+  defp normalize_dc_config(opts) when is_list(opts) do
+    validate_dc_config(%DCConfig{
+      cycle_ns: Keyword.get(opts, :cycle_ns, 1_000_000),
+      await_lock?: Keyword.get(opts, :await_lock?, false),
+      lock_threshold_ns: Keyword.get(opts, :lock_threshold_ns, 100),
+      lock_timeout_ms: Keyword.get(opts, :lock_timeout_ms, 5_000),
+      warmup_cycles: Keyword.get(opts, :warmup_cycles, 0)
+    })
+  end
+
+  defp normalize_dc_config(_dc_config), do: {:error, {:invalid_start_options, :invalid_dc}}
+
+  defp validate_dc_config(%DCConfig{} = dc_config)
+       when is_integer(dc_config.cycle_ns) and dc_config.cycle_ns >= 1_000_000 and
+              rem(dc_config.cycle_ns, 1_000_000) == 0 and
+              is_boolean(dc_config.await_lock?) and
+              is_integer(dc_config.lock_threshold_ns) and dc_config.lock_threshold_ns > 0 and
+              is_integer(dc_config.lock_timeout_ms) and dc_config.lock_timeout_ms > 0 and
+              is_integer(dc_config.warmup_cycles) and dc_config.warmup_cycles >= 0 do
+    {:ok, dc_config}
+  end
+
+  defp validate_dc_config(_dc_config), do: {:error, {:invalid_start_options, :invalid_dc}}
 
   defp validate_frame_timeout_override_ms(nil), do: :ok
 
@@ -178,7 +211,7 @@ defmodule EtherCAT.Master.Config do
 
   defp maybe_put_frame_timeout(opts, _timeout_ms), do: opts
 
-  defp normalize_domain_configs(domain_config) when is_list(domain_config) do
+  defp normalize_domain_configs(domain_config, _dc_config) when is_list(domain_config) do
     Enum.with_index(domain_config)
     |> Enum.reduce_while({:ok, []}, fn {entry, idx}, {:ok, acc} ->
       case normalize_domain_config(entry) do
@@ -190,22 +223,25 @@ defmodule EtherCAT.Master.Config do
       end
     end)
     |> case do
-      {:ok, domains} -> {:ok, Enum.reverse(domains)}
-      {:error, _} = err -> err
+      {:ok, domains} ->
+        {:ok, Enum.reverse(domains)}
+
+      {:error, _} = err ->
+        err
     end
   end
 
-  defp normalize_domain_configs(_domain_config),
+  defp normalize_domain_configs(_domain_config, _dc_config),
     do: {:error, {:invalid_domain_config, :invalid_list}}
 
   defp normalize_domain_config(%DomainConfig{} = cfg), do: validate_domain_config(cfg)
 
   defp normalize_domain_config(opts) when is_list(opts) do
     with {:ok, id} <- Keyword.fetch(opts, :id),
-         {:ok, period_ms} <- Keyword.fetch(opts, :period_ms) do
+         {:ok, cycle_time_us} <- Keyword.fetch(opts, :cycle_time_us) do
       validate_domain_config(%DomainConfig{
         id: id,
-        period_ms: period_ms,
+        cycle_time_us: cycle_time_us,
         miss_threshold: Keyword.get(opts, :miss_threshold, 1000),
         logical_base: Keyword.get(opts, :logical_base, 0)
       })
@@ -216,8 +252,9 @@ defmodule EtherCAT.Master.Config do
 
   defp normalize_domain_config(_opts), do: {:error, :invalid_entry}
 
-  defp validate_domain_config(%DomainConfig{id: id, period_ms: period_ms} = cfg)
-       when is_atom(id) and is_integer(period_ms) and period_ms > 0 and
+  defp validate_domain_config(%DomainConfig{id: id, cycle_time_us: cycle_time_us} = cfg)
+       when is_atom(id) and is_integer(cycle_time_us) and cycle_time_us >= 1_000 and
+              rem(cycle_time_us, 1_000) == 0 and
               is_integer(cfg.miss_threshold) and cfg.miss_threshold > 0 and
               is_integer(cfg.logical_base) and cfg.logical_base >= 0 do
     {:ok, cfg}
@@ -263,7 +300,8 @@ defmodule EtherCAT.Master.Config do
         driver: normalize_slave_driver(Keyword.get(opts, :driver)),
         config: Keyword.get(opts, :config, %{}),
         process_data: Keyword.get(opts, :process_data, :none),
-        target_state: Keyword.get(opts, :target_state, :op)
+        target_state: Keyword.get(opts, :target_state, :op),
+        sync: Keyword.get(opts, :sync)
       })
     else
       :error -> {:error, :missing_name}
@@ -275,8 +313,9 @@ defmodule EtherCAT.Master.Config do
   defp validate_normalized_slave(%SlaveConfig{name: name} = cfg)
        when is_atom(name) and is_map(cfg.config) do
     with :ok <- validate_process_data_request(cfg.process_data),
-         :ok <- validate_target_state(cfg.target_state) do
-      {:ok, %{cfg | driver: normalize_slave_driver(cfg.driver)}}
+         :ok <- validate_target_state(cfg.target_state),
+         {:ok, sync_config} <- normalize_sync_config(cfg.sync) do
+      {:ok, %{cfg | driver: normalize_slave_driver(cfg.driver), sync: sync_config}}
     end
   end
 
@@ -300,6 +339,91 @@ defmodule EtherCAT.Master.Config do
   defp validate_target_state(:preop), do: :ok
   defp validate_target_state(_target_state), do: {:error, :invalid_target_state}
 
+  defp normalize_sync_config(nil), do: {:ok, nil}
+
+  defp normalize_sync_config(%SyncConfig{} = sync_config), do: validate_sync_config(sync_config)
+
+  defp normalize_sync_config(opts) when is_list(opts) do
+    validate_sync_config(%SyncConfig{
+      mode: Keyword.get(opts, :mode),
+      sync0: Keyword.get(opts, :sync0),
+      sync1: Keyword.get(opts, :sync1),
+      latches: Keyword.get(opts, :latches, %{})
+    })
+  end
+
+  defp normalize_sync_config(_sync_config), do: {:error, :invalid_sync}
+
+  defp validate_sync_config(
+         %SyncConfig{mode: nil, sync0: nil, sync1: nil, latches: latches} = cfg
+       ) do
+    with :ok <- validate_latches(latches) do
+      {:ok, %{cfg | latches: latches}}
+    end
+  end
+
+  defp validate_sync_config(
+         %SyncConfig{mode: :free_run, sync0: nil, sync1: nil, latches: latches} = cfg
+       ) do
+    with :ok <- validate_latches(latches) do
+      {:ok, %{cfg | latches: latches}}
+    end
+  end
+
+  defp validate_sync_config(
+         %SyncConfig{mode: :sync0, sync0: sync0, sync1: nil, latches: latches} = cfg
+       ) do
+    with :ok <- validate_sync0(sync0),
+         :ok <- validate_latches(latches) do
+      {:ok, %{cfg | latches: latches}}
+    end
+  end
+
+  defp validate_sync_config(
+         %SyncConfig{mode: :sync1, sync0: sync0, sync1: sync1, latches: latches} = cfg
+       ) do
+    with :ok <- validate_sync0(sync0),
+         :ok <- validate_sync1(sync1),
+         :ok <- validate_latches(latches) do
+      {:ok, %{cfg | latches: latches}}
+    end
+  end
+
+  defp validate_sync_config(_sync_config), do: {:error, :invalid_sync}
+
+  defp validate_sync0(%{pulse_ns: pulse_ns, shift_ns: shift_ns})
+       when is_integer(pulse_ns) and pulse_ns > 0 and is_integer(shift_ns),
+       do: :ok
+
+  defp validate_sync0(%{pulse_ns: 0, shift_ns: shift_ns}) when is_integer(shift_ns),
+    do: {:error, :unsupported_sync_ack_mode}
+
+  defp validate_sync0(_sync0), do: {:error, :invalid_sync}
+
+  defp validate_sync1(%{offset_ns: offset_ns})
+       when is_integer(offset_ns) and offset_ns >= 0,
+       do: :ok
+
+  defp validate_sync1(_sync1), do: {:error, :invalid_sync}
+
+  defp validate_latches(latches) when is_map(latches) do
+    values = Map.values(latches)
+
+    if Enum.all?(latches, &valid_latch_entry?/1) and length(values) == length(Enum.uniq(values)) do
+      :ok
+    else
+      {:error, :invalid_sync}
+    end
+  end
+
+  defp validate_latches(_latches), do: {:error, :invalid_sync}
+
+  defp valid_latch_entry?({name, {latch_id, edge}})
+       when is_atom(name) and latch_id in [0, 1] and edge in [:pos, :neg],
+       do: true
+
+  defp valid_latch_entry?(_entry), do: false
+
   defp valid_requested_signal?({signal_name, domain_id})
        when is_atom(signal_name) and is_atom(domain_id),
        do: true
@@ -318,7 +442,8 @@ defmodule EtherCAT.Master.Config do
         driver: DefaultSlaveDriver,
         config: %{},
         process_data: :none,
-        target_state: :preop
+        target_state: :preop,
+        sync: nil
       }
     end)
   end

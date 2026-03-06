@@ -93,7 +93,7 @@ Process.sleep(300)
 
 EtherCAT.start(
   interface: interface,
-  domains: [[id: :main, period_ms: 10]],
+  domains: [[id: :main, cycle_time_us: 10_000]],
   slaves: [
     [name: :coupler],
     [name: :bridge_1],
@@ -111,12 +111,12 @@ IO.puts("Waiting for OP...")
 :ok = EtherCAT.await_running(10_000)
 IO.puts("Running.\n")
 
-EtherCAT.subscribe_input(:thermo, :channel1, self())
-EtherCAT.subscribe_input(:thermo, :channel2, self())
+EtherCAT.subscribe(:thermo, :channel1, self())
+EtherCAT.subscribe(:thermo, :channel2, self())
 
 Enum.each(1..60, fn _ ->
   receive do
-    {:slave_input, :thermo, ch, %{ohms: ohms} = data} ->
+    {:ethercat, :signal, :thermo, ch, %{ohms: ohms} = data} ->
       tag = if data.error, do: " ERR", else: if(data.invalid, do: " INVALID", else: "")
       IO.puts("#{ch}: #{:erlang.float_to_binary(ohms, decimals: 3)} Ω#{tag}")
   after

@@ -9,6 +9,11 @@ defmodule EtherCAT.Slave.RegistersTest do
     assert Registers.dc_activation(0x07) == {0x0981, <<0x07>>}
   end
 
+  test "dc cyclic unit control uses 0x0980" do
+    assert Registers.dc_cyclic_unit_control() == {0x0980, 2}
+    assert Registers.dc_cyclic_unit_control(0x0000) == {0x0980, <<0::16-little>>}
+  end
+
   test "sync1 cycle register uses 0x09A4" do
     assert Registers.dc_sync1_cycle_time() == {0x09A4, 4}
     assert Registers.dc_sync1_cycle_time(250_000) == {0x09A4, <<250_000::32-little>>}

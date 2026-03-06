@@ -57,7 +57,7 @@ via the `@paths` map. `walk_path/2` calls `do_transition/2` for each intermediat
 
 **Post-`SAFEOP` configuration step** (runs immediately after the transition succeeds):
 1. `invoke_driver(data, :on_safeop)`.
-2. `configure_dc_signals/1` — if `dc_cycle_ns` is set and driver exports `distributed_clocks/1`: write SYNC0/SYNC1 parameters, latch controls, start time, and activation byte in one frame, and require every configured-station write to acknowledge with `WKC = 1`.
+2. `configure_dc_signals/1` — if master-wide DC is configured and the slave has `sync: %EtherCAT.Slave.Sync.Config{}`: write SYNC0/SYNC1 parameters, latch controls, start time, and activation byte in one frame, and require every configured-station write to acknowledge with `WKC = 1`.
 
 **`:op` enter**:
 1. `invoke_driver(data, :on_op)`.
@@ -88,17 +88,18 @@ via the `@paths` map. `walk_path/2` calls `do_transition/2` for each intermediat
   identity:          map() | nil,        # vendor_id, product_code, revision, serial from SII
   mailbox_config:    map() | nil,        # recv_offset, recv_size, send_offset, send_size
   mailbox_counter:   0..7,               # last used mailbox session counter for CoE traffic
-  dc_cycle_ns:       pos_integer() | nil, # SYNC0 cycle time; nil disables DC
+  dc_cycle_ns:       pos_integer() | nil, # internal SYNC0 cycle propagated from EtherCAT.DC.Config.cycle_ns
+  sync_config:       EtherCAT.Slave.Sync.Config.t() | nil, # per-slave SYNC/latch intent from Slave.Config
   sii_sm_configs:    list(),             # [{sm_index, phys_start, length, ctrl}] from SII
   sii_pdo_configs:   list(),             # [%{index, direction, sm_index, bit_size, bit_offset}]
   process_data_request: :none | {:all, atom()} | [{atom(), atom()}],
-  active_latches:    list() | nil,       # [{0|1, :pos|:neg}] from distributed_clocks
+  latch_names:       map(),              # %{{0|1, :pos|:neg} => latch_name}
+  active_latches:    list() | nil,       # [{0|1, :pos|:neg}] derived from sync.latches
   latch_poll_ms:     pos_integer() | nil, # latch poll interval while in :op
   signal_registrations: map(),          # %{signal_name => %{domain_id, sm_key, bit_offset, bit_size}}
   signal_registrations_by_sm: map(),    # %{sm_key => [{signal_name, %{bit_offset, bit_size}}]}
-  input_subscriptions: map(),           # %{signal_name => MapSet.t(pid())}
-  subscriber_refs:    map(),            # %{pid => monitor_ref}
-  latch_subscriptions: map(),           # %{{latch_id, edge} => MapSet.t(pid())}
+  subscriptions:     map(),             # %{signal_or_latch_name => MapSet.t(pid())}
+  subscriber_refs:   map(),             # %{pid => monitor_ref}
 }
 ```
 
@@ -117,7 +118,7 @@ All callbacks receive `(config :: map())` or `(slave_name :: atom(), config :: m
 | `on_safeop/2` | optional | `(name, config) -> :ok` | Called on SafeOp entry. |
 | `on_op/2` | optional | `(name, config) -> :ok` | Called on Op entry. |
 | `mailbox_config/1` | optional | `config -> [{:sdo_download, index, subindex, binary}]` | PREOP mailbox configuration steps. Used for CoE parameterization and PDO remapping before SM/FMMU config. `binary` may be any non-empty size; the runtime chooses expedited or segmented CoE transfer automatically. |
-| `distributed_clocks/1` | optional | `config -> %{sync0_pulse_ns: pos_integer(), optional(:sync1_cycle_ns) => pos_integer(), optional(:latches) => [%{latch_id: 0\|1, edge: :pos\|:neg}]} \| nil` | DC signal parameters. Return `nil` to disable DC config on this slave. |
+| `sync_mode/2` | optional | `(config, %EtherCAT.Slave.Sync.Config{}) -> [{:sdo_download, index, subindex, binary}]` | Translate public `sync:` intent into device-specific mailbox steps (for example CoE sync-mode objects such as `0x1C32` / `0x1C33`). |
 | `on_latch/5` | optional | `(name, config, latch_id, edge, timestamp_ns) -> :ok` | Called when a configured ESC LATCH event is captured during `:op`. |
 
 Sub-byte signals (e.g., 1-bit digital channels): `decode_signal` receives a 1-byte binary with the value in bit 0 (LSB). `encode_signal` must return a 1-byte binary with the value in bit 0.
@@ -168,26 +169,28 @@ The domain key is `{slave_name, {:sm, sm_idx}}` — a single ETS entry covers al
 SYNC0 + optional SYNC1 and LATCH0/1 polling. Configured immediately after the
 slave reaches `:safeop` in `configure_dc_signals/1`:
 
-1. Read `distributed_clocks/1` from driver.
-2. Compute `start_time = System.os_time(:nanosecond) - @ethercat_epoch_offset_ns + 100_000` (100 µs headroom for frame round-trip per §9.2.3.6 step 6).
-3. Send FPWR datagrams in one frame:
+1. Read `sync:` from `%EtherCAT.Slave.Config{}`.
+2. If the driver exports `sync_mode/2`, append its mailbox steps during PREOP so device-specific application sync mode is configured before SAFEOP.
+3. Read the slave DC system time (`0x0910`) and current sync difference (`0x092C`).
+4. Compute a future SYNC0 start time from the slave DC time, the configured cycle, and `sync0.shift_ns`, aligned like SOEM to the next whole cycle boundary plus a startup margin.
+5. Send FPWR datagrams in one frame:
+   - `Registers.dc_activation(0x00)` → `0x0981` (deactivate before reprogramming)
    - `Registers.dc_sync0_cycle_time(cycle_ns)` → `0x09A0`
-   - `Registers.dc_sync1_cycle_time(sync1_cycle_ns)` → `0x09A4`
+   - `Registers.dc_sync1_cycle_time(sync1_offset_ns)` → `0x09A4`
    - `Registers.dc_pulse_length(pulse_ns)` → `0x0982`
    - `Registers.dc_sync0_start_time(start_time)` → `0x0990`
    - `Registers.dc_latch0_control(latch0_ctrl)` / `dc_latch1_control(latch1_ctrl)` → `0x09A8/0x09A9`
-   - `Registers.dc_activation(0x03 | 0x07)` → `0x0981` (bits 0+1 always; bit2 when SYNC1 enabled)
-4. In `:op`, if latches are configured, poll `0x09AE/0x09AF`; on captured edge read `0x09B0..0x09CF`, dispatch `{:slave_latch, ...}`, and call optional `on_latch/5`.
-5. If the configuration transaction fails or any datagram returns an unexpected `WKC`, latch polling remains disabled and the transition fails.
+   - `Registers.dc_cyclic_unit_control(0x0000)` → `0x0980` (generic EtherCAT-side control)
+   - `Registers.dc_activation(0x00 | 0x03 | 0x07)` → `0x0981` (`0x00` for latch-only / free-run, `0x03` for SYNC0, `0x07` for SYNC1)
+6. In `:op`, if latches are configured, poll `0x09AE/0x09AF`; on captured edge read `0x09B0..0x09CF`, dispatch `{:ethercat, :latch, slave, latch_name, timestamp_ns}`, and call optional `on_latch/5`.
+7. If the DC snapshot read fails, the configuration transaction fails, or any datagram returns an unexpected `WKC`, latch polling remains disabled and the transition fails.
 
 All writes happen in one frame so the activation datagram sees already-written parameters.
-
-EtherCAT epoch offset: `946_684_800_000_000_000` ns (difference between Unix epoch 1970 and EtherCAT epoch 2000-01-01).
+The generic start alignment currently uses a fixed 100 ms startup margin, matching SOEM's conservative approach more closely than the older host-wall-clock `+100 µs` shortcut.
 
 ### What is missing
 
-- **CoE sync mode objects**: `0x1C32` (output sync parameters) and `0x1C33` (input sync parameters). These CoE objects configure the slave application's synchronization mode (free-run, SM event, SYNC0). Required for drives and other servo devices. Currently no support for reading or writing these.
-- **DC lock detection**: should poll `0x092C–0x092F` (system time difference) and wait for lock before entering Op.
+- **Built-in drive sync-mode profiles**: driver-specific `sync_mode/2` mailbox steps can already program object-dictionary entries such as `0x1C32` / `0x1C33`, but the runtime does not yet ship reusable common-drive helpers for them.
 - **SYNC0 status acknowledgement**: in acknowledge pulse mode (`pulse_ns=0`), slave application must read `0x098E` to release each SYNC0 pulse.
 
 ---
@@ -196,6 +199,15 @@ EtherCAT epoch offset: `946_684_800_000_000_000` ns (difference between Unix epo
 
 **Why configure DC signals only after SAFEOP is confirmed?**
 ETG.1020 §6.3.2 requires DC SYNC configuration after the slave has confirmed SafeOp. At this point FMMUs are already written during the PREOP-local setup step and the PDI is armed. Configuring earlier risks a race where the first SYNC0 pulse fires before the slave PDI is ready.
+
+**Why is sync public config, not a driver callback?**
+Generic SYNC0/SYNC1/latch intent belongs on `%EtherCAT.Slave.Config{sync: ...}` because users reason about named latch events and sync mode as part of application wiring, not as hidden driver behavior. Drivers only own device-specific translation via `sync_mode/2` when a slave application needs CoE sync-mode objects beyond the generic ESC registers.
+
+For common `0x1C32` / `0x1C33` mailbox writes, drivers can use
+`EtherCAT.Slave.Sync.CoE` instead of embedding raw object indices and mode codes.
+
+**Why does the runtime write `0x0980 = 0x0000`?**
+`0x0980` is the DC Cyclic Unit Control / AssignActivate register. The generic public API does not attempt to model vendor-specific AssignActivate words. The runtime therefore writes `0x0000`, which matches the simple EtherCAT-side control path used by SOEM. If a slave needs additional application-side sync selection, that belongs in driver-specific `sync_mode/2` mailbox steps or a future explicit AssignActivate API.
 
 **Which bus transaction mode is used where?**
 Configuration and mailbox writes use `Bus.transaction/2` because delivery matters more than strict timing.
@@ -213,14 +225,12 @@ Master waits for all named slaves to report `:preop` before advancing any slave 
 
 **ESC LATCH0/LATCH1 (hardware)**: physical input pins on the ESC chip. When asserted, the DC latch unit records the system timestamp. Registers at `0x09B0–0x09CF`. Used for precise external event timestamping.
 
-**CoE "Input Latch" (0x1C33)**: CoE object dictionary entry that configures *when* the slave application samples PDO inputs relative to the SYNC0 event. Unrelated to the LATCH hardware pins. This object is not yet read or written by this codebase.
+**CoE "Input Latch" (0x1C33)**: CoE object dictionary entry that configures *when* the slave application samples PDO inputs relative to the SYNC0 event. Unrelated to the LATCH hardware pins. This object may be written by driver-specific `sync_mode/2` mailbox steps or `EtherCAT.Slave.Sync.CoE` helpers, but it is not interpreted directly by the generic runtime.
 
 ---
 
 ## Known Gaps and TODOs
 
-- No CoE sync mode configuration (0x1C32/0x1C33); required for servo drives.
-- No DC lock detection before advancing to Op.
 - No per-slave health monitoring (AL status polling, error counter reads) after reaching Op.
 - No IRQ-based input change detection; relying on cyclic LRW from Domain.
 - No public object-dictionary browsing helpers beyond direct SDO upload/download calls.

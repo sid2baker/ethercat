@@ -21,7 +21,7 @@ It measures three things separately:
 ## What the numbers mean
 
 - `single_channel_latency` measures `EtherCAT.write_output/3` to the matching
-  `{:slave_input, ...}` notification on `:sensor, :ch1`
+  `{:ethercat, :signal, ...}` notification on `:sensor, :ch1`
 - `full_width_loopback` alternates `0x0000 <-> 0xFFFF`, waits until all 16
   looped-back inputs match, and reports pattern rate and channel-transition rate
 - `priority_stress` floods the bus with reliable `FPRD AL status` traffic while
@@ -241,7 +241,7 @@ defmodule Example.Bench.Observer do
   @impl true
   def init(opts) do
     sensor_name = Keyword.fetch!(opts, :sensor_name)
-    Enum.each(@channels, &EtherCAT.subscribe_input(sensor_name, &1, self()))
+    Enum.each(@channels, &EtherCAT.subscribe(sensor_name, &1, self()))
 
     {:ok,
      %{
@@ -288,7 +288,7 @@ defmodule Example.Bench.Observer do
   end
 
   @impl true
-  def handle_info({:slave_input, sensor_name, channel, value}, %{sensor_name: sensor_name} = state) do
+  def handle_info({:ethercat, :signal, sensor_name, channel, value}, %{sensor_name: sensor_name} = state) do
     now = System.monotonic_time()
 
     new_state = %{
@@ -474,12 +474,12 @@ defmodule Example.Bench do
         domains: [
           %DomainConfig{
             id: opts.domain_id,
-            period_ms: opts.period_ms,
+            cycle_time_us: opts.period_ms * 1_000,
             miss_threshold: opts.miss_threshold
           }
         ],
         slaves: slave_configs(opts),
-        dc_cycle_ns: opts.dc_cycle_ns
+        dc: %EtherCAT.DC.Config{cycle_ns: opts.dc_cycle_ns}
       ]
       |> maybe_put(:backup_interface, opts.backup_interface)
 

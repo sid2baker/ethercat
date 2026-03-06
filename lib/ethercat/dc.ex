@@ -1,6 +1,6 @@
 defmodule EtherCAT.DC do
   @moduledoc """
-  Distributed Clocks — clock initialization and ongoing drift maintenance.
+  Distributed Clocks — clock initialization and runtime maintenance.
 
   ## Initialization
 
@@ -26,13 +26,16 @@ defmodule EtherCAT.DC do
   bus ordered by scan position. More complex tree-delay propagation needs a
   richer topology graph than the current master passes into DC init.
 
-  ## Drift maintenance
+  ## Runtime maintenance
 
-  After `start_link/1`, the gen_statem sends one ARMW datagram to the system
-  time register (0x0910) of the reference clock every `period_ms` milliseconds.
-  The EtherCAT frame passes through each slave in order — the reference clock's
-  system time is read and written to every subsequent slave in a single pass,
-  keeping all clocks aligned.
+  `EtherCAT.DC` is the runtime owner for network-wide Distributed Clocks state.
+  It sends its own realtime frame at the configured DC cycle:
+
+    - every tick: configured-address FRMW to the reference clock system time register (`0x0910`)
+    - every N ticks: append configured-address reads of `0x092C` on the monitored DC-capable slaves
+
+  That keeps DC ownership out of `Domain`. Domains stay process-image/LRW loops;
+  `DC` owns clock maintenance, lock classification, diagnostics, and waiters.
   """
 
   @behaviour :gen_statem
@@ -44,13 +47,12 @@ defmodule EtherCAT.DC do
   alias EtherCAT.DC.InitPlan
   alias EtherCAT.DC.InitStep
   alias EtherCAT.DC.Snapshot
+  alias EtherCAT.DC.Status
   alias EtherCAT.Slave.Registers
   alias EtherCAT.Telemetry
 
-  # ns between Unix epoch (1970) and EtherCAT epoch (2000-01-01 00:00:00)
   @ethercat_epoch_offset_ns 946_684_800_000_000_000
-
-  # -- Public API ------------------------------------------------------------
+  @default_diagnostic_interval_ns 10_000_000
 
   @doc """
   One-time DC initialization. Must be called after `assign_stations` and before
@@ -58,13 +60,15 @@ defmodule EtherCAT.DC do
 
   `slave_topology` is a list of `{station, dl_status_binary}` tuples — one per
   slave, in bus order. DL status is a 2-byte little-endian value from register
-  0x0110, used to determine which ports are open (topology).
+  `0x0110`, used to determine which ports are open.
 
-  Returns `{:ok, ref_station}` where `ref_station` is the station address of
-  the reference clock slave, or `{:error, reason}`.
+  Returns `{:ok, ref_station, monitored_stations}` where `ref_station` is the
+  reference-clock station and `monitored_stations` is the ordered list of
+  DC-capable stations whose `0x092C` sync-diff registers can be checked at
+  runtime, or `{:error, reason}`.
   """
   @spec initialize_clocks(Bus.server(), [{non_neg_integer(), binary()}]) ::
-          {:ok, non_neg_integer()} | {:error, term()}
+          {:ok, non_neg_integer(), [non_neg_integer()]} | {:error, term()}
   def initialize_clocks(bus, slave_topology) when slave_topology != [] do
     with :ok <- trigger_recv_latch(bus),
          {:ok, snapshots} <- read_snapshots(bus, slave_topology),
@@ -74,13 +78,11 @@ defmodule EtherCAT.DC do
         "[DC] initialized ref=0x#{Integer.to_string(plan.ref_station, 16)} dc_slaves=#{length(plan.steps)}"
       )
 
-      {:ok, plan.ref_station}
+      {:ok, plan.ref_station, Enum.map(plan.steps, & &1.station)}
     end
   end
 
-  def initialize_clocks(_link, []), do: {:error, :no_slaves}
-
-  # -- child_spec / start_link -----------------------------------------------
+  def initialize_clocks(_bus, []), do: {:error, :no_slaves}
 
   @doc false
   def child_spec(opts) do
@@ -93,19 +95,67 @@ defmodule EtherCAT.DC do
   end
 
   @doc """
-  Start the DC drift maintenance gen_statem.
+  Start the DC runtime maintenance process.
 
   Options:
-    - `:bus` (required) — Bus server reference
-    - `:ref_station` (required) — station address of the reference clock
-    - `:period_ms` — drift correction interval, default 10 ms
+    - `:bus` (required)
+    - `:ref_station` (required)
+    - `:config` (required) — `%EtherCAT.DC.Config{}`
+    - `:monitored_stations` — ordered DC-capable stations for `0x092C` diagnostics
+    - `:tick_interval_ms` — optional runtime tick override for tests/debugging
+    - `:diagnostic_interval_cycles` — optional diagnostic cadence override for tests/debugging
   """
   @spec start_link(keyword()) :: :gen_statem.start_ret()
   def start_link(opts) do
     :gen_statem.start_link({:local, __MODULE__}, __MODULE__, opts, [])
   end
 
-  # -- :gen_statem callbacks -------------------------------------------------
+  @doc "Return a runtime Distributed Clocks status snapshot."
+  @spec status(pid() | atom()) :: Status.t() | {:error, :not_running}
+  def status(server \\ __MODULE__) do
+    try do
+      :gen_statem.call(server, :status)
+    catch
+      :exit, _reason -> {:error, :not_running}
+    end
+  end
+
+  @doc "Block until the DC runtime reports `:locked`."
+  @spec await_locked(pid() | atom(), pos_integer()) :: :ok | {:error, term()}
+  def await_locked(server \\ __MODULE__, timeout_ms \\ 5_000)
+      when is_integer(timeout_ms) and timeout_ms > 0 do
+    deadline_ms = System.monotonic_time(:millisecond) + timeout_ms
+    do_await_locked(server, deadline_ms)
+  end
+
+  @doc false
+  @spec maintenance_transaction(non_neg_integer()) :: Transaction.t()
+  def maintenance_transaction(ref_station) when is_integer(ref_station) and ref_station >= 0 do
+    Transaction.frmw(ref_station, Registers.dc_system_time())
+  end
+
+  @doc false
+  @spec decode_abs_sync_diff(non_neg_integer()) :: non_neg_integer()
+  def decode_abs_sync_diff(raw) when is_integer(raw) and raw >= 0 do
+    <<_::1, abs_sync_diff_ns::31>> = <<raw::32>>
+    abs_sync_diff_ns
+  end
+
+  @doc false
+  @spec classify_lock([non_neg_integer()], pos_integer()) ::
+          {:locking | :locked | :unavailable, non_neg_integer() | nil}
+  def classify_lock([], _threshold_ns), do: {:unavailable, nil}
+
+  def classify_lock(sync_diffs, threshold_ns)
+      when is_list(sync_diffs) and is_integer(threshold_ns) and threshold_ns > 0 do
+    max_sync_diff_ns = Enum.max(sync_diffs)
+
+    if max_sync_diff_ns <= threshold_ns do
+      {:locked, max_sync_diff_ns}
+    else
+      {:locking, max_sync_diff_ns}
+    end
+  end
 
   @impl true
   def callback_mode, do: [:handle_event_function, :state_enter]
@@ -114,54 +164,276 @@ defmodule EtherCAT.DC do
   def init(opts) do
     bus = Keyword.fetch!(opts, :bus)
     ref_station = Keyword.fetch!(opts, :ref_station)
-    period_ms = Keyword.get(opts, :period_ms, 10)
+    config = Keyword.fetch!(opts, :config)
+    monitored_stations = Keyword.get(opts, :monitored_stations, [ref_station])
+    tick_interval_ms = Keyword.get(opts, :tick_interval_ms, tick_interval_ms(config.cycle_ns))
 
-    data = %{bus: bus, ref_station: ref_station, period_ms: period_ms, fail_count: 0}
+    diagnostic_interval_cycles =
+      Keyword.get(opts, :diagnostic_interval_cycles, diagnostic_interval_cycles(config.cycle_ns))
+
+    data = %{
+      bus: bus,
+      ref_station: ref_station,
+      config: config,
+      monitored_stations: monitored_stations,
+      tick_interval_ms: tick_interval_ms,
+      diagnostic_interval_cycles: diagnostic_interval_cycles,
+      cycle_count: 0,
+      fail_count: 0,
+      lock_state: initial_lock_state(monitored_stations),
+      max_sync_diff_ns: nil,
+      last_sync_check_at_ms: nil
+    }
+
     {:ok, :running, data}
   end
 
   @impl true
   def handle_event(:enter, _old, :running, data) do
-    {:keep_state_and_data, [{:state_timeout, data.period_ms, :tick}]}
+    {:keep_state_and_data, [{:state_timeout, data.tick_interval_ms, :tick}]}
   end
 
-  def handle_event(:enter, _old, :stopped, _data), do: :keep_state_and_data
+  def handle_event({:call, from}, :status, :running, data) do
+    {:keep_state_and_data, [{:reply, from, runtime_status(data)}]}
+  end
 
   def handle_event(:state_timeout, :tick, :running, data) do
-    result =
-      Bus.transaction(
-        data.bus,
-        Transaction.armw(data.ref_station, Registers.dc_system_time()),
-        drift_tick_timeout_us(data.period_ms)
-      )
+    request = build_runtime_request(data)
 
-    new_data =
-      case result do
-        {:ok, [%{wkc: wkc}]} ->
-          if data.fail_count > 0 do
-            Logger.info("[DC] drift tick recovered after #{data.fail_count} failure(s)")
-          end
-
-          Telemetry.dc_tick(data.ref_station, wkc)
-
-          %{data | fail_count: 0}
+    updated_data =
+      case Bus.transaction(data.bus, request.tx, tick_timeout_us(data.config.cycle_ns)) do
+        {:ok, replies} ->
+          process_runtime_replies(data, request, replies)
 
         {:error, reason} ->
-          n = data.fail_count + 1
-
-          if n == 1 or rem(n, 100) == 0 do
-            Logger.warning("[DC] drift tick failed: #{inspect(reason)} (#{n} consecutive)")
-          end
-
-          %{data | fail_count: n}
+          process_runtime_failure(data, request, reason)
       end
 
-    {:keep_state, new_data, [{:state_timeout, data.period_ms, :tick}]}
+    {:keep_state, %{updated_data | cycle_count: data.cycle_count + 1},
+     [{:state_timeout, data.tick_interval_ms, :tick}]}
   end
 
   def handle_event(_type, _event, _state, _data), do: :keep_state_and_data
 
-  # -- Init helpers ----------------------------------------------------------
+  defp build_runtime_request(data) do
+    diagnostics? =
+      data.monitored_stations != [] and
+        rem(data.cycle_count + 1, data.diagnostic_interval_cycles) == 0
+
+    tx =
+      data.ref_station
+      |> maintenance_transaction()
+      |> maybe_append_sync_diff_reads(diagnostics?, data.monitored_stations)
+
+    %{tx: tx, diagnostics?: diagnostics?}
+  end
+
+  defp maybe_append_sync_diff_reads(tx, false, _stations), do: tx
+
+  defp maybe_append_sync_diff_reads(tx, true, stations) do
+    Enum.reduce(stations, tx, fn station, acc ->
+      Transaction.fprd(acc, station, Registers.dc_system_time_diff())
+    end)
+  end
+
+  defp process_runtime_replies(data, %{diagnostics?: false}, [%{wkc: wkc}]) when wkc > 0 do
+    maybe_log_runtime_recovered(data.fail_count)
+    Telemetry.dc_tick(data.ref_station, wkc)
+    %{data | fail_count: 0}
+  end
+
+  defp process_runtime_replies(data, %{diagnostics?: true}, [%{wkc: wkc} | diag_replies])
+       when wkc > 0 do
+    case decode_sync_diffs(data.monitored_stations, diag_replies, []) do
+      {:ok, sync_diffs} ->
+        maybe_log_runtime_recovered(data.fail_count)
+        Telemetry.dc_tick(data.ref_station, wkc)
+
+        now_ms = System.system_time(:millisecond)
+
+        {classified_state, max_sync_diff_ns} =
+          classify_lock(sync_diffs, data.config.lock_threshold_ns)
+
+        lock_state =
+          apply_warmup(classified_state, data.cycle_count + 1, data.config.warmup_cycles)
+
+        updated = %{
+          data
+          | fail_count: 0,
+            lock_state: lock_state,
+            max_sync_diff_ns: max_sync_diff_ns,
+            last_sync_check_at_ms: now_ms
+        }
+
+        emit_monitor_telemetry(data, updated)
+        updated
+
+      {:error, reason} ->
+        process_runtime_failure(data, %{diagnostics?: true}, reason)
+    end
+  end
+
+  defp process_runtime_replies(data, _request, replies) do
+    process_runtime_failure(data, %{diagnostics?: false}, {:unexpected_reply, length(replies)})
+  end
+
+  defp process_runtime_failure(data, %{diagnostics?: diagnostics?}, reason) do
+    failures = data.fail_count + 1
+
+    if failures == 1 or rem(failures, 100) == 0 do
+      Logger.warning("[DC] runtime tick failed: #{inspect(reason)} (#{failures} consecutive)")
+    end
+
+    updated =
+      if diagnostics? and data.monitored_stations != [] do
+        now_ms = System.system_time(:millisecond)
+        next_state = if data.monitored_stations == [], do: :unavailable, else: :locking
+
+        new_data = %{
+          data
+          | fail_count: failures,
+            lock_state: next_state,
+            last_sync_check_at_ms: now_ms
+        }
+
+        emit_monitor_telemetry(data, new_data)
+        new_data
+      else
+        %{data | fail_count: failures}
+      end
+
+    updated
+  end
+
+  defp maybe_log_runtime_recovered(0), do: :ok
+
+  defp maybe_log_runtime_recovered(fail_count) when fail_count > 0 do
+    Logger.info("[DC] runtime recovered after #{fail_count} failure(s)")
+  end
+
+  defp emit_monitor_telemetry(old_data, new_data) do
+    maybe_emit_sync_diff(new_data)
+    maybe_emit_lock_change(old_data, new_data)
+  end
+
+  defp maybe_emit_sync_diff(%{
+         max_sync_diff_ns: max_sync_diff_ns,
+         ref_station: ref_station,
+         monitored_stations: monitored_stations
+       })
+       when is_integer(max_sync_diff_ns) and is_integer(ref_station) do
+    Telemetry.dc_sync_diff_observed(ref_station, max_sync_diff_ns, length(monitored_stations))
+  end
+
+  defp maybe_emit_sync_diff(_data), do: :ok
+
+  defp maybe_emit_lock_change(%{lock_state: lock_state}, %{lock_state: lock_state}), do: :ok
+
+  defp maybe_emit_lock_change(old_data, %{ref_station: ref_station} = new_data)
+       when is_integer(ref_station) do
+    Telemetry.dc_lock_changed(
+      ref_station,
+      old_data.lock_state,
+      new_data.lock_state,
+      new_data.max_sync_diff_ns
+    )
+  end
+
+  defp maybe_emit_lock_change(_old_data, _new_data), do: :ok
+
+  defp decode_sync_diffs([], [], acc), do: {:ok, Enum.reverse(acc)}
+
+  defp decode_sync_diffs(
+         [_station | stations],
+         [%{data: <<raw::32-little>>, wkc: 1} | results],
+         acc
+       ) do
+    decode_sync_diffs(stations, results, [decode_abs_sync_diff(raw) | acc])
+  end
+
+  defp decode_sync_diffs([station | _stations], [%{wkc: wkc} | _results], _acc) do
+    {:error, {:sync_diff_read_failed, station, {:unexpected_wkc, wkc}}}
+  end
+
+  defp decode_sync_diffs(stations, results, _acc) do
+    {:error, {:sync_diff_unexpected_reply_count, length(results), length(stations)}}
+  end
+
+  defp runtime_status(data) do
+    %Status{
+      configured?: true,
+      active?: true,
+      cycle_ns: data.config.cycle_ns,
+      reference_station: data.ref_station,
+      lock_state: data.lock_state,
+      max_sync_diff_ns: data.max_sync_diff_ns,
+      last_sync_check_at_ms: data.last_sync_check_at_ms,
+      monitor_failures: data.fail_count
+    }
+  end
+
+  defp initial_lock_state([]), do: :unavailable
+  defp initial_lock_state(_stations), do: :locking
+
+  defp apply_warmup(:unavailable, _cycle_number, _warmup_cycles), do: :unavailable
+
+  defp apply_warmup(lock_state, cycle_number, warmup_cycles)
+       when is_integer(warmup_cycles) and warmup_cycles > 0 and cycle_number <= warmup_cycles do
+    case lock_state do
+      :locked -> :locking
+      other -> other
+    end
+  end
+
+  defp apply_warmup(lock_state, _cycle_number, _warmup_cycles), do: lock_state
+
+  defp tick_interval_ms(cycle_ns) when is_integer(cycle_ns) and cycle_ns > 0 do
+    ceil_div(cycle_ns, 1_000_000)
+  end
+
+  defp diagnostic_interval_cycles(cycle_ns) when is_integer(cycle_ns) and cycle_ns > 0 do
+    max(1, ceil_div(@default_diagnostic_interval_ns, cycle_ns))
+  end
+
+  defp do_await_locked(server, deadline_ms) do
+    case status(server) do
+      %Status{lock_state: :locked} ->
+        :ok
+
+      %Status{lock_state: :unavailable} ->
+        {:error, :dc_lock_unavailable}
+
+      {:error, _reason} = err ->
+        err
+
+      %Status{} = status ->
+        remaining_ms = deadline_ms - System.monotonic_time(:millisecond)
+
+        if remaining_ms <= 0 do
+          {:error, :timeout}
+        else
+          Process.sleep(min(await_poll_interval_ms(status), remaining_ms))
+          do_await_locked(server, deadline_ms)
+        end
+    end
+  end
+
+  defp await_poll_interval_ms(%Status{cycle_ns: cycle_ns})
+       when is_integer(cycle_ns) and cycle_ns > 0 do
+    cycle_ms = max(1, ceil_div(cycle_ns, 1_000_000))
+    min(cycle_ms, 10)
+  end
+
+  defp await_poll_interval_ms(_status), do: 1
+
+  defp tick_timeout_us(cycle_ns) when is_integer(cycle_ns) and cycle_ns > 0 do
+    cycle_us = div(cycle_ns, 1_000)
+    max(div(cycle_us * 9, 10), 200)
+  end
+
+  defp ceil_div(value, divisor) when is_integer(value) and is_integer(divisor) and divisor > 0 do
+    div(value + divisor - 1, divisor)
+  end
 
   defp trigger_recv_latch(bus) do
     case Bus.transaction(bus, Transaction.bwr(Registers.dc_recv_time_latch())) do
@@ -293,10 +565,5 @@ defmodule EtherCAT.DC do
 
   defp ethercat_now_ns do
     System.os_time(:nanosecond) - @ethercat_epoch_offset_ns
-  end
-
-  defp drift_tick_timeout_us(period_ms) when is_integer(period_ms) and period_ms > 0 do
-    period_us = period_ms * 1_000
-    max(div(period_us * 9, 10), 200)
   end
 end

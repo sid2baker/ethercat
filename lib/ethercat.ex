@@ -6,8 +6,9 @@ defmodule EtherCAT do
 
       EtherCAT.start(
         interface: "eth0",
+        dc: %EtherCAT.DC.Config{cycle_ns: 1_000_000},
         domains: [
-          %EtherCAT.Domain.Config{id: :main, period_ms: 1}
+          %EtherCAT.Domain.Config{id: :main, cycle_time_us: 1_000}
         ],
         slaves: [
           %EtherCAT.Slave.Config{name: :coupler},
@@ -26,7 +27,7 @@ defmodule EtherCAT do
 
       :ok = EtherCAT.await_running()
 
-      EtherCAT.subscribe_input(:sensor, :ch1)   # receive {:slave_input, :sensor, :ch1, value}
+      EtherCAT.subscribe(:sensor, :ch1)   # receive {:ethercat, :signal, :sensor, :ch1, value}
       EtherCAT.write_output(:valve, :ch1, 1)
 
       EtherCAT.stop()
@@ -35,7 +36,7 @@ defmodule EtherCAT do
 
       EtherCAT.start(
         interface: "eth0",
-        domains: [%EtherCAT.Domain.Config{id: :main, period_ms: 1}]
+        domains: [%EtherCAT.Domain.Config{id: :main, cycle_time_us: 1_000}]
       )
 
       :ok = EtherCAT.await_running()
@@ -81,7 +82,7 @@ defmodule EtherCAT do
       unnamed couplers. If omitted or empty, one default slave process is started
       per discovered station and held in `:preop` for dynamic configuration.
     - `:base_station` — first station address, default `0x1000`
-    - `:dc_cycle_ns` — SYNC0 cycle time in ns, default `1_000_000`
+    - `:dc` — `%EtherCAT.DC.Config{}` for master-wide Distributed Clocks, or `nil` to disable DC
     - `:frame_timeout_ms` — optional fixed bus frame response timeout in ms
       (otherwise auto-tuned from slave count and cycle time)
   """
@@ -127,6 +128,23 @@ defmodule EtherCAT do
   @spec phase() :: :idle | :scanning | :configuring | :preop_ready | :operational | :degraded
   def phase, do: Master.phase()
 
+  @doc "Return a Distributed Clocks status snapshot for the current session."
+  @spec dc_status() :: EtherCAT.DC.Status.t()
+  def dc_status, do: Master.dc_status()
+
+  @doc "Return the current DC reference clock as `%{name, station}`."
+  @spec reference_clock() ::
+          {:ok, %{name: atom() | nil, station: non_neg_integer()}} | {:error, term()}
+  def reference_clock, do: Master.reference_clock()
+
+  @doc """
+  Wait for DC lock.
+
+  Returns `:ok` once the active DC runtime reports `:locked`.
+  """
+  @spec await_dc_locked(timeout_ms :: pos_integer()) :: :ok | {:error, term()}
+  def await_dc_locked(timeout_ms \\ 5_000), do: Master.await_dc_locked(timeout_ms)
+
   @doc """
   Return the last terminal startup/runtime failure retained after the master
   returned to `:idle`.
@@ -157,14 +175,18 @@ defmodule EtherCAT do
   def slaves, do: Master.slaves()
 
   @doc """
-  Subscribe to decoded input change notifications from a slave PDO.
+  Subscribe to named slave events.
 
-  Messages arrive as `{:slave_input, slave_name, pdo_name, value}`.
-  Defaults to `self()`.
+  `name` may refer to:
+
+    - a registered process-data signal, delivered as
+      `{:ethercat, :signal, slave_name, name, value}`
+    - a named latch configured through `sync.latches`, delivered as
+      `{:ethercat, :latch, slave_name, name, timestamp_ns}`
   """
-  @spec subscribe_input(atom(), atom(), pid()) :: :ok
-  def subscribe_input(slave_name, pdo_name, pid \\ self()),
-    do: Slave.subscribe_input(slave_name, pdo_name, pid)
+  @spec subscribe(atom(), atom(), pid()) :: :ok
+  def subscribe(slave_name, name, pid \\ self()),
+    do: Slave.subscribe(slave_name, name, pid)
 
   @doc """
   Stage `value` into a slave output PDO for the next domain cycle.

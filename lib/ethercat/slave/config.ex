@@ -15,6 +15,8 @@ defmodule EtherCAT.Slave.Config do
     - `:target_state` — desired startup target for this slave:
       - `:op` — master will advance it to cyclic operation
       - `:preop` — master will leave it in PREOP for manual configuration
+    - `:sync` — optional `%EtherCAT.Slave.Sync.Config{}` describing slave-local
+      SYNC0/SYNC1 and latch intent
   """
 
   @type process_data_request :: :none | {:all, atom()} | [{atom(), atom()}]
@@ -24,7 +26,8 @@ defmodule EtherCAT.Slave.Config do
           driver: module(),
           config: map(),
           process_data: process_data_request(),
-          target_state: target_state()
+          target_state: target_state(),
+          sync: EtherCAT.Slave.Sync.Config.t() | nil
         }
 
   @enforce_keys [:name]
@@ -32,5 +35,6 @@ defmodule EtherCAT.Slave.Config do
             driver: EtherCAT.Slave.Driver.Default,
             config: %{},
             process_data: :none,
-            target_state: :op
+            target_state: :op,
+            sync: nil
 end
