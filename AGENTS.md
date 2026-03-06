@@ -1,94 +1,71 @@
 # EtherCAT Agent Guide
 
-## Quick Orientation
+## Start Here
 
-Start here. Read in order for any non-trivial task.
+Use this file as a map. The detailed knowledge lives in `docs/`.
 
-| File | What it gives you |
-|------|-------------------|
-| `docs/references/ethercat-spec/01-llm-reference-index.md` | **Primary reference entrypoint**; chapter map and context-loading guidance |
-| `ARCHITECTURE.md` | System map, data flow, key design decisions |
-| `lib/ethercat/slave.md` | Slave ESM lifecycle, driver contract, PDO registration, DC config |
-| `lib/ethercat/master.md` | Master scan/configure/activate sequence, DC init steps |
-| `lib/ethercat/domain.md` | Domain cyclic LRW, ETS schema, frame assembly, hot path |
-| `docs/references/ethercat-esc-technology.md` | ESC hardware: FMMU, SM, DC, ESM, SII, interrupts |
-| `docs/references/ethercat-esc-registers.md` | Full ESC register map |
-| `docs/references/README.md` | **Reference implementations index** — IgH + SOEM file map by topic |
-| `docs/references/igh/master/` | IgH EtherCAT Master source (C, kernel). Key files: `fsm_slave_config.c`, `fsm_coe.c`, `fsm_master.c` |
-| `docs/references/soem/src/` | SOEM source (C, userspace). Key files: `ec_dc.c`, `ec_coe.c`, `ec_config.c` |
-| `docs/exec-plans/active/dc-sync1-latch-complete.md` | Planned SYNC1 + LATCH implementation |
-| `docs/exec-plans/tech-debt-tracker.md` | Known gaps across all subsystems |
-| `docs/design-docs/engineering-summary.md` | Narrative summary with hardware observations |
+Read in this order for non-trivial work:
 
----
+1. `docs/index.md` — documentation entrypoint and system-of-record map
+2. `ARCHITECTURE.md` — subsystem boundaries and runtime data flow
+3. `docs/design-docs/index.md` — deep dives and architecture rationale
+4. `docs/exec-plans/index.md` — active work, completed plans, and debt
+5. `docs/QUALITY_SCORE.md` — current implementation grades and top gaps
+
+Then load the subsystem briefing you are changing:
+
+- `lib/ethercat/master.md`
+- `lib/ethercat/slave.md`
+- `lib/ethercat/domain.md`
+
+For protocol and reference-master work, start with:
+
+- `docs/references/ethercat-spec/01-llm-reference-index.md`
+- `docs/references/README.md`
+- `docs/references/ethercat-esc-technology.md`
+- `docs/references/ethercat-esc-registers.md`
+
+For hardware validation and runtime harnesses:
+
+- `examples/hardware_validation_livebook.livemd`
+- `examples/el1809_el2809_benchmarks.livemd`
 
 ## Hard Rules
 
-### API Evolution (Pre-release)
+### API Evolution
 
 This library is pre-release. Prefer API clarity over backward compatibility.
 
-When a cleaner API requires a breaking change, make the breaking change and update
-all call sites in the same change. Do not add compatibility shims, deprecation
-layers, or dual-path behavior unless explicitly requested.
+If a better abstraction requires a breaking change, make it and update all call
+sites in the same change. Do not add compatibility shims unless explicitly requested.
 
 ### Bitwise Operations
 
-**Never use `import Bitwise` or Bitwise operators (`&&&`, `|||`, `band`, `bor`, etc.)**
+Never use `import Bitwise` or bitwise operators.
 
-Always use binary pattern matching to extract or compose bit fields:
+Use binary pattern matching to extract and compose fields.
 
-```elixir
-# Good
-<<_::3, err_flag::1, state::4, _::8>> = register_bytes
+### `gen_statem` Enter Callbacks
 
-# Bad
-<<status::16-little>> = register_bytes
-state = Bitwise.band(status, 0x0F)
-```
+Enter callbacks may not transition state.
 
-To set a flag: use arithmetic (`state_code + 0x10`) when fields don't overlap, or
-construct bytes directly (`<<flags::8>>`).
+Use enter callbacks only for unconditional side effects such as arming timers or
+emitting telemetry. State decisions belong in the event handler that decided to
+enter the state.
 
-### gen_statem Enter Callbacks
+## Mechanical Checks
 
-**Enter callbacks may not transition state.** Returning `{:next_state, ...}` or
-`{:next_event, ...}` from an enter callback is illegal — OTP will crash the process.
+- `mix ethercat.harness.doctor` — validate the docs spine and AGENTS map
+- `mix test` — validate behavior
+- `mix usage_rules.docs Module` — dependency and standard-library docs
+- `mix usage_rules.search_docs query` — cross-package docs search
 
-Enter callbacks are for unconditional side-effects only: arming a recurring timer,
-emitting telemetry, logging. Nothing that decides where to go next.
+## Documentation Rules
 
-Work that causes a state transition belongs in the event handler that decides to
-transition:
-
-```elixir
-# Bad — enter callback trying to decide where to go
-def handle_event(:enter, _old, :configuring, data) do
-  new_data = do_configure(data)
-  if done?(new_data),
-    do: {:keep_state, new_data, [{:next_event, :internal, :done}]},  # illegal
-    else: {:keep_state, new_data}
-end
-
-# Good — caller decides, enter callback just arms the timer
-def handle_event({:timeout, :scan_poll}, nil, :scanning, data) do
-  configured = do_configure(data)
-  if done?(configured),
-    do: {:next_state, :running, configured},
-    else: {:next_state, :configuring, configured}
-end
-```
-
-The same applies to `gen_statem.init/1`: start in the correct initial state directly
-rather than using a `timeout 0` to immediately leave a placeholder state.
-
----
-
-## Tooling
-
-Use `mix usage_rules.docs Module` or `mix usage_rules.docs Module.fun/arity` to look up
-documentation for Elixir, OTP, or any dependency. Use `mix usage_rules.search_docs query`
-to search across all packages.
+1. `AGENTS.md` stays a map, not an encyclopedia.
+2. Architectural decisions belong in `docs/design-docs/`.
+3. Multi-step work belongs in `docs/exec-plans/`.
+4. When behavior changes, update the corresponding subsystem briefing in `lib/ethercat/*.md`.
 
 <!-- usage-rules-start -->
 <!-- usage_rules-start -->
@@ -120,7 +97,7 @@ mix usage_rules.docs Enum.zip/1
 
 ## Searching Documentation
 
-You should also consult the documentation of any tools you are using, early and often. The best
+You should also consult the documentation of any tools you are using, early and often. The best 
 way to accomplish this is to use the `usage_rules.search_docs` mix task. Once you have
 found what you are looking for, use the links in the search results to get more detail. For example:
 

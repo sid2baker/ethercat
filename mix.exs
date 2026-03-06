@@ -30,7 +30,7 @@ defmodule EtherCAT.MixProject do
   defp usage_rules do
     [
       file: "AGENTS.md",
-      usage_rules: :all
+      usage_rules: [:elixir, :otp]
     ]
   end
 end

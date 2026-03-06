@@ -156,6 +156,12 @@ EtherCAT.Application
 **Init path:** SII reads and slave configuration happen concurrently across all slaves.
 **Redundancy:** Swap `transport: :raw` for `transport: :redundant` to add a backup interface with automatic failover.
 
+## Contributor Harness
+
+- `docs/index.md` is the documentation entrypoint.
+- `mix ethercat.harness.doctor` validates the docs spine and AGENTS map.
+- `examples/hardware_validation_livebook.livemd` is the main real-hardware validation harness.
+
 ## Installation
 
 ```elixir

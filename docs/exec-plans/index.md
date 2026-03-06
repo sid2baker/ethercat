@@ -1,0 +1,31 @@
+# Execution Plans Index
+
+Execution plans are first-class repo artifacts. They track intent, progress,
+and decision logs for multi-step work.
+
+## Active
+
+- [docs/exec-plans/active/dc-sync1-latch-complete.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/active/dc-sync1-latch-complete.md)
+  Remaining DC SYNC1 and latch work from the earlier narrower plan.
+- [docs/exec-plans/active/distributed-clocks-spec-alignment.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/active/distributed-clocks-spec-alignment.md)
+  Current plan for aligning Distributed Clocks behavior and public API.
+
+## Completed
+
+- [docs/exec-plans/completed/bus-scheduler-refactor.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/completed/bus-scheduler-refactor.md)
+  Centralized bus scheduling and batching policy.
+- [docs/exec-plans/completed/coe-sdo-segmentation.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/completed/coe-sdo-segmentation.md)
+  Segmented CoE SDO upload and download support.
+- [docs/exec-plans/completed/link-transaction-api.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/completed/link-transaction-api.md)
+  Bus transaction API cleanup and link-boundary refactor.
+
+## Ongoing Debt
+
+- [docs/exec-plans/tech-debt-tracker.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/tech-debt-tracker.md)
+  Cross-cutting gaps that are not worth promoting into a full active plan yet.
+
+## Rules
+
+1. Active plans describe work that still changes behavior.
+2. Completed plans are historical context, not the live source of truth.
+3. When a plan lands, move it to `completed/` and update this index in the same change.
