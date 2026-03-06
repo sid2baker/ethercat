@@ -42,7 +42,13 @@ defmodule EtherCAT.SlaveTest do
         ch1: %{sm_key: {:sm, 0}, bit_offset: 0, bit_size: 1},
         ch2: %{sm_key: {:sm, 0}, bit_offset: 1, bit_size: 1}
       },
-      input_subscriptions: %{ch1: [self()], ch2: [self()]}
+      signal_registrations_by_sm: %{
+        {:sm, 0} => [
+          {:ch1, %{bit_offset: 0, bit_size: 1}},
+          {:ch2, %{bit_offset: 1, bit_size: 1}}
+        ]
+      },
+      input_subscriptions: %{ch1: MapSet.new([self()]), ch2: MapSet.new([self()])}
     }
 
     assert :keep_state_and_data =
@@ -154,10 +160,13 @@ defmodule EtherCAT.SlaveTest do
   end
 
   test "invalid mailbox configuration blocks PREOP activation" do
-    assert {:keep_state, %EtherCAT.Slave{} = updated} =
+    from = {self(), make_ref()}
+
+    assert {:keep_state, %EtherCAT.Slave{} = updated,
+            [{:reply, ^from, {:error, {:invalid_mailbox_step, :bad_step}}}]} =
              EtherCAT.Slave.handle_event(
-               :enter,
-               :init,
+               {:call, from},
+               {:configure, []},
                :preop,
                %EtherCAT.Slave{
                  name: :sensor,
@@ -172,6 +181,47 @@ defmodule EtherCAT.SlaveTest do
              )
 
     assert updated.configuration_error == {:invalid_mailbox_step, :bad_step}
+  end
+
+  test "subscriptions are deduplicated and removed when subscribers exit" do
+    from = {self(), make_ref()}
+    pid = self()
+
+    assert {:keep_state, subscribed, [{:reply, ^from, :ok}]} =
+             EtherCAT.Slave.handle_event(
+               {:call, from},
+               {:subscribe, :ch1, pid},
+               :preop,
+               %EtherCAT.Slave{
+                 input_subscriptions: %{},
+                 subscriber_refs: %{},
+                 latch_subscriptions: %{}
+               }
+             )
+
+    ref = Map.fetch!(subscribed.subscriber_refs, pid)
+
+    assert {:keep_state, subscribed_again, [{:reply, ^from, :ok}]} =
+             EtherCAT.Slave.handle_event(
+               {:call, from},
+               {:subscribe, :ch1, pid},
+               :preop,
+               subscribed
+             )
+
+    assert Map.fetch!(subscribed_again.input_subscriptions, :ch1) == MapSet.new([pid])
+
+    assert {:keep_state, cleaned} =
+             EtherCAT.Slave.handle_event(
+               :info,
+               {:DOWN, ref, :process, pid, :normal},
+               :preop,
+               subscribed_again
+             )
+
+    assert cleaned.input_subscriptions == %{}
+    assert cleaned.latch_subscriptions == %{}
+    assert cleaned.subscriber_refs == %{}
   end
 
   test "sdo upload and download reject calls before mailbox setup" do

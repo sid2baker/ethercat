@@ -56,6 +56,18 @@ defmodule EtherCAT.Slave.Registers do
   @spec dl_control() :: reg()
   def dl_control, do: {0x0100, 4}
 
+  @spec dl_port_control() :: reg()
+  def dl_port_control, do: {0x0101, 1}
+
+  @spec dl_port_control(non_neg_integer()) :: reg_write()
+  def dl_port_control(value), do: {0x0101, <<value::8>>}
+
+  @spec dl_alias_control() :: reg()
+  def dl_alias_control, do: {0x0103, 1}
+
+  @spec dl_alias_control(non_neg_integer()) :: reg_write()
+  def dl_alias_control(value), do: {0x0103, <<value::8>>}
+
   @spec dl_status() :: reg()
   def dl_status, do: {0x0110, 2}
 
@@ -79,6 +91,12 @@ defmodule EtherCAT.Slave.Registers do
   @spec al_event_mask() :: reg()
   def al_event_mask, do: {0x0204, 4}
 
+  @spec ecat_event_mask() :: reg()
+  def ecat_event_mask, do: {0x0200, 2}
+
+  @spec ecat_event_mask(non_neg_integer()) :: reg_write()
+  def ecat_event_mask(mask), do: {0x0200, <<mask::16-little>>}
+
   @spec al_event_req() :: reg()
   def al_event_req, do: {0x0220, 4}
 
@@ -86,6 +104,9 @@ defmodule EtherCAT.Slave.Registers do
 
   @spec rx_error_counter() :: reg()
   def rx_error_counter, do: {0x0300, 8}
+
+  @spec rx_error_counter_clear() :: reg_write()
+  def rx_error_counter_clear, do: {0x0300, <<0::64>>}
 
   @spec fwd_rx_error_counter() :: reg()
   def fwd_rx_error_counter, do: {0x0308, 4}
@@ -117,6 +138,9 @@ defmodule EtherCAT.Slave.Registers do
 
   @spec eeprom_ecat_access() :: reg()
   def eeprom_ecat_access, do: {0x0500, 1}
+
+  @spec eeprom_ecat_access(non_neg_integer()) :: reg_write()
+  def eeprom_ecat_access(value), do: {0x0500, <<value::8>>}
 
   @spec eeprom_pdi_access() :: reg()
   def eeprom_pdi_access, do: {0x0501, 1}
@@ -196,6 +220,12 @@ defmodule EtherCAT.Slave.Registers do
   @spec fmmu(non_neg_integer(), binary()) :: {non_neg_integer(), binary()}
   def fmmu(index, data), do: {fmmu(index), data}
 
+  @doc "Reset `count` consecutive FMMU entries starting at FMMU0."
+  @spec fmmu_reset(pos_integer()) :: reg_write()
+  def fmmu_reset(count) when is_integer(count) and count > 0 do
+    {fmmu(0), :binary.copy(<<0>>, count * 16)}
+  end
+
   @doc "Logical start address of FMMU `index` (32-bit offset in master logical address space)."
   @spec fmmu_log_start(non_neg_integer()) :: reg()
   def fmmu_log_start(i), do: {fmmu(i) + 0, 4}
@@ -274,6 +304,12 @@ defmodule EtherCAT.Slave.Registers do
   @spec dc_speed_counter_start(non_neg_integer()) :: reg_write()
   def dc_speed_counter_start(v), do: {0x0930, <<v::16-little>>}
 
+  @spec dc_time_filter() :: reg()
+  def dc_time_filter, do: {0x0934, 2}
+
+  @spec dc_time_filter(non_neg_integer()) :: reg_write()
+  def dc_time_filter(v), do: {0x0934, <<v::16-little>>}
+
   @doc """
   DC Activation register.
 
@@ -293,6 +329,10 @@ defmodule EtherCAT.Slave.Registers do
   @doc "DC Activation write — encodes `code` as a single byte."
   @spec dc_activation(non_neg_integer()) :: reg_write()
   def dc_activation(code), do: {0x0981, <<code::8>>}
+
+  @doc "Reset DC system time/system-time offset handling with a 32-bit zero write."
+  @spec dc_system_time_reset() :: reg_write()
+  def dc_system_time_reset, do: {0x0910, <<0::32>>}
 
   @doc "Pulse length of SYNC signals in ns. 0 = acknowledged mode."
   @spec dc_pulse_length() :: reg()
@@ -381,4 +421,10 @@ defmodule EtherCAT.Slave.Registers do
   @doc "LATCH1 negative-edge timestamp (64-bit, ns since 2000-01-01)."
   @spec dc_latch1_neg_time() :: reg()
   def dc_latch1_neg_time, do: {0x09C8, 8}
+
+  @doc "Reset `count` consecutive SyncManager entries starting at SM0."
+  @spec sm_reset(pos_integer()) :: reg_write()
+  def sm_reset(count) when is_integer(count) and count > 0 do
+    {sm(0), :binary.copy(<<0>>, count * 8)}
+  end
 end

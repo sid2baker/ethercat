@@ -68,8 +68,9 @@ defmodule EtherCAT do
   self-driving configuration.
 
   Returns `:ok` once scanning has started. Call `await_running/1` to block
-  until startup finishes. For dynamic PREOP workflows, call `activate/0`
-  afterwards to enter cyclic operation.
+  until startup finishes. If the master falls back to `:idle`, inspect
+  `last_failure/0` for the retained reason. For dynamic PREOP workflows, call
+  `activate/0` afterwards to enter cyclic operation.
 
   Options:
     - `:interface` (required) — network interface, e.g. `"eth0"`
@@ -125,6 +126,13 @@ defmodule EtherCAT do
   """
   @spec phase() :: :idle | :scanning | :configuring | :preop_ready | :operational | :degraded
   def phase, do: Master.phase()
+
+  @doc """
+  Return the last terminal startup/runtime failure retained after the master
+  returned to `:idle`.
+  """
+  @spec last_failure() :: map() | nil
+  def last_failure, do: Master.last_failure()
 
   @doc """
   Configure a discovered slave while the session is still in PREOP.

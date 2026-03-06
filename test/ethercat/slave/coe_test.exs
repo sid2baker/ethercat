@@ -192,6 +192,8 @@ defmodule EtherCAT.Slave.CoETest do
   end
 
   test "slave PREOP mailbox configuration supports segmented CoE downloads" do
+    from = {self(), make_ref()}
+
     bus =
       start_supervised!({
         FakeBus,
@@ -205,10 +207,10 @@ defmodule EtherCAT.Slave.CoETest do
         ]
       })
 
-    assert {:keep_state, %EtherCAT.Slave{} = updated} =
+    assert {:keep_state, %EtherCAT.Slave{} = updated, [{:reply, ^from, :ok}]} =
              EtherCAT.Slave.handle_event(
-               :enter,
-               :init,
+               {:call, from},
+               {:configure, []},
                :preop,
                %EtherCAT.Slave{
                  bus: bus,

@@ -36,13 +36,18 @@ via the `@paths` map. `walk_path/2` calls `do_transition/2` for each intermediat
 
 **`:init` enter**: no-op. The init callback starts `initialize_to_preop/1` immediately.
 
+**`:preop` enter**: no-op. PREOP-local configuration is triggered by explicit post-transition logic, not by the enter callback, so the state machine stays within OTP's `:state_enter` rules.
+
+**`:safeop` enter**: no-op. SAFEOP-local DC signal programming is likewise driven by explicit post-transition logic after the AL transition has completed successfully.
+
 **Auto-advance (`:init` → `:preop`):**
 1. Read SII EEPROM (identity, mailbox config, SM configs, PDO configs).
-2. Configure mailbox SMs (SM0 recv + SM1 send) while still in INIT.
-3. Write `0x02` to AL control (`0x0120`) and poll AL status (`0x0130`) until state matches or error bit set.
-4. If success: transition to `:preop`. If failure: schedule retry after 200 ms via `{:timeout, :auto_advance}`.
+2. Configure mailbox SMs (SM0 recv + SM1 send) while still in INIT, and require every configured-station write to acknowledge with `WKC = 1`.
+3. Write `0x02` to AL control (`0x0120`) and poll AL status (`0x0130`) until the slave reports `PREOP` with the AL error bit clear.
+4. If success: transition to `:preop` and run the PREOP-local configuration step.
+5. If failure at any point: schedule retry after 200 ms via `{:timeout, :auto_advance}`.
 
-**`:preop` enter** (synchronous, blocks until complete):
+**Post-`PREOP` configuration step** (runs immediately after the transition succeeds):
 1. `invoke_driver(data, :on_preop)` — optional driver callback.
 2. `run_mailbox_config/1` — if driver exports `mailbox_config/1`, execute each
    `{:sdo_download, index, subindex, binary}` mailbox step in order, using
@@ -50,9 +55,9 @@ via the `@paths` map. `walk_path/2` calls `do_transition/2` for each intermediat
 3. `configure_preop_process_data/1` — resolve the configured `process_data` request, register each SM group with its Domain, then write process-data SyncManagers and FMMUs.
 4. Send `{:slave_ready, name, :preop}` to `EtherCAT.Master`.
 
-**`:safeop` enter**:
+**Post-`SAFEOP` configuration step** (runs immediately after the transition succeeds):
 1. `invoke_driver(data, :on_safeop)`.
-2. `configure_dc_signals/1` — if `dc_cycle_ns` is set and driver exports `distributed_clocks/1`: write SYNC0/SYNC1 parameters, latch controls, start time, and activation byte in one frame.
+2. `configure_dc_signals/1` — if `dc_cycle_ns` is set and driver exports `distributed_clocks/1`: write SYNC0/SYNC1 parameters, latch controls, start time, and activation byte in one frame, and require every configured-station write to acknowledge with `WKC = 1`.
 
 **`:op` enter**:
 1. `invoke_driver(data, :on_op)`.
@@ -63,7 +68,9 @@ via the `@paths` map. `walk_path/2` calls `do_transition/2` for each intermediat
 `do_transition/2`:
 1. FPWR to `Registers.al_control(code)` — write requested state.
 2. Poll `Registers.al_status()` up to 200 times at 1 ms intervals.
-3. If status `[4]` (error bit) is set: read `0x0134` (error code), write `(current_state | 0x10)` to AL control to acknowledge, return `{:error, {:al_error, code}, data}`.
+3. If status `[4]` (error bit) is set: read `0x0134` (error code), write `(current_state | 0x10)` to AL control to acknowledge, and return either:
+   - `{:error, {:al_error, code}, data}` if the acknowledge write succeeds
+   - `{:error, {:al_error, code, {:ack_failed, reason}}, data}` if the acknowledge write itself fails
 
 ---
 
@@ -88,8 +95,10 @@ via the `@paths` map. `walk_path/2` calls `do_transition/2` for each intermediat
   active_latches:    list() | nil,       # [{0|1, :pos|:neg}] from distributed_clocks
   latch_poll_ms:     pos_integer() | nil, # latch poll interval while in :op
   signal_registrations: map(),          # %{signal_name => %{domain_id, sm_key, bit_offset, bit_size}}
-  input_subscriptions: map(),           # %{signal_name => [pid]}
-  latch_subscriptions: map(),           # %{{latch_id, edge} => [pid]}
+  signal_registrations_by_sm: map(),    # %{sm_key => [{signal_name, %{bit_offset, bit_size}}]}
+  input_subscriptions: map(),           # %{signal_name => MapSet.t(pid())}
+  subscriber_refs:    map(),            # %{pid => monitor_ref}
+  latch_subscriptions: map(),           # %{{latch_id, edge} => MapSet.t(pid())}
 }
 ```
 
@@ -126,7 +135,7 @@ Sub-byte signals (e.g., 1-bit digital channels): `decode_signal` receives a 1-by
 
 ## Process Data Configuration
 
-Called from `:preop` enter in `configure_preop_process_data/1`:
+Called from the explicit post-`PREOP` configuration step in `configure_preop_process_data/1`:
 
 1. Normalize `data.process_data_request`:
    - `:none`
@@ -136,7 +145,7 @@ Called from `:preop` enter in `configure_preop_process_data/1`:
 3. Resolve that declaration to a SII PDO config entry via the declared PDO index.
 4. If the declaration is a slice, add its bit offset inside the PDO to the PDO's bit offset inside the SyncManager.
 5. Group resolved signals by SM index (`sii_pdo_config.sm_index`).
-4. For each SM group:
+6. For each SM group:
    a. Look up SM physical address and control byte from `sii_sm_configs`.
    b. Compute total SM byte size from all SII PDOs on that SM (not just driver-requested ones).
    c. Call `Domain.register_pdo(domain_id, {name, {:sm, sm_idx}}, total_sm_size, direction)` → `{:ok, logical_offset}`.
@@ -144,8 +153,9 @@ Called from `:preop` enter in `configure_preop_process_data/1`:
    e. FPWR FMMU register: 16 bytes encoding logical_offset, size, start_bit=0, stop_bit=7, phys_start, phys_start_bit=0, type=`0x01`(input)/`0x02`(output), activate=`0x01`.
    f. FPWR SM activate register with `0x01`.
    g. Store `%{domain_id, sm_key, bit_offset, bit_size}` per signal name in `signal_registrations`.
-6. Reject any request that tries to place signals from the same SyncManager into multiple domains; this runtime maps one SM to one domain/FMMU span.
-7. If PREOP-local mailbox or process-data configuration fails, `configuration_error` is set and later `SAFEOP/OP` requests are rejected locally.
+7. Reject any request that tries to place signals from the same SyncManager into multiple domains; this runtime maps one SM to one domain/FMMU span.
+8. Build a second registration index keyed by `sm_key` so runtime domain-input dispatch can decode only the signals that actually belong to the changed SyncManager instead of scanning every registered signal on each domain update.
+9. If PREOP-local mailbox or process-data configuration fails, `configuration_error` is set and later `SAFEOP/OP` requests are rejected locally.
 
 The domain key is `{slave_name, {:sm, sm_idx}}` — a single ETS entry covers all signals sharing an SM.
 
@@ -155,7 +165,8 @@ The domain key is `{slave_name, {:sm, sm_idx}}` — a single ETS entry covers al
 
 ### What is implemented
 
-SYNC0 + optional SYNC1 and LATCH0/1 polling. Configured at `:safeop` entry in `configure_dc_signals/1`:
+SYNC0 + optional SYNC1 and LATCH0/1 polling. Configured immediately after the
+slave reaches `:safeop` in `configure_dc_signals/1`:
 
 1. Read `distributed_clocks/1` from driver.
 2. Compute `start_time = System.os_time(:nanosecond) - @ethercat_epoch_offset_ns + 100_000` (100 µs headroom for frame round-trip per §9.2.3.6 step 6).
@@ -167,6 +178,7 @@ SYNC0 + optional SYNC1 and LATCH0/1 polling. Configured at `:safeop` entry in `c
    - `Registers.dc_latch0_control(latch0_ctrl)` / `dc_latch1_control(latch1_ctrl)` → `0x09A8/0x09A9`
    - `Registers.dc_activation(0x03 | 0x07)` → `0x0981` (bits 0+1 always; bit2 when SYNC1 enabled)
 4. In `:op`, if latches are configured, poll `0x09AE/0x09AF`; on captured edge read `0x09B0..0x09CF`, dispatch `{:slave_latch, ...}`, and call optional `on_latch/5`.
+5. If the configuration transaction fails or any datagram returns an unexpected `WKC`, latch polling remains disabled and the transition fails.
 
 All writes happen in one frame so the activation datagram sees already-written parameters.
 
@@ -182,8 +194,8 @@ EtherCAT epoch offset: `946_684_800_000_000_000` ns (difference between Unix epo
 
 ## Key Design Decisions
 
-**Why `configure_dc_signals` at `:safeop` entry, not `:preop`?**
-ETG.1020 §6.3.2 requires DC SYNC configuration after the slave has confirmed SafeOp. At this point FMMUs are already written (done in `:preop`) and the PDI is armed. Configuring earlier risks a race where the first SYNC0 pulse fires before the slave PDI is ready.
+**Why configure DC signals only after SAFEOP is confirmed?**
+ETG.1020 §6.3.2 requires DC SYNC configuration after the slave has confirmed SafeOp. At this point FMMUs are already written during the PREOP-local setup step and the PDI is armed. Configuring earlier risks a race where the first SYNC0 pulse fires before the slave PDI is ready.
 
 **Which bus transaction mode is used where?**
 Configuration and mailbox writes use `Bus.transaction/2` because delivery matters more than strict timing.
@@ -192,8 +204,8 @@ Runtime latch polling in `:op` uses `Bus.transaction/3` with a timeout budget sl
 **Where do ad-hoc SDO uploads/downloads live?**
 `Slave.download_sdo/4` and `Slave.upload_sdo/3` run through the same mailbox counter and CoE transfer core used by PREOP `mailbox_config/1`. That keeps all mailbox sequencing in the slave process rather than exposing counter management to callers.
 
-**Why send `{:slave_ready, name, :preop}` to `EtherCAT.Master`?**
-Master waits for all named slaves to report `:preop` before advancing any slave to SafeOp/Op. This ensures all FMMUs and SM registers are written before the first LRW cycle starts. The master uses `Process.send(__MODULE__, ...)` so it doesn't need the slave's pid.
+**Why send `{:slave_ready, name, :preop}` only after checked PREOP-local setup?**
+Master waits for all named slaves to report `:preop` before advancing any slave to SafeOp/Op. In this implementation, that readiness signal means more than “AL state = PREOP”: it means mailbox parameterization and process-data SM/FMMU registration have already completed locally. That keeps activation aligned with the EtherCAT configuration sequence rather than racing ahead on AL state alone.
 
 ---
 

@@ -6,6 +6,12 @@
 It coordinates the entire bus startup sequence: bus open, slave count stabilization, station
 assignment, DC initialization, slave spawning, and transition to operational state.
 
+Pure startup helpers live under `lib/ethercat/master/`:
+- `config.ex` normalizes declarative input to internal `%Domain.Config{}` and `%Slave.Config{}` structs
+- `init_reset.ex` defines the reset-to-default ESC transaction
+- `init_recovery.ex` derives per-slave INIT recovery actions from AL status snapshots
+- `init_verification.ex` defines which INIT states actually block startup
+
 Supervised as `:permanent` under `EtherCAT.Application`. Started at application boot, not
 restarted on individual slave crashes.
 
@@ -22,7 +28,7 @@ restarted on individual slave crashes.
 |-------|-------------|
 | `:idle` | Not started. Rejects all calls except `start/1`. |
 | `:scanning` | Bus open, polling for a stable slave count via BRD to `0x0000`. |
-| `:configuring` | Stations assigned, DC initialized, slaves spawned. Waiting for all named slaves to send `{:slave_ready, name, :preop}`. |
+| `:configuring` | Stations assigned, DC initialized, slaves spawned. Waiting for all named slaves to finish their checked PREOP-local setup and send `{:slave_ready, name, :preop}`. |
 | `:running` | Startup sequence complete. Either operational, or waiting in PREOP for explicit `configure_slave/2` + `activate/0`. |
 | `:degraded` | Startup is partially complete; at least one slave failed PREOP→SAFEOP/OP. Master retries failed promotions periodically and moves to `:running` once all succeed. |
 
@@ -60,10 +66,32 @@ APWR to each slave by auto-increment position (0 to count-1), writing `base_stat
 **Step 2: Read DL status**
 FPRD `0x0110–0x0111` from each slave — 2-byte DL status. Passed to `DC.initialize_clocks/2` to determine topology (which ports are open).
 
-**Step 3: Reset and verify Init**
-`BWR 0x0120 = 0x0011` broadcasts an Init request with Error Acknowledge set.
-Then the master polls each slave's `0x0130` until every node reports clean
-Init state before any PREOP startup work begins.
+**Step 3: Reset defaults, then verify Init**
+Before trusting Init, the master first clears stale hardware configuration left
+from a prior session with one broadcast transaction:
+- reset manual loop-port control
+- restore ECAT event mask
+- clear RX error counters
+- clear FMMU0..2
+- clear SM0..3
+- clear DC activation
+- reset DC system-time handling
+- restore DC speed counter start and time filter defaults
+- clear DL alias control
+
+Then it applies a full SOEM-style reset tail:
+- broadcast `AL Control = 0x0011` (`Init | Error Acknowledge`)
+- force EEPROM ownership from PDI
+- hand EEPROM ownership back to the EtherCAT master
+- broadcast `AL Control = 0x0011` again
+
+After that, it polls each slave's `0x0130` until every node reports `INIT` as
+its actual state before any PREOP startup work begins. A lingering AL error bit
+on top of `INIT` is logged but does not block startup; IgH likewise continues
+scanning in this case and lets the later per-slave transition logic deal with
+the latched error. If a slave is not yet in `INIT`, the master performs the spec
+acknowledgement ritual on that station (`actual_state | 0x10`) and, if needed,
+re-requests Init before polling again.
 
 **Step 4: DC initialization**
 `DC.initialize_clocks(bus, slave_stations)` — see DC section below. Returns `{:ok, ref_station}` or `{:error, reason}`.
@@ -80,7 +108,10 @@ If `slaves: []` (or omitted), the master auto-creates one default slave config p
 
 Slaves receive `dc_cycle_ns` only if DC init succeeded (otherwise `nil`).
 
-Each slave auto-advances to `:preop` concurrently in its own init. When it reaches `:preop`, it sends `{:slave_ready, name, :preop}` to the `EtherCAT.Master` process.
+Each slave auto-advances to `:preop` concurrently in its own init. After the
+`INIT -> PREOP` transition succeeds, it runs its mailbox/process-data PREOP
+configuration step and then sends `{:slave_ready, name, :preop}` to the
+`EtherCAT.Master` process.
 
 If the configured slave count exceeds the discovered slave count, startup fails
 before any slave process is started.
@@ -189,8 +220,8 @@ Telemetry: `[:ethercat, :dc, :tick]` with `%{wkc: wkc}` on each tick.
   bus_ref:         reference() | nil,    # Process.monitor ref for bus crash detection
   dc_pid:          pid() | nil,          # DC gen_statem pid
   dc_ref_station:  non_neg_integer() | nil,  # Station of reference clock slave
-  slave_config:    list(),               # Raw slave config entries from start/1
-  domain_config:   list(),               # Raw domain config entries from start/1
+  slave_config:    [EtherCAT.Slave.Config.t()],  # normalized slave configs
+  domain_config:   [EtherCAT.Domain.Config.t()], # normalized domain configs
   dc_cycle_ns:     pos_integer() | nil,  # SYNC0 period; nil if no DC
   frame_timeout_override_ms: pos_integer() | nil, # Optional fixed bus frame timeout
   base_station:    non_neg_integer(),    # Default 0x1000

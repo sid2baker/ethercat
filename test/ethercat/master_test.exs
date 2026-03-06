@@ -61,4 +61,25 @@ defmodule EtherCAT.MasterTest do
                %EtherCAT.Master{activation_failures: failures}
              )
   end
+
+  test "last_failure is queryable in idle and active states" do
+    from = {self(), make_ref()}
+    failure = %{kind: :configuration_failed, reason: :no_response, at_ms: 123}
+
+    assert {:keep_state_and_data, [{:reply, ^from, ^failure}]} =
+             EtherCAT.Master.handle_event(
+               {:call, from},
+               :last_failure,
+               :idle,
+               %EtherCAT.Master{last_failure: failure}
+             )
+
+    assert {:keep_state_and_data, [{:reply, ^from, ^failure}]} =
+             EtherCAT.Master.handle_event(
+               {:call, from},
+               :last_failure,
+               :scanning,
+               %EtherCAT.Master{last_failure: failure}
+             )
+  end
 end

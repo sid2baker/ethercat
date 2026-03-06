@@ -33,7 +33,7 @@ defmodule EtherCAT.Slave do
 
   require Logger
 
-  alias EtherCAT.{Domain, Bus, Slave.CoE, Slave.SII}
+  alias EtherCAT.{Domain, Bus, Slave.ALTransition, Slave.CoE, Slave.SII}
   alias EtherCAT.Bus.Transaction
   alias EtherCAT.Slave.ProcessDataPlan
   alias EtherCAT.Slave.ProcessDataPlan.SmGroup
@@ -89,8 +89,12 @@ defmodule EtherCAT.Slave do
     :latch_poll_ms,
     # %{signal_name => %{domain_id, sm_key, bit_offset, bit_size}}
     :signal_registrations,
+    # %{{:sm, idx} => [{signal_name, %{bit_offset, bit_size}}]}
+    :signal_registrations_by_sm,
     # %{signal_name => [pid]}
     :input_subscriptions,
+    # %{pid => reference()}
+    subscriber_refs: %{},
     # %{{latch_id, edge} => [pid]}
     latch_subscriptions: %{}
   ]
@@ -243,7 +247,9 @@ defmodule EtherCAT.Slave do
       active_latches: nil,
       latch_poll_ms: nil,
       signal_registrations: %{},
+      signal_registrations_by_sm: %{},
       input_subscriptions: %{},
+      subscriber_refs: %{},
       latch_subscriptions: %{}
     }
 
@@ -255,24 +261,9 @@ defmodule EtherCAT.Slave do
   @impl true
   def handle_event(:enter, _old, :init, _data), do: :keep_state_and_data
 
-  def handle_event(:enter, _old, :preop, data) do
-    new_data = configure_preop_process_data(data)
+  def handle_event(:enter, _old, :preop, _data), do: :keep_state_and_data
 
-    Logger.debug(
-      "[Slave #{data.name}] preop: ready (#{map_size(new_data.signal_registrations)} signal(s) registered)"
-    )
-
-    send(EtherCAT.Master, {:slave_ready, data.name, :preop})
-    {:keep_state, new_data}
-  end
-
-  def handle_event(:enter, _old, :safeop, data) do
-    invoke_driver(data, :on_safeop)
-    # ETG.1020 §6.3.2: configure DC SYNC after the slave confirms SAFEOP —
-    # FMMUs are already written (done in :preop enter), cycle time is canonical.
-    new_data = configure_dc_signals(data)
-    {:keep_state, new_data}
-  end
+  def handle_event(:enter, _old, :safeop, _data), do: :keep_state_and_data
 
   def handle_event(:enter, _old, :op, data) do
     invoke_driver(data, :on_op)
@@ -356,17 +347,12 @@ defmodule EtherCAT.Slave do
   # -- Subscribe -------------------------------------------------------------
 
   def handle_event({:call, from}, {:subscribe, signal_name, pid}, _state, data) do
-    subs = Map.get(data.input_subscriptions, signal_name, [])
-    new_subs = Map.put(data.input_subscriptions, signal_name, [pid | subs])
-    {:keep_state, %{data | input_subscriptions: new_subs}, [{:reply, from, :ok}]}
+    {:keep_state, subscribe_input_pid(data, signal_name, pid), [{:reply, from, :ok}]}
   end
 
   def handle_event({:call, from}, {:subscribe_latch, latch_id, edge, pid}, _state, data)
       when latch_id in [0, 1] and edge in [:pos, :neg] do
-    key = {latch_id, edge}
-    subs = Map.get(data.latch_subscriptions, key, [])
-    new_subs = Map.put(data.latch_subscriptions, key, [pid | subs])
-    {:keep_state, %{data | latch_subscriptions: new_subs}, [{:reply, from, :ok}]}
+    {:keep_state, subscribe_latch_pid(data, latch_id, edge, pid), [{:reply, from, :ok}]}
   end
 
   def handle_event({:call, from}, {:subscribe_latch, _latch_id, _edge, _pid}, _state, _data) do
@@ -459,8 +445,8 @@ defmodule EtherCAT.Slave do
         data
       ) do
     notifications =
-      data.signal_registrations
-      |> Enum.filter(fn {_signal_name, reg} -> reg.sm_key == sm_key end)
+      data.signal_registrations_by_sm
+      |> Map.get(sm_key, [])
       |> Enum.reduce([], fn {signal_name, %{bit_offset: bit_offset, bit_size: bit_size}}, acc ->
         if signal_changed?(old_sm_bytes, new_sm_bytes, bit_offset, bit_size) do
           raw = extract_sm_bits(new_sm_bytes, bit_offset, bit_size)
@@ -473,7 +459,7 @@ defmodule EtherCAT.Slave do
             end
 
           data.input_subscriptions
-          |> Map.get(signal_name, [])
+          |> Map.get(signal_name, MapSet.new())
           |> Enum.reduce(acc, fn pid, pid_acc ->
             [{pid, signal_name, decoded} | pid_acc]
           end)
@@ -487,6 +473,16 @@ defmodule EtherCAT.Slave do
     end)
 
     :keep_state_and_data
+  end
+
+  def handle_event(:info, {:DOWN, ref, :process, pid, _reason}, _state, data) do
+    case Map.get(data.subscriber_refs, pid) do
+      ^ref ->
+        {:keep_state, drop_subscriber(data, pid)}
+
+      _ ->
+        :keep_state_and_data
+    end
   end
 
   def handle_event(:state_timeout, :latch_poll, :op, data) do
@@ -523,9 +519,9 @@ defmodule EtherCAT.Slave do
   # Returns a gen_statem init tuple: {:ok, state, data} or {:ok, state, data, actions}.
   # Reads SII EEPROM, arms mailbox SMs, and requests PREOP from the ESC.
   # Full PREOP setup (SDO config, FMMU registration, :slave_ready) runs
-  # asynchronously in the :preop enter handler — slaves init concurrently.
+  # explicitly after the PREOP transition succeeds.
   defp initialize_to_preop(data) do
-    case do_transition(data, :init) do
+    case transition_to(data, :init) do
       {:ok, init_data} ->
         read_sii_and_enter_preop(init_data)
 
@@ -567,22 +563,32 @@ defmodule EtherCAT.Slave do
         # Configure mailbox SMs (SM0 recv + SM1 send) while still in INIT so that
         # the slave's PDI finds them armed when it enters PREOP.
         Logger.debug("[Slave #{data.name}] init: setting up mailbox SMs")
-        configure_mailbox_sync_managers(new_data)
 
-        Logger.debug("[Slave #{data.name}] init: transitioning to PREOP")
+        case configure_mailbox_sync_managers(new_data) do
+          :ok ->
+            Logger.debug("[Slave #{data.name}] init: transitioning to PREOP")
 
-        case do_transition(new_data, :preop) do
-          {:ok, new_data2} ->
-            preop_ms = System.monotonic_time(:millisecond) - t0
-            Logger.debug("[Slave #{data.name}] init: PREOP reached in #{preop_ms}ms total")
-            {:ok, :preop, new_data2}
+            case transition_to(new_data, :preop) do
+              {:ok, new_data2} ->
+                preop_ms = System.monotonic_time(:millisecond) - t0
+                Logger.debug("[Slave #{data.name}] init: PREOP reached in #{preop_ms}ms total")
+                {:ok, :preop, new_data2}
 
-          {:error, reason, new_data2} ->
+              {:error, reason, new_data2} ->
+                Logger.warning(
+                  "[Slave #{data.name}] preop failed: #{inspect(reason)} — retrying in #{@auto_advance_retry_ms} ms"
+                )
+
+                {:ok, :init, new_data2,
+                 [{{:timeout, :auto_advance}, @auto_advance_retry_ms, nil}]}
+            end
+
+          {:error, reason} ->
             Logger.warning(
-              "[Slave #{data.name}] preop failed: #{inspect(reason)} — retrying in #{@auto_advance_retry_ms} ms"
+              "[Slave #{data.name}] mailbox SM setup failed: #{inspect(reason)} — retrying in #{@auto_advance_retry_ms} ms"
             )
 
-            {:ok, :init, new_data2, [{{:timeout, :auto_advance}, @auto_advance_retry_ms, nil}]}
+            {:ok, :init, new_data, [{{:timeout, :auto_advance}, @auto_advance_retry_ms, nil}]}
         end
 
       {:error, reason} ->
@@ -620,7 +626,11 @@ defmodule EtherCAT.Slave do
              mailbox_data.sii_sm_configs
            ),
          {:ok, registrations} <- apply_process_data_groups(mailbox_data, sm_groups) do
-      %{clear_configuration_error(mailbox_data) | signal_registrations: registrations}
+      %{
+        clear_configuration_error(mailbox_data)
+        | signal_registrations: registrations,
+          signal_registrations_by_sm: build_signal_registration_index(registrations)
+      }
     else
       {:error, reason} ->
         log_process_data_error(data, reason)
@@ -630,6 +640,15 @@ defmodule EtherCAT.Slave do
 
   defp clear_configuration_error(data) do
     %{data | configuration_error: nil}
+  end
+
+  defp build_signal_registration_index(registrations) when is_map(registrations) do
+    Enum.reduce(registrations, %{}, fn {signal_name, registration}, acc ->
+      entry =
+        {signal_name, %{bit_offset: registration.bit_offset, bit_size: registration.bit_size}}
+
+      Map.update(acc, registration.sm_key, [entry], &[entry | &1])
+    end)
   end
 
   defp maybe_reconfigure_preop(%{signal_registrations: registrations} = data, opts)
@@ -660,6 +679,76 @@ defmodule EtherCAT.Slave do
       nil -> {:ok, configured}
       reason -> {:error, reason, configured}
     end
+  end
+
+  defp subscribe_input_pid(data, signal_name, pid) do
+    {subscriber_refs, pid_set} =
+      ensure_subscriber_monitor(
+        data.subscriber_refs,
+        Map.get(data.input_subscriptions, signal_name, MapSet.new()),
+        pid
+      )
+
+    %{
+      data
+      | subscriber_refs: subscriber_refs,
+        input_subscriptions: Map.put(data.input_subscriptions, signal_name, pid_set)
+    }
+  end
+
+  defp subscribe_latch_pid(data, latch_id, edge, pid) do
+    key = {latch_id, edge}
+
+    {subscriber_refs, pid_set} =
+      ensure_subscriber_monitor(
+        data.subscriber_refs,
+        Map.get(data.latch_subscriptions, key, MapSet.new()),
+        pid
+      )
+
+    %{
+      data
+      | subscriber_refs: subscriber_refs,
+        latch_subscriptions: Map.put(data.latch_subscriptions, key, pid_set)
+    }
+  end
+
+  defp ensure_subscriber_monitor(subscriber_refs, current_set, pid) do
+    refs =
+      if Map.has_key?(subscriber_refs, pid) do
+        subscriber_refs
+      else
+        Map.put(subscriber_refs, pid, Process.monitor(pid))
+      end
+
+    {refs, MapSet.put(current_set, pid)}
+  end
+
+  defp drop_subscriber(data, pid) do
+    input_subscriptions =
+      prune_subscription_pid(data.input_subscriptions, pid)
+
+    latch_subscriptions =
+      prune_subscription_pid(data.latch_subscriptions, pid)
+
+    %{
+      data
+      | input_subscriptions: input_subscriptions,
+        latch_subscriptions: latch_subscriptions,
+        subscriber_refs: Map.delete(data.subscriber_refs, pid)
+    }
+  end
+
+  defp prune_subscription_pid(subscriptions, pid) do
+    Enum.reduce(subscriptions, %{}, fn {key, pid_set}, acc ->
+      next_set = MapSet.delete(pid_set, pid)
+
+      if MapSet.size(next_set) == 0 do
+        acc
+      else
+        Map.put(acc, key, next_set)
+      end
+    end)
   end
 
   defp apply_process_data_groups(data, sm_groups) do
@@ -722,7 +811,7 @@ defmodule EtherCAT.Slave do
            |> Transaction.fpwr(data.station, Registers.sm(sm_group.sm_index, sm_reg))
          ) do
       {:ok, replies} ->
-        ensure_positive_wkcs(replies, {:sync_manager_write_failed, sm_group.sm_index})
+        ensure_expected_wkcs(replies, 1, {:sync_manager_write_failed, sm_group.sm_index})
 
       {:error, reason} ->
         {:error, {:sync_manager_write_failed, sm_group.sm_index, reason}}
@@ -739,7 +828,7 @@ defmodule EtherCAT.Slave do
            Transaction.fpwr(data.station, Registers.fmmu(fmmu_idx, fmmu_reg))
          ) do
       {:ok, replies} ->
-        ensure_positive_wkcs(replies, {:fmmu_write_failed, sm_group.sm_index})
+        ensure_expected_wkcs(replies, 1, {:fmmu_write_failed, sm_group.sm_index})
 
       {:error, reason} ->
         {:error, {:fmmu_write_failed, sm_group.sm_index, reason}}
@@ -752,22 +841,23 @@ defmodule EtherCAT.Slave do
            Transaction.fpwr(data.station, Registers.sm_activate(sm_group.sm_index, 1))
          ) do
       {:ok, replies} ->
-        ensure_positive_wkcs(replies, {:sync_manager_activate_failed, sm_group.sm_index})
+        ensure_expected_wkcs(replies, 1, {:sync_manager_activate_failed, sm_group.sm_index})
 
       {:error, reason} ->
         {:error, {:sync_manager_activate_failed, sm_group.sm_index, reason}}
     end
   end
 
-  defp ensure_positive_wkcs(replies, error_tag) when is_list(replies) and replies != [] do
-    if all_wkc_positive?(replies) do
+  defp ensure_expected_wkcs(replies, expected_wkc, error_tag)
+       when is_list(replies) and replies != [] and is_integer(expected_wkc) and expected_wkc >= 0 do
+    if all_wkc_equal?(replies, expected_wkc) do
       :ok
     else
       {:error, error_tag}
     end
   end
 
-  defp ensure_positive_wkcs(_replies, error_tag), do: {:error, error_tag}
+  defp ensure_expected_wkcs(_replies, _expected_wkc, error_tag), do: {:error, error_tag}
 
   defp log_process_data_error(data, :invalid_process_data_request) do
     Logger.warning("[Slave #{data.name}] invalid process_data request")
@@ -854,9 +944,15 @@ defmodule EtherCAT.Slave do
   defp walk_path(data, []), do: {:ok, data}
 
   defp walk_path(data, [next | rest]) do
-    case do_transition(data, next) do
+    case transition_to(data, next) do
       {:ok, new_data} -> walk_path(new_data, rest)
       error -> error
+    end
+  end
+
+  defp transition_to(data, target) do
+    with {:ok, transitioned_data} <- do_transition(data, target) do
+      post_transition(target, transitioned_data)
     end
   end
 
@@ -864,7 +960,7 @@ defmodule EtherCAT.Slave do
     code = Map.fetch!(@al_codes, target)
     Logger.debug("[Slave #{data.name}] AL → #{target} (code=0x#{Integer.to_string(code, 16)})")
 
-    with {:ok, [%{wkc: wkc}]} when wkc > 0 <-
+    with {:ok, [%{wkc: 1}]} <-
            Bus.transaction(data.bus, Transaction.fpwr(data.station, Registers.al_control(code))) do
       poll_al(data, code, @poll_limit)
     else
@@ -872,27 +968,58 @@ defmodule EtherCAT.Slave do
         Logger.warning("[Slave #{data.name}] AL → #{target}: no response (wkc=0)")
         {:error, :no_response, data}
 
+      {:ok, [%{wkc: wkc}]} ->
+        Logger.warning("[Slave #{data.name}] AL → #{target}: unexpected wkc=#{inspect(wkc)}")
+        {:error, {:unexpected_wkc, wkc}, data}
+
       {:error, reason} ->
         Logger.warning("[Slave #{data.name}] AL → #{target} failed: #{inspect(reason)}")
         {:error, reason, data}
     end
   end
 
+  defp post_transition(:preop, data) do
+    new_data = configure_preop_process_data(data)
+
+    Logger.debug(
+      "[Slave #{data.name}] preop: ready (#{map_size(new_data.signal_registrations)} signal(s) registered)"
+    )
+
+    send(EtherCAT.Master, {:slave_ready, data.name, :preop})
+    {:ok, new_data}
+  end
+
+  defp post_transition(:safeop, data) do
+    invoke_driver(data, :on_safeop)
+    configure_dc_signals(data)
+  end
+
+  defp post_transition(:op, data) do
+    invoke_driver(data, :on_op)
+    {:ok, data}
+  end
+
+  defp post_transition(_target, data), do: {:ok, data}
+
   defp poll_al(data, _code, 0), do: {:error, :transition_timeout, data}
 
   defp poll_al(data, code, n) do
     case Bus.transaction(data.bus, Transaction.fprd(data.station, Registers.al_status())) do
-      {:ok, [%{data: <<_::3, _err::1, state::4, _::8>>, wkc: wkc}]}
-      when wkc > 0 and state == code ->
-        {:ok, data}
+      {:ok, [%{data: status, wkc: wkc}]} when wkc > 0 ->
+        cond do
+          ALTransition.error_latched?(status) ->
+            case ack_error(data, status) do
+              {:ok, err_code, new_data} -> {:error, {:al_error, err_code}, new_data}
+              {:error, reason, new_data} -> {:error, reason, new_data}
+            end
 
-      {:ok, [%{data: <<_::3, 1::1, _::4, _::8>>, wkc: wkc}]} when wkc > 0 ->
-        {err_code, new_data} = ack_error(data)
-        {:error, {:al_error, err_code}, new_data}
+          ALTransition.target_reached?(status, code) ->
+            {:ok, data}
 
-      {:ok, [%{data: <<_::16>>, wkc: wkc}]} when wkc > 0 ->
-        Process.sleep(@poll_interval_ms)
-        poll_al(data, code, n - 1)
+          true ->
+            Process.sleep(@poll_interval_ms)
+            poll_al(data, code, n - 1)
+        end
 
       {:ok, [%{wkc: 0}]} ->
         {:error, :no_response, data}
@@ -902,24 +1029,26 @@ defmodule EtherCAT.Slave do
     end
   end
 
-  defp ack_error(data) do
+  defp ack_error(data, status) do
     err_code =
       case Bus.transaction(data.bus, Transaction.fprd(data.station, Registers.al_status_code())) do
         {:ok, [%{data: <<c::16-little>>, wkc: wkc}]} when wkc > 0 -> c
         _ -> nil
       end
 
-    state_code =
-      case Bus.transaction(data.bus, Transaction.fprd(data.station, Registers.al_status())) do
-        {:ok, [%{data: <<_::3, _err::1, state::4, _::8>>, wkc: wkc}]} when wkc > 0 -> state
-        _ -> 0x01
-      end
+    new_data = %{data | error_code: err_code}
+    ack_value = ALTransition.ack_value(status)
 
-    ack_value = state_code + 0x10
-
-    Bus.transaction(data.bus, Transaction.fpwr(data.station, Registers.al_control(ack_value)))
-
-    {err_code, %{data | error_code: err_code}}
+    case ALTransition.classify_ack_write(
+           err_code,
+           Bus.transaction(
+             data.bus,
+             Transaction.fpwr(data.station, Registers.al_control(ack_value))
+           )
+         ) do
+      {:ok, acked_err_code} -> {:ok, acked_err_code, new_data}
+      {:error, reason} -> {:error, reason, new_data}
+    end
   end
 
   # -- SII -------------------------------------------------------------------
@@ -1041,14 +1170,14 @@ defmodule EtherCAT.Slave do
 
   # -- DC signal configuration -----------------------------------------------
 
-  defp configure_dc_signals(%{driver: nil} = data), do: clear_latch_config(data)
+  defp configure_dc_signals(%{driver: nil} = data), do: {:ok, clear_latch_config(data)}
 
-  defp configure_dc_signals(%{dc_cycle_ns: nil} = data), do: clear_latch_config(data)
+  defp configure_dc_signals(%{dc_cycle_ns: nil} = data), do: {:ok, clear_latch_config(data)}
 
   defp configure_dc_signals(data) do
     case invoke_driver_call(data, :distributed_clocks) do
       nil ->
-        clear_latch_config(data)
+        {:ok, clear_latch_config(data)}
 
       dc_spec ->
         pulse_ns = Map.fetch!(dc_spec, :sync0_pulse_ns)
@@ -1065,37 +1194,48 @@ defmodule EtherCAT.Slave do
         {active_latches, latch0_ctrl, latch1_ctrl} =
           build_latch_config(Map.get(dc_spec, :latches, []))
 
-        Bus.transaction(
-          data.bus,
-          Transaction.new()
-          |> Transaction.fpwr(data.station, Registers.dc_sync0_cycle_time(cycle_ns))
-          |> Transaction.fpwr(data.station, Registers.dc_sync1_cycle_time(sync1_cycle_ns))
-          |> Transaction.fpwr(data.station, Registers.dc_pulse_length(pulse_ns))
-          |> Transaction.fpwr(data.station, Registers.dc_sync0_start_time(start_time))
-          |> Transaction.fpwr(data.station, Registers.dc_latch0_control(latch0_ctrl))
-          |> Transaction.fpwr(data.station, Registers.dc_latch1_control(latch1_ctrl))
-          |> Transaction.fpwr(data.station, Registers.dc_activation(activation))
-        )
+        case Bus.transaction(
+               data.bus,
+               Transaction.new()
+               |> Transaction.fpwr(data.station, Registers.dc_sync0_cycle_time(cycle_ns))
+               |> Transaction.fpwr(data.station, Registers.dc_sync1_cycle_time(sync1_cycle_ns))
+               |> Transaction.fpwr(data.station, Registers.dc_pulse_length(pulse_ns))
+               |> Transaction.fpwr(data.station, Registers.dc_sync0_start_time(start_time))
+               |> Transaction.fpwr(data.station, Registers.dc_latch0_control(latch0_ctrl))
+               |> Transaction.fpwr(data.station, Registers.dc_latch1_control(latch1_ctrl))
+               |> Transaction.fpwr(data.station, Registers.dc_activation(activation))
+             ) do
+          {:ok, replies} ->
+            case ensure_expected_wkcs(replies, 1, :dc_configuration_failed) do
+              :ok ->
+                active_latches_or_nil =
+                  if active_latches == [] do
+                    nil
+                  else
+                    active_latches
+                  end
 
-        active_latches_or_nil =
-          if active_latches == [] do
-            nil
-          else
-            active_latches
-          end
+                latch_poll_ms =
+                  if active_latches_or_nil do
+                    1
+                  else
+                    nil
+                  end
 
-        latch_poll_ms =
-          if active_latches_or_nil do
-            1
-          else
-            nil
-          end
+                Logger.debug(
+                  "[Slave #{data.name}] DC configured: cycle=#{cycle_ns}ns sync1=#{sync1_cycle_ns}ns pulse=#{pulse_ns}ns latches=#{inspect(active_latches_or_nil)}"
+                )
 
-        Logger.debug(
-          "[Slave #{data.name}] DC configured: cycle=#{cycle_ns}ns sync1=#{sync1_cycle_ns}ns pulse=#{pulse_ns}ns latches=#{inspect(active_latches_or_nil)}"
-        )
+                {:ok,
+                 %{data | active_latches: active_latches_or_nil, latch_poll_ms: latch_poll_ms}}
 
-        %{data | active_latches: active_latches_or_nil, latch_poll_ms: latch_poll_ms}
+              {:error, reason} ->
+                {:error, reason, clear_latch_config(data)}
+            end
+
+          {:error, reason} ->
+            {:error, {:dc_configuration_failed, reason}, clear_latch_config(data)}
+        end
     end
   end
 
@@ -1211,16 +1351,22 @@ defmodule EtherCAT.Slave do
     sm0 = <<ro::16-little, rs::16-little, 0x26::8, 0::8, 0x00::8, 0::8>>
     sm1 = <<so::16-little, ss::16-little, 0x22::8, 0::8, 0x00::8, 0::8>>
 
-    Bus.transaction(
-      data.bus,
-      Transaction.new()
-      |> Transaction.fpwr(data.station, Registers.sm_activate(0, 0))
-      |> Transaction.fpwr(data.station, Registers.sm_activate(1, 0))
-      |> Transaction.fpwr(data.station, Registers.sm(0, sm0))
-      |> Transaction.fpwr(data.station, Registers.sm(1, sm1))
-      |> Transaction.fpwr(data.station, Registers.sm_activate(0, 1))
-      |> Transaction.fpwr(data.station, Registers.sm_activate(1, 1))
-    )
+    case Bus.transaction(
+           data.bus,
+           Transaction.new()
+           |> Transaction.fpwr(data.station, Registers.sm_activate(0, 0))
+           |> Transaction.fpwr(data.station, Registers.sm_activate(1, 0))
+           |> Transaction.fpwr(data.station, Registers.sm(0, sm0))
+           |> Transaction.fpwr(data.station, Registers.sm(1, sm1))
+           |> Transaction.fpwr(data.station, Registers.sm_activate(0, 1))
+           |> Transaction.fpwr(data.station, Registers.sm_activate(1, 1))
+         ) do
+      {:ok, replies} ->
+        ensure_expected_wkcs(replies, 1, :mailbox_sync_manager_setup_failed)
+
+      {:error, reason} ->
+        {:error, {:mailbox_sync_manager_setup_failed, reason}}
+    end
   end
 
   # -- Bit-level SM packing helpers ------------------------------------------
@@ -1307,9 +1453,9 @@ defmodule EtherCAT.Slave do
     div(value + divisor - 1, divisor)
   end
 
-  defp all_wkc_positive?(replies) when is_list(replies) do
+  defp all_wkc_equal?(replies, expected_wkc) when is_list(replies) and is_integer(expected_wkc) do
     Enum.all?(replies, fn
-      %{wkc: wkc} when is_integer(wkc) and wkc > 0 -> true
+      %{wkc: ^expected_wkc} -> true
       _ -> false
     end)
   end
