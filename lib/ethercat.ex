@@ -209,7 +209,7 @@ defmodule EtherCAT do
       }
   """
   @spec slave_info(atom()) :: map()
-  def slave_info(slave_name), do: Slave.slave_info(slave_name)
+  def slave_info(slave_name), do: Slave.info(slave_name)
 
   @doc """
   Return a diagnostic snapshot for a domain.
