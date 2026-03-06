@@ -11,12 +11,12 @@ interface = opts[:interface] || raise "pass --interface, e.g. --interface enp0s3
 
 {:ok, bus} = Bus.start_link(interface: interface)
 
-{:ok, [%{wkc: count}]} = Bus.transaction_queue(bus, &Transaction.brd(&1, {0x0000, 1}))
+{:ok, [%{wkc: count}]} = Bus.transaction(bus, Transaction.brd({0x0000, 1}))
 IO.puts("#{count} slave(s) on #{interface}\n")
 
 Enum.each(0..(count - 1), fn pos ->
   station = 0x1000 + pos
-  Bus.transaction_queue(bus, &Transaction.apwr(&1, pos, Registers.station_address(station)))
+  Bus.transaction(bus, Transaction.apwr(pos, Registers.station_address(station)))
 end)
 
 Enum.each(0..(count - 1), fn pos ->
@@ -33,3 +33,5 @@ Enum.each(0..(count - 1), fn pos ->
       IO.puts("  [#{pos}] #{hex.(station)}  error: #{inspect(reason)}")
   end
 end)
+
+:gen_statem.stop(bus)

@@ -20,15 +20,15 @@ defmodule Bench do
     IO.puts("\nEtherCAT link bench — #{interface}, #{frames} frames")
     IO.puts(String.duplicate("-", 50))
 
-    {:ok, link} = Bus.start_link(interface: interface)
+    {:ok, bus} = Bus.start_link(interface: interface)
 
     # Warm-up: one frame to prime the socket
-    Bus.transaction_queue(link, &Transaction.brd(&1, {0x0000, 1}))
+    Bus.transaction(bus, Transaction.brd({0x0000, 1}))
 
     samples =
       Enum.map(1..frames, fn i ->
         t0 = System.monotonic_time(:microsecond)
-        result = Bus.transaction_queue(link, &Transaction.brd(&1, {0x0000, 1}))
+        result = Bus.transaction(bus, Transaction.brd({0x0000, 1}))
         t1 = System.monotonic_time(:microsecond)
         rtt_us = t1 - t0
 
@@ -80,7 +80,7 @@ defmodule Bench do
       end
     end
 
-    :gen_statem.stop(link)
+    :gen_statem.stop(bus)
     :ok
   end
 

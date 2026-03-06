@@ -1,6 +1,8 @@
 # EtherCAT Examples
 
 Runnable scripts and Livebooks for testing the library against real hardware.
+If you are starting fresh, use the Livebooks first. They are the maintained,
+interactive harnesses.
 
 All scripts assume the 4-slave test ring unless noted:
 
@@ -25,7 +27,21 @@ Raw Ethernet socket access requires `CAP_NET_RAW` or root.
 
 ---
 
-## Scripts
+## Start Here
+
+Open one of these Livebooks with [Livebook](https://livebook.dev) using a
+**Mix project runtime** pointed at the repository root.
+
+| Notebook | What it covers |
+|----------|---------------|
+| `livebooks/hardware_validation_livebook.livemd` | Full interactive hardware validation: startup, manual I/O, latency benchmarks, full-width loopback, priority stress, DC lock |
+| `livebooks/el1809_el2809_benchmarks.livemd` | Focused EL1809/EL2809 benchmarks and PDO inspection |
+
+If you prefer scripts, start with the maintained ones below. Some older
+low-level scripts in `examples/` are historical maintainer probes and may lag
+the current public API.
+
+## Maintained Scripts
 
 ### Bus diagnostics
 
@@ -42,11 +58,9 @@ Raw Ethernet socket access requires `CAP_NET_RAW` or root.
 
 | Script | What it does |
 |--------|-------------|
-| `io_quick.exs` | Quick cyclic I/O sanity check — write all outputs, read back inputs |
-| `loopback.exs` | Inspect raw SII PDO configs and LRW frame data for EL2809 |
-| `hardware_test.exs` | Full-stack stress test — cyclic I/O with miss counting |
 | `el3202.exs` | EL3202 resistance-mode RTD readings via named-PDO API |
 | `wiring_map.exs` | Commission-time loopback map — probe each output channel and find the matching input |
+| `loopback.exs` | Inspect raw SII PDO configs and current LRW-facing state for the EL2809 |
 
 ### Timing and performance
 
@@ -63,18 +77,13 @@ Raw Ethernet socket access requires `CAP_NET_RAW` or root.
 | `rtd_stability.exs` | `--period-ms` `--duration-s` `--report-s` `--sigma` | Long-duration RTD stability analysis — Welford running statistics, toggle-bit continuity, outlier detection |
 | `dc_sync.exs` | `--period-ms` `--lock-timeout` `--drift-samples` `--lock-threshold` `--no-rtd` | Distributed Clocks test — DC lock convergence, per-slave system time via FPRD, sync-diff monitoring, loopback jitter baseline |
 
----
+## Removed legacy scripts
 
-## Livebooks
+The following historical examples were removed because they targeted obsolete
+APIs and were superseded by the maintained scripts and Livebooks above:
 
-Interactive Livebooks live under [`livebooks/`](livebooks/). Open them with
-[Livebook](https://livebook.dev) using a **Mix project runtime** pointed at
-this repository root.
-
-| Notebook | What it covers |
-|----------|---------------|
-| `hardware_validation_livebook.livemd` | Full interactive hardware validation: startup, manual I/O, latency benchmarks, full-width loopback, priority stress, DC lock |
-| `el1809_el2809_benchmarks.livemd` | Focused EL1809/EL2809 benchmarks and PDO inspection |
+- `io_quick.exs` (removed; superseded by Livebooks and current examples)
+- `hardware_test.exs` (removed; superseded by `livebooks/hardware_validation_livebook.livemd`)
 
 ---
 

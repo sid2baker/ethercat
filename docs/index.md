@@ -36,9 +36,9 @@ Use this file as the entry point. Keep it small, stable, and cross-linked.
 
 ## Operational Harness
 
-- [examples/hardware_validation_livebook.livemd](/home/n0gg1n/Development/Work/opencode/ethercat/examples/hardware_validation_livebook.livemd)
+- [hardware_validation_livebook.livemd](/home/n0gg1n/Development/Work/opencode/ethercat/examples/livebooks/hardware_validation_livebook.livemd)
   Interactive hardware validation harness.
-- [examples/el1809_el2809_benchmarks.livemd](/home/n0gg1n/Development/Work/opencode/ethercat/examples/el1809_el2809_benchmarks.livemd)
+- [el1809_el2809_benchmarks.livemd](/home/n0gg1n/Development/Work/opencode/ethercat/examples/livebooks/el1809_el2809_benchmarks.livemd)
   Benchmark notebook for latency, throughput, and priority checks.
 
 ## Mechanical Checks

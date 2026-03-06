@@ -27,7 +27,7 @@
 #   --count N        BRD stress transaction count (default: 50)
 
 alias EtherCAT.Bus
-alias EtherCAT.Bus.{Command, Frame, Transaction}
+alias EtherCAT.Bus.{Frame, Transaction}
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -116,7 +116,7 @@ raw_ok =
     {:ok, sock} ->
       IO.puts("  ✓ bound #{:inet.ntoa(bind_ip)}:#{port}")
 
-      {:ok, ecat_payload} = Frame.encode([Command.brd(0, 1)])
+      {:ok, ecat_payload} = Transaction.brd({0x0000, 1}) |> Transaction.datagrams() |> Frame.encode()
       IO.puts("  ✓ frame built: #{byte_size(ecat_payload)} bytes  (EtherCAT header + BRD datagram)")
 
       t0 = System.monotonic_time(:nanosecond)
@@ -191,7 +191,7 @@ print_every = max(1, div(count, 10))
 {ok_count, timeout_count, error_map, rtts} =
   Enum.reduce(1..count, {0, 0, %{}, []}, fn i, {ok, to, errs, rtts} ->
     t0 = System.monotonic_time(:nanosecond)
-    result = Bus.transaction_queue(bus, &Transaction.brd(&1, {0x0000, 1}))
+    result = Bus.transaction(bus, Transaction.brd({0x0000, 1}))
     rtt_us = div(System.monotonic_time(:nanosecond) - t0, 1000)
 
     if rem(i, print_every) == 0 do
@@ -227,7 +227,7 @@ if length(rtts) > 0 do
 end
 
 brd_wkc =
-  case Bus.transaction_queue(bus, &Transaction.brd(&1, {0x0000, 1})) do
+  case Bus.transaction(bus, Transaction.brd({0x0000, 1})) do
     {:ok, [%{wkc: n}]} -> n
     _ -> nil
   end
@@ -241,16 +241,17 @@ if brd_wkc && brd_wkc > 0 do
 
   responding =
     Enum.filter(0..(brd_wkc + 1), fn pos ->
-      case Bus.transaction_queue(bus, &Transaction.aprd(&1, pos, {0x0130, 2})) do
-        {:ok, [%{wkc: 1, data: <<al::16-little>>}]} ->
-          state = case Bitwise.band(al, 0xF) do
-            1 -> :init
-            2 -> :preop
-            4 -> :safeop
-            8 -> :op
-            n -> :"unknown(#{n})"
-          end
-          error = Bitwise.band(al, 0x10) != 0
+      case Bus.transaction(bus, Transaction.aprd(pos, {0x0130, 2})) do
+        {:ok, [%{wkc: 1, data: <<state_code::4, error::1, _::11>>}]} ->
+          state =
+            case state_code do
+              1 -> :init
+              2 -> :preop
+              4 -> :safeop
+              8 -> :op
+              n -> :"unknown(#{n})"
+            end
+
           IO.puts("  pos #{pos}: AL=#{state}#{if error, do: " ERR", else: ""}")
           true
 
