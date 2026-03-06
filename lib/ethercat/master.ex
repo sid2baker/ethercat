@@ -142,6 +142,10 @@ defmodule EtherCAT.Master do
   @spec slaves() :: list()
   def slaves, do: :gen_statem.call(__MODULE__, :slaves)
 
+  @doc "Return `[{id, cycle_time_us, pid}]` for all running domains."
+  @spec domains() :: list()
+  def domains, do: :gen_statem.call(__MODULE__, :domains)
+
   @doc "Return the bus pid."
   @spec bus() :: pid() | nil
   def bus, do: :gen_statem.call(__MODULE__, :bus)
@@ -655,6 +659,19 @@ defmodule EtherCAT.Master do
 
   def handle_event({:call, from}, :slaves, _state, data) do
     {:keep_state_and_data, [{:reply, from, data.slaves}]}
+  end
+
+  def handle_event({:call, from}, :domains, _state, data) do
+    result =
+      (data.domain_configs || [])
+      |> Enum.flat_map(fn config ->
+        case Registry.lookup(EtherCAT.Registry, {:domain, config.id}) do
+          [{pid, _}] -> [{config.id, config.cycle_time_us, pid}]
+          [] -> []
+        end
+      end)
+
+    {:keep_state_and_data, [{:reply, from, result}]}
   end
 
   def handle_event({:call, from}, :bus, _state, data) do

@@ -174,6 +174,10 @@ defmodule EtherCAT do
   @spec slaves() :: list()
   def slaves, do: Master.slaves()
 
+  @doc "Return `[{id, cycle_time_us, pid}]` for all running domains."
+  @spec domains() :: list()
+  def domains, do: Master.domains()
+
   @doc """
   Return a diagnostic snapshot for a slave.
 
