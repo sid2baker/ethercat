@@ -280,7 +280,7 @@ defmodule EtherCAT.DC do
   defp process_runtime_failure(data, %{diagnostics?: diagnostics?}, reason) do
     failures = data.fail_count + 1
 
-    if failures == 1 or rem(failures, 100) == 0 do
+    if failures >= 3 and (failures == 3 or rem(failures, 100) == 0) do
       Logger.warning("[DC] runtime tick failed: #{inspect(reason)} (#{failures} consecutive)")
     end
 

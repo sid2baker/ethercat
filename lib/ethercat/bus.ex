@@ -21,6 +21,7 @@ defmodule EtherCAT.Bus do
     :idx,
     :in_flight,
     frame_timeout_ms: 25,
+    timeout_count: 0,
     realtime: :queue.new(),
     reliable: :queue.new()
   ]
@@ -247,22 +248,26 @@ defmodule EtherCAT.Bus do
         handle_timeout_response(ecat_payload, %{data | link: link})
 
       {:error, link, :timeout} ->
-        elapsed_ms =
-          System.convert_time_unit(
-            System.monotonic_time() - in_flight_tx_at(data.in_flight),
-            :native,
-            :millisecond
+        timeouts = data.timeout_count + 1
+
+        if timeouts >= 3 and (timeouts == 3 or rem(timeouts, 100) == 0) do
+          elapsed_ms =
+            System.convert_time_unit(
+              System.monotonic_time() - in_flight_tx_at(data.in_flight),
+              :native,
+              :millisecond
+            )
+
+          n = length(awaiting_from_in_flight(data.in_flight))
+
+          Logger.warning(
+            "[Bus] frame timeout after #{elapsed_ms}ms -- #{n} caller(s) lost (#{timeouts} consecutive, transport=#{link_name(data)})"
           )
-
-        n = length(awaiting_from_in_flight(data.in_flight))
-
-        Logger.warning(
-          "[Bus] frame timeout after #{elapsed_ms}ms -- #{n} caller(s) lost (transport=#{link_name(data)})"
-        )
+        end
 
         drained = data.link_mod.drain(link)
         reply_in_flight(data.in_flight, {:error, :timeout})
-        dispatch_next(%{data | link: drained, in_flight: nil})
+        dispatch_next(%{data | link: drained, in_flight: nil, timeout_count: timeouts})
     end
   end
 
@@ -495,6 +500,7 @@ defmodule EtherCAT.Bus do
             dispatch_next(%{
               data
               | in_flight: nil,
+                timeout_count: 0,
                 link: data.link_mod.clear_awaiting(data.link)
             })
 
