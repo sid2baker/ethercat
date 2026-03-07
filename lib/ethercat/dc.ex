@@ -21,7 +21,7 @@ defmodule EtherCAT.DC do
   5. Apply offset + delay writes to every DC-capable slave.
   6. Reset PLL filters by writing back the latched speed-counter seed.
 
-  The planning step is pure and testable via `EtherCAT.DC.InitPlan.build/2`.
+  The planning step is pure and covered by unit tests.
   The current topology model is intentionally explicit: it supports a linear
   bus ordered by scan position. More complex tree-delay propagation needs a
   richer topology graph than the current master passes into DC init.

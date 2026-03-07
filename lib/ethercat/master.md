@@ -12,7 +12,7 @@ Pure startup helpers live under `lib/ethercat/master/`:
 - `init_recovery.ex` derives per-slave INIT recovery actions from AL status snapshots
 - `init_verification.ex` defines which INIT states actually block startup
 
-Supervised as `:permanent` under `EtherCAT.Application`. Started at application boot, not
+Supervised as `:permanent` under the application supervisor. Started at application boot, not
 restarted on individual slave crashes.
 
 ---
@@ -193,9 +193,9 @@ Implements ESC datasheet §9.1.3.6 (clock synchronization initialization):
    - `0x0918–0x091F` (64-bit ECAT receive time)
    - `0x0900–0x090F` (receive times for ports 0..3)
    - `0x0930–0x0931` (speed counter start)
-3. **Derive active ports from DL status**: `EtherCAT.DC.Snapshot` combines the latched receive times with the `0x0110` DL status already read by the master, so the planner only considers ports that actually participate in the topology.
+3. **Derive active ports from DL status**: combines the latched receive times with the `0x0110` DL status already read by the master, so the planner only considers ports that actually participate in the topology.
 4. **Find reference clock**: first DC-capable snapshot in bus order.
-5. **Build init plan**: `EtherCAT.DC.InitPlan.build/2` computes:
+5. **Build init plan**: computes:
    - reference offset against the EtherCAT epoch time
    - per-slave offset relative to the reference receive time
    - chain-only cumulative propagation delay from receive spans
