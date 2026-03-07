@@ -51,7 +51,7 @@ defmodule EtherCAT.MixProject do
     [
       main: "EtherCAT",
       source_url: @source_url,
-      extras: ["README.md", "ARCHITECTURE.md", "WORKFLOW.md"]
+      extras: ["README.md", "CHANGELOG.md"]
     ]
   end
 
