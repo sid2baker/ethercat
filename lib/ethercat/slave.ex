@@ -304,11 +304,12 @@ defmodule EtherCAT.Slave do
               name: name,
               domain: reg.domain_id,
               direction: reg.direction,
+              sm_index: elem(reg.sm_key, 1),
               bit_offset: reg.bit_offset,
               bit_size: reg.bit_size
             }
           end)
-          |> Enum.sort_by(&{&1.bit_offset, &1.direction})
+          |> Enum.sort_by(&{&1.sm_index, &1.bit_offset})
       end
 
     info = %{
