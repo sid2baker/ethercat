@@ -1036,7 +1036,7 @@ defmodule EtherCAT.Master do
   defp log_lingering_init_errors([]), do: :ok
 
   defp log_lingering_init_errors(statuses) do
-    Logger.warning(
+    Logger.debug(
       "[Master] continuing with slaves in INIT but with AL error latched: #{inspect(statuses)}"
     )
   end
