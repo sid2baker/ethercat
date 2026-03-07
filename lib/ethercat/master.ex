@@ -132,34 +132,40 @@ defmodule EtherCAT.Master do
     - any other option is forwarded to `Bus.start_link/1` unchanged
   """
   @spec start(keyword()) :: :ok | {:error, term()}
-  def start(opts \\ []), do: :gen_statem.call(__MODULE__, {:start, opts})
+  def start(opts \\ []), do: safe_call({:start, opts})
 
-  @doc "Stop the master: shut down all slaves, domains, and the bus."
+  @doc "Stop the master: shut down all slaves, domains, and the bus. Idempotent if not started."
   @spec stop() :: :ok
-  def stop, do: :gen_statem.call(__MODULE__, :stop)
+  def stop do
+    try do
+      :gen_statem.call(__MODULE__, :stop)
+    catch
+      :exit, {:noproc, _} -> :ok
+    end
+  end
 
   @doc "Return `[{name, station, pid}]` for all named slaves."
-  @spec slaves() :: list()
-  def slaves, do: :gen_statem.call(__MODULE__, :slaves)
+  @spec slaves() :: list() | {:error, :not_started}
+  def slaves, do: safe_call(:slaves)
 
   @doc "Return `[{id, cycle_time_us, pid}]` for all running domains."
-  @spec domains() :: list()
-  def domains, do: :gen_statem.call(__MODULE__, :domains)
+  @spec domains() :: list() | {:error, :not_started}
+  def domains, do: safe_call(:domains)
 
   @doc "Return the bus pid."
-  @spec bus() :: pid() | nil
-  def bus, do: :gen_statem.call(__MODULE__, :bus)
+  @spec bus() :: pid() | nil | {:error, :not_started}
+  def bus, do: safe_call(:bus)
 
   @doc "Return the current master state atom."
-  @spec state() :: atom()
-  def state, do: :gen_statem.call(__MODULE__, :state)
+  @spec state() :: atom() | {:error, :not_started}
+  def state, do: safe_call(:state)
 
   @doc """
   Return the last terminal startup/runtime failure retained after the master
   returned to `:idle`.
   """
-  @spec last_failure() :: map() | nil
-  def last_failure, do: :gen_statem.call(__MODULE__, :last_failure)
+  @spec last_failure() :: map() | nil | {:error, :not_started}
+  def last_failure, do: safe_call(:last_failure)
 
   @doc """
   Return the current session phase.
@@ -167,8 +173,10 @@ defmodule EtherCAT.Master do
   Unlike `state/0`, this is the public lifecycle view and distinguishes between
   PREOP-ready startup and fully operational cyclic runtime.
   """
-  @spec phase() :: :idle | :scanning | :configuring | :preop_ready | :operational | :degraded
-  def phase, do: :gen_statem.call(__MODULE__, :phase)
+  @spec phase() ::
+          :idle | :scanning | :configuring | :preop_ready | :operational | :degraded
+          | {:error, :not_started}
+  def phase, do: safe_call(:phase)
 
   @doc """
   Configure a discovered slave while the session is still in PREOP.
@@ -178,7 +186,7 @@ defmodule EtherCAT.Master do
   """
   @spec configure_slave(atom(), keyword() | EtherCAT.Slave.Config.t()) :: :ok | {:error, term()}
   def configure_slave(slave_name, spec) do
-    :gen_statem.call(__MODULE__, {:configure_slave, slave_name, spec})
+    safe_call({:configure_slave, slave_name, spec})
   end
 
   @doc """
@@ -189,7 +197,7 @@ defmodule EtherCAT.Master do
   """
   @spec activate() :: :ok | {:error, term()}
   def activate do
-    :gen_statem.call(__MODULE__, :activate)
+    safe_call(:activate)
   end
 
   @doc """
@@ -197,36 +205,36 @@ defmodule EtherCAT.Master do
 
   Returns immediately if already `:running`. Returns `{:error, :timeout}` if
   the master does not reach `:running` within `timeout_ms` milliseconds.
-  Returns `{:error, :not_started}` if the master is `:idle`.
+  Returns `{:error, :not_started}` if the master process is not running.
   """
   @spec await_running(timeout_ms :: pos_integer()) :: :ok | {:error, term()}
   def await_running(timeout_ms \\ 10_000) do
-    :gen_statem.call(__MODULE__, :await_running, timeout_ms)
+    safe_call(:await_running, timeout_ms)
   end
 
   @doc """
   Block until the master reaches operational cyclic runtime, then return `:ok`.
 
   This waits for DC/domain runtime to start and for `:op` promotion to complete.
-  Returns `{:error, :not_started}` if the master is idle.
+  Returns `{:error, :not_started}` if the master is idle or not running.
   Returns `{:error, {:activation_failed, failures}}` if activation falls into degraded mode.
   """
   @spec await_operational(timeout_ms :: pos_integer()) :: :ok | {:error, term()}
   def await_operational(timeout_ms \\ 10_000) do
-    :gen_statem.call(__MODULE__, :await_operational, timeout_ms)
+    safe_call(:await_operational, timeout_ms)
   end
 
   @doc "Return a Distributed Clocks status snapshot for the current session."
-  @spec dc_status() :: DCStatus.t()
+  @spec dc_status() :: DCStatus.t() | {:error, :not_started}
   def dc_status do
-    :gen_statem.call(__MODULE__, :dc_status)
+    safe_call(:dc_status)
   end
 
   @doc "Return the current DC reference clock as `%{name, station}`."
   @spec reference_clock() ::
           {:ok, %{name: atom() | nil, station: non_neg_integer()}} | {:error, term()}
   def reference_clock do
-    :gen_statem.call(__MODULE__, :reference_clock)
+    safe_call(:reference_clock)
   end
 
   @doc """
@@ -236,7 +244,7 @@ defmodule EtherCAT.Master do
   """
   @spec await_dc_locked(timeout_ms :: pos_integer()) :: :ok | {:error, term()}
   def await_dc_locked(timeout_ms \\ 5_000) do
-    case :gen_statem.call(__MODULE__, :dc_runtime) do
+    case safe_call(:dc_runtime) do
       {:ok, dc_pid} -> DC.await_locked(dc_pid, timeout_ms)
       {:error, _} = err -> err
     end
@@ -1389,6 +1397,22 @@ defmodule EtherCAT.Master do
 
       [] ->
         :ok
+    end
+  end
+
+  defp safe_call(msg) do
+    try do
+      :gen_statem.call(__MODULE__, msg)
+    catch
+      :exit, {:noproc, _} -> {:error, :not_started}
+    end
+  end
+
+  defp safe_call(msg, timeout) do
+    try do
+      :gen_statem.call(__MODULE__, msg, timeout)
+    catch
+      :exit, {:noproc, _} -> {:error, :not_started}
     end
   end
 end

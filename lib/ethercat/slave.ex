@@ -132,9 +132,9 @@ defmodule EtherCAT.Slave do
     - `{:ethercat, :signal, slave_name, signal_name, decoded_value}`
     - `{:ethercat, :latch, slave_name, latch_name, timestamp_ns}`
   """
-  @spec subscribe(atom(), atom(), pid()) :: :ok
+  @spec subscribe(atom(), atom(), pid()) :: :ok | {:error, :not_found}
   def subscribe(slave_name, signal_name, pid) do
-    :gen_statem.call(via(slave_name), {:subscribe, signal_name, pid})
+    safe_call(slave_name, {:subscribe, signal_name, pid})
   end
 
   @doc """
@@ -146,13 +146,13 @@ defmodule EtherCAT.Slave do
   """
   @spec write_output(atom(), atom(), term()) :: :ok | {:error, term()}
   def write_output(slave_name, signal_name, value) do
-    :gen_statem.call(via(slave_name), {:write_output, signal_name, value})
+    safe_call(slave_name, {:write_output, signal_name, value})
   end
 
   @doc "Request an ESM state transition. Walks multi-step paths automatically."
   @spec request(atom(), atom()) :: :ok | {:error, term()}
   def request(slave_name, target) do
-    :gen_statem.call(via(slave_name), {:request, target})
+    safe_call(slave_name, {:request, target})
   end
 
   @doc """
@@ -163,20 +163,20 @@ defmodule EtherCAT.Slave do
   """
   @spec configure(atom(), keyword()) :: :ok | {:error, term()}
   def configure(slave_name, opts) when is_list(opts) do
-    :gen_statem.call(via(slave_name), {:configure, opts})
+    safe_call(slave_name, {:configure, opts})
   end
 
   @doc "Return the current ESM state atom."
-  @spec state(atom()) :: atom()
-  def state(slave_name), do: :gen_statem.call(via(slave_name), :state)
+  @spec state(atom()) :: atom() | {:error, :not_found}
+  def state(slave_name), do: safe_call(slave_name, :state)
 
   @doc "Return the identity map from SII EEPROM, or nil if not yet read."
-  @spec identity(atom()) :: map() | nil
-  def identity(slave_name), do: :gen_statem.call(via(slave_name), :identity)
+  @spec identity(atom()) :: map() | nil | {:error, :not_found}
+  def identity(slave_name), do: safe_call(slave_name, :identity)
 
   @doc "Return the last AL status code, or nil."
-  @spec error(atom()) :: non_neg_integer() | nil
-  def error(slave_name), do: :gen_statem.call(via(slave_name), :error)
+  @spec error(atom()) :: non_neg_integer() | nil | {:error, :not_found}
+  def error(slave_name), do: safe_call(slave_name, :error)
 
   @doc """
   Return a diagnostic snapshot for the slave.
@@ -191,8 +191,8 @@ defmodule EtherCAT.Slave do
     - `:signals` — list of `%{name, domain, direction, bit_offset, bit_size}` for registered signals
     - `:configuration_error` — last configuration failure atom, or `nil`
   """
-  @spec info(atom()) :: map()
-  def info(slave_name), do: :gen_statem.call(via(slave_name), :info)
+  @spec info(atom()) :: {:ok, map()} | {:error, :not_found}
+  def info(slave_name), do: safe_call(slave_name, :info)
 
   @doc """
   Read the decoded input value for an input signal. Equivalent to the value
@@ -202,7 +202,7 @@ defmodule EtherCAT.Slave do
   """
   @spec read_input(atom(), atom()) :: {:ok, term()} | {:error, term()}
   def read_input(slave_name, signal_name) do
-    :gen_statem.call(via(slave_name), {:read_input, signal_name})
+    safe_call(slave_name, {:read_input, signal_name})
   end
 
   @doc """
@@ -215,7 +215,7 @@ defmodule EtherCAT.Slave do
           :ok | {:error, term()}
   def download_sdo(slave_name, index, subindex, data)
       when is_binary(data) and byte_size(data) > 0 do
-    :gen_statem.call(via(slave_name), {:download_sdo, index, subindex, data})
+    safe_call(slave_name, {:download_sdo, index, subindex, data})
   end
 
   @doc """
@@ -227,7 +227,7 @@ defmodule EtherCAT.Slave do
   @spec upload_sdo(atom(), non_neg_integer(), non_neg_integer()) ::
           {:ok, binary()} | {:error, term()}
   def upload_sdo(slave_name, index, subindex) do
-    :gen_statem.call(via(slave_name), {:upload_sdo, index, subindex})
+    safe_call(slave_name, {:upload_sdo, index, subindex})
   end
 
   # -- :gen_statem callbacks -------------------------------------------------
@@ -347,7 +347,7 @@ defmodule EtherCAT.Slave do
       configuration_error: data.configuration_error
     }
 
-    {:keep_state_and_data, [{:reply, from, info}]}
+    {:keep_state_and_data, [{:reply, from, {:ok, info}}]}
   end
 
   def handle_event({:call, from}, {:request, target}, state, _data) when state == target do
@@ -1601,6 +1601,14 @@ defmodule EtherCAT.Slave do
   end
 
   # -- Registry helpers -------------------------------------------------------
+
+  defp safe_call(slave_name, msg) do
+    try do
+      :gen_statem.call(via(slave_name), msg)
+    catch
+      :exit, {:noproc, _} -> {:error, :not_found}
+    end
+  end
 
   defp via(slave_name), do: {:via, Registry, {EtherCAT.Registry, {:slave, slave_name}}}
 end

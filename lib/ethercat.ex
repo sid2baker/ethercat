@@ -194,7 +194,7 @@ defmodule EtherCAT do
   ## Example
 
       iex> EtherCAT.slave_info(:sensor)
-      %{
+      {:ok, %{
         name: :sensor,
         station: 0x1001,
         al_state: :op,
@@ -206,9 +206,9 @@ defmodule EtherCAT do
           ...
         ],
         configuration_error: nil
-      }
+      }}
   """
-  @spec slave_info(atom()) :: map()
+  @spec slave_info(atom()) :: {:ok, map()} | {:error, :not_found}
   def slave_info(slave_name), do: Slave.info(slave_name)
 
   @doc """
@@ -227,7 +227,7 @@ defmodule EtherCAT do
   ## Example
 
       iex> EtherCAT.domain_info(:main)
-      %{
+      {:ok, %{
         id: :main,
         cycle_time_us: 1_000,
         state: :cycling,
@@ -236,7 +236,7 @@ defmodule EtherCAT do
         total_miss_count: 2,
         image_size: 4,
         expected_wkc: 3
-      }
+      }}
   """
   @spec domain_info(atom()) :: {:ok, map()} | {:error, term()}
   def domain_info(domain_id), do: Domain.info(domain_id)
@@ -251,7 +251,7 @@ defmodule EtherCAT do
     - a named latch configured through `sync.latches`, delivered as
       `{:ethercat, :latch, slave_name, name, timestamp_ns}`
   """
-  @spec subscribe(atom(), atom(), pid()) :: :ok
+  @spec subscribe(atom(), atom(), pid()) :: :ok | {:error, :not_found}
   def subscribe(slave_name, name, pid \\ self()),
     do: Slave.subscribe(slave_name, name, pid)
 

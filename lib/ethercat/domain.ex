@@ -101,7 +101,7 @@ defmodule EtherCAT.Domain do
           {:ok, non_neg_integer()} | {:error, term()}
   def register_pdo(domain_id, key, size, direction) do
     slave_pid = if direction == :input, do: self(), else: nil
-    :gen_statem.call(via(domain_id), {:register_pdo, key, size, direction, slave_pid})
+    safe_call(domain_id, {:register_pdo, key, size, direction, slave_pid})
   end
 
   @doc """
@@ -112,38 +112,46 @@ defmodule EtherCAT.Domain do
   """
   @spec start_cycling(domain_id()) :: :ok | {:error, term()}
   def start_cycling(domain_id) do
-    :gen_statem.call(via(domain_id), :start_cycling)
+    safe_call(domain_id, :start_cycling)
   end
 
   @doc "Halt cycling. Idempotent in `:open` and `:stopped`; call `start_cycling/1` again to resume."
-  @spec stop_cycling(domain_id()) :: :ok
+  @spec stop_cycling(domain_id()) :: :ok | {:error, :not_found}
   def stop_cycling(domain_id) do
-    :gen_statem.call(via(domain_id), :stop_cycling)
+    safe_call(domain_id, :stop_cycling)
   end
 
   @doc "Write raw output bytes. Direct ETS — no gen_statem hop."
   @spec write(domain_id(), pdo_key(), binary()) :: :ok | {:error, :not_found}
   def write(domain_id, key, binary) when is_atom(domain_id) and is_binary(binary) do
-    case :ets.update_element(domain_id, key, {2, binary}) do
-      true -> :ok
-      false -> {:error, :not_found}
+    try do
+      case :ets.update_element(domain_id, key, {2, binary}) do
+        true -> :ok
+        false -> {:error, :not_found}
+      end
+    rescue
+      ArgumentError -> {:error, :not_found}
     end
   end
 
   @doc "Read current raw value (output or input). Direct ETS — no gen_statem hop."
   @spec read(domain_id(), pdo_key()) :: {:ok, binary()} | {:error, :not_found | :not_ready}
   def read(domain_id, key) when is_atom(domain_id) do
-    case stored_value(domain_id, key) do
-      {:ok, :unset} -> {:error, :not_ready}
-      {:ok, value} -> {:ok, value}
-      :error -> {:error, :not_found}
+    try do
+      case stored_value(domain_id, key) do
+        {:ok, :unset} -> {:error, :not_ready}
+        {:ok, value} -> {:ok, value}
+        :error -> {:error, :not_found}
+      end
+    rescue
+      ArgumentError -> {:error, :not_found}
     end
   end
 
   @doc "Return current stats."
-  @spec stats(domain_id()) :: {:ok, map()}
+  @spec stats(domain_id()) :: {:ok, map()} | {:error, :not_found}
   def stats(domain_id) do
-    :gen_statem.call(via(domain_id), :stats)
+    safe_call(domain_id, :stats)
   end
 
   @doc """
@@ -152,9 +160,9 @@ defmodule EtherCAT.Domain do
   Returns `{:ok, map}` with keys: `:id`, `:cycle_time_us`, `:state`,
   `:cycle_count`, `:miss_count`, `:total_miss_count`, `:image_size`, `:expected_wkc`.
   """
-  @spec info(domain_id()) :: {:ok, map()} | {:error, term()}
+  @spec info(domain_id()) :: {:ok, map()} | {:error, :not_found}
   def info(domain_id) do
-    :gen_statem.call(via(domain_id), :info)
+    safe_call(domain_id, :info)
   end
 
   @doc """
@@ -165,7 +173,7 @@ defmodule EtherCAT.Domain do
   @spec update_cycle_time(domain_id(), pos_integer()) :: :ok | {:error, term()}
   def update_cycle_time(domain_id, cycle_time_us)
       when is_integer(cycle_time_us) and cycle_time_us > 0 do
-    :gen_statem.call(via(domain_id), {:update_cycle_time, cycle_time_us})
+    safe_call(domain_id, {:update_cycle_time, cycle_time_us})
   end
 
   @impl true
@@ -420,6 +428,14 @@ defmodule EtherCAT.Domain do
 
   defp replacement_value({:ok, value}, size), do: binary_pad(value, size)
   defp replacement_value(:error, size), do: :binary.copy(<<0>>, size)
+
+  defp safe_call(domain_id, msg) do
+    try do
+      :gen_statem.call(via(domain_id), msg)
+    catch
+      :exit, {:noproc, _} -> {:error, :not_found}
+    end
+  end
 
   defp via(domain_id), do: {:via, Registry, {EtherCAT.Registry, {:domain, domain_id}}}
 
