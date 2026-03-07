@@ -47,7 +47,7 @@ defmodule MultiDomain.EL1809 do
   @behaviour EtherCAT.Slave.Driver
   @impl true
   def process_data_model(_config) do
-    Enum.into(1..16, %{}, fn i -> {String.to_atom("ch#{i}"), 0x1A00 + i - 1} end)
+    Enum.map(1..16, fn i -> {String.to_atom("ch#{i}"), 0x1A00 + i - 1} end)
   end
   @impl true
   def encode_signal(_pdo, _config, _), do: <<>>
@@ -60,7 +60,7 @@ defmodule MultiDomain.EL2809 do
   @behaviour EtherCAT.Slave.Driver
   @impl true
   def process_data_model(_config) do
-    Enum.into(1..16, %{}, fn i -> {String.to_atom("ch#{i}"), 0x1600 + i - 1} end)
+    Enum.map(1..16, fn i -> {String.to_atom("ch#{i}"), 0x1600 + i - 1} end)
   end
   @impl true
   def encode_signal(_ch, _config, value), do: <<value::8>>
@@ -71,7 +71,7 @@ end
 defmodule MultiDomain.EL3202 do
   @behaviour EtherCAT.Slave.Driver
   @impl true
-  def process_data_model(_config), do: %{channel1: 0x1A00, channel2: 0x1A01}
+  def process_data_model(_config), do: [channel1: 0x1A00, channel2: 0x1A01]
   @impl true
   def mailbox_config(_config) do
     [

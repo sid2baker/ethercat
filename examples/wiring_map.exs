@@ -38,7 +38,7 @@ defmodule WiringMap.EL1809 do
   @behaviour EtherCAT.Slave.Driver
   @impl true
   def process_data_model(_config) do
-    Enum.into(1..16, %{}, fn i -> {:"ch#{i}", 0x1A00 + i - 1} end)
+    Enum.map(1..16, fn i -> {:"ch#{i}", 0x1A00 + i - 1} end)
   end
 
   @impl true
@@ -53,7 +53,7 @@ defmodule WiringMap.EL2809 do
   @behaviour EtherCAT.Slave.Driver
   @impl true
   def process_data_model(_config) do
-    Enum.into(1..16, %{}, fn i -> {:"ch#{i}", 0x1600 + i - 1} end)
+    Enum.map(1..16, fn i -> {:"ch#{i}", 0x1600 + i - 1} end)
   end
 
   @impl true
@@ -66,7 +66,7 @@ end
 defmodule WiringMap.EL3202 do
   @behaviour EtherCAT.Slave.Driver
   @impl true
-  def process_data_model(_config), do: %{channel1: 0x1A00, channel2: 0x1A01}
+  def process_data_model(_config), do: [channel1: 0x1A00, channel2: 0x1A01]
   @impl true
   def mailbox_config(_config) do
     [

@@ -8,7 +8,7 @@ alias EtherCAT.Domain.Config, as: DomainConfig
 
 defmodule DigitalOut do
   @behaviour EtherCAT.Slave.Driver
-  def process_data_model(_), do: %{ch1: 0x1600}
+  def process_data_model(_), do: [ch1: 0x1600]
   def encode_signal(_, _, v), do: <<v::8>>
   def decode_signal(_, _, _), do: nil
 end

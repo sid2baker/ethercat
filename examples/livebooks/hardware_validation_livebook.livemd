@@ -166,24 +166,12 @@ defmodule Example.EL1809 do
 
   @impl true
   def process_data_model(_config) do
-    %{
-      ch1: 0x1A00,
-      ch2: 0x1A01,
-      ch3: 0x1A02,
-      ch4: 0x1A03,
-      ch5: 0x1A04,
-      ch6: 0x1A05,
-      ch7: 0x1A06,
-      ch8: 0x1A07,
-      ch9: 0x1A08,
-      ch10: 0x1A09,
-      ch11: 0x1A0A,
-      ch12: 0x1A0B,
-      ch13: 0x1A0C,
-      ch14: 0x1A0D,
-      ch15: 0x1A0E,
-      ch16: 0x1A0F
-    }
+    [
+      ch1: 0x1A00, ch2: 0x1A01, ch3: 0x1A02, ch4: 0x1A03,
+      ch5: 0x1A04, ch6: 0x1A05, ch7: 0x1A06, ch8: 0x1A07,
+      ch9: 0x1A08, ch10: 0x1A09, ch11: 0x1A0A, ch12: 0x1A0B,
+      ch13: 0x1A0C, ch14: 0x1A0D, ch15: 0x1A0E, ch16: 0x1A0F
+    ]
   end
 
   @impl true
@@ -199,24 +187,12 @@ defmodule Example.EL2809 do
 
   @impl true
   def process_data_model(_config) do
-    %{
-      ch1: 0x1600,
-      ch2: 0x1601,
-      ch3: 0x1602,
-      ch4: 0x1603,
-      ch5: 0x1604,
-      ch6: 0x1605,
-      ch7: 0x1606,
-      ch8: 0x1607,
-      ch9: 0x1608,
-      ch10: 0x1609,
-      ch11: 0x160A,
-      ch12: 0x160B,
-      ch13: 0x160C,
-      ch14: 0x160D,
-      ch15: 0x160E,
-      ch16: 0x160F
-    }
+    [
+      ch1: 0x1600, ch2: 0x1601, ch3: 0x1602, ch4: 0x1603,
+      ch5: 0x1604, ch6: 0x1605, ch7: 0x1606, ch8: 0x1607,
+      ch9: 0x1608, ch10: 0x1609, ch11: 0x160A, ch12: 0x160B,
+      ch13: 0x160C, ch14: 0x160D, ch15: 0x160E, ch16: 0x160F
+    ]
   end
 
   @impl true
@@ -231,7 +207,7 @@ defmodule Example.EL3202 do
 
   @impl true
   def process_data_model(_config) do
-    %{channel1: 0x1A00, channel2: 0x1A01}
+    [channel1: 0x1A00, channel2: 0x1A01]
   end
 
   @impl true
@@ -875,7 +851,7 @@ defmodule Example.Hardware do
 
   defp station_map do
     EtherCAT.slaves()
-    |> Enum.into(%{}, fn {name, station, _pid} -> {name, station} end)
+    |> Enum.into(%{}, fn %{name: name, station: station} -> {name, station} end)
   end
 
   defp pick_probe_station(config, stations) do
