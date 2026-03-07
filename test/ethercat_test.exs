@@ -54,7 +54,7 @@ defmodule EtherCATTest do
   test "default slave driver is a safe no-op profile" do
     driver = EtherCAT.Slave.Driver.Default
 
-    assert driver.process_data_model(%{}) == %{}
+    assert driver.process_data_model(%{}) == []
     assert driver.encode_signal(:unused, %{}, 1) == <<>>
     assert driver.decode_signal(:unused, %{}, <<0xAB, 0xCD>>) == <<0xAB, 0xCD>>
   end

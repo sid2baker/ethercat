@@ -13,13 +13,14 @@ defmodule EtherCAT.Slave.Driver.Default do
   @behaviour EtherCAT.Slave.Driver
 
   @impl true
-  def process_data_model(_config), do: %{}
+  def process_data_model(_config), do: []
 
   @impl true
   def process_data_model(_config, sii_pdo_configs) do
-    Enum.reduce(sii_pdo_configs, %{}, fn %{index: index}, acc ->
+    sii_pdo_configs
+    |> Enum.map(fn %{index: index} ->
       name = String.to_atom("pdo_0x" <> String.downcase(Integer.to_string(index, 16)))
-      Map.put(acc, name, index)
+      {name, index}
     end)
   end
 

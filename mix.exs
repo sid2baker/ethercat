@@ -35,7 +35,8 @@ defmodule EtherCAT.MixProject do
       skills: [
         build: [
           "elixir-otp": [
-            description: "Use this skill when working with standard Elixir and OTP — GenServer, supervisors, processes, streams, pattern matching, etc.",
+            description:
+              "Use this skill when working with standard Elixir and OTP — GenServer, supervisors, processes, streams, pattern matching, etc.",
             usage_rules: [:usage_rules]
           ]
         ]

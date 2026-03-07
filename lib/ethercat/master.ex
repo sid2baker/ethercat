@@ -93,18 +93,19 @@ defmodule EtherCAT.Master do
   @spec start(keyword()) :: :ok | {:error, term()}
   def start(opts \\ []), do: safe_call({:start, opts})
 
-  @doc "Stop the master: shut down all slaves, domains, and the bus. Idempotent if not started."
-  @spec stop() :: :ok
+  @doc "Stop the master: shut down all slaves, domains, and the bus. Returns `:already_stopped` if not running."
+  @spec stop() :: :ok | :already_stopped
   def stop do
     try do
       :gen_statem.call(__MODULE__, :stop)
     catch
-      :exit, {:noproc, _} -> :ok
+      :exit, {:noproc, _} -> :already_stopped
     end
   end
 
-  @doc "Return `[{name, station, pid}]` for all named slaves."
-  @spec slaves() :: list() | {:error, :not_started}
+  @doc "Return `[%{name:, station:, pid:}]` for all named slaves."
+  @spec slaves() ::
+          [%{name: atom(), station: non_neg_integer(), pid: pid()}] | {:error, :not_started}
   def slaves, do: safe_call(:slaves)
 
   @doc "Return `[{id, cycle_time_us, pid}]` for all running domains."
@@ -133,7 +134,12 @@ defmodule EtherCAT.Master do
   PREOP-ready startup and fully operational cyclic runtime.
   """
   @spec phase() ::
-          :idle | :scanning | :configuring | :preop_ready | :operational | :degraded
+          :idle
+          | :scanning
+          | :configuring
+          | :preop_ready
+          | :operational
+          | :degraded
           | {:error, :not_started}
   def phase, do: safe_call(:phase)
 
@@ -307,6 +313,10 @@ defmodule EtherCAT.Master do
 
   def handle_event({:call, from}, :dc_runtime, :idle, _data) do
     {:keep_state_and_data, [{:reply, from, {:error, :not_started}}]}
+  end
+
+  def handle_event({:call, from}, :stop, :idle, _data) do
+    {:keep_state_and_data, [{:reply, from, :already_stopped}]}
   end
 
   def handle_event({:call, from}, _event, :idle, _data) do
@@ -625,7 +635,12 @@ defmodule EtherCAT.Master do
   end
 
   def handle_event({:call, from}, :slaves, _state, data) do
-    {:keep_state_and_data, [{:reply, from, data.slaves}]}
+    result =
+      Enum.map(data.slaves, fn {name, station, pid} ->
+        %{name: name, station: station, pid: pid}
+      end)
+
+    {:keep_state_and_data, [{:reply, from, result}]}
   end
 
   def handle_event({:call, from}, :domains, _state, data) do
@@ -1372,6 +1387,7 @@ defmodule EtherCAT.Master do
       :gen_statem.call(__MODULE__, msg, timeout)
     catch
       :exit, {:noproc, _} -> {:error, :not_started}
+      :exit, {:timeout, _} -> {:error, :timeout}
     end
   end
 end

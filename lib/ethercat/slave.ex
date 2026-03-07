@@ -298,7 +298,8 @@ defmodule EtherCAT.Slave do
           []
 
         regs ->
-          Enum.map(regs, fn {name, reg} ->
+          regs
+          |> Enum.map(fn {name, reg} ->
             %{
               name: name,
               domain: reg.domain_id,
@@ -307,6 +308,7 @@ defmodule EtherCAT.Slave do
               bit_size: reg.bit_size
             }
           end)
+          |> Enum.sort_by(&{&1.bit_offset, &1.direction})
       end
 
     info = %{

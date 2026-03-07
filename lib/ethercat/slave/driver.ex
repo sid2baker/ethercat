@@ -17,8 +17,8 @@ defmodule EtherCAT.Slave.Driver do
 
   ## Process-data model
 
-  `process_data_model/1` returns a map keyed by logical signal name (atom). Each
-  value declares where that signal lives in the slave's PDO layout:
+  `process_data_model/1` returns a keyword list of `{signal_name, declaration}` pairs.
+  Each value declares where that signal lives in the slave's PDO layout:
 
   - an integer means "this signal spans the whole PDO at that index"
   - `%EtherCAT.Slave.ProcessDataSignal{}` may select a bit-range inside a PDO
@@ -28,9 +28,9 @@ defmodule EtherCAT.Slave.Driver do
   offset within its SyncManager. The driver's signal model sits on top of that
   hardware description and names the application-facing signals.
 
-      %{
-        channels: 0x1A00
-      }
+  Use a keyword list (not a map) so signal order is explicit and deterministic.
+
+      [channels: 0x1A00]
 
   Each signal is encoded and decoded independently. Sub-byte signals (e.g. 1-bit
   digital channels) receive/return 1 padded byte with the value in bit 0 (LSB).
@@ -43,12 +43,12 @@ defmodule EtherCAT.Slave.Driver do
 
         @impl true
         def process_data_model(_config) do
-          %{
+          [
             ch1:  0x1A00, ch2:  0x1A01, ch3:  0x1A02, ch4:  0x1A03,
             ch5:  0x1A04, ch6:  0x1A05, ch7:  0x1A06, ch8:  0x1A07,
             ch9:  0x1A08, ch10: 0x1A09, ch11: 0x1A0A, ch12: 0x1A0B,
             ch13: 0x1A0C, ch14: 0x1A0D, ch15: 0x1A0E, ch16: 0x1A0F
-          }
+          ]
         end
 
         @impl true
@@ -67,12 +67,12 @@ defmodule EtherCAT.Slave.Driver do
 
         @impl true
         def process_data_model(_config) do
-          %{
+          [
             ch1:  0x1600, ch2:  0x1601, ch3:  0x1602, ch4:  0x1603,
             ch5:  0x1604, ch6:  0x1605, ch7:  0x1606, ch8:  0x1607,
             ch9:  0x1608, ch10: 0x1609, ch11: 0x160A, ch12: 0x160B,
             ch13: 0x160C, ch14: 0x160D, ch15: 0x160E, ch16: 0x160F
-          }
+          ]
         end
 
         @impl true
@@ -91,7 +91,7 @@ defmodule EtherCAT.Slave.Driver do
         @impl true
         def process_data_model(_config) do
           # 0x1A00 = channel 1 (SM3, bytes 0–3), 0x1A01 = channel 2 (SM3, bytes 4–7)
-          %{channel1: 0x1A00, channel2: 0x1A01}
+          [channel1: 0x1A00, channel2: 0x1A01]
         end
 
         @impl true
@@ -145,7 +145,7 @@ defmodule EtherCAT.Slave.Driver do
   driver uses this to auto-discover all PDOs without any hand-written mapping.
   """
   @callback process_data_model(config()) ::
-              %{signal_name() => non_neg_integer() | ProcessDataSignal.t()}
+              [{signal_name(), non_neg_integer() | ProcessDataSignal.t()}]
 
   @doc """
   Optional 2-arity variant of `process_data_model/1` that receives SII PDO configs.
@@ -160,7 +160,7 @@ defmodule EtherCAT.Slave.Driver do
   When this callback is exported, it takes precedence over `process_data_model/1`.
   """
   @callback process_data_model(config(), sii_pdo_configs :: [map()]) ::
-              %{signal_name() => non_neg_integer() | ProcessDataSignal.t()}
+              [{signal_name(), non_neg_integer() | ProcessDataSignal.t()}]
 
   @doc "Encode one logical output signal into raw bytes for the process image."
   @callback encode_signal(signal_name(), config(), term()) :: binary()

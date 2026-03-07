@@ -9,13 +9,13 @@ defmodule EtherCAT.Slave.ProcessDataPlanTest do
 
     @impl true
     def process_data_model(_config) do
-      %{
+      [
         out1: 0x1600,
         in1: 0x1A00,
         in2: 0x1A01,
         status_word: ProcessDataSignal.slice(0x1A02, 0, 16),
         actual_position: ProcessDataSignal.slice(0x1A02, 16, 32)
-      }
+      ]
     end
 
     @impl true
@@ -44,13 +44,13 @@ defmodule EtherCAT.Slave.ProcessDataPlanTest do
   test "builds sync-manager groups from driver model and SII metadata" do
     requested = [out1: :main, in1: :main, in2: :main, status_word: :main, actual_position: :main]
 
-    model = %{
+    model = [
       out1: 0x1600,
       in1: 0x1A00,
       in2: 0x1A01,
       status_word: ProcessDataSignal.slice(0x1A02, 0, 16),
       actual_position: ProcessDataSignal.slice(0x1A02, 16, 32)
-    }
+    ]
 
     sii_pdo_configs = [
       %{index: 0x1600, direction: :output, sm_index: 2, bit_size: 8, bit_offset: 0},
@@ -98,18 +98,18 @@ defmodule EtherCAT.Slave.ProcessDataPlanTest do
     assert {:error, {:signal_not_in_driver_model, :missing}} =
              ProcessDataPlan.build(
                [missing: :main],
-               %{out1: 0x1600},
+               [out1: 0x1600],
                sii_pdo_configs,
                sii_sm_configs
              )
 
     assert {:error, {:pdo_not_in_sii, 0x1A00}} =
-             ProcessDataPlan.build([in1: :main], %{in1: 0x1A00}, sii_pdo_configs, sii_sm_configs)
+             ProcessDataPlan.build([in1: :main], [in1: 0x1A00], sii_pdo_configs, sii_sm_configs)
 
     assert {:error, {:sm_not_in_sii, 3}} =
              ProcessDataPlan.build(
                [in1: :main],
-               %{in1: 0x1A00},
+               [in1: 0x1A00],
                [%{index: 0x1A00, direction: :input, sm_index: 3, bit_size: 8, bit_offset: 0}],
                sii_sm_configs
              )
@@ -126,7 +126,7 @@ defmodule EtherCAT.Slave.ProcessDataPlanTest do
     assert {:error, {:signal_range_out_of_bounds, :too_big, 0x1A00}} =
              ProcessDataPlan.build(
                [too_big: :main],
-               %{too_big: ProcessDataSignal.slice(0x1A00, 8, 16)},
+               [too_big: ProcessDataSignal.slice(0x1A00, 8, 16)],
                sii_pdo_configs,
                sii_sm_configs
              )
@@ -134,7 +134,7 @@ defmodule EtherCAT.Slave.ProcessDataPlanTest do
     assert {:error, {:sync_manager_spans_multiple_domains, 3}} =
              ProcessDataPlan.build(
                [first: :main, second: :aux],
-               %{first: 0x1A00, second: 0x1A01},
+               [first: 0x1A00, second: 0x1A01],
                sii_pdo_configs,
                sii_sm_configs
              )

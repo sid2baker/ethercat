@@ -64,7 +64,7 @@ defmodule EtherCAT.Slave.ProcessDataPlan do
           required(:bit_offset) => non_neg_integer()
         }
 
-  @type process_data_model :: %{signal_name() => non_neg_integer() | ProcessDataSignal.t()}
+  @type process_data_model :: [{signal_name(), non_neg_integer() | ProcessDataSignal.t()}]
 
   @type resolved_signal :: {signal_name(), atom(), ProcessDataSignal.t(), sii_pdo_config()}
 
@@ -127,7 +127,7 @@ defmodule EtherCAT.Slave.ProcessDataPlan do
   end
 
   defp fetch_signal_spec(model, signal_name) do
-    case Map.fetch(model, signal_name) do
+    case Keyword.fetch(model, signal_name) do
       {:ok, declaration} -> normalize_signal_declaration(signal_name, declaration)
       :error -> {:error, {:signal_not_in_driver_model, signal_name}}
     end

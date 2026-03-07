@@ -32,8 +32,8 @@ defmodule EtherCAT do
   @spec start(keyword()) :: :ok | {:error, term()}
   def start(opts \\ []), do: Master.start(opts)
 
-  @doc "Stop the master: shut down all slaves, domains, and the bus."
-  @spec stop() :: :ok
+  @doc "Stop the master: shut down all slaves, domains, and the bus. Returns `:already_stopped` if not running."
+  @spec stop() :: :ok | :already_stopped
   def stop, do: Master.stop()
 
   @doc """
@@ -113,8 +113,9 @@ defmodule EtherCAT do
   @spec activate() :: :ok | {:error, term()}
   def activate, do: Master.activate()
 
-  @doc "Return `[{name, station, pid}]` for all running slaves."
-  @spec slaves() :: list()
+  @doc "Return `[%{name:, station:, pid:}]` for all running slaves."
+  @spec slaves() ::
+          [%{name: atom(), station: non_neg_integer(), pid: pid()}] | {:error, :not_started}
   def slaves, do: Master.slaves()
 
   @doc "Return `[{id, cycle_time_us, pid}]` for all running domains."
