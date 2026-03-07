@@ -1,4 +1,5 @@
 defmodule EtherCAT.Domain do
+  @external_resource Path.join(__DIR__, "domain.md")
   @moduledoc File.read!(Path.join(__DIR__, "domain.md"))
 
   @behaviour :gen_statem

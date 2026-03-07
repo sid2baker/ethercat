@@ -1,4 +1,5 @@
 defmodule EtherCAT do
+  @external_resource Path.join(__DIR__, "ethercat.md")
   @moduledoc File.read!(Path.join(__DIR__, "ethercat.md"))
 
   alias EtherCAT.{Domain, Master, Slave}

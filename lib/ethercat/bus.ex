@@ -1,4 +1,5 @@
 defmodule EtherCAT.Bus do
+  @external_resource Path.join(__DIR__, "bus.md")
   @moduledoc File.read!(Path.join(__DIR__, "bus.md"))
 
   @behaviour :gen_statem

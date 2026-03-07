@@ -1,4 +1,5 @@
 defmodule EtherCAT.Slave do
+  @external_resource Path.join(__DIR__, "slave.md")
   @moduledoc File.read!(Path.join(__DIR__, "slave.md"))
 
   @behaviour :gen_statem
