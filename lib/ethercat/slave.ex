@@ -1,6 +1,15 @@
 defmodule EtherCAT.Slave do
-  @external_resource Path.join(__DIR__, "slave.md")
-  @moduledoc File.read!(Path.join(__DIR__, "slave.md"))
+  @moduledoc """
+  EtherCAT State Machine (ESM) lifecycle for one physical slave device.
+
+  One Slave process per named slave, registered under `{:slave, name}`.
+  Manages INIT → PREOP → SAFEOP → OP transitions, mailbox configuration,
+  process-data SM/FMMU setup, and DC signal programming.
+
+  Typically driven by the master — use `EtherCAT.read_input/2`,
+  `EtherCAT.write_output/3`, and `EtherCAT.subscribe/2` from the top-level API.
+  Direct slave access via `request/2`, `info/1`, and `download_sdo/4` is also supported.
+  """
 
   @behaviour :gen_statem
 

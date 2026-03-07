@@ -1,6 +1,5 @@
 defmodule EtherCAT.Master do
-  @external_resource Path.join(__DIR__, "master.md")
-  @moduledoc File.read!(Path.join(__DIR__, "master.md"))
+  @moduledoc false
 
   @behaviour :gen_statem
 

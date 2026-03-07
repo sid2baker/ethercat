@@ -1,6 +1,32 @@
 defmodule EtherCAT.Domain do
-  @external_resource Path.join(__DIR__, "domain.md")
-  @moduledoc File.read!(Path.join(__DIR__, "domain.md"))
+  @moduledoc """
+  Cyclic process image for one logical EtherCAT domain.
+
+  One Domain per configured domain ID. Slaves register their PDOs during PREOP,
+  then the domain runs a self-timed LRW exchange each cycle.
+
+  ## States
+
+  - `:open` — accepting PDO registrations, not yet cycling
+  - `:cycling` — self-timed LRW tick active
+  - `:stopped` — cycling halted (too many misses or manual stop)
+
+  ## Hot Path (Direct ETS)
+
+      # Write output
+      Domain.write(:my_domain, {:valve, :ch1}, <<0xFF>>)
+
+      # Read current value
+      Domain.read(:my_domain, {:sensor, :ch1})
+      # => {:ok, binary} | {:error, :not_found | :not_ready}
+
+  Both bypass the gen_statem entirely via direct ETS access.
+
+  ## Telemetry
+
+  - `[:ethercat, :domain, :cycle, :done]` — `%{duration_us, cycle_count}`
+  - `[:ethercat, :domain, :cycle, :missed]` — `%{miss_count}`, metadata: `%{domain, reason}`
+  """
 
   @behaviour :gen_statem
 
