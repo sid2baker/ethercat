@@ -1,71 +1,28 @@
-# EtherCAT Agent Guide
+# EtherCAT
 
-## Start Here
+## Navigation
 
-Use this file as a map. The detailed knowledge lives in `docs/`.
+- `ARCHITECTURE.md` — subsystem boundaries and runtime data flow
+- `docs/index.md` — documentation map
+- `docs/design-docs/index.md` — architecture decisions
+- `docs/exec-plans/index.md` — active work and debt tracker
 
-Read in this order for non-trivial work:
+Subsystem briefings (also `@moduledoc` source):
 
-1. `docs/index.md` — documentation entrypoint and system-of-record map
-2. `ARCHITECTURE.md` — subsystem boundaries and runtime data flow
-3. `docs/design-docs/index.md` — deep dives and architecture rationale
-4. `docs/exec-plans/index.md` — active work, completed plans, and debt
-5. `docs/QUALITY_SCORE.md` — current implementation grades and top gaps
-
-Then load the subsystem briefing you are changing:
-
-- `lib/ethercat/master.md`
-- `lib/ethercat/slave.md`
-- `lib/ethercat/domain.md`
-
-For protocol and reference-master work, start with:
-
-- `docs/references/ethercat-spec/01-llm-reference-index.md`
-- `docs/references/README.md`
-- `docs/references/ethercat-esc-technology.md`
-- `docs/references/ethercat-esc-registers.md`
-
-For hardware validation and runtime harnesses:
-
-- `examples/hardware_validation_livebook.livemd`
-- `examples/el1809_el2809_benchmarks.livemd`
+- `lib/ethercat.md`, `lib/ethercat/master.md`, `lib/ethercat/slave.md`
+- `lib/ethercat/domain.md`, `lib/ethercat/bus.md`
 
 ## Hard Rules
 
-### API Evolution
+- **API**: pre-release, prefer clarity over compatibility; no shims
+- **Bitwise**: never `import Bitwise`; use binary pattern matching
+- **`gen_statem` enter callbacks**: side effects only, no state transitions
 
-This library is pre-release. Prefer API clarity over backward compatibility.
+## Checks
 
-If a better abstraction requires a breaking change, make it and update all call
-sites in the same change. Do not add compatibility shims unless explicitly requested.
-
-### Bitwise Operations
-
-Never use `import Bitwise` or bitwise operators.
-
-Use binary pattern matching to extract and compose fields.
-
-### `gen_statem` Enter Callbacks
-
-Enter callbacks may not transition state.
-
-Use enter callbacks only for unconditional side effects such as arming timers or
-emitting telemetry. State decisions belong in the event handler that decided to
-enter the state.
-
-## Mechanical Checks
-
-- `mix ethercat.harness.doctor` — validate the docs spine and AGENTS map
-- `mix test` — validate behavior
-- `mix usage_rules.docs Module` — dependency and standard-library docs
-- `mix usage_rules.search_docs query` — cross-package docs search
-
-## Documentation Rules
-
-1. `AGENTS.md` stays a map, not an encyclopedia.
-2. Architectural decisions belong in `docs/design-docs/`.
-3. Multi-step work belongs in `docs/exec-plans/`.
-4. When behavior changes, update the corresponding subsystem briefing in `lib/ethercat/*.md`.
+- `mix test` — behavior
+- `mix usage_rules.docs Module` — docs lookup
+- `mix usage_rules.search_docs query` — cross-package search
 
 <!-- usage-rules-start -->
 <!-- usage_rules-start -->
