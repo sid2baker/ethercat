@@ -6,17 +6,10 @@
 
 <!-- gif goes here -->
 
-Pure-Elixir EtherCAT master built on OTP. Runs over a standard Ethernet
-interface with no RTOS, no kernel patch, and no proprietary NIC driver.
-
-**Nerves-first** — designed for [Nerves](https://nerves-project.org/) embedded
-systems with [VintageNet](https://github.com/nerves-networking/vintage_net).
-Standard Linux is supported when VintageNet is configured; bare Linux without
-VintageNet is not.
-
-**Good fit:** discrete I/O, Beckhoff terminal stacks, 1 ms to 10 ms cyclic loops, diagnostics tooling.
-
-**Not the right fit:** sub-millisecond hard real-time control.
+- **Pure-Elixir EtherCAT master**
+- **[Nerves](https://nerves-project.org/)-first**, runs on standard Linux too
+- **Good fit:** discrete I/O, Beckhoff terminal stacks, 1 ms to 10 ms cyclic loops, diagnostics tooling
+- **Not the right fit:** sub-millisecond hard real-time control
 
 ## Try It in Livebook
 
