@@ -1,5 +1,9 @@
 # EtherCAT
 
+[![Hex version](https://img.shields.io/hexpm/v/ethercat.svg)](https://hex.pm/packages/ethercat)
+[![Hexdocs](https://img.shields.io/badge/docs-hexdocs-purple)](https://hexdocs.pm/ethercat)
+[![License](https://img.shields.io/hexpm/l/ethercat)](https://github.com/sid2baker/ethercat/blob/main/LICENSE)
+
 Pure-Elixir EtherCAT master built on OTP.
 
 This library talks EtherCAT over a standard Ethernet interface. It does not need
