@@ -30,7 +30,15 @@ defmodule EtherCAT.MixProject do
   defp usage_rules do
     [
       file: "AGENTS.md",
-      usage_rules: [:elixir, :otp]
+      usage_rules: [:elixir, :otp],
+      skills: [
+        build: [
+          "elixir-otp": [
+            description: "Use this skill when working with standard Elixir and OTP — GenServer, supervisors, processes, streams, pattern matching, etc.",
+            usage_rules: [:usage_rules]
+          ]
+        ]
+      ]
     ]
   end
 end
