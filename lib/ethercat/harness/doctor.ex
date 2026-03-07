@@ -9,7 +9,12 @@ defmodule EtherCAT.Harness.Doctor do
     "docs/exec-plans/index.md",
     "docs/exec-plans/tech-debt-tracker.md",
     "docs/QUALITY_SCORE.md",
-    "docs/references/README.md"
+    "docs/references/README.md",
+    "lib/ethercat.md",
+    "lib/ethercat/master.md",
+    "lib/ethercat/slave.md",
+    "lib/ethercat/domain.md",
+    "lib/ethercat/bus.md"
   ]
 
   @docs_index_paths [

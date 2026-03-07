@@ -1,46 +1,5 @@
 defmodule EtherCAT.Master do
-  @moduledoc """
-  EtherCAT master — singleton gen_statem registered as `EtherCAT.Master`.
-
-  ## States
-
-    - `:idle` — not started
-    - `:scanning` — bus open, polling for a stable slave count
-    - `:configuring` — stations assigned, DC initialised, slaves spawned;
-      waiting for all named slaves to reach `:preop`
-    - `:running` — startup finished; either operational or waiting for explicit activation
-    - `:degraded` — startup completed partially; failed slave promotions are retried
-
-  The state machine is fully self-driving for static startup. For dynamic startup,
-  call `configure_slave/2` while discovered slaves are held in PREOP, then call
-  `activate/0` to start cyclic operation.
-
-  ## Example
-
-      EtherCAT.start(
-        interface: "eth0",
-        dc: %EtherCAT.DC.Config{cycle_ns: 1_000_000},
-        domains: [%EtherCAT.Domain.Config{id: :main, cycle_time_us: 1_000}],
-        slaves: [
-          %EtherCAT.Slave.Config{name: :coupler},
-          %EtherCAT.Slave.Config{
-            name: :sensor,
-            driver: MyApp.EL1809,
-            process_data: {:all, :main}
-          },
-          %EtherCAT.Slave.Config{
-            name: :valve,
-            driver: MyApp.EL2809,
-            process_data: {:all, :main}
-          }
-        ]
-      )
-      :ok = EtherCAT.await_running()
-
-  Station addresses are assigned from list position: `base_station + index`.
-  When `slaves: []` (or omitted), the master starts one dynamic default slave per
-  discovered station and leaves them in `:preop` for runtime configuration.
-  """
+  @moduledoc File.read!(Path.join(__DIR__, "master.md"))
 
   @behaviour :gen_statem
 

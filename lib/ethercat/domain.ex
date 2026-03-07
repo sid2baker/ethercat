@@ -1,32 +1,5 @@
 defmodule EtherCAT.Domain do
-  @moduledoc """
-  Self-timed cyclic process image exchange for EtherCAT slaves.
-
-  A Domain owns one flat LRW frame shared across all registered slaves.
-  Slaves register their PDOs via `register_pdo/4`, which assigns the logical
-  offset immediately and returns it. The slave can then write its FMMU without
-  any further coordination. Once all slaves are configured, `start_cycling/1`
-  arms the self-timed LRW cycle.
-
-  ## I/O hot path (direct ETS, no gen_statem hop)
-
-      Domain.write(:fast, {:valve, :outputs}, <<0xFF, 0xFF>>)
-      {:ok, raw} = Domain.read(:fast, {:sensor, :channels})
-
-  ## Input change notifications
-
-  The Domain sends `{:domain_input, domain_id, key, old_raw_binary | :unset, new_raw_binary}`
-  to the registered slave pid whenever an input value changes after a cycle.
-  Slaves decode and re-publish to application subscribers.
-
-  ## ETS table schema
-
-      table  : domain_id  (:named_table, :public, :set)
-      record : {key, value, slave_pid}
-               key        — {slave_name, pdo_name}
-               value      — binary | :unset  (:unset until first input cycle completes)
-               slave_pid  — pid for inputs, nil for outputs
-  """
+  @moduledoc File.read!(Path.join(__DIR__, "domain.md"))
 
   @behaviour :gen_statem
 

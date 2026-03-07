@@ -1,32 +1,5 @@
 defmodule EtherCAT.Slave do
-  @moduledoc """
-  gen_statem managing the ESM (EtherCAT State Machine) lifecycle for one physical slave.
-
-  Registered in EtherCAT.Registry under `{:slave, name}` (atom name) for the public API.
-
-  ## Lifecycle
-
-  Master starts a Slave with one declarative process-data request from the `slaves:`
-  config list. The slave auto-advances to `:preop`: reads SII EEPROM, configures
-  mailbox SyncManagers, enters PREOP, then applies any requested mailbox and process-data
-  configuration. The master drives the slave to `:safeop` and `:op` once all slaves
-  have reached `:preop`.
-
-  ## Usage
-
-      # Subscribe to decoded signals or named latch events
-      Slave.subscribe(:sensor, :channels, self())
-
-      # Write outputs
-      Slave.write_output(:valve, :outputs, 0xFFFF)
-
-  ## States
-
-      :init → :preop  (auto)
-      :preop → :safeop → :op  (master-driven)
-      any → :init, :preop, :safeop  (backward)
-      :init ↔ :bootstrap
-  """
+  @moduledoc File.read!(Path.join(__DIR__, "slave.md"))
 
   @behaviour :gen_statem
 
