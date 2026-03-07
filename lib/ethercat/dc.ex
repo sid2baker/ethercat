@@ -468,6 +468,11 @@ defmodule EtherCAT.DC do
       |> Transaction.fprd(station, Registers.dc_speed_counter_start())
 
     case Bus.transaction(bus, tx) do
+      {:ok, [%{wkc: 0} | _]} ->
+        # wkc=0 on the ECAT receive-time register means this slave has no DC clock unit.
+        # Return a non-DC snapshot so the caller can continue with other stations.
+        {:ok, Snapshot.new(station, dl_status, %{}, nil, nil)}
+
       {:ok, [ecat, p0, p1, p2, p3, speed_counter]} ->
         with {:ok, ecat_time_ns} <- decode_u64(station, :ecat_recv_time, ecat),
              {:ok, p0_time_ns} <- decode_u32(station, {:recv_time, 0}, p0),

@@ -1050,6 +1050,10 @@ defmodule EtherCAT.Master do
           Logger.info("[Master] DC initialized, ref=0x#{Integer.to_string(ref_station, 16)}")
           {:ok, ref_station, dc_stations}
 
+        {:error, :no_dc_capable_slave} ->
+          Logger.debug("[Master] no DC-capable slaves found — running without DC")
+          {:ok, nil, []}
+
         {:error, reason} ->
           Logger.warning("[Master] DC init failed (#{inspect(reason)}) — running without DC")
           {:ok, nil, []}
