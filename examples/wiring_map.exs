@@ -149,7 +149,7 @@ read_all_inputs = fn ->
     ch = :"ch#{i}"
 
     case EtherCAT.read_input(:inputs, ch) do
-      {:ok, val} -> {ch, val}
+      {:ok, %{value: val}} -> {ch, val}
       _ -> {ch, nil}
     end
   end)
@@ -228,9 +228,10 @@ end)
 
 IO.puts(String.duplicate("-", 60))
 
-pass_count = Enum.count(results, fn {_out_ch, responding, expected_in} ->
-  responding == [expected_in]
-end)
+pass_count =
+  Enum.count(results, fn {_out_ch, responding, expected_in} ->
+    responding == [expected_in]
+  end)
 
 fail_count = 16 - pass_count
 

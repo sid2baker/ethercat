@@ -235,12 +235,14 @@ defmodule EtherCAT.Slave do
   def info(slave_name), do: safe_call(slave_name, :info)
 
   @doc """
-  Read the decoded input value for an input signal. Equivalent to the value
-  delivered via `subscribe/3` for normal process-data signals.
+  Read the decoded input value for an input signal together with its last update
+  time. Equivalent to the value delivered via `subscribe/3` for normal
+  process-data signals, but with freshness metadata.
 
   Returns `{:error, :not_ready}` until the first domain cycle completes.
   """
-  @spec read_input(atom(), atom()) :: {:ok, term()} | {:error, term()}
+  @spec read_input(atom(), atom()) ::
+          {:ok, %{value: term(), updated_at_us: integer() | nil}} | {:error, term()}
   def read_input(slave_name, signal_name) do
     safe_call(slave_name, {:read_input, signal_name})
   end
@@ -545,10 +547,15 @@ defmodule EtherCAT.Slave do
           bit_size: bit_size,
           direction: :input
         } ->
-          case Domain.read(domain_id, {data.name, sm_key}) do
-            {:ok, sm_bytes} ->
+          case Domain.sample(domain_id, {data.name, sm_key}) do
+            {:ok, %{value: sm_bytes, updated_at_us: updated_at_us}} ->
               raw = extract_sm_bits(sm_bytes, bit_offset, bit_size)
-              {:ok, data.driver.decode_signal(signal_name, data.config, raw)}
+
+              {:ok,
+               %{
+                 value: data.driver.decode_signal(signal_name, data.config, raw),
+                 updated_at_us: updated_at_us
+               }}
 
             {:error, _} = err ->
               err

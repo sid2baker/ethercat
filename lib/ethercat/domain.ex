@@ -24,8 +24,8 @@ defmodule EtherCAT.Domain do
 
   ## Telemetry
 
-  - `[:ethercat, :domain, :cycle, :done]` — `%{duration_us, cycle_count}`
-  - `[:ethercat, :domain, :cycle, :missed]` — `%{miss_count}`, metadata: `%{domain, reason}`
+  - `[:ethercat, :domain, :cycle, :done]` — `%{duration_us, cycle_count, completed_at_us}`
+  - `[:ethercat, :domain, :cycle, :missed]` — `%{miss_count, total_miss_count, invalid_at_us}`, metadata: `%{domain, reason}`
   """
 
   @behaviour :gen_statem
@@ -46,6 +46,11 @@ defmodule EtherCAT.Domain do
     :period_us,
     :logical_base,
     :next_cycle_at,
+    :last_cycle_started_at_us,
+    :last_cycle_completed_at_us,
+    :last_valid_cycle_at_us,
+    :last_invalid_cycle_at_us,
+    :last_invalid_reason,
     layout: Layout.new(),
     cycle_plan: nil,
     cycle_health: :healthy,
@@ -124,8 +129,10 @@ defmodule EtherCAT.Domain do
   @doc "Write raw output bytes. Direct ETS — no gen_statem hop."
   @spec write(domain_id(), pdo_key(), binary()) :: :ok | {:error, :not_found}
   def write(domain_id, key, binary) when is_atom(domain_id) and is_binary(binary) do
+    updated_at_us = System.monotonic_time(:microsecond)
+
     try do
-      case :ets.update_element(domain_id, key, {2, binary}) do
+      case :ets.update_element(domain_id, key, [{2, binary}, {3, updated_at_us}]) do
         true -> :ok
         false -> {:error, :not_found}
       end
@@ -148,6 +155,32 @@ defmodule EtherCAT.Domain do
     end
   end
 
+  @doc """
+  Read the current raw value together with freshness metadata.
+
+  Returns `{:error, :not_ready}` until the first input cycle completes for input
+  PDOs. Output PDOs become fresh once the process image is staged.
+  """
+  @spec sample(domain_id(), pdo_key()) ::
+          {:ok, %{value: binary(), updated_at_us: integer() | nil}}
+          | {:error, :not_found | :not_ready}
+  def sample(domain_id, key) when is_atom(domain_id) do
+    try do
+      case stored_entry(domain_id, key) do
+        {:ok, :unset, _meta} ->
+          {:error, :not_ready}
+
+        {:ok, value, meta} ->
+          {:ok, %{value: value, updated_at_us: sample_updated_at_us(meta)}}
+
+        :error ->
+          {:error, :not_found}
+      end
+    rescue
+      ArgumentError -> {:error, :not_found}
+    end
+  end
+
   @doc "Return current stats."
   @spec stats(domain_id()) :: {:ok, map()} | {:error, :not_found}
   def stats(domain_id) do
@@ -159,7 +192,8 @@ defmodule EtherCAT.Domain do
 
   Returns `{:ok, map}` with keys: `:id`, `:cycle_time_us`, `:state`,
   `:cycle_count`, `:miss_count`, `:total_miss_count`, `:cycle_health`,
-  `:logical_base`, `:image_size`, `:expected_wkc`.
+  `:logical_base`, `:image_size`, `:expected_wkc`, `:last_valid_cycle_at_us`,
+  `:last_invalid_cycle_at_us`, `:last_invalid_reason`.
   """
   @spec info(domain_id()) :: {:ok, map()} | {:error, :not_found}
   def info(domain_id) do
@@ -205,6 +239,11 @@ defmodule EtherCAT.Domain do
       period_us: cycle_time_us,
       logical_base: logical_base,
       next_cycle_at: nil,
+      last_cycle_started_at_us: nil,
+      last_cycle_completed_at_us: nil,
+      last_valid_cycle_at_us: nil,
+      last_invalid_cycle_at_us: nil,
+      last_invalid_reason: nil,
       layout: Layout.new(),
       cycle_plan: nil,
       cycle_health: :healthy,
@@ -234,7 +273,7 @@ defmodule EtherCAT.Domain do
     {offset, layout} = Layout.register(data.layout, key, size, direction)
 
     ets_value = if direction == :input, do: :unset, else: :binary.copy(<<0>>, size)
-    :ets.insert(data.table, {key, ets_value, nil})
+    :ets.insert(data.table, {key, ets_value, initial_sample_meta(direction)})
 
     new_data = %{data | layout: layout}
 
@@ -258,6 +297,7 @@ defmodule EtherCAT.Domain do
 
   def handle_event(:state_timeout, :tick, :cycling, data) do
     t0 = System.monotonic_time(:microsecond)
+    cycle_index = data.cycle_count + 1
     image = build_frame(data.cycle_plan.image_size, data.cycle_plan.output_patches, data.table)
 
     result =
@@ -278,16 +318,28 @@ defmodule EtherCAT.Domain do
       {:ok, [%{data: response, wkc: wkc}]}
       when wkc == data.cycle_plan.expected_wkc and wkc > 0 ->
         maybe_notify_cycle_recovered(data)
-        dispatch_inputs(response, data.cycle_plan.input_slices, data.table, data.id)
+        completed_at_us = System.monotonic_time(:microsecond)
+
+        dispatch_inputs(
+          response,
+          data.cycle_plan.input_slices,
+          data.table,
+          data.id,
+          completed_at_us
+        )
+
         duration_us = System.monotonic_time(:microsecond) - t0
 
-        Telemetry.domain_cycle_done(data.id, duration_us, data.cycle_count + 1)
+        Telemetry.domain_cycle_done(data.id, duration_us, cycle_index, completed_at_us)
 
         new_data = %{
           data
-          | cycle_count: data.cycle_count + 1,
+          | cycle_count: cycle_index,
             miss_count: 0,
             cycle_health: :healthy,
+            last_cycle_started_at_us: t0,
+            last_cycle_completed_at_us: completed_at_us,
+            last_valid_cycle_at_us: completed_at_us,
             next_cycle_at: next_at
         }
 
@@ -295,13 +347,25 @@ defmodule EtherCAT.Domain do
 
       {:ok, [%{wkc: wkc}]} when wkc >= 0 ->
         reason = {:wkc_mismatch, %{expected: data.cycle_plan.expected_wkc, actual: wkc}}
-        Telemetry.domain_cycle_missed(data.id, data.miss_count + 1, reason)
+        invalid_at_us = System.monotonic_time(:microsecond)
+
+        Telemetry.domain_cycle_missed(
+          data.id,
+          data.miss_count + 1,
+          data.total_miss_count + 1,
+          reason,
+          invalid_at_us
+        )
+
         maybe_notify_cycle_invalid(data, reason)
 
         new_data = %{
           data
           | miss_count: 0,
             cycle_health: {:invalid, reason},
+            last_cycle_started_at_us: t0,
+            last_invalid_cycle_at_us: invalid_at_us,
+            last_invalid_reason: reason,
             total_miss_count: data.total_miss_count + 1,
             next_cycle_at: next_at
         }
@@ -332,7 +396,10 @@ defmodule EtherCAT.Domain do
       total_miss_count: data.total_miss_count,
       cycle_health: data.cycle_health,
       image_size: Layout.image_size(data.layout),
-      expected_wkc: Layout.expected_wkc(data.layout)
+      expected_wkc: Layout.expected_wkc(data.layout),
+      last_valid_cycle_at_us: data.last_valid_cycle_at_us,
+      last_invalid_cycle_at_us: data.last_invalid_cycle_at_us,
+      last_invalid_reason: data.last_invalid_reason
     }
 
     {:keep_state_and_data, [{:reply, from, {:ok, stats}}]}
@@ -349,7 +416,12 @@ defmodule EtherCAT.Domain do
       cycle_health: data.cycle_health,
       logical_base: data.logical_base,
       image_size: Layout.image_size(data.layout),
-      expected_wkc: Layout.expected_wkc(data.layout)
+      expected_wkc: Layout.expected_wkc(data.layout),
+      last_cycle_started_at_us: data.last_cycle_started_at_us,
+      last_cycle_completed_at_us: data.last_cycle_completed_at_us,
+      last_valid_cycle_at_us: data.last_valid_cycle_at_us,
+      last_invalid_cycle_at_us: data.last_invalid_cycle_at_us,
+      last_invalid_reason: data.last_invalid_reason
     }
 
     {:keep_state_and_data, [{:reply, from, {:ok, info}}]}
@@ -383,13 +455,19 @@ defmodule EtherCAT.Domain do
     ]
   end
 
-  defp dispatch_inputs(response, input_slices, table, domain_id) do
+  defp dispatch_inputs(
+         response,
+         input_slices,
+         table,
+         domain_id,
+         updated_at_us
+       ) do
     Enum.each(input_slices, fn {offset, size, {slave_name, _} = key} ->
       new_val = binary_part(response, offset, size)
       old_val = stored_value(table, key, nil)
 
       if new_val != old_val do
-        :ets.update_element(table, key, {2, new_val})
+        :ets.update_element(table, key, [{2, new_val}, {3, updated_at_us}])
         maybe_dispatch_input(slave_name, {:domain_input, domain_id, key, old_val, new_val})
       end
     end)
@@ -431,9 +509,9 @@ defmodule EtherCAT.Domain do
   end
 
   defp stored_value(table, key) do
-    case :ets.lookup(table, key) do
-      [{^key, value, _}] -> {:ok, value}
-      [] -> :error
+    case stored_entry(table, key) do
+      {:ok, value, _meta} -> {:ok, value}
+      :error -> :error
     end
   end
 
@@ -447,6 +525,13 @@ defmodule EtherCAT.Domain do
   defp replacement_value({:ok, value}, size), do: binary_pad(value, size)
   defp replacement_value(:error, size), do: :binary.copy(<<0>>, size)
 
+  defp stored_entry(table, key) do
+    case :ets.lookup(table, key) do
+      [{^key, value, meta}] -> {:ok, value, meta}
+      [] -> :error
+    end
+  end
+
   defp safe_call(domain_id, msg) do
     try do
       :gen_statem.call(via(domain_id), msg)
@@ -458,13 +543,24 @@ defmodule EtherCAT.Domain do
   defp via(domain_id), do: {:via, Registry, {EtherCAT.Registry, {:domain, domain_id}}}
 
   defp mark_cycle_missed(data, reason, next_at, next_timeout) do
-    Telemetry.domain_cycle_missed(data.id, data.miss_count + 1, reason)
+    invalid_at_us = System.monotonic_time(:microsecond)
+
+    Telemetry.domain_cycle_missed(
+      data.id,
+      data.miss_count + 1,
+      data.total_miss_count + 1,
+      reason,
+      invalid_at_us
+    )
+
     maybe_notify_cycle_invalid(data, reason)
 
     new_data = %{
       data
       | miss_count: data.miss_count + 1,
         cycle_health: {:invalid, reason},
+        last_invalid_cycle_at_us: invalid_at_us,
+        last_invalid_reason: reason,
         total_miss_count: data.total_miss_count + 1,
         next_cycle_at: next_at
     }
@@ -496,10 +592,19 @@ defmodule EtherCAT.Domain do
 
   defp maybe_notify_cycle_recovered(_data), do: :ok
 
+  defp initial_sample_meta(:input), do: nil
+  defp initial_sample_meta(:output), do: nil
+
+  defp sample_updated_at_us(updated_at_us) when is_integer(updated_at_us), do: updated_at_us
+  defp sample_updated_at_us(_meta), do: nil
+
   defp maybe_dispatch_input(slave_name, msg) do
     case Registry.lookup(EtherCAT.Registry, {:slave, slave_name}) do
-      [{pid, _}] -> send(pid, msg)
-      [] -> :ok
+      [{pid, _}] ->
+        send(pid, msg)
+
+      [] ->
+        :ok
     end
   end
 end

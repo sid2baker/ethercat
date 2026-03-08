@@ -96,6 +96,20 @@ defmodule EtherCAT.DomainTest do
     assert {:ok, %{cycle_time_us: 10_000}} = Domain.info(domain_id)
   end
 
+  test "sample reports staged output freshness metadata", %{domain_id: domain_id} do
+    assert {:ok, 0} = Domain.register_pdo(domain_id, {:valve, {:sm, 0}}, 1, :output)
+
+    assert {:ok, %{value: <<0>>, updated_at_us: nil}} =
+             Domain.sample(domain_id, {:valve, {:sm, 0}})
+
+    assert :ok = Domain.write(domain_id, {:valve, {:sm, 0}}, <<1>>)
+
+    assert {:ok, %{value: <<1>>, updated_at_us: updated_at_us}} =
+             Domain.sample(domain_id, {:valve, {:sm, 0}})
+
+    assert is_integer(updated_at_us)
+  end
+
   test "start_cycling fails fast for oversized LRW images", %{domain_id: domain_id} do
     assert {:ok, 0} = Domain.register_pdo(domain_id, {:big, :pdo}, 2036, :output)
 
@@ -138,12 +152,16 @@ defmodule EtherCAT.DomainTest do
              {:invalid, {:wkc_mismatch, %{expected: 1, actual: 0}}}
 
     assert invalid_data.miss_count == 0
+    assert is_integer(invalid_data.last_invalid_cycle_at_us)
+    assert invalid_data.last_invalid_reason == {:wkc_mismatch, %{expected: 1, actual: 0}}
 
     assert {:keep_state, recovered_data, _actions} =
              Domain.handle_event(:state_timeout, :tick, :cycling, invalid_data)
 
     assert recovered_data.cycle_health == :healthy
     assert recovered_data.miss_count == 0
+    assert is_integer(recovered_data.last_valid_cycle_at_us)
+    assert is_integer(recovered_data.last_cycle_completed_at_us)
   end
 
   test "input dispatch resolves the current slave pid from the registry on each change" do

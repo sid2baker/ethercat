@@ -400,7 +400,8 @@ defmodule EtherCAT do
 
   Returns `{:error, :not_ready}` until the first domain cycle completes.
   """
-  @spec read_input(atom(), atom()) :: {:ok, term()} | {:error, term()}
+  @spec read_input(atom(), atom()) ::
+          {:ok, %{value: term(), updated_at_us: integer() | nil}} | {:error, term()}
   def read_input(slave_name, pdo_name),
     do: Slave.read_input(slave_name, pdo_name)
 

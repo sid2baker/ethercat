@@ -85,11 +85,11 @@ defmodule EtherCAT.Telemetry do
   ### Domain cycle events
 
       [:ethercat, :domain, :cycle, :done]
-        measurements: %{duration_us: integer(), cycle_count: non_neg_integer()}
+        measurements: %{duration_us: integer(), cycle_count: non_neg_integer(), completed_at_us: integer()}
         metadata:     %{domain: atom()}
 
       [:ethercat, :domain, :cycle, :missed]
-        measurements: %{miss_count: pos_integer()}
+        measurements: %{miss_count: pos_integer(), total_miss_count: pos_integer(), invalid_at_us: integer()}
         metadata:     %{domain: atom(), reason: term()}
 
   ### Domain fault events
@@ -255,19 +255,19 @@ defmodule EtherCAT.Telemetry do
   end
 
   @doc false
-  def domain_cycle_done(domain_id, duration_us, cycle_count) do
+  def domain_cycle_done(domain_id, duration_us, cycle_count, completed_at_us) do
     execute(
       [:ethercat, :domain, :cycle, :done],
-      %{duration_us: duration_us, cycle_count: cycle_count},
+      %{duration_us: duration_us, cycle_count: cycle_count, completed_at_us: completed_at_us},
       %{domain: domain_id}
     )
   end
 
   @doc false
-  def domain_cycle_missed(domain_id, miss_count, reason) do
+  def domain_cycle_missed(domain_id, miss_count, total_miss_count, reason, invalid_at_us) do
     execute(
       [:ethercat, :domain, :cycle, :missed],
-      %{miss_count: miss_count},
+      %{miss_count: miss_count, total_miss_count: total_miss_count, invalid_at_us: invalid_at_us},
       %{domain: domain_id, reason: reason}
     )
   end

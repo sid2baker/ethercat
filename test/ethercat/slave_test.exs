@@ -223,6 +223,38 @@ defmodule EtherCAT.SlaveTest do
     refute_receive {:ethercat, :signal, :sensor, :fast_ch1, _}
   end
 
+  test "read_input returns decoded value with freshness metadata" do
+    domain_id = :"sample_domain_#{System.unique_integer([:positive, :monotonic])}"
+    key = {:sensor, {:sm, 0}}
+    :ets.new(domain_id, [:set, :public, :named_table])
+    :ets.insert(domain_id, {key, <<1>>, 1234})
+
+    data = %EtherCAT.Slave{
+      name: :sensor,
+      driver: TestDriver,
+      config: %{},
+      signal_registrations: %{
+        ch1: %{
+          domain_id: domain_id,
+          sm_key: {:sm, 0},
+          bit_offset: 0,
+          bit_size: 1,
+          direction: :input
+        }
+      }
+    }
+
+    from = {self(), make_ref()}
+
+    assert {:keep_state_and_data, [{:reply, ^from, {:ok, %{value: 1, updated_at_us: 1234}}}]} =
+             EtherCAT.Slave.handle_event(
+               {:call, from},
+               {:read_input, :ch1},
+               :op,
+               data
+             )
+  end
+
   test "preop rejects safeop and op requests when local configuration failed" do
     from = {self(), make_ref()}
 
@@ -461,8 +493,10 @@ defmodule EtherCAT.SlaveTest do
                }
              )
 
-    assert [{^key, <<1>>, nil}] = :ets.lookup(fast_domain_id, key)
-    assert [{^key, <<1>>, nil}] = :ets.lookup(slow_domain_id, key)
+    assert [{^key, <<1>>, fast_updated_at_us}] = :ets.lookup(fast_domain_id, key)
+    assert is_integer(fast_updated_at_us)
+    assert [{^key, <<1>>, slow_updated_at_us}] = :ets.lookup(slow_domain_id, key)
+    assert is_integer(slow_updated_at_us)
 
     assert {:keep_state, %EtherCAT.Slave{output_sm_images: %{{:sm, 1} => <<3>>}},
             [{:reply, ^from, :ok}]} =
@@ -497,8 +531,10 @@ defmodule EtherCAT.SlaveTest do
                }
              )
 
-    assert [{^key, <<3>>, nil}] = :ets.lookup(fast_domain_id, key)
-    assert [{^key, <<3>>, nil}] = :ets.lookup(slow_domain_id, key)
+    assert [{^key, <<3>>, fast_updated_at_us}] = :ets.lookup(fast_domain_id, key)
+    assert is_integer(fast_updated_at_us)
+    assert [{^key, <<3>>, slow_updated_at_us}] = :ets.lookup(slow_domain_id, key)
+    assert is_integer(slow_updated_at_us)
   end
 
   test "subscriptions are deduplicated and removed when subscribers exit" do

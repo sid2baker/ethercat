@@ -76,23 +76,24 @@ defmodule EtherCAT.TelemetryTest do
                     %{ref_station: 0x1000, from: :locking, to: :locked, max_sync_diff_ns: 15}}
   end
 
-  test "domain_cycle_done/3 emits the domain done telemetry event" do
+  test "domain_cycle_done/4 emits the domain done telemetry event" do
     event_name = [:ethercat, :domain, :cycle, :done]
     attach_event(event_name, self())
 
-    Telemetry.domain_cycle_done(:main, 42, 7)
+    Telemetry.domain_cycle_done(:main, 42, 7, 99)
 
-    assert_receive {:telemetry_event, ^event_name, %{duration_us: 42, cycle_count: 7},
-                    %{domain: :main}}
+    assert_receive {:telemetry_event, ^event_name,
+                    %{duration_us: 42, cycle_count: 7, completed_at_us: 99}, %{domain: :main}}
   end
 
-  test "domain_cycle_missed/3 emits the domain missed telemetry event" do
+  test "domain_cycle_missed/5 emits the domain missed telemetry event" do
     event_name = [:ethercat, :domain, :cycle, :missed]
     attach_event(event_name, self())
 
-    Telemetry.domain_cycle_missed(:main, 3, :no_response)
+    Telemetry.domain_cycle_missed(:main, 3, 8, :no_response, 123)
 
-    assert_receive {:telemetry_event, ^event_name, %{miss_count: 3},
+    assert_receive {:telemetry_event, ^event_name,
+                    %{miss_count: 3, total_miss_count: 8, invalid_at_us: 123},
                     %{domain: :main, reason: :no_response}}
   end
 
@@ -106,10 +107,10 @@ defmodule EtherCAT.TelemetryTest do
       :telemetry.detach(handler_id)
     end)
 
-    Telemetry.domain_cycle_done(:main, 42, 7)
+    Telemetry.domain_cycle_done(:main, 42, 7, 99)
 
     assert_receive {:telemetry_event, [:ethercat, :domain, :cycle, :done],
-                    %{duration_us: 42, cycle_count: 7}, %{domain: :main}}
+                    %{duration_us: 42, cycle_count: 7, completed_at_us: 99}, %{domain: :main}}
   end
 
   def handle_event(event, measurements, metadata, pid) do
