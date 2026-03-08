@@ -638,7 +638,18 @@ defmodule EtherCAT.Master do
         {:next_state, :running, healed_data}
 
       {:recovering, still_recovering} ->
-        {:keep_state, still_recovering, [{{:timeout, :degraded_retry}, @degraded_retry_ms, nil}]}
+        case unrecoverable_recovery_reason(still_recovering) do
+          nil ->
+            {:keep_state, still_recovering,
+             [{{:timeout, :degraded_retry}, @degraded_retry_ms, nil}]}
+
+          reason ->
+            Logger.error("[Master] recovery failed and requires full restart: #{inspect(reason)}")
+
+            stop_session(still_recovering)
+
+            {:next_state, :idle, reset_master(failure_snapshot(:recovery_unrecoverable, reason))}
+        end
     end
   end
 
@@ -1701,7 +1712,19 @@ defmodule EtherCAT.Master do
        ),
        do: false
 
+  defp retryable_runtime_slave_fault?({:preop_configuration_failed, _reason}), do: false
+
   defp retryable_runtime_slave_fault?(_reason), do: true
+
+  defp unrecoverable_recovery_reason(%{runtime_faults: runtime_faults}) do
+    Enum.find_value(runtime_faults, fn
+      {{:slave, name}, {:preop, {:preop_configuration_failed, reason}}} ->
+        {:slave_preop_configuration_failed, name, reason}
+
+      _other ->
+        nil
+    end)
+  end
 
   defp maybe_restart_dc_runtime(%{runtime_faults: runtime_faults} = data) do
     if Map.has_key?(runtime_faults, {:dc, :runtime}) and not dc_running?() and

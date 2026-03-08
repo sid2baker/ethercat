@@ -21,14 +21,9 @@ The target is:
 
 ## Why This Refactor Exists
 
-The current restriction is an implementation shortcut, not a spec rule.
+The original restriction was an implementation shortcut, not a spec rule.
 
-Today the planner rejects multiple domain IDs for one SyncManager:
-
-- `EtherCAT.Slave.ProcessDataPlan.resolve_sm_domain_id/2`
-- `{:sync_manager_spans_multiple_domains, sm_index}`
-
-That rule leaks upward into:
+That rule used to leak upward into:
 
 - slave PREOP registration
 - reconnect caching
@@ -54,47 +49,39 @@ Relevant references:
 - `docs/references/igh/documentation/ethercat_doc.tex`
 - `docs/references/igh/master/slave_config.c`
 
-## Current Mismatch
+## Landed
 
-### Planner
+The core refactor has landed:
 
-Current `ProcessDataPlan` collapses each SyncManager into one `SmGroup` with a
-single `domain_id`.
+1. the planner now models one physical SM area plus per-domain attachments
+2. reconnect caches are keyed per `{domain_id, sm_key}`
+3. signal decode indexes are keyed per `{domain_id, sm_key}`
+4. one FMMU is allocated per `{domain, sync_manager}` attachment
+5. split output SMs use one canonical SM image in the slave and fan out the
+   merged bytes into every attached domain
+6. the maintained multi-domain example uses a real split-SM layout on hardware
 
-Implication:
+The remaining work is now mostly about recovery proof, documentation cleanup,
+and moving this plan out of `active/` once those are complete.
 
-- one SM cannot legally appear in two domains
-- the refactor boundary starts in the planner, not in `Domain`
+## Remaining Gaps
 
-### Registration and reconnect
+### Recovery proof
 
-Current registration caching is effectively keyed by `{sm_key, domain_id}` data
-stored per signal, but the planner only ever produces one domain per SM.
+The reconnect cache and master-owned recovery logic are now attachment-aware,
+but the maintained fault-tolerance path still needs an explicit split-SM
+reconnect scenario so this stays proven end-to-end.
 
-Implication:
+### Documentation drift
 
-- reconnect reuse works for one attachment per SM
-- reconnect cannot express one cached logical offset per `{domain, sm_key}`
+Several design notes in `docs/design-docs/` still describe the old restriction
+as current. Those docs need either an addendum or a follow-up cleanup pass.
 
-### Input dispatch
+### Bit-level packing boundary
 
-Current `signal_registrations_by_sm` is keyed by `sm_key` only.
-
-Implication:
-
-- `{:domain_input, domain_id, ...}` is already sent by `Domain`
-- but the slave-side decode index ignores `domain_id`
-- two domains watching the same SM cannot be kept distinct
-
-### Output staging
-
-Current `write_output` reads and writes exactly one domain image for the signal.
-
-Implication:
-
-- if one output SM is split across multiple domains, one domain can overwrite
-  the other domain's bits on the next cycle
-- this is the highest-risk part of the refactor
+The library now supports split attachments at the current byte-oriented process
+data boundary. If bit-level packing across domains becomes a goal, that should
+be a separate follow-up decision rather than being smuggled into this plan.
 
 ## Target Model
 
@@ -132,7 +119,7 @@ This is required so:
 - faster domains do not revert bits owned by slower domains
 - every LRW frame for that SM carries the same coherent full buffer
 
-## Execution Order
+## Execution Record
 
 ## Phase 1 - Refactor the planner model
 
@@ -150,11 +137,13 @@ for one SM.
 3. keep the rule that each attachment covers the full SM byte range
 4. preserve deterministic ordering for FMMU allocation and tests
 
-### Acceptance
+### Result
 
 1. planner accepts requested signals from the same SM in multiple domains
 2. planner still rejects invalid signal ranges and missing SII/SM data
 3. planner output makes attachment boundaries explicit
+
+Status: DONE
 
 ## Phase 2 - Key runtime state by attachment, not bare SM
 
@@ -169,11 +158,13 @@ Make registration, reconnect, and input decode attachment-aware.
 3. keep `Domain` notifications attachment-aware all the way to signal decode
 4. update reconnect reuse to validate one cached offset per attachment
 
-### Acceptance
+### Result
 
 1. one input SM can be present in multiple domains without decode collisions
 2. reconnect reuse works when the same SM is registered into multiple domains
 3. tests cover per-attachment cache hits and misses
+
+Status: DONE
 
 ## Phase 3 - Add coherent split-output support
 
@@ -192,11 +183,13 @@ fighting each other.
 4. ensure initial PREOP registration seeds every attached output domain with the
    same starting SM bytes
 
-### Acceptance
+### Result
 
 1. two output signals in the same SM can live in different domains
 2. writing one signal does not clear sibling bits owned by another domain
 3. mixed-rate domains remain coherent across repeated writes
+
+Status: DONE
 
 ## Phase 4 - FMMU allocation and limits
 
@@ -211,10 +204,12 @@ Match the reference-master model of one FMMU per `{domain, sync_manager}`.
 3. document the practical limit:
    - maximum domains per slave is bounded by available FMMUs
 
-### Acceptance
+### Result
 
 1. split-SM multi-domain configs program separate FMMUs
 2. FMMU exhaustion fails fast in PREOP with a targeted error
+
+Status: DONE
 
 ## Phase 5 - Update examples, docs, and hardware validation
 
@@ -241,27 +236,29 @@ Suggested validation scenarios:
 3. reconnect:
    - disconnect and reconnect a slave whose SM is attached to multiple domains
 
-### Acceptance
+### Result
 
 1. docs no longer claim one SM maps to exactly one domain
 2. hardware examples show split-SM domains working
 3. fault-tolerance paths still recover attachment caches correctly
 
+Status: IN PROGRESS
+Completed:
+- `examples/multi_domain.exs` now uses a real split-SM layout
+- `examples/README.md` documents split-domain behavior
+- live hardware validation exists for split input/output attachments
+
+Remaining:
+- add or extend a maintained recovery scenario that exercises split-SM
+  disconnect/reconnect under the master-owned recovery flow
+
 ## Risks and Decision Gates
 
-### Highest risk: split outputs
+### Highest remaining risk: recovery regressions
 
-Split-input support is mechanically straightforward.
-
-Split-output support is not.
-
-If Phase 3 is not complete, we should not partially expose multi-domain output
-SM support. The safe fallback milestone is:
-
-- allow multi-domain input SMs
-- keep output SM splitting rejected with an explicit error
-
-That is a valid intermediate checkpoint, but not the final target.
+The data model refactor itself is landed. The main risk now is that future
+recovery changes regress split attachments by rebuilding only one attachment or
+by losing per-domain cached logical offsets.
 
 ### WKC and domain semantics
 

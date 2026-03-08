@@ -665,6 +665,64 @@ defmodule EtherCAT.SlaveTest do
              )
   end
 
+  test "cached_domain_offset keeps split-SM reconnect caches attachment-aware" do
+    sm_group = %SmGroup{
+      sm_index: 3,
+      sm_key: {:sm, 3},
+      direction: :input,
+      phys: 0x1200,
+      ctrl: 0x00,
+      total_sm_size: 2,
+      fmmu_type: 0x01,
+      attachments: [
+        %DomainAttachment{
+          domain_id: :fast,
+          registrations: [%{signal_name: :ch1, bit_offset: 0, bit_size: 8}]
+        },
+        %DomainAttachment{
+          domain_id: :slow,
+          registrations: [%{signal_name: :ch2, bit_offset: 8, bit_size: 8}]
+        }
+      ]
+    }
+
+    [fast_attachment, slow_attachment] = sm_group.attachments
+
+    registrations = %{
+      ch1: %{
+        domain_id: :fast,
+        sm_key: {:sm, 3},
+        direction: :input,
+        bit_offset: 0,
+        bit_size: 8,
+        logical_address: 0x3000,
+        sm_size: 2
+      },
+      ch2: %{
+        domain_id: :slow,
+        sm_key: {:sm, 3},
+        direction: :input,
+        bit_offset: 8,
+        bit_size: 8,
+        logical_address: 0x3010,
+        sm_size: 2
+      }
+    }
+
+    assert {:ok, 0x3000} =
+             EtherCAT.Slave.cached_domain_offset(registrations, sm_group, fast_attachment)
+
+    assert {:ok, 0x3010} =
+             EtherCAT.Slave.cached_domain_offset(registrations, sm_group, slow_attachment)
+
+    assert :error =
+             EtherCAT.Slave.cached_domain_offset(
+               put_in(registrations, [:ch2, :bit_offset], 0),
+               sm_group,
+               slow_attachment
+             )
+  end
+
   test "preop sync-only reconfigure rejects invalid sync_mode mailbox steps" do
     from = {self(), make_ref()}
     sync = %EtherCAT.Slave.Sync.Config{mode: :sync0, sync0: %{pulse_ns: 5_000, shift_ns: 0}}
