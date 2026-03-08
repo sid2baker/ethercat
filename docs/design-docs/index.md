@@ -12,6 +12,8 @@ Design docs capture decisions, tradeoffs, and deep technical analysis.
   Narrative summary of the project and hardware observations.
 - [docs/design-docs/harness-engineering.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/design-docs/harness-engineering.md)
   Agent-first repo operating model for this library.
+- [docs/design-docs/lifecycle-spec-alignment-review.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/design-docs/lifecycle-spec-alignment-review.md)
+  Review of master/slave/domain/DC lifecycle alignment against the EtherCAT reference chapters and recent resilience work.
 - [docs/design-docs/sid-19-code-review.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/design-docs/sid-19-code-review.md)
   Historical review notes for SID-19 work.
 

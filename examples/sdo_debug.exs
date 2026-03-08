@@ -34,7 +34,7 @@ EtherCAT.start(
 :ok = EtherCAT.await_running(10_000)
 
 bus = EtherCAT.bus()
-[{:thermo, station, _}] = EtherCAT.slaves()
+[%{name: :thermo, station: station}] = EtherCAT.slaves()
 
 IO.puts("station: 0x#{Integer.to_string(station, 16)}\n")
 
@@ -100,9 +100,7 @@ Process.sleep(300)
 
 <<_::3, full_after_unpadded::1, _::4>> = <<st_a>>
 
-IO.puts(
-  "    SM1 status : 0x#{Integer.to_string(st_a, 16)}  bit3=#{full_after_unpadded == 1}"
-)
+IO.puts("    SM1 status : 0x#{Integer.to_string(st_a, 16)}  bit3=#{full_after_unpadded == 1}")
 
 # ── 6. Reset SM0 by rewriting its register, then test B ──────────────────────
 

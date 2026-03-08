@@ -36,9 +36,7 @@ defmodule EtherCAT.Master do
   @init_poll_interval_ms 10
 
   defstruct [
-    :bus_pid,
     :bus_ref,
-    :dc_pid,
     # station address of the DC reference clock slave (nil if no DC)
     :dc_ref_station,
     :dc_stations,
@@ -57,6 +55,8 @@ defmodule EtherCAT.Master do
     pending_preop: MapSet.new(),
     # %{slave_name => {target_state, reason}} for startup activation failures
     activation_failures: %{},
+    # %{fault_key => reason} for runtime degradations that are not retried via Slave.request/2
+    runtime_faults: %{},
     # last terminal session failure retained after returning to :idle
     last_failure: nil,
     # blocked await_running callers — replied when :running is entered
@@ -78,8 +78,8 @@ defmodule EtherCAT.Master do
     - `:interface` (required) — e.g. `"eth0"`
     - `:slaves` — list of slave config entries, default `[]`. Each entry is a
       `%EtherCAT.Slave.Config{}` (or equivalent keyword list) with keys: `:name`, `:driver`,
-      `:config`, `:process_data`, and `:target_state`. `process_data` declares what
-      the slave should register while in PREOP:
+      `:config`, `:process_data`, `:target_state`, and optional `:health_poll_ms`.
+      `process_data` declares what the slave should register while in PREOP:
       - `:none`
       - `{:all, domain_id}`
       - `[{pdo_name, domain_id}]`
@@ -107,17 +107,25 @@ defmodule EtherCAT.Master do
     end
   end
 
-  @doc "Return `[%{name:, station:, pid:}]` for all named slaves."
+  @doc "Return `[%{name:, station:, server:, pid:}]` for all named slaves."
   @spec slaves() ::
-          [%{name: atom(), station: non_neg_integer(), pid: pid()}] | {:error, :not_started}
+          [
+            %{
+              name: atom(),
+              station: non_neg_integer(),
+              server: :gen_statem.server_ref(),
+              pid: pid() | nil
+            }
+          ]
+          | {:error, :not_started}
   def slaves, do: safe_call(:slaves)
 
   @doc "Return `[{id, cycle_time_us, pid}]` for all running domains."
   @spec domains() :: list() | {:error, :not_started}
   def domains, do: safe_call(:domains)
 
-  @doc "Return the bus pid."
-  @spec bus() :: pid() | nil | {:error, :not_started}
+  @doc "Return the stable bus server reference."
+  @spec bus() :: Bus.server() | nil | {:error, :not_started}
   def bus, do: safe_call(:bus)
 
   @doc "Return the current master state atom."
@@ -186,7 +194,8 @@ defmodule EtherCAT.Master do
 
   This waits for DC/domain runtime to start and for `:op` promotion to complete.
   Returns `{:error, :not_started}` if the master is idle or not running.
-  Returns `{:error, {:activation_failed, failures}}` if activation falls into degraded mode.
+  Returns `{:error, {:activation_failed, failures}}` for startup degradations and
+  `{:error, {:runtime_degraded, faults}}` when runtime health has degraded.
   """
   @spec await_operational(timeout_ms :: pos_integer()) :: :ok | {:error, term()}
   def await_operational(timeout_ms \\ 10_000) do
@@ -214,7 +223,7 @@ defmodule EtherCAT.Master do
   @spec await_dc_locked(timeout_ms :: pos_integer()) :: :ok | {:error, term()}
   def await_dc_locked(timeout_ms \\ 5_000) do
     case safe_call(:dc_runtime) do
-      {:ok, dc_pid} -> DC.await_locked(dc_pid, timeout_ms)
+      {:ok, dc_server} -> DC.await_locked(dc_server, timeout_ms)
       {:error, _} = err -> err
     end
   end
@@ -256,9 +265,7 @@ defmodule EtherCAT.Master do
 
       new_data = %{
         data
-        | bus_pid: bus_pid,
-          bus_ref: bus_ref,
-          dc_pid: nil,
+        | bus_ref: bus_ref,
           base_station: start_config.base_station,
           dc_stations: [],
           slave_configs: start_config.slave_config,
@@ -271,6 +278,7 @@ defmodule EtherCAT.Master do
           scan_window: [],
           pending_preop: MapSet.new(),
           activation_failures: %{},
+          runtime_faults: %{},
           last_failure: nil,
           await_callers: [],
           await_operational_callers: []
@@ -337,7 +345,7 @@ defmodule EtherCAT.Master do
     now_ms = System.monotonic_time(:millisecond)
 
     new_window =
-      case Bus.transaction(data.bus_pid, Transaction.brd(Registers.esc_type())) do
+      case Bus.transaction(bus_server(data), Transaction.brd(Registers.esc_type())) do
         {:ok, [%{wkc: n}]} ->
           # Prepend new reading; keep enough history to measure a full stable span
           window = [{now_ms, n} | data.scan_window]
@@ -553,24 +561,17 @@ defmodule EtherCAT.Master do
   # :degraded ----------------------------------------------------------------
 
   def handle_event(:enter, _old, :degraded, data) do
-    Logger.warning("[Master] degraded startup; retrying failed slave promotions")
+    Logger.warning("[Master] degraded — #{degraded_summary(data)}")
 
-    reply_await_callers(
-      data.await_callers,
-      {:error, {:activation_failed, data.activation_failures}}
-    )
-
-    reply_await_callers(
-      data.await_operational_callers,
-      {:error, {:activation_failed, data.activation_failures}}
-    )
+    reply_await_callers(data.await_callers, degraded_reply(data))
+    reply_await_callers(data.await_operational_callers, degraded_reply(data))
 
     {:keep_state, %{data | await_callers: [], await_operational_callers: []},
      [{{:timeout, :degraded_retry}, @degraded_retry_ms, nil}]}
   end
 
   def handle_event({:timeout, :degraded_retry}, nil, :degraded, data) do
-    case retry_failed_activation(data) do
+    case retry_degraded_state(data) do
       {:ok, healed_data} ->
         {:next_state, :running, healed_data}
 
@@ -586,13 +587,11 @@ defmodule EtherCAT.Master do
   end
 
   def handle_event({:call, from}, :await_running, :degraded, data) do
-    {:keep_state_and_data,
-     [{:reply, from, {:error, {:activation_failed, data.activation_failures}}}]}
+    {:keep_state_and_data, [{:reply, from, degraded_reply(data)}]}
   end
 
   def handle_event({:call, from}, :await_operational, :degraded, data) do
-    {:keep_state_and_data,
-     [{:reply, from, {:error, {:activation_failed, data.activation_failures}}}]}
+    {:keep_state_and_data, [{:reply, from, degraded_reply(data)}]}
   end
 
   def handle_event({:call, from}, {:configure_slave, _slave_name, _spec}, :degraded, _data) do
@@ -630,18 +629,18 @@ defmodule EtherCAT.Master do
     {:keep_state_and_data, [{:reply, from, {:error, :dc_disabled}}]}
   end
 
-  def handle_event({:call, from}, :dc_runtime, _state, %{dc_pid: dc_pid}) when is_pid(dc_pid) do
-    {:keep_state_and_data, [{:reply, from, {:ok, dc_pid}}]}
-  end
-
   def handle_event({:call, from}, :dc_runtime, _state, _data) do
-    {:keep_state_and_data, [{:reply, from, {:error, :dc_inactive}}]}
+    if dc_running?() do
+      {:keep_state_and_data, [{:reply, from, {:ok, dc_server()}}]}
+    else
+      {:keep_state_and_data, [{:reply, from, {:error, :dc_inactive}}]}
+    end
   end
 
   def handle_event({:call, from}, :slaves, _state, data) do
     result =
-      Enum.map(data.slaves, fn {name, station, pid} ->
-        %{name: name, station: station, pid: pid}
+      Enum.map(data.slaves, fn {name, station} ->
+        %{name: name, station: station, server: slave_server(name), pid: lookup_slave_pid(name)}
       end)
 
     {:keep_state_and_data, [{:reply, from, result}]}
@@ -661,7 +660,7 @@ defmodule EtherCAT.Master do
   end
 
   def handle_event({:call, from}, :bus, _state, data) do
-    {:keep_state_and_data, [{:reply, from, data.bus_pid}]}
+    {:keep_state_and_data, [{:reply, from, bus_public_ref(data)}]}
   end
 
   # Catch-all for unrecognized calls in any active state
@@ -675,17 +674,25 @@ defmodule EtherCAT.Master do
     Logger.error("[Master] bus crashed (#{inspect(reason)}) — returning to idle")
     reply_await_callers(data.await_callers, {:error, {:bus_down, reason}})
     reply_await_callers(data.await_operational_callers, {:error, {:bus_down, reason}})
-    stop_session(%{data | bus_pid: nil})
+    stop_session(data)
     {:next_state, :idle, reset_master(failure_snapshot(:bus_down, reason))}
   end
 
   # Domain process crashed unexpectedly
-  def handle_event(:info, {:DOWN, ref, :process, _pid, reason}, _state, data)
+  def handle_event(:info, {:DOWN, ref, :process, _pid, reason}, state, data)
       when is_map_key(data.domain_refs, ref) do
     {id, refs} = Map.pop(data.domain_refs, ref)
     Logger.error("[Master] domain #{id} crashed: #{inspect(reason)}")
     Telemetry.domain_crashed(id, reason)
-    {:keep_state, %{data | domain_refs: refs}}
+
+    data_with_refs = %{data | domain_refs: refs}
+    degraded_data = put_runtime_fault(data_with_refs, {:domain, id}, {:crashed, reason})
+
+    case state do
+      :running -> {:next_state, :degraded, degraded_data}
+      :degraded -> {:keep_state, degraded_data}
+      _other -> {:keep_state, degraded_data}
+    end
   end
 
   # Slave process crashed unexpectedly
@@ -703,8 +710,44 @@ defmodule EtherCAT.Master do
   end
 
   # Domain stopped cycling due to consecutive misses
-  def handle_event(:info, {:domain_stopped, id, reason}, _state, _data) do
+  def handle_event(:info, {:domain_stopped, id, reason}, state, data) do
     Logger.error("[Master] domain #{id} stopped cycling: #{inspect(reason)}")
+    degraded_data = put_runtime_fault(data, {:domain, id}, {:stopped, reason})
+
+    case state do
+      :running -> {:next_state, :degraded, degraded_data}
+      :degraded -> {:keep_state, degraded_data}
+      _other -> :keep_state_and_data
+    end
+  end
+
+  def handle_event(:info, {:domain_cycle_invalid, id, reason}, :running, data) do
+    Logger.warning("[Master] domain #{id} cycle invalid: #{inspect(reason)} — entering degraded")
+    {:next_state, :degraded, put_runtime_fault(data, {:domain, id}, {:cycle_invalid, reason})}
+  end
+
+  def handle_event(:info, {:domain_cycle_invalid, id, reason}, :degraded, data) do
+    Logger.warning("[Master] domain #{id} cycle still invalid: #{inspect(reason)}")
+    {:keep_state, put_runtime_fault(data, {:domain, id}, {:cycle_invalid, reason})}
+  end
+
+  def handle_event(:info, {:domain_cycle_invalid, _id, _reason}, _state, _data) do
+    :keep_state_and_data
+  end
+
+  def handle_event(:info, {:domain_cycle_recovered, id}, :degraded, data) do
+    Logger.info("[Master] domain #{id} cycle recovered")
+
+    case maybe_resume_running(clear_runtime_fault(data, {:domain, id})) do
+      {:ok, healed_data} ->
+        {:next_state, :running, healed_data}
+
+      {:degraded, still_degraded} ->
+        {:keep_state, still_degraded}
+    end
+  end
+
+  def handle_event(:info, {:domain_cycle_recovered, _id}, _state, _data) do
     :keep_state_and_data
   end
 
@@ -741,15 +784,24 @@ defmodule EtherCAT.Master do
       :ok ->
         new_failures = Map.delete(data.activation_failures, name)
 
-        if map_size(new_failures) == 0 do
-          Logger.info("[Master] all slaves recovered — returning to :running")
-          {:next_state, :running, %{data | activation_failures: %{}}}
-        else
-          {:keep_state, %{data | activation_failures: new_failures}}
+        recovered_data =
+          data
+          |> Map.put(:activation_failures, new_failures)
+          |> maybe_restart_stopped_domains()
+
+        case maybe_resume_running(recovered_data) do
+          {:ok, healed_data} ->
+            {:next_state, :running, healed_data}
+
+          {:degraded, still_degraded} ->
+            {:keep_state, still_degraded}
         end
 
       {:error, reason} ->
-        Logger.warning("[Master] slave #{name} :op request failed after reconnect: #{inspect(reason)}")
+        Logger.warning(
+          "[Master] slave #{name} :op request failed after reconnect: #{inspect(reason)}"
+        )
+
         new_failures = Map.put(data.activation_failures, name, {:preop, reason})
         {:keep_state, %{data | activation_failures: new_failures}}
     end
@@ -783,7 +835,10 @@ defmodule EtherCAT.Master do
   defp normalize_start_options(opts), do: Config.normalize_start_options(opts)
 
   defp start_session_bus(bus_opts) do
-    DynamicSupervisor.start_child(EtherCAT.SessionSupervisor, {Bus, bus_opts})
+    DynamicSupervisor.start_child(
+      EtherCAT.SessionSupervisor,
+      {Bus, Keyword.put(bus_opts, :name, Bus)}
+    )
   end
 
   defp configure_discovered_slave(%{activation_phase: :operational}, _slave_name, _spec) do
@@ -832,7 +887,8 @@ defmodule EtherCAT.Master do
         driver: updated_config.driver,
         config: updated_config.config,
         process_data: updated_config.process_data,
-        sync: updated_config.sync
+        sync: updated_config.sync,
+        health_poll_ms: updated_config.health_poll_ms
       )
     else
       :ok
@@ -849,25 +905,27 @@ defmodule EtherCAT.Master do
     }
   end
 
-  defp tune_bus_frame_timeout(%{bus_pid: nil}, _slave_count), do: :ok
-
   defp tune_bus_frame_timeout(data, slave_count) do
-    target_ms = recommended_frame_timeout_ms(data, slave_count)
+    if bus_running?() do
+      target_ms = recommended_frame_timeout_ms(data, slave_count)
 
-    case Bus.set_frame_timeout(data.bus_pid, target_ms) do
-      :ok ->
-        Logger.info(
-          "[Master] bus frame timeout set to #{target_ms}ms (slaves=#{slave_count}, dc_cycle_ns=#{inspect(dc_cycle_ns(data))})"
-        )
+      case Bus.set_frame_timeout(bus_server(data), target_ms) do
+        :ok ->
+          Logger.info(
+            "[Master] bus frame timeout set to #{target_ms}ms (slaves=#{slave_count}, dc_cycle_ns=#{inspect(dc_cycle_ns(data))})"
+          )
 
-        :ok
+          :ok
 
-      {:error, reason} ->
-        Logger.warning(
-          "[Master] failed to tune bus frame timeout to #{target_ms}ms: #{inspect(reason)}"
-        )
+        {:error, reason} ->
+          Logger.warning(
+            "[Master] failed to tune bus frame timeout to #{target_ms}ms: #{inspect(reason)}"
+          )
 
-        :ok
+          :ok
+      end
+    else
+      :ok
     end
   end
 
@@ -914,11 +972,8 @@ defmodule EtherCAT.Master do
          :ok <- reset_slaves_to_init(data, stations),
          {:ok, dc_ref_station, dc_stations} <- initialize_distributed_clocks(data, slave_topology),
          {:ok, domain_refs} <- start_domains(data, dc_ref_station),
-         {:ok, effective_slave_configs, slaves, pending_preop, activatable_slaves} <-
+         {:ok, effective_slave_configs, slaves, pending_preop, activatable_slaves, slave_refs} <-
            start_slaves(data, count, if(dc_ref_station, do: dc_cycle_ns(data), else: nil)) do
-      slave_refs =
-        Map.new(slaves, fn {name, _station, pid} -> {Process.monitor(pid), name} end)
-
       {:ok,
        %{
          data
@@ -950,7 +1005,7 @@ defmodule EtherCAT.Master do
         station = station_for_position(data, pos)
 
         case Bus.transaction(
-               data.bus_pid,
+               bus_server(data),
                Transaction.apwr(pos, Registers.station_address(station))
              ) do
           {:ok, [%{wkc: 1}]} ->
@@ -972,7 +1027,7 @@ defmodule EtherCAT.Master do
 
   defp read_topology_statuses(data, stations) do
     Enum.reduce_while(stations, {:ok, []}, fn station, {:ok, acc} ->
-      case Bus.transaction(data.bus_pid, Transaction.fprd(station, Registers.dl_status())) do
+      case Bus.transaction(bus_server(data), Transaction.fprd(station, Registers.dl_status())) do
         {:ok, [%{data: status, wkc: 1}]} ->
           {:cont, {:ok, [{station, status} | acc]}}
 
@@ -1003,7 +1058,7 @@ defmodule EtherCAT.Master do
   end
 
   defp reset_slaves_to_default(data, count) do
-    case Bus.transaction(data.bus_pid, InitReset.transaction()) do
+    case Bus.transaction(bus_server(data), InitReset.transaction()) do
       {:ok, replies} ->
         case InitReset.validate_results(replies, count) do
           :ok ->
@@ -1019,7 +1074,7 @@ defmodule EtherCAT.Master do
   end
 
   defp broadcast_init_ack(data, count) do
-    case Bus.transaction(data.bus_pid, Transaction.bwr(Registers.al_control(0x11))) do
+    case Bus.transaction(bus_server(data), Transaction.bwr(Registers.al_control(0x11))) do
       {:ok, replies} ->
         case InitReset.validate_init_ack_reply(replies, count) do
           :ok ->
@@ -1081,7 +1136,10 @@ defmodule EtherCAT.Master do
   end
 
   defp write_al_control(data, station, control) do
-    case Bus.transaction(data.bus_pid, Transaction.fpwr(station, Registers.al_control(control))) do
+    case Bus.transaction(
+           bus_server(data),
+           Transaction.fpwr(station, Registers.al_control(control))
+         ) do
       {:ok, [%{wkc: 1}]} -> :ok
       {:ok, [%{wkc: wkc}]} -> {:error, {:unexpected_wkc, wkc}}
       {:error, reason} -> {:error, reason}
@@ -1089,7 +1147,7 @@ defmodule EtherCAT.Master do
   end
 
   defp read_init_status(data, station) do
-    case Bus.transaction(data.bus_pid, Transaction.fprd(station, Registers.al_status())) do
+    case Bus.transaction(bus_server(data), Transaction.fprd(station, Registers.al_status())) do
       {:ok, [%{data: <<_::3, error::1, state::4, _::8>>, wkc: 1}]} ->
         %{
           station: station,
@@ -1107,7 +1165,7 @@ defmodule EtherCAT.Master do
   end
 
   defp read_al_status_code(data, station) do
-    case Bus.transaction(data.bus_pid, Transaction.fprd(station, Registers.al_status_code())) do
+    case Bus.transaction(bus_server(data), Transaction.fprd(station, Registers.al_status_code())) do
       {:ok, [%{data: <<code::16-little>>, wkc: 1}]} -> code
       _ -> nil
     end
@@ -1125,7 +1183,7 @@ defmodule EtherCAT.Master do
     if is_nil(data.dc_config) do
       {:ok, nil, []}
     else
-      case DC.initialize_clocks(data.bus_pid, slave_topology) do
+      case DC.initialize_clocks(bus_server(data), slave_topology) do
         {:ok, ref_station, dc_stations} ->
           Logger.info("[Master] DC initialized, ref=0x#{Integer.to_string(ref_station, 16)}")
           {:ok, ref_station, dc_stations}
@@ -1150,7 +1208,7 @@ defmodule EtherCAT.Master do
 
       case DynamicSupervisor.start_child(
              EtherCAT.SessionSupervisor,
-             {Domain, [{:bus, data.bus_pid} | domain_opts]}
+             {Domain, [{:bus, bus_server(data)} | domain_opts]}
            ) do
         {:ok, pid} ->
           {:cont, {:ok, Map.put(refs, Process.monitor(pid), id)}}
@@ -1164,49 +1222,52 @@ defmodule EtherCAT.Master do
     end)
   end
 
-  # Returns {:ok, effective_config, slaves_list, pending_preop_names, activatable_names}
+  # Returns {:ok, effective_config, slaves_list, pending_preop_names, activatable_names, slave_refs}
   defp start_slaves(data, bus_count, dc_cycle_ns) do
     with {:ok, effective_config} <-
            Config.effective_slave_config(data.slave_configs || [], bus_count) do
       Enum.with_index(effective_config)
-      |> Enum.reduce_while({:ok, [], [], []}, fn {entry, pos},
-                                                 {:ok, slave_acc, pending_acc, activatable_acc} ->
-        station = station_for_position(data, pos)
-        name = entry.name
+      |> Enum.reduce_while(
+        {:ok, [], [], [], %{}},
+        fn {entry, pos}, {:ok, slave_acc, pending_acc, activatable_acc, slave_refs} ->
+          station = station_for_position(data, pos)
+          name = entry.name
 
-        opts = [
-          bus: data.bus_pid,
-          station: station,
-          name: name,
-          driver: entry.driver,
-          config: entry.config,
-          process_data: entry.process_data,
-          dc_cycle_ns: dc_cycle_ns,
-          sync: entry.sync,
-          health_poll_ms: entry.health_poll_ms
-        ]
+          opts = [
+            bus: bus_server(data),
+            station: station,
+            name: name,
+            driver: entry.driver,
+            config: entry.config,
+            process_data: entry.process_data,
+            dc_cycle_ns: dc_cycle_ns,
+            sync: entry.sync,
+            health_poll_ms: entry.health_poll_ms
+          ]
 
-        case DynamicSupervisor.start_child(EtherCAT.SlaveSupervisor, {Slave, opts}) do
-          {:ok, pid} ->
-            next_activatable =
-              if entry.target_state == :op do
-                [name | activatable_acc]
-              else
-                activatable_acc
-              end
+          case DynamicSupervisor.start_child(EtherCAT.SlaveSupervisor, {Slave, opts}) do
+            {:ok, pid} ->
+              next_activatable =
+                if entry.target_state == :op do
+                  [name | activatable_acc]
+                else
+                  activatable_acc
+                end
 
-            {:cont,
-             {:ok, [{name, station, pid} | slave_acc], [name | pending_acc], next_activatable}}
+              {:cont,
+               {:ok, [{name, station} | slave_acc], [name | pending_acc], next_activatable,
+                Map.put(slave_refs, Process.monitor(pid), name)}}
 
-          {:error, reason} ->
-            {:halt,
-             {:error, {:slave_start_failed, name, station, reason}, Enum.reverse(slave_acc)}}
+            {:error, reason} ->
+              {:halt,
+               {:error, {:slave_start_failed, name, station, reason}, Enum.reverse(slave_acc)}}
+          end
         end
-      end)
+      )
       |> case do
-        {:ok, slaves, pending, activatable} ->
+        {:ok, slaves, pending, activatable, slave_refs} ->
           {:ok, effective_config, Enum.reverse(slaves), Enum.reverse(pending),
-           Enum.reverse(activatable)}
+           Enum.reverse(activatable), slave_refs}
 
         {:error, reason, started_slaves} ->
           {:error, reason, started_slaves}
@@ -1227,14 +1288,12 @@ defmodule EtherCAT.Master do
     Logger.info("[Master] activating — starting DC, cyclic domains, and advancing slaves to :op")
 
     case start_dc_runtime(data) do
-      {:ok, dc_pid} ->
-        activation_data = %{data | dc_pid: dc_pid}
+      :ok ->
+        with :ok <- start_domain_cycles(data),
+             :ok <- await_dc_lock_if_requested(data) do
+          activation_failures = activate_required_slaves(data.activatable_slaves)
 
-        with :ok <- start_domain_cycles(activation_data),
-             :ok <- await_dc_lock_if_requested(activation_data) do
-          activation_failures = activate_required_slaves(activation_data.activatable_slaves)
-
-          activated_data = %{activation_data | activation_failures: activation_failures}
+          activated_data = %{data | activation_failures: activation_failures}
 
           if map_size(activation_failures) == 0 do
             {:ok, %{activated_data | activation_phase: :operational}}
@@ -1247,7 +1306,7 @@ defmodule EtherCAT.Master do
           end
         else
           {:error, reason} ->
-            {:error, reason, activation_data}
+            {:error, reason, data}
         end
 
       {:error, reason} ->
@@ -1261,37 +1320,32 @@ defmodule EtherCAT.Master do
     Enum.each(data.domain_refs, fn {ref, _id} -> Process.demonitor(ref, [:flush]) end)
     Enum.each(data.slave_refs, fn {ref, _name} -> Process.demonitor(ref, [:flush]) end)
 
-    if data.dc_pid do
-      DynamicSupervisor.terminate_child(EtherCAT.SessionSupervisor, data.dc_pid)
-    end
+    stop_dc_runtime()
 
-    Enum.each(data.slaves || [], fn entry ->
-      pid = elem(entry, tuple_size(entry) - 1)
-      DynamicSupervisor.terminate_child(EtherCAT.SlaveSupervisor, pid)
+    Enum.each(data.slaves || [], fn {name, _station} ->
+      terminate_slave(name)
     end)
 
     Enum.each(Config.domain_ids(data.domain_configs || []), fn domain_id ->
       terminate_domain(domain_id)
     end)
 
-    if data.bus_pid do
-      DynamicSupervisor.terminate_child(EtherCAT.SessionSupervisor, data.bus_pid)
-    end
+    stop_bus()
   end
 
-  defp start_dc_runtime(%{dc_ref_station: nil}), do: {:ok, nil}
+  defp start_dc_runtime(%{dc_ref_station: nil}), do: :ok
 
   defp start_dc_runtime(data) do
     case DynamicSupervisor.start_child(
            EtherCAT.SessionSupervisor,
            {DC,
-            bus: data.bus_pid,
+            bus: bus_server(data),
             ref_station: data.dc_ref_station,
             monitored_stations: data.dc_stations,
             config: data.dc_config}
          ) do
-      {:ok, pid} ->
-        {:ok, pid}
+      {:ok, _pid} ->
+        :ok
 
       {:error, reason} ->
         {:error, {:dc_start_failed, reason}}
@@ -1317,21 +1371,19 @@ defmodule EtherCAT.Master do
   defp await_dc_lock_if_requested(data) do
     timeout_ms = data.dc_config.lock_timeout_ms
 
-    case data.dc_pid do
-      pid when is_pid(pid) ->
-        case DC.await_locked(pid, timeout_ms) do
-          :ok ->
-            :ok
+    if dc_running?() do
+      case DC.await_locked(dc_server(), timeout_ms) do
+        :ok ->
+          :ok
 
-          {:error, :timeout} ->
-            {:error, {:dc_lock_timeout, dc_status_for(data)}}
+        {:error, :timeout} ->
+          {:error, {:dc_lock_timeout, dc_status_for(data)}}
 
-          {:error, reason} ->
-            {:error, {:dc_lock_failed, reason}}
-        end
-
-      _ ->
-        {:error, {:dc_lock_unavailable, :no_active_dc_runtime}}
+        {:error, reason} ->
+          {:error, {:dc_lock_failed, reason}}
+      end
+    else
+      {:error, {:dc_lock_unavailable, :no_active_dc_runtime}}
     end
   end
 
@@ -1360,7 +1412,14 @@ defmodule EtherCAT.Master do
     end)
   end
 
-  defp retry_failed_activation(%{activation_failures: failures} = data) do
+  defp retry_degraded_state(%{activation_failures: failures} = data)
+       when map_size(failures) == 0 do
+    data
+    |> maybe_restart_stopped_domains()
+    |> maybe_resume_running()
+  end
+
+  defp retry_degraded_state(%{activation_failures: failures} = data) do
     retried_failures =
       Enum.reduce(failures, %{}, fn
         {name, {:down, _}}, acc ->
@@ -1381,12 +1440,11 @@ defmodule EtherCAT.Master do
           end
       end)
 
-    if map_size(retried_failures) == 0 do
-      Logger.info("[Master] degraded recovery succeeded; all activatable slaves are in :op")
-      {:ok, %{data | activation_failures: %{}}}
-    else
-      {:degraded, %{data | activation_failures: retried_failures}}
-    end
+    updated_data = %{data | activation_failures: retried_failures}
+
+    updated_data
+    |> maybe_restart_stopped_domains_when_ready()
+    |> maybe_resume_running()
   end
 
   defp phase_for(:idle, _data), do: :idle
@@ -1402,6 +1460,84 @@ defmodule EtherCAT.Master do
 
   defp dc_cycle_ns(_data), do: nil
 
+  defp put_runtime_fault(data, key, reason) do
+    %{data | runtime_faults: Map.put(data.runtime_faults, key, reason)}
+  end
+
+  defp clear_runtime_fault(data, key) do
+    %{data | runtime_faults: Map.delete(data.runtime_faults, key)}
+  end
+
+  defp maybe_restart_stopped_domains_when_ready(%{activation_failures: failures} = data)
+       when map_size(failures) == 0 do
+    maybe_restart_stopped_domains(data)
+  end
+
+  defp maybe_restart_stopped_domains_when_ready(data), do: data
+
+  defp maybe_restart_stopped_domains(%{runtime_faults: runtime_faults} = data) do
+    Enum.reduce(runtime_faults, data, fn
+      {{:domain, domain_id}, {:stopped, reason}}, acc ->
+        restart_stopped_domain(acc, domain_id, reason)
+
+      _other_fault, acc ->
+        acc
+    end)
+  end
+
+  defp restart_stopped_domain(data, domain_id, reason) do
+    case Domain.start_cycling(domain_id) do
+      :ok ->
+        Logger.info(
+          "[Master] restarted domain #{domain_id} after stop caused by #{inspect(reason)}"
+        )
+
+        data
+
+      {:error, :already_cycling} ->
+        data
+
+      {:error, restart_reason} ->
+        Logger.warning(
+          "[Master] failed to restart domain #{domain_id} after stop: #{inspect(restart_reason)}"
+        )
+
+        data
+    end
+  end
+
+  defp maybe_resume_running(data) do
+    if map_size(data.activation_failures) == 0 and map_size(data.runtime_faults) == 0 do
+      Logger.info("[Master] degraded recovery succeeded; operational path is healthy again")
+      {:ok, %{data | activation_failures: %{}, runtime_faults: %{}}}
+    else
+      {:degraded, data}
+    end
+  end
+
+  defp degraded_reply(data) do
+    activation_failures = data.activation_failures
+    runtime_faults = data.runtime_faults
+
+    cond do
+      map_size(activation_failures) > 0 and map_size(runtime_faults) == 0 ->
+        {:error, {:activation_failed, activation_failures}}
+
+      map_size(activation_failures) == 0 and map_size(runtime_faults) > 0 ->
+        {:error, {:runtime_degraded, runtime_faults}}
+
+      true ->
+        {:error,
+         {:degraded, %{activation_failures: activation_failures, runtime_faults: runtime_faults}}}
+    end
+  end
+
+  defp degraded_summary(data) do
+    activation_count = map_size(data.activation_failures)
+    runtime_count = map_size(data.runtime_faults)
+    "activation_failures=#{activation_count} runtime_faults=#{runtime_count}"
+  end
+
   defp dc_status_for(%{dc_config: nil}) do
     %DCStatus{lock_state: :disabled}
   end
@@ -1416,32 +1552,26 @@ defmodule EtherCAT.Master do
       lock_state: :inactive
     }
 
-    case data.dc_pid do
-      pid when is_pid(pid) ->
-        if Process.alive?(pid) do
-          case DC.status(pid) do
-            %DCStatus{} = status ->
-              %{status | reference_clock: reference_clock_name(data)}
+    if dc_running?() do
+      case DC.status(dc_server()) do
+        %DCStatus{} = status ->
+          %{status | reference_clock: reference_clock_name(data)}
 
-            {:error, _reason} ->
-              base_status
-          end
-        else
+        {:error, _reason} ->
           base_status
-        end
-
-      _ ->
-        base_status
+      end
+    else
+      base_status
     end
   end
 
   defp reference_clock_name(%{dc_ref_station: nil}), do: nil
 
   defp reference_clock_name(data) do
-    case Enum.find(data.slaves || [], fn {_name, station, _pid} ->
+    case Enum.find(data.slaves || [], fn {_name, station} ->
            station == data.dc_ref_station
          end) do
-      {name, _station, _pid} -> name
+      {name, _station} -> name
       nil -> nil
     end
   end
@@ -1459,12 +1589,9 @@ defmodule EtherCAT.Master do
   end
 
   defp terminate_domain(domain_id) do
-    case Registry.lookup(EtherCAT.Registry, {:domain, domain_id}) do
-      [{pid, _}] ->
-        DynamicSupervisor.terminate_child(EtherCAT.SessionSupervisor, pid)
-
-      [] ->
-        :ok
+    case lookup_domain_pid(domain_id) do
+      pid when is_pid(pid) -> DynamicSupervisor.terminate_child(EtherCAT.SessionSupervisor, pid)
+      nil -> :ok
     end
   end
 
@@ -1484,4 +1611,57 @@ defmodule EtherCAT.Master do
       :exit, {:timeout, _} -> {:error, :timeout}
     end
   end
+
+  defp bus_server(_data), do: Bus
+
+  defp bus_public_ref(_data) do
+    if bus_running?(), do: bus_server(nil), else: nil
+  end
+
+  defp bus_running? do
+    is_pid(Process.whereis(Bus))
+  end
+
+  defp dc_server, do: DC
+
+  defp dc_running? do
+    is_pid(Process.whereis(DC))
+  end
+
+  defp stop_bus do
+    case Process.whereis(Bus) do
+      pid when is_pid(pid) -> DynamicSupervisor.terminate_child(EtherCAT.SessionSupervisor, pid)
+      nil -> :ok
+    end
+  end
+
+  defp stop_dc_runtime do
+    case Process.whereis(DC) do
+      pid when is_pid(pid) -> DynamicSupervisor.terminate_child(EtherCAT.SessionSupervisor, pid)
+      nil -> :ok
+    end
+  end
+
+  defp terminate_slave(name) do
+    case lookup_slave_pid(name) do
+      pid when is_pid(pid) -> DynamicSupervisor.terminate_child(EtherCAT.SlaveSupervisor, pid)
+      nil -> :ok
+    end
+  end
+
+  defp lookup_slave_pid(name) do
+    case Registry.lookup(EtherCAT.Registry, {:slave, name}) do
+      [{pid, _}] -> pid
+      [] -> nil
+    end
+  end
+
+  defp lookup_domain_pid(domain_id) do
+    case Registry.lookup(EtherCAT.Registry, {:domain, domain_id}) do
+      [{pid, _}] -> pid
+      [] -> nil
+    end
+  end
+
+  defp slave_server(name), do: {:via, Registry, {EtherCAT.Registry, {:slave, name}}}
 end

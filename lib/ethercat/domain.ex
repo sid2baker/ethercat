@@ -48,6 +48,7 @@ defmodule EtherCAT.Domain do
     :next_cycle_at,
     layout: Layout.new(),
     cycle_plan: nil,
+    cycle_health: :healthy,
     miss_count: 0,
     miss_threshold: 100,
     cycle_count: 0,
@@ -72,7 +73,7 @@ defmodule EtherCAT.Domain do
 
   Options:
     - `:id` (required) — atom, also ETS table name and Registry key
-    - `:bus` (required) — bus pid
+    - `:bus` (required) — bus server reference
     - `:cycle_time_us` (required) — cycle period in microseconds
     - `:logical_base` — LRW logical address base, default `0`
     - `:miss_threshold` — stop after N consecutive misses, default `100`
@@ -94,14 +95,13 @@ defmodule EtherCAT.Domain do
   coordination required.
 
   Direction:
-    - `:input`  — slave reads from bus; domain tracks the slave pid for change notifications
-    - `:output` — slave writes to bus; no pid tracking
+    - `:input`  — slave reads from bus; domain tracks the slave name for change notifications
+    - `:output` — slave writes to bus; no input delivery route is needed
   """
   @spec register_pdo(domain_id(), pdo_key(), pos_integer(), :input | :output) ::
           {:ok, non_neg_integer()} | {:error, term()}
   def register_pdo(domain_id, key, size, direction) do
-    slave_pid = if direction == :input, do: self(), else: nil
-    safe_call(domain_id, {:register_pdo, key, size, direction, slave_pid})
+    safe_call(domain_id, {:register_pdo, key, size, direction})
   end
 
   @doc """
@@ -158,7 +158,8 @@ defmodule EtherCAT.Domain do
   Return a diagnostic snapshot for a domain.
 
   Returns `{:ok, map}` with keys: `:id`, `:cycle_time_us`, `:state`,
-  `:cycle_count`, `:miss_count`, `:total_miss_count`, `:image_size`, `:expected_wkc`.
+  `:cycle_count`, `:miss_count`, `:total_miss_count`, `:cycle_health`,
+  `:image_size`, `:expected_wkc`.
   """
   @spec info(domain_id()) :: {:ok, map()} | {:error, :not_found}
   def info(domain_id) do
@@ -206,6 +207,7 @@ defmodule EtherCAT.Domain do
       next_cycle_at: nil,
       layout: Layout.new(),
       cycle_plan: nil,
+      cycle_health: :healthy,
       miss_count: 0,
       miss_threshold: miss_threshold,
       cycle_count: 0,
@@ -228,18 +230,18 @@ defmodule EtherCAT.Domain do
 
   def handle_event(:enter, _old, :stopped, _data), do: :keep_state_and_data
 
-  def handle_event({:call, from}, {:register_pdo, key, size, direction, slave_pid}, :open, data) do
-    {offset, layout} = Layout.register(data.layout, key, size, direction, slave_pid)
+  def handle_event({:call, from}, {:register_pdo, key, size, direction}, :open, data) do
+    {offset, layout} = Layout.register(data.layout, key, size, direction)
 
     ets_value = if direction == :input, do: :unset, else: :binary.copy(<<0>>, size)
-    :ets.insert(data.table, {key, ets_value, slave_pid})
+    :ets.insert(data.table, {key, ets_value, nil})
 
     new_data = %{data | layout: layout}
 
     {:keep_state, new_data, [{:reply, from, {:ok, data.logical_base + offset}}]}
   end
 
-  def handle_event({:call, from}, {:register_pdo, _, _, _, _}, _state, _data) do
+  def handle_event({:call, from}, {:register_pdo, _, _, _}, _state, _data) do
     {:keep_state_and_data, [{:reply, from, {:error, :not_open}}]}
   end
 
@@ -275,6 +277,7 @@ defmodule EtherCAT.Domain do
     case result do
       {:ok, [%{data: response, wkc: wkc}]}
       when wkc == data.cycle_plan.expected_wkc and wkc > 0 ->
+        maybe_notify_cycle_recovered(data)
         dispatch_inputs(response, data.cycle_plan.input_slices, data.table, data.id)
         duration_us = System.monotonic_time(:microsecond) - t0
 
@@ -284,21 +287,21 @@ defmodule EtherCAT.Domain do
           data
           | cycle_count: data.cycle_count + 1,
             miss_count: 0,
+            cycle_health: :healthy,
             next_cycle_at: next_at
         }
 
         {:keep_state, new_data, next_timeout}
 
       {:ok, [%{wkc: wkc}]} when wkc >= 0 ->
-        # WKC mismatch: frame completed but some slaves dropped off (ring loopback closed them
-        # out). Domain keeps cycling for remaining slaves. miss_count is reset — this is a
-        # successful frame, not a bus-level error. Slave health poll handles per-slave detection.
         reason = {:wkc_mismatch, %{expected: data.cycle_plan.expected_wkc, actual: wkc}}
         Telemetry.domain_cycle_missed(data.id, data.miss_count + 1, reason)
+        maybe_notify_cycle_invalid(data, reason)
 
         new_data = %{
           data
           | miss_count: 0,
+            cycle_health: {:invalid, reason},
             total_miss_count: data.total_miss_count + 1,
             next_cycle_at: next_at
         }
@@ -327,6 +330,7 @@ defmodule EtherCAT.Domain do
       cycle_count: data.cycle_count,
       miss_count: data.miss_count,
       total_miss_count: data.total_miss_count,
+      cycle_health: data.cycle_health,
       image_size: Layout.image_size(data.layout),
       expected_wkc: Layout.expected_wkc(data.layout)
     }
@@ -342,6 +346,7 @@ defmodule EtherCAT.Domain do
       cycle_count: data.cycle_count,
       miss_count: data.miss_count,
       total_miss_count: data.total_miss_count,
+      cycle_health: data.cycle_health,
       image_size: Layout.image_size(data.layout),
       expected_wkc: Layout.expected_wkc(data.layout)
     }
@@ -378,13 +383,13 @@ defmodule EtherCAT.Domain do
   end
 
   defp dispatch_inputs(response, input_slices, table, domain_id) do
-    Enum.each(input_slices, fn {offset, size, key, slave_pid} ->
+    Enum.each(input_slices, fn {offset, size, {slave_name, _} = key} ->
       new_val = binary_part(response, offset, size)
       old_val = stored_value(table, key, nil)
 
       if new_val != old_val do
         :ets.update_element(table, key, {2, new_val})
-        send(slave_pid, {:domain_input, domain_id, key, old_val, new_val})
+        maybe_dispatch_input(slave_name, {:domain_input, domain_id, key, old_val, new_val})
       end
     end)
   end
@@ -453,10 +458,12 @@ defmodule EtherCAT.Domain do
 
   defp mark_cycle_missed(data, reason, next_at, next_timeout) do
     Telemetry.domain_cycle_missed(data.id, data.miss_count + 1, reason)
+    maybe_notify_cycle_invalid(data, reason)
 
     new_data = %{
       data
       | miss_count: data.miss_count + 1,
+        cycle_health: {:invalid, reason},
         total_miss_count: data.total_miss_count + 1,
         next_cycle_at: next_at
     }
@@ -474,5 +481,24 @@ defmodule EtherCAT.Domain do
   defp cycle_transaction_timeout_us(period_us)
        when is_integer(period_us) and period_us > 0 do
     max(div(period_us * 9, 10), 200)
+  end
+
+  defp maybe_notify_cycle_invalid(%{cycle_health: :healthy, id: id}, reason) do
+    send(EtherCAT.Master, {:domain_cycle_invalid, id, reason})
+  end
+
+  defp maybe_notify_cycle_invalid(_data, _reason), do: :ok
+
+  defp maybe_notify_cycle_recovered(%{cycle_health: {:invalid, _reason}, id: id}) do
+    send(EtherCAT.Master, {:domain_cycle_recovered, id})
+  end
+
+  defp maybe_notify_cycle_recovered(_data), do: :ok
+
+  defp maybe_dispatch_input(slave_name, msg) do
+    case Registry.lookup(EtherCAT.Registry, {:slave, slave_name}) do
+      [{pid, _}] -> send(pid, msg)
+      [] -> :ok
+    end
   end
 end

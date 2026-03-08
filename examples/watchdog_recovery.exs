@@ -87,7 +87,7 @@ al_state_name = fn
   0x02 -> :preop
   0x04 -> :safeop
   0x08 -> :op
-  n    -> :"unknown_#{n}"
+  n -> :"unknown_#{n}"
 end
 
 hex = fn n -> "0x#{String.upcase(Integer.to_string(n, 16))}" end
@@ -143,12 +143,12 @@ end
     ]
   )
 
-interface    = opts[:interface] || raise "pass --interface, e.g. --interface enp0s31f6"
-period_ms    = Keyword.get(opts, :period_ms, 10)
-poll_ms      = Keyword.get(opts, :poll_ms, 5)
+interface = opts[:interface] || raise "pass --interface, e.g. --interface enp0s31f6"
+period_ms = Keyword.get(opts, :period_ms, 10)
+poll_ms = Keyword.get(opts, :poll_ms, 5)
 trip_timeout = Keyword.get(opts, :trip_timeout, 2_000)
-op_timeout   = Keyword.get(opts, :op_timeout, 5_000)
-include_rtd  = not Keyword.get(opts, :no_rtd, false)
+op_timeout = Keyword.get(opts, :op_timeout, 5_000)
+include_rtd = not Keyword.get(opts, :no_rtd, false)
 
 IO.puts("""
 EtherCAT watchdog trip & recovery test
@@ -183,8 +183,16 @@ rtd_slave = %EtherCAT.Slave.Config{
     slaves:
       [
         %EtherCAT.Slave.Config{name: :coupler},
-        %EtherCAT.Slave.Config{name: :inputs,  driver: WatchdogTest.EL1809, process_data: {:all, :main}},
-        %EtherCAT.Slave.Config{name: :outputs, driver: WatchdogTest.EL2809, process_data: {:all, :main}}
+        %EtherCAT.Slave.Config{
+          name: :inputs,
+          driver: WatchdogTest.EL1809,
+          process_data: {:all, :main}
+        },
+        %EtherCAT.Slave.Config{
+          name: :outputs,
+          driver: WatchdogTest.EL2809,
+          process_data: {:all, :main}
+        }
       ] ++ if(include_rtd, do: [rtd_slave], else: [])
   )
 
@@ -196,12 +204,12 @@ bus = EtherCAT.bus()
 {:ok, outputs_station} =
   EtherCAT.slaves()
   |> Enum.find_value(fn
-    {:outputs, station, _pid} -> {:ok, station}
+    %{name: :outputs, station: station} -> {:ok, station}
     _ -> nil
   end)
   |> case do
     nil -> raise "slave :outputs not found"
-    v   -> v
+    v -> v
   end
 
 IO.puts("  :outputs slave at station #{hex.(outputs_station)}")
@@ -249,7 +257,9 @@ case EtherCAT.Bus.transaction(
 
     # Warn if trip_timeout is less than configured watchdog timeout
     if timeout_ms && timeout_ms > trip_timeout do
-      IO.puts("  ⚠ trip_timeout (#{trip_timeout} ms) < configured WDT (#{timeout_ms} ms) — increase --trip-timeout")
+      IO.puts(
+        "  ⚠ trip_timeout (#{trip_timeout} ms) < configured WDT (#{timeout_ms} ms) — increase --trip-timeout"
+      )
     end
 
   _ ->
@@ -313,7 +323,10 @@ wdt_status_val =
 
 if wdt_status_val != nil do
   wdt_expired = EtherCAT.Slave.Registers.wdt_status_expired?(<<wdt_status_val::16-little>>)
-  IO.puts("  WDT_status=0x#{Integer.to_string(wdt_status_val, 16)} → watchdog #{if wdt_expired, do: "EXPIRED (outputs went safe)", else: "still running (outputs NOT safe)"}")
+
+  IO.puts(
+    "  WDT_status=0x#{Integer.to_string(wdt_status_val, 16)} → watchdog #{if wdt_expired, do: "EXPIRED (outputs went safe)", else: "still running (outputs NOT safe)"}"
+  )
 end
 
 # ---------------------------------------------------------------------------
@@ -400,7 +413,9 @@ IO.puts("  #{restored_count}/16 loopback inputs back HIGH after recovery")
 # reset to safe state (0), but the AL status remains OP (no SAFEOP transition).
 # This is valid EtherCAT behaviour — the master can still communicate with the
 # slave in OP even while outputs are held at safe state.
-wdt_ok = wdt_status_val != nil and EtherCAT.Slave.Registers.wdt_status_expired?(<<wdt_status_val::16-little>>)
+wdt_ok =
+  wdt_status_val != nil and
+    EtherCAT.Slave.Registers.wdt_status_expired?(<<wdt_status_val::16-little>>)
 
 IO.puts("""
 

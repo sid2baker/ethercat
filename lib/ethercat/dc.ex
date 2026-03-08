@@ -111,7 +111,7 @@ defmodule EtherCAT.DC do
   end
 
   @doc "Return a runtime Distributed Clocks status snapshot."
-  @spec status(pid() | atom()) :: Status.t() | {:error, :not_running}
+  @spec status(:gen_statem.server_ref()) :: Status.t() | {:error, :not_running}
   def status(server \\ __MODULE__) do
     try do
       :gen_statem.call(server, :status)
@@ -121,7 +121,7 @@ defmodule EtherCAT.DC do
   end
 
   @doc "Block until the DC runtime reports `:locked`."
-  @spec await_locked(pid() | atom(), pos_integer()) :: :ok | {:error, term()}
+  @spec await_locked(:gen_statem.server_ref(), pos_integer()) :: :ok | {:error, term()}
   def await_locked(server \\ __MODULE__, timeout_ms \\ 5_000)
       when is_integer(timeout_ms) and timeout_ms > 0 do
     deadline_ms = System.monotonic_time(:millisecond) + timeout_ms

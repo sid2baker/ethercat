@@ -96,7 +96,7 @@ defmodule EtherCAT.Slave.CoE do
   value includes the final counter after the full transfer.
   """
   @spec download_sdo(
-          pid(),
+          Bus.server(),
           non_neg_integer(),
           mailbox_config(),
           0..7,
@@ -127,7 +127,7 @@ defmodule EtherCAT.Slave.CoE do
   Returns the full payload and the final mailbox counter.
   """
   @spec upload_sdo(
-          pid(),
+          Bus.server(),
           non_neg_integer(),
           mailbox_config(),
           0..7,

@@ -77,7 +77,8 @@ defmodule EtherCAT.Master.Config do
         config: Keyword.get(opts, :config, current_config.config),
         process_data: Keyword.get(opts, :process_data, current_config.process_data),
         target_state: Keyword.get(opts, :target_state, current_config.target_state),
-        sync: Keyword.get(opts, :sync, current_config.sync)
+        sync: Keyword.get(opts, :sync, current_config.sync),
+        health_poll_ms: Keyword.get(opts, :health_poll_ms, current_config.health_poll_ms)
       }
 
     validate_normalized_slave(normalized)
@@ -134,7 +135,8 @@ defmodule EtherCAT.Master.Config do
     current_config.driver != updated_config.driver or
       current_config.config != updated_config.config or
       current_config.process_data != updated_config.process_data or
-      current_config.sync != updated_config.sync
+      current_config.sync != updated_config.sync or
+      current_config.health_poll_ms != updated_config.health_poll_ms
   end
 
   @spec domain_start_opts(DomainConfig.t()) :: keyword()
@@ -301,7 +303,8 @@ defmodule EtherCAT.Master.Config do
         config: Keyword.get(opts, :config, %{}),
         process_data: Keyword.get(opts, :process_data, :none),
         target_state: Keyword.get(opts, :target_state, :op),
-        sync: Keyword.get(opts, :sync)
+        sync: Keyword.get(opts, :sync),
+        health_poll_ms: Keyword.get(opts, :health_poll_ms)
       })
     else
       :error -> {:error, :missing_name}
@@ -314,7 +317,8 @@ defmodule EtherCAT.Master.Config do
        when is_atom(name) and is_map(cfg.config) do
     with :ok <- validate_process_data_request(cfg.process_data),
          :ok <- validate_target_state(cfg.target_state),
-         {:ok, sync_config} <- normalize_sync_config(cfg.sync) do
+         {:ok, sync_config} <- normalize_sync_config(cfg.sync),
+         :ok <- validate_health_poll_ms(cfg.health_poll_ms) do
       {:ok, %{cfg | driver: normalize_slave_driver(cfg.driver), sync: sync_config}}
     end
   end
@@ -338,6 +342,10 @@ defmodule EtherCAT.Master.Config do
   defp validate_target_state(:op), do: :ok
   defp validate_target_state(:preop), do: :ok
   defp validate_target_state(_target_state), do: {:error, :invalid_target_state}
+
+  defp validate_health_poll_ms(nil), do: :ok
+  defp validate_health_poll_ms(ms) when is_integer(ms) and ms > 0, do: :ok
+  defp validate_health_poll_ms(_ms), do: {:error, :invalid_health_poll_ms}
 
   defp normalize_sync_config(nil), do: {:ok, nil}
 

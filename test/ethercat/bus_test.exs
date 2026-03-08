@@ -261,6 +261,28 @@ defmodule EtherCAT.BusTest do
     assert {:ok, [%{data: <<0x44, 0x44>>, wkc: 1}]} = Task.await(next)
   end
 
+  test "named buses are reachable through their registered server ref" do
+    name = :"bus_test_#{System.unique_integer([:positive, :monotonic])}"
+
+    {:ok, bus} =
+      Bus.start_link(
+        name: name,
+        link_mod: FakeLink,
+        transport: :udp,
+        test_pid: self(),
+        frame_timeout_ms: 50
+      )
+
+    assert Process.whereis(name) == bus
+
+    read = Task.async(fn -> Bus.transaction(name, Transaction.fprd(0x1000, {0x0130, 2})) end)
+
+    [datagram] = assert_sent_frame()
+    reply_with(bus, [datagram], fn dg -> %{dg | data: <<0x12, 0x34>>, wkc: 1} end)
+
+    assert {:ok, [%{data: <<0x12, 0x34>>, wkc: 1}]} = Task.await(read)
+  end
+
   defp start_bus do
     Bus.start_link(link_mod: FakeLink, transport: :udp, test_pid: self(), frame_timeout_ms: 50)
   end

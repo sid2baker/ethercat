@@ -66,13 +66,10 @@ defmodule EtherCAT.Bus do
       |> Keyword.put(:transport_mod, transport_mod)
       |> Keyword.put(:link_mod, link_mod)
 
-    gen_opts =
-      case opts[:name] do
-        nil -> []
-        name -> [{:name, name}]
-      end
-
-    :gen_statem.start_link(__MODULE__, opts, gen_opts)
+    case opts[:name] do
+      nil -> :gen_statem.start_link(__MODULE__, opts, [])
+      name -> start_named(name, opts)
+    end
   end
 
   @impl true
@@ -644,4 +641,16 @@ defmodule EtherCAT.Bus do
   end
 
   defp link_name(%{link: link, link_mod: link_mod}), do: link_mod.name(link)
+
+  defp start_named({:local, _name} = name, opts),
+    do: :gen_statem.start_link(name, __MODULE__, opts, [])
+
+  defp start_named({:global, _name} = name, opts),
+    do: :gen_statem.start_link(name, __MODULE__, opts, [])
+
+  defp start_named({:via, _mod, _name} = name, opts),
+    do: :gen_statem.start_link(name, __MODULE__, opts, [])
+
+  defp start_named(name, opts) when is_atom(name),
+    do: :gen_statem.start_link({:local, name}, __MODULE__, opts, [])
 end

@@ -44,6 +44,7 @@ defmodule DcSync.EL1809 do
   def process_data_model(_config) do
     Enum.map(1..16, fn i -> {String.to_atom("ch#{i}"), 0x1A00 + i - 1} end)
   end
+
   @impl true
   def encode_signal(_pdo, _config, _), do: <<>>
   @impl true
@@ -57,6 +58,7 @@ defmodule DcSync.EL2809 do
   def process_data_model(_config) do
     Enum.map(1..16, fn i -> {String.to_atom("ch#{i}"), 0x1600 + i - 1} end)
   end
+
   @impl true
   def encode_signal(_ch, _config, value), do: <<value::8>>
   @impl true
@@ -74,6 +76,7 @@ defmodule DcSync.EL3202 do
       {:sdo_download, 0x8010, 0x19, <<8::16-little>>}
     ]
   end
+
   @impl true
   def encode_signal(_pdo, _config, _value), do: <<>>
   @impl true
@@ -97,13 +100,13 @@ end
     ]
   )
 
-interface       = opts[:interface] || raise "pass --interface, e.g. --interface enp0s31f6"
-period_ms       = Keyword.get(opts, :period_ms, 10)
+interface = opts[:interface] || raise "pass --interface, e.g. --interface enp0s31f6"
+period_ms = Keyword.get(opts, :period_ms, 10)
 lock_timeout_ms = Keyword.get(opts, :lock_timeout, 10_000)
-drift_samples   = Keyword.get(opts, :drift_samples, 200)
-jitter_samples  = Keyword.get(opts, :jitter_samples, 500)
-lock_threshold  = Keyword.get(opts, :lock_threshold, 1_000)
-include_rtd     = not Keyword.get(opts, :no_rtd, false)
+drift_samples = Keyword.get(opts, :drift_samples, 200)
+jitter_samples = Keyword.get(opts, :jitter_samples, 500)
+lock_threshold = Keyword.get(opts, :lock_threshold, 1_000)
+include_rtd = not Keyword.get(opts, :no_rtd, false)
 
 IO.puts("""
 EtherCAT distributed clocks synchronization test
@@ -143,7 +146,7 @@ rtd_slave = %EtherCAT.Slave.Config{
     slaves:
       [
         %EtherCAT.Slave.Config{name: :coupler},
-        %EtherCAT.Slave.Config{name: :inputs,  driver: DcSync.EL1809, process_data: {:all, :main}},
+        %EtherCAT.Slave.Config{name: :inputs, driver: DcSync.EL1809, process_data: {:all, :main}},
         %EtherCAT.Slave.Config{name: :outputs, driver: DcSync.EL2809, process_data: {:all, :main}}
       ] ++ if(include_rtd, do: [rtd_slave], else: []),
     dc: %EtherCAT.DC.Config{
@@ -177,7 +180,9 @@ IO.puts("── 2. Reference clock ───────────────
 
 case EtherCAT.reference_clock() do
   {:ok, ref} ->
-    IO.puts("  reference slave : #{inspect(ref.name)}  station=0x#{Integer.to_string(ref.station, 16)}")
+    IO.puts(
+      "  reference slave : #{inspect(ref.name)}  station=0x#{Integer.to_string(ref.station, 16)}"
+    )
 
   {:error, reason} ->
     IO.puts("  no reference clock — #{inspect(reason)}")
@@ -262,7 +267,11 @@ convergence_data =
     IO.puts("  DC not active — skipping lock convergence.")
     IO.puts("  Possible causes:")
     IO.puts("    - Hardware does not support Distributed Clocks")
-    IO.puts("    - DC receive-time latch returned WKC=0 (slave at that position lacks DC registers)")
+
+    IO.puts(
+      "    - DC receive-time latch returned WKC=0 (slave at that position lacks DC registers)"
+    )
+
     IO.puts("    - Topology snapshot read failed")
     %{final_state: :disabled, samples: []}
   end
@@ -279,7 +288,7 @@ hex = fn n -> "0x#{String.pad_leading(Integer.to_string(n, 16), 4, "0")}" end
 ns_to_ms = fn ns -> Float.round(ns / 1_000_000.0, 3) end
 
 ref_time =
-  Enum.find_value(slave_list, fn {_name, station, _pid} ->
+  Enum.find_value(slave_list, fn %{station: station} ->
     case EtherCAT.Bus.transaction(
            bus,
            EtherCAT.Bus.Transaction.fprd(station, EtherCAT.Slave.Registers.dc_system_time())
@@ -294,7 +303,11 @@ if ref_time == nil do
 else
   IO.puts("  Reference system time: #{ref_time} ns")
   IO.puts("")
-  IO.puts("  #{String.pad_trailing("Slave", 12)} #{String.pad_trailing("Station", 10)} #{String.pad_trailing("SysTime (ns)", 22)} #{String.pad_trailing("Offset vs ref", 18)} SyncDiff")
+
+  IO.puts(
+    "  #{String.pad_trailing("Slave", 12)} #{String.pad_trailing("Station", 10)} #{String.pad_trailing("SysTime (ns)", 22)} #{String.pad_trailing("Offset vs ref", 18)} SyncDiff"
+  )
+
   IO.puts("  " <> String.duplicate("-", 80))
 
   Enum.each(slave_list, fn %{name: name, station: station} ->
@@ -310,7 +323,10 @@ else
     sync_diff =
       case EtherCAT.Bus.transaction(
              bus,
-             EtherCAT.Bus.Transaction.fprd(station, EtherCAT.Slave.Registers.dc_system_time_diff())
+             EtherCAT.Bus.Transaction.fprd(
+               station,
+               EtherCAT.Slave.Registers.dc_system_time_diff()
+             )
            ) do
         {:ok, [%{data: <<raw::32-little>>, wkc: 1}]} ->
           <<_::1, abs_diff::31>> = <<raw::32>>
@@ -346,7 +362,9 @@ IO.puts("\n── 5. Drift monitoring ──────────────
 
 drift_stats =
   if dc_active do
-    IO.puts("  Collecting #{drift_samples} max_sync_diff_ns samples (#{period_ms * 2} ms between each)...")
+    IO.puts(
+      "  Collecting #{drift_samples} max_sync_diff_ns samples (#{period_ms * 2} ms between each)..."
+    )
 
     samples =
       Enum.reduce_while(1..drift_samples, [], fn _, acc ->
@@ -385,8 +403,15 @@ drift_stats =
           locked : #{EtherCAT.dc_status().lock_state}
       """)
 
-      %{n: n, min: hd(sorted), p50: percentile.(sorted, 50), p95: percentile.(sorted, 95),
-        p99: percentile.(sorted, 99), max: List.last(sorted), mean: mean}
+      %{
+        n: n,
+        min: hd(sorted),
+        p50: percentile.(sorted, 50),
+        p95: percentile.(sorted, 95),
+        p99: percentile.(sorted, 99),
+        max: List.last(sorted),
+        mean: mean
+      }
     end
   else
     IO.puts("  DC not active — skipping drift monitoring.")
@@ -397,7 +422,9 @@ drift_stats =
 # Phase 6: Jitter comparison (loopback self-clocking)
 # ---------------------------------------------------------------------------
 
-IO.puts("\n── 6. Loopback jitter (DC#{if dc_active, do: " enabled", else: " disabled"}) ───────────────────────────────────")
+IO.puts(
+  "\n── 6. Loopback jitter (DC#{if dc_active, do: " enabled", else: " disabled"}) ───────────────────────────────────"
+)
 
 EtherCAT.subscribe(:inputs, :ch1, self())
 
@@ -435,7 +462,8 @@ jitter_result =
     t_collect_start = System.monotonic_time(:microsecond)
 
     {intervals, _} =
-      Enum.map_reduce(0..(jitter_samples - 1), System.monotonic_time(:microsecond), fn i, prev_t ->
+      Enum.map_reduce(0..(jitter_samples - 1), System.monotonic_time(:microsecond), fn i,
+                                                                                       prev_t ->
         target = rem(i, 2)
         EtherCAT.write_output(:outputs, :ch1, target)
 
@@ -493,7 +521,10 @@ jitter_result =
 
     %{p99_us: p99_j, verdict: verdict, miss_delta: miss_delta}
   else
-    IO.puts("  ✗ Loopback prime timeout — skipping jitter test (check EL2809 ch1 → EL1809 ch1 wire)")
+    IO.puts(
+      "  ✗ Loopback prime timeout — skipping jitter test (check EL2809 ch1 → EL1809 ch1 wire)"
+    )
+
     nil
   end
 
@@ -510,11 +541,15 @@ IO.puts("""
 
 if drift_stats do
   IO.puts("  Sync diff (steady-state):")
-  IO.puts("    p50 = #{drift_stats.p50} ns   p99 = #{drift_stats.p99} ns   max = #{drift_stats.max} ns")
+
+  IO.puts(
+    "    p50 = #{drift_stats.p50} ns   p99 = #{drift_stats.p99} ns   max = #{drift_stats.max} ns"
+  )
 end
 
 if jitter_result do
   IO.puts("  Loopback jitter p99 : #{jitter_result.p99_us} µs  (#{jitter_result.verdict})")
+
   if jitter_result.miss_delta > 0 do
     IO.puts("  ⚠ #{jitter_result.miss_delta} domain miss(es) during jitter test")
   end

@@ -54,7 +54,7 @@ defmodule EtherCAT.Slave.SII do
   Returns `{:ok, identity}` where identity is a map with keys:
   `:vendor_id`, `:product_code`, `:revision`, `:serial_number`.
   """
-  @spec read_identity(pid(), non_neg_integer()) ::
+  @spec read_identity(Bus.server(), non_neg_integer()) ::
           {:ok,
            %{
              vendor_id: integer(),
@@ -79,7 +79,7 @@ defmodule EtherCAT.Slave.SII do
   These are the PREOP/SAFEOP/OP mailbox parameters used for CoE, FoE, and EoE.
   See also the bootstrap mailbox at words 0x14–0x17 (BOOT state only).
   """
-  @spec read_mailbox_config(pid(), non_neg_integer()) ::
+  @spec read_mailbox_config(Bus.server(), non_neg_integer()) ::
           {:ok,
            %{
              recv_offset: integer(),
@@ -120,7 +120,7 @@ defmodule EtherCAT.Slave.SII do
   This is the authoritative source for SM physical addresses, sizes, and ctrl bytes,
   matching the `DefaultSize` and `ControlRegister` shown by `ethercat pdos`.
   """
-  @spec read_sm_configs(pid(), non_neg_integer()) :: {:ok, [sm_entry()]} | {:error, atom()}
+  @spec read_sm_configs(Bus.server(), non_neg_integer()) :: {:ok, [sm_entry()]} | {:error, atom()}
   def read_sm_configs(bus, station), do: find_sm_category(bus, station, @category_start)
 
   @doc """
@@ -132,7 +132,8 @@ defmodule EtherCAT.Slave.SII do
   Bit offsets are computed in EEPROM order within each SM group.
   Returns `{:ok, []}` if no PDO categories are present.
   """
-  @spec read_pdo_configs(pid(), non_neg_integer()) :: {:ok, [pdo_config()]} | {:error, atom()}
+  @spec read_pdo_configs(Bus.server(), non_neg_integer()) ::
+          {:ok, [pdo_config()]} | {:error, atom()}
   def read_pdo_configs(bus, station),
     do: find_pdo_categories(bus, station, @category_start, [])
 
@@ -144,7 +145,7 @@ defmodule EtherCAT.Slave.SII do
 
   Returns `{:ok, binary}` or `{:error, reason}`.
   """
-  @spec dump(pid(), non_neg_integer()) :: {:ok, binary()} | {:error, atom()}
+  @spec dump(Bus.server(), non_neg_integer()) :: {:ok, binary()} | {:error, atom()}
   def dump(bus, station) do
     with {:ok, end_word} <- find_end(bus, station) do
       read(bus, station, 0x0000, end_word)
@@ -156,7 +157,7 @@ defmodule EtherCAT.Slave.SII do
 
   Returns `{:ok, binary}` with `word_count * 2` bytes, or `{:error, reason}`.
   """
-  @spec read(pid(), non_neg_integer(), non_neg_integer(), pos_integer()) ::
+  @spec read(Bus.server(), non_neg_integer(), non_neg_integer(), pos_integer()) ::
           {:ok, binary()} | {:error, atom()}
   def read(bus, station, word_address, word_count) do
     with {:ok, chunk_words} <- read_data_register_size(bus, station) do
@@ -172,7 +173,7 @@ defmodule EtherCAT.Slave.SII do
 
   Returns `:ok` or `{:error, reason}`.
   """
-  @spec write(pid(), non_neg_integer(), non_neg_integer(), binary()) ::
+  @spec write(Bus.server(), non_neg_integer(), non_neg_integer(), binary()) ::
           :ok | {:error, atom()}
   def write(bus, station, word_address, data) when rem(byte_size(data), 2) == 0 do
     write_words(bus, station, word_address, data)
@@ -187,7 +188,7 @@ defmodule EtherCAT.Slave.SII do
 
   Returns `:ok` or `{:error, reason}`.
   """
-  @spec reload(pid(), non_neg_integer()) :: :ok | {:error, atom()}
+  @spec reload(Bus.server(), non_neg_integer()) :: :ok | {:error, atom()}
   def reload(bus, station) do
     with :ok <- ensure_ready(bus, station),
          :ok <- write_reg(bus, station, Registers.eeprom_control(), @cmd_reload),

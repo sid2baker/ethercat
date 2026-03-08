@@ -2,7 +2,7 @@ defmodule EtherCAT.Domain.Layout.CyclePlan do
   @moduledoc false
 
   @type output_patch :: {non_neg_integer(), pos_integer(), {atom(), term()}}
-  @type input_slice :: {non_neg_integer(), pos_integer(), {atom(), term()}, pid()}
+  @type input_slice :: {non_neg_integer(), pos_integer(), {atom(), term()}}
 
   @type t :: %__MODULE__{
           image_size: non_neg_integer(),
@@ -45,9 +45,9 @@ defmodule EtherCAT.Domain.Layout do
   @spec new() :: t()
   def new, do: %__MODULE__{}
 
-  @spec register(t(), pdo_key(), pos_integer(), :input | :output, pid() | nil) ::
+  @spec register(t(), pdo_key(), pos_integer(), :input | :output) ::
           {non_neg_integer(), t()}
-  def register(%__MODULE__{} = layout, {slave_name, _pdo_name} = key, size, :output, _slave_pid) do
+  def register(%__MODULE__{} = layout, {slave_name, _pdo_name} = key, size, :output) do
     offset = layout.image_size
 
     {offset,
@@ -59,15 +59,14 @@ defmodule EtherCAT.Domain.Layout do
      }}
   end
 
-  def register(%__MODULE__{} = layout, {slave_name, _pdo_name} = key, size, :input, slave_pid)
-      when is_pid(slave_pid) do
+  def register(%__MODULE__{} = layout, {slave_name, _pdo_name} = key, size, :input) do
     offset = layout.image_size
 
     {offset,
      %{
        layout
        | image_size: offset + size,
-         input_slices_rev: [{offset, size, key, slave_pid} | layout.input_slices_rev],
+         input_slices_rev: [{offset, size, key} | layout.input_slices_rev],
          input_slave_names: MapSet.put(layout.input_slave_names, slave_name)
      }}
   end

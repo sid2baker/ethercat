@@ -2,6 +2,72 @@ defmodule EtherCAT do
   @moduledoc """
   Public API for the EtherCAT master runtime.
 
+  `EtherCAT` is the entry point for a master-owned session lifecycle:
+
+  - `Master` owns startup, activation, degraded mode, and recovery policy
+  - `Domain` owns cyclic LRW exchange and the logical PDO image
+  - `Slave` owns ESM transitions and slave-local configuration
+  - `DC` owns distributed-clock initialization and runtime maintenance
+  - `Bus` serializes all frame I/O
+
+  Public session health is exposed through `phase/0`:
+
+  - `:idle`
+  - `:scanning`
+  - `:configuring`
+  - `:preop_ready`
+  - `:operational`
+  - `:degraded`
+
+  `await_running/1` waits for a usable session. `await_operational/1` waits for
+  cyclic OP.
+
+  ## Runtime Lifecycle
+
+  ```mermaid
+  stateDiagram-v2
+      [*] --> idle
+      idle --> scanning: start/1
+      scanning --> configuring: ring counted and addressed
+      configuring --> preop_ready: domains open\\nslaves in PREOP
+      preop_ready --> operational: activate/0 or activatable config
+      operational --> degraded: slave_down / invalid cycle /\\ndomain stop / DC runtime loss
+      degraded --> operational: recovery succeeds
+      degraded --> preop_ready: rebuilt and ready,\\nnot yet cycling
+      degraded --> idle: stop or unrecoverable failure
+      preop_ready --> idle: stop/0
+      operational --> idle: stop/0
+  ```
+
+  ## Startup Sequence
+
+  ```mermaid
+  sequenceDiagram
+      autonumber
+      participant App
+      participant Master
+      participant Bus
+      participant DC
+      participant Domain
+      participant Slave
+
+      App->>Master: start/1
+      Master->>Bus: count, address, verify
+      Master->>DC: initialize_clocks(bus, topology)
+      Master->>Domain: start_link(:open)
+      Master->>Slave: start_link(...)
+      Slave->>Bus: INIT -> SII -> mailbox setup -> PREOP
+      Slave->>Domain: register PDO layout
+      Slave-->>Master: slave_ready(:preop)
+      opt activatable session
+          Master->>DC: start runtime maintenance
+          Master->>Domain: start_cycling()
+          Master->>Slave: request(:safeop)
+          Master->>Slave: request(:op)
+      end
+      Master-->>App: phase = :preop_ready or :operational
+  ```
+
   ## Usage
 
       EtherCAT.start(
@@ -60,8 +126,8 @@ defmodule EtherCAT do
 
   alias EtherCAT.{Domain, Master, Slave}
 
-  @doc "Return the bus pid for direct frame transactions."
-  @spec bus() :: pid()
+  @doc "Return the stable bus server reference for direct frame transactions."
+  @spec bus() :: EtherCAT.Bus.server() | nil | {:error, :not_started}
   def bus, do: Master.bus()
 
   @doc """
@@ -170,9 +236,17 @@ defmodule EtherCAT do
   @spec activate() :: :ok | {:error, term()}
   def activate, do: Master.activate()
 
-  @doc "Return `[%{name:, station:, pid:}]` for all running slaves."
+  @doc "Return `[%{name:, station:, server:, pid:}]` for all running slaves."
   @spec slaves() ::
-          [%{name: atom(), station: non_neg_integer(), pid: pid()}] | {:error, :not_started}
+          [
+            %{
+              name: atom(),
+              station: non_neg_integer(),
+              server: :gen_statem.server_ref(),
+              pid: pid() | nil
+            }
+          ]
+          | {:error, :not_started}
   def slaves, do: Master.slaves()
 
   @doc "Return `[{id, cycle_time_us, pid}]` for all running domains."

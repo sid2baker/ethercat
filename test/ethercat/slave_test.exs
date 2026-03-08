@@ -1,6 +1,8 @@
 defmodule EtherCAT.SlaveTest do
   use ExUnit.Case, async: true
 
+  alias EtherCAT.Slave.ProcessDataPlan.SmGroup
+
   defmodule TestDriver do
     @behaviour EtherCAT.Slave.Driver
 
@@ -368,6 +370,72 @@ defmodule EtherCAT.SlaveTest do
              )
 
     assert updated.sync_config == sync
+  end
+
+  test "preop configure allows health poll updates after process-data registration" do
+    from = {self(), make_ref()}
+
+    assert {:keep_state, %EtherCAT.Slave{} = updated, [{:reply, ^from, :ok}]} =
+             EtherCAT.Slave.handle_event(
+               {:call, from},
+               {:configure, [health_poll_ms: 250]},
+               :preop,
+               %EtherCAT.Slave{
+                 driver: TestDriver,
+                 config: %{},
+                 process_data_request: :none,
+                 signal_registrations: %{ch1: %{domain_id: :main}},
+                 health_poll_ms: nil
+               }
+             )
+
+    assert updated.health_poll_ms == 250
+  end
+
+  test "cached_domain_offset reuses a compatible SM logical address" do
+    sm_group = %SmGroup{
+      sm_index: 2,
+      sm_key: {:sm, 2},
+      domain_id: :main,
+      direction: :output,
+      phys: 0x1000,
+      ctrl: 0x64,
+      total_sm_size: 2,
+      fmmu_type: 0x02,
+      registrations: [
+        %{signal_name: :ch1, domain_id: :main, bit_offset: 0, bit_size: 8},
+        %{signal_name: :ch2, domain_id: :main, bit_offset: 8, bit_size: 8}
+      ]
+    }
+
+    registrations = %{
+      ch1: %{
+        domain_id: :main,
+        sm_key: {:sm, 2},
+        direction: :output,
+        bit_offset: 0,
+        bit_size: 8,
+        logical_address: 0x2000,
+        sm_size: 2
+      },
+      ch2: %{
+        domain_id: :main,
+        sm_key: {:sm, 2},
+        direction: :output,
+        bit_offset: 8,
+        bit_size: 8,
+        logical_address: 0x2000,
+        sm_size: 2
+      }
+    }
+
+    assert {:ok, 0x2000} = EtherCAT.Slave.cached_domain_offset(registrations, sm_group)
+
+    assert :error =
+             EtherCAT.Slave.cached_domain_offset(
+               put_in(registrations, [:ch2, :logical_address], 0x2001),
+               sm_group
+             )
   end
 
   test "preop sync-only reconfigure rejects invalid sync_mode mailbox steps" do

@@ -73,7 +73,7 @@ defmodule EtherCAT.Slave do
     :latch_poll_ms,
     # poll period for AL Status background health check while in :op; nil = disabled
     :health_poll_ms,
-    # %{signal_name => %{domain_id, sm_key, bit_offset, bit_size, direction}}
+    # %{signal_name => %{domain_id, sm_key, bit_offset, bit_size, direction, logical_address, sm_size}}
     :signal_registrations,
     # %{{:sm, idx} => [{signal_name, %{bit_offset, bit_size}}]}
     :signal_registrations_by_sm,
@@ -149,6 +149,43 @@ defmodule EtherCAT.Slave do
   @spec configure(atom(), keyword()) :: :ok | {:error, term()}
   def configure(slave_name, opts) when is_list(opts) do
     safe_call(slave_name, {:configure, opts})
+  end
+
+  @doc false
+  @spec cached_domain_offset(map(), SmGroup.t()) :: {:ok, non_neg_integer()} | :error
+  def cached_domain_offset(registrations, %SmGroup{} = sm_group) when is_map(registrations) do
+    sm_group.registrations
+    |> Enum.reduce_while({:ok, nil}, fn registration, {:ok, current_offset} ->
+      case Map.get(registrations, registration.signal_name) do
+        %{
+          domain_id: domain_id,
+          sm_key: sm_key,
+          direction: direction,
+          bit_offset: bit_offset,
+          bit_size: bit_size,
+          logical_address: logical_address,
+          sm_size: sm_size
+        }
+        when domain_id == registration.domain_id and sm_key == sm_group.sm_key and
+               direction == sm_group.direction and bit_offset == registration.bit_offset and
+               bit_size == registration.bit_size and is_integer(logical_address) and
+               logical_address >= 0 and sm_size == sm_group.total_sm_size ->
+          next_offset = current_offset || logical_address
+
+          if next_offset == logical_address do
+            {:cont, {:ok, next_offset}}
+          else
+            {:halt, :error}
+          end
+
+        _ ->
+          {:halt, :error}
+      end
+    end)
+    |> case do
+      {:ok, logical_address} when is_integer(logical_address) -> {:ok, logical_address}
+      _ -> :error
+    end
   end
 
   @doc "Return the current ESM state atom."
@@ -630,7 +667,11 @@ defmodule EtherCAT.Slave do
       {:error, reason} ->
         # Bus-level failure — entire segment unreachable
         EtherCAT.Telemetry.slave_down(data.name, data.station)
-        Logger.warning("[Slave #{data.name}] health poll: bus error #{inspect(reason)} — entering :down")
+
+        Logger.warning(
+          "[Slave #{data.name}] health poll: bus error #{inspect(reason)} — entering :down"
+        )
+
         send(EtherCAT.Master, {:slave_down, data.name})
         {:next_state, :down, data}
     end
@@ -639,7 +680,10 @@ defmodule EtherCAT.Slave do
   # -- :down state (slave physically disconnected, polling for reconnect) -----
 
   def handle_event(:enter, _old, :down, data) do
-    Logger.info("[Slave #{data.name}] entering :down — reconnect poll every #{data.health_poll_ms}ms")
+    Logger.info(
+      "[Slave #{data.name}] entering :down — reconnect poll every #{data.health_poll_ms}ms"
+    )
+
     {:keep_state_and_data, [{{:timeout, :health_poll}, data.health_poll_ms, nil}]}
   end
 
@@ -827,12 +871,13 @@ defmodule EtherCAT.Slave do
     requested_config = Keyword.get(opts, :config, data.config)
     requested_process_data = Keyword.get(opts, :process_data, data.process_data_request)
     requested_sync = Keyword.get(opts, :sync, data.sync_config)
+    requested_health_poll_ms = Keyword.get(opts, :health_poll_ms, data.health_poll_ms)
 
     if requested_driver == data.driver and requested_config == data.config and
          requested_process_data == data.process_data_request do
       case apply_sync_only_reconfigure(data, requested_sync) do
         {:ok, new_data} ->
-          {:ok, new_data}
+          {:ok, %{new_data | health_poll_ms: requested_health_poll_ms}}
 
         {:error, reason} ->
           {:error, reason, data}
@@ -848,7 +893,8 @@ defmodule EtherCAT.Slave do
       | driver: Keyword.get(opts, :driver, data.driver),
         config: Keyword.get(opts, :config, data.config),
         process_data_request: Keyword.get(opts, :process_data, data.process_data_request),
-        sync_config: Keyword.get(opts, :sync, data.sync_config)
+        sync_config: Keyword.get(opts, :sync, data.sync_config),
+        health_poll_ms: Keyword.get(opts, :health_poll_ms, data.health_poll_ms)
     }
 
     configured = configure_preop_process_data(updated_data)
@@ -947,7 +993,15 @@ defmodule EtherCAT.Slave do
          :ok <- write_process_data_sync_manager(data, sm_group),
          :ok <- write_process_data_fmmu(data, sm_group, fmmu_idx, offset),
          :ok <- activate_process_data_sync_manager(data, sm_group) do
-      {:ok, register_sm_group(sm_group, regs), fmmu_idx + 1}
+      {:ok, register_sm_group(sm_group, regs, offset), fmmu_idx + 1}
+    end
+  end
+
+  defp register_process_data_domain(%{signal_registrations: registrations}, %SmGroup{} = sm_group)
+       when map_size(registrations) > 0 do
+    case cached_domain_offset(registrations, sm_group) do
+      {:ok, offset} -> {:ok, offset}
+      :error -> {:error, {:domain_reregister_required, sm_group.sm_index}}
     end
   end
 
@@ -963,14 +1017,16 @@ defmodule EtherCAT.Slave do
     end
   end
 
-  defp register_sm_group(%SmGroup{} = sm_group, regs) do
+  defp register_sm_group(%SmGroup{} = sm_group, regs, logical_address) do
     Enum.reduce(sm_group.registrations, regs, fn registration, acc ->
       Map.put(acc, registration.signal_name, %{
         domain_id: registration.domain_id,
         sm_key: sm_group.sm_key,
         direction: sm_group.direction,
         bit_offset: registration.bit_offset,
-        bit_size: registration.bit_size
+        bit_size: registration.bit_size,
+        logical_address: logical_address,
+        sm_size: sm_group.total_sm_size
       })
     end)
   end
@@ -1086,6 +1142,12 @@ defmodule EtherCAT.Slave do
   defp log_process_data_error(data, {:domain_register_failed, sm_index, reason}) do
     Logger.warning(
       "[Slave #{data.name}] domain registration for SM#{sm_index} failed: #{inspect(reason)}"
+    )
+  end
+
+  defp log_process_data_error(data, {:domain_reregister_required, sm_index}) do
+    Logger.warning(
+      "[Slave #{data.name}] SM#{sm_index} needs domain re-registration; reconnect self-heal cannot reuse the cached logical address"
     )
   end
 

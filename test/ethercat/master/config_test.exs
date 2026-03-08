@@ -37,12 +37,17 @@ defmodule EtherCAT.Master.ConfigTest do
   end
 
   test "normalize_runtime_slave_config merges updates into the current struct" do
-    current = %SlaveConfig{name: :sensor, config: %{gain: 1}, process_data: :none}
+    current = %SlaveConfig{
+      name: :sensor,
+      config: %{gain: 1},
+      process_data: :none,
+      health_poll_ms: 100
+    }
 
     assert {:ok, %SlaveConfig{} = updated} =
              Config.normalize_runtime_slave_config(
                :sensor,
-               [config: %{gain: 2}, target_state: :preop],
+               [config: %{gain: 2}, target_state: :preop, health_poll_ms: 250],
                current
              )
 
@@ -50,6 +55,7 @@ defmodule EtherCAT.Master.ConfigTest do
     assert updated.config == %{gain: 2}
     assert updated.process_data == :none
     assert updated.target_state == :preop
+    assert updated.health_poll_ms == 250
   end
 
   test "normalize_start_options validates sync config and stores it on slave config" do
@@ -74,6 +80,22 @@ defmodule EtherCAT.Master.ConfigTest do
     assert sync.sync0 == %{pulse_ns: 5_000, shift_ns: 0}
     assert sync.sync1 == %{offset_ns: 25_000}
     assert sync.latches == %{product_edge: {0, :pos}}
+  end
+
+  test "normalize_start_options preserves and validates health_poll_ms" do
+    assert {:ok, config} =
+             Config.normalize_start_options(
+               interface: "eth0",
+               slaves: [[name: :sensor, health_poll_ms: 250]]
+             )
+
+    assert [%SlaveConfig{health_poll_ms: 250}] = config.slave_config
+
+    assert {:error, {:invalid_slave_config, {:invalid_options, 0, :invalid_health_poll_ms}}} =
+             Config.normalize_start_options(
+               interface: "eth0",
+               slaves: [[name: :sensor, health_poll_ms: 0]]
+             )
   end
 
   test "effective_slave_config synthesizes dynamic slaves when none are configured" do

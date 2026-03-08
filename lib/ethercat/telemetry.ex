@@ -354,16 +354,19 @@ defmodule EtherCAT.Telemetry do
     :telemetry.attach_many(
       @handler_id,
       @all_events,
-      fn event, _measurements, _metadata, _config ->
-        case @event_index do
-          %{^event => idx} -> :counters.add(ref, idx + 1, 1)
-          _ -> :ok
-        end
-      end,
-      nil
+      &__MODULE__.count_event/4,
+      ref
     )
 
     :ok
+  end
+
+  @doc false
+  def count_event(event, _measurements, _metadata, ref) do
+    case @event_index do
+      %{^event => idx} -> :counters.add(ref, idx + 1, 1)
+      _ -> :ok
+    end
   end
 
   @doc """

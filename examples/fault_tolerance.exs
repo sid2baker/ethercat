@@ -1,25 +1,29 @@
 #!/usr/bin/env elixir
 # EtherCAT fault tolerance validation.
 #
-# Tests the runtime fault detection and recovery mechanisms added in v0.2:
+# Tests the runtime fault detection and recovery mechanisms:
 #
-#   A. Process crash detection
+#   A. Process crash detection (no hardware interaction required)
 #      A1. Kill the domain process → [:ethercat, :domain, :crashed] fires
 #      A2. Kill a slave process   → [:ethercat, :slave, :crashed]  fires
 #
-#   B. Domain stop notification (requires brief cable pull — ~1 s)
-#      Sets miss_threshold: 2, pulls cable → domain stops after 2 misses,
-#      telemetry [:ethercat, :domain, :stopped] fires, master receives notification.
+#   B. Domain stop on total bus failure (main cable pull — ~1 s)
+#      miss_threshold: 2, pull main cable → frame errors accumulate →
+#      [:ethercat, :domain, :stopped] fires. Domain only stops on frame errors,
+#      NOT on WKC mismatch (partial slave loss).
 #
-#   C. Slave health poll + ESM retreat (requires cable pull on slave segment)
-#      Sets health_poll_ms: 500 on :outputs, pull cable → slave detects AL fault
-#      within 500 ms, retreats to SafeOp, master enters :degraded.
+#   C. Slave disconnect → :down state (cable pull on slave segment)
+#      health_poll_ms: 500 on :outputs; pull cable after :outputs →
+#        - [:ethercat, :slave, :down] fires within ~500 ms
+#        - master enters :degraded
+#        - domain either keeps cycling or stops, depending on whether the
+#          physical topology still returns frames after the pull
 #
-#   D. Recovery (reconnect cable after C)
-#      Master retries activation, :outputs returns to Op, master → :running.
-#
-# Scenarios A run without any physical interaction.
-# Scenarios B, C, D require you to briefly disconnect the EtherCAT cable when prompted.
+#   D. Recovery after disconnect (reconnect cable after C)
+#      slave reinitialises via :down reconnect poll →
+#        - slave reaches :preop (post_transition sends {:slave_ready})
+#        - if C stopped the domain, master restarts it
+#        - master activates to :op → returns to :running
 #
 # Hardware:
 #   position 0  EK1100 coupler          (:coupler)
@@ -58,11 +62,13 @@ end
 defmodule FT.EL3202 do
   @behaviour EtherCAT.Slave.Driver
   def process_data_model(_), do: [channel1: 0x1A00, channel2: 0x1A01]
+
   def mailbox_config(_),
     do: [
       {:sdo_download, 0x8000, 0x19, <<8::16-little>>},
       {:sdo_download, 0x8010, 0x19, <<8::16-little>>}
     ]
+
   def encode_signal(_, _, _), do: <<>>
   def decode_signal(_, _, _), do: nil
 end
@@ -73,28 +79,6 @@ end
 
 defmodule FT.Helpers do
   alias EtherCAT.Slave.Registers
-
-  def assert_telemetry(event, timeout_ms \\ 2_000) do
-    ref = make_ref()
-    self = self()
-
-    :telemetry.attach(
-      "ft-assert-#{inspect(ref)}",
-      event,
-      fn _ev, _m, _meta, _ -> send(self, {:telemetry_fired, ref, event}) end,
-      nil
-    )
-
-    result =
-      receive do
-        {:telemetry_fired, ^ref, ^event} -> :ok
-      after
-        timeout_ms -> {:error, :not_fired}
-      end
-
-    :telemetry.detach("ft-assert-#{inspect(ref)}")
-    result
-  end
 
   def read_al_status(bus, station) do
     case EtherCAT.Bus.transaction(
@@ -130,6 +114,26 @@ defmodule FT.Helpers do
     end)
   end
 
+  def poll_until_phase(target_phase, timeout_ms, poll_ms \\ 100) do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+
+    Stream.repeatedly(fn -> :ok end)
+    |> Enum.reduce_while(:polling, fn _, _ ->
+      phase = EtherCAT.phase()
+
+      if phase == target_phase do
+        {:halt, :ok}
+      else
+        if System.monotonic_time(:millisecond) >= deadline do
+          {:halt, {:error, :timeout, phase}}
+        else
+          Process.sleep(poll_ms)
+          {:cont, :polling}
+        end
+      end
+    end)
+  end
+
   def print(label, status, detail \\ "") do
     mark = if status == :ok, do: "✓", else: "✗"
     extra = if detail != "", do: "  #{detail}", else: ""
@@ -144,6 +148,12 @@ defmodule FT.Helpers do
 
   def section(title) do
     IO.puts("\n── #{title} #{String.duplicate("─", max(0, 65 - String.length(title)))}")
+  end
+end
+
+defmodule FT.TelemetryHandlers do
+  def forward(_event, _measurements, metadata, %{waiter: waiter, tag: tag}) do
+    send(waiter, {tag, metadata})
   end
 end
 
@@ -162,11 +172,11 @@ end
     ]
   )
 
-interface      = opts[:interface] || raise "pass --interface, e.g. --interface enp0s31f6"
-poll_ms        = Keyword.get(opts, :poll_ms, 500)
+interface = opts[:interface] || raise "pass --interface, e.g. --interface enp0s31f6"
+poll_ms = Keyword.get(opts, :poll_ms, 500)
 miss_threshold = Keyword.get(opts, :miss_threshold, 2)
-skip_hardware  = Keyword.get(opts, :skip_hardware, false)
-include_rtd    = not Keyword.get(opts, :no_rtd, false)
+skip_hardware = Keyword.get(opts, :skip_hardware, false)
+include_rtd = not Keyword.get(opts, :no_rtd, false)
 
 IO.puts("""
 EtherCAT fault tolerance validation
@@ -221,6 +231,7 @@ start_bus = fn health_poll_ms_opt ->
 end
 
 results = %{}
+waiter = self()
 
 # ===========================================================================
 # Scenario A1 — Domain process crash detection
@@ -238,16 +249,12 @@ EtherCAT.Telemetry.attach()
   end
 
 IO.puts("  Domain #{inspect(domain_id)} pid=#{inspect(domain_pid)}")
-IO.puts("  Attaching telemetry listener for [:ethercat, :domain, :crashed]...")
-
-# Subscribe before kill to avoid race
-waiter = self()
 
 :telemetry.attach(
   "ft-domain-crash",
   [:ethercat, :domain, :crashed],
-  fn _, _, meta, _ -> send(waiter, {:got_domain_crashed, meta}) end,
-  nil
+  &FT.TelemetryHandlers.forward/4,
+  %{waiter: waiter, tag: :got_domain_crashed}
 )
 
 Process.exit(domain_pid, :kill)
@@ -272,7 +279,6 @@ results = Map.put(results, :a1, a1_result)
 
 FT.Helpers.section("A2. Slave process crash detection")
 
-# Restart clean after A1 killed the domain
 start_bus.(nil)
 
 %{pid: slave_pid} = Enum.find(EtherCAT.slaves(), &(&1.name == :outputs))
@@ -282,8 +288,8 @@ IO.puts("  Slave :outputs pid=#{inspect(slave_pid)}")
 :telemetry.attach(
   "ft-slave-crash",
   [:ethercat, :slave, :crashed],
-  fn _, _, meta, _ -> send(waiter, {:got_slave_crashed, meta}) end,
-  nil
+  &FT.TelemetryHandlers.forward/4,
+  %{waiter: waiter, tag: :got_slave_crashed}
 )
 
 Process.exit(slave_pid, :kill)
@@ -303,27 +309,32 @@ a2_result =
 results = Map.put(results, :a2, a2_result)
 
 # ===========================================================================
-# Scenario B — Domain stop notification (cable pull)
+# Scenario B — Domain stop on total bus failure (main cable pull)
 # ===========================================================================
 
 results =
   if skip_hardware do
-    IO.puts("\n── B. Domain stop notification ── SKIPPED (--skip-hardware) ──────")
+    IO.puts("\n── B. Domain stop (total bus failure) ── SKIPPED (--skip-hardware) ─")
     Map.put(results, :b, :skipped)
   else
-    FT.Helpers.section("B. Domain stop notification (cable pull — #{miss_threshold} miss threshold)")
+    FT.Helpers.section("B. Domain stop on total bus failure (miss_threshold=#{miss_threshold})")
+    IO.puts("  NOTE: Pull the MAIN cable (from PC/switch to EK1100 coupler),")
+    IO.puts("        NOT a cable between slaves. This causes frame-level errors")
+    IO.puts("        which accumulate toward miss_threshold.")
+    IO.puts("        Pulling between slaves causes WKC mismatch (scenario C),")
+    IO.puts("        which now keeps the domain cycling.")
 
     start_bus.(nil)
 
     :telemetry.attach(
       "ft-domain-stop",
       [:ethercat, :domain, :stopped],
-      fn _, _, meta, _ -> send(waiter, {:got_domain_stopped, meta}) end,
-      nil
+      &FT.TelemetryHandlers.forward/4,
+      %{waiter: waiter, tag: :got_domain_stopped}
     )
 
     FT.Helpers.prompt(
-      "Pull the EtherCAT cable. The domain will stop after #{miss_threshold} consecutive misses."
+      "Pull the MAIN EtherCAT cable (PC → EK1100). Domain stops after #{miss_threshold} frame errors."
     )
 
     b_result =
@@ -344,116 +355,195 @@ results =
 
     :telemetry.detach("ft-domain-stop")
 
-    FT.Helpers.prompt("Reconnect the cable, then press ENTER.")
+    FT.Helpers.prompt("Reconnect the main cable, then press ENTER.")
 
     Map.put(results, :b, b_result)
   end
 
 # ===========================================================================
-# Scenario C — Health poll + ESM retreat
+# Scenario C — Slave disconnect → :down state (cable pull on slave segment)
 # ===========================================================================
 
-results =
+{results, c_domain_mode} =
   if skip_hardware do
-    IO.puts("\n── C. Health poll + ESM retreat ── SKIPPED (--skip-hardware) ─────")
-    Map.put(results, :c, :skipped)
+    IO.puts("\n── C. Slave disconnect → :down ── SKIPPED (--skip-hardware) ────────")
+    {Map.put(results, :c, :skipped), :skipped}
   else
-    FT.Helpers.section("C. Health poll fault detection + ESM retreat (health_poll_ms=#{poll_ms})")
+    FT.Helpers.section("C. Slave disconnect → :down (health_poll_ms=#{poll_ms})")
+    IO.puts("  Pull the cable AFTER the :outputs (EL2809) slave.")
+    IO.puts("  Expected:")
+    IO.puts("    - [:ethercat, :slave, :down] fires within ~#{poll_ms} ms")
+    IO.puts("    - master enters :degraded")
+    IO.puts("    - domain outcome depends on topology:")
+    IO.puts("        cycling  → frame return path stayed intact")
+    IO.puts("        stopped  → cable pull broke the return path / segment")
 
     start_bus.(poll_ms)
-    bus = EtherCAT.bus()
 
-    %{station: outputs_station} =
-      Enum.find(EtherCAT.slaves(), &(&1.name == :outputs)) ||
-        raise("slave :outputs not found")
-
-    IO.puts("  :outputs at station=0x#{Integer.to_string(outputs_station, 16)}")
-    IO.puts("  Health poll will detect fault within ~#{poll_ms} ms of cable pull")
+    {:ok, stats_before} = EtherCAT.Domain.stats(:main)
+    cycle_before = stats_before.cycle_count
 
     :telemetry.attach(
-      "ft-health-fault",
-      [:ethercat, :slave, :health, :fault],
-      fn _, meas, meta, _ ->
-        send(waiter, {:got_health_fault, meta, meas})
-      end,
-      nil
+      "ft-slave-down",
+      [:ethercat, :slave, :down],
+      &FT.TelemetryHandlers.forward/4,
+      %{waiter: waiter, tag: :got_slave_down}
     )
 
     FT.Helpers.prompt(
-      "Pull the EtherCAT cable on the :outputs (EL2809) segment. The health poll will fire within #{poll_ms} ms."
+      "Pull the cable AFTER :outputs (EL2809). Health poll detects within #{poll_ms} ms."
     )
 
     t_pull = System.monotonic_time(:millisecond)
 
     c_result =
       receive do
-        {:got_health_fault, meta, meas} ->
+        {:got_slave_down, meta} ->
           latency = System.monotonic_time(:millisecond) - t_pull
 
           FT.Helpers.print(
-            "health fault event fired",
+            "slave_down event fired",
             :ok,
-            "slave=#{inspect(meta.slave)} al_state=0x#{Integer.to_string(meas.al_state, 16)} code=0x#{Integer.to_string(meas.error_code, 16)} latency=~#{latency}ms"
+            "slave=#{inspect(meta.slave)} latency=~#{latency}ms"
           )
 
           :ok
       after
         poll_ms * 4 ->
-          FT.Helpers.print("health fault event", :error, "NOT received within #{poll_ms * 4}ms")
+          FT.Helpers.print("slave_down event", :error, "NOT received within #{poll_ms * 4}ms")
           :error
       end
 
-    :telemetry.detach("ft-health-fault")
+    :telemetry.detach("ft-slave-down")
 
-    # Verify AL status is now SafeOp
+    # Give the domain enough time to either keep cycling or trip miss_threshold.
     Process.sleep(200)
+    {:ok, stats_after} = EtherCAT.Domain.stats(:main)
+    {:ok, domain_info_after} = EtherCAT.domain_info(:main)
+    cycle_after = stats_after.cycle_count
 
-    case FT.Helpers.read_al_status(bus, outputs_station) do
-      {:ok, {0x04, _}} ->
-        FT.Helpers.print("slave retreated to SafeOp (AL=0x04)", :ok)
+    {domain_status, domain_mode} =
+      case domain_info_after.state do
+        :cycling when cycle_after > cycle_before ->
+          FT.Helpers.print(
+            "domain stayed in :cycling after disconnect",
+            :ok,
+            "#{cycle_before} → #{cycle_after} (+#{cycle_after - cycle_before} cycles)"
+          )
 
-      {:ok, {al, _}} ->
-        FT.Helpers.print("slave AL state", :error, "expected 0x04 SafeOp, got 0x#{Integer.to_string(al, 16)}")
+          {:ok, :cycling}
 
-      _ ->
-        FT.Helpers.print("AL status read after retreat", :error, "no response")
-    end
+        :stopped ->
+          FT.Helpers.print(
+            "domain stopped after disconnect",
+            :ok,
+            "segment pull broke the return path; recovery will restart it"
+          )
 
-    Map.put(results, :c, c_result)
+          {:ok, :stopped}
+
+        :cycling ->
+          FT.Helpers.print(
+            "domain state",
+            :error,
+            "still :cycling but cycle_count did not advance (#{cycle_before} → #{cycle_after})"
+          )
+
+          {:error, :cycling}
+
+        other ->
+          FT.Helpers.print(
+            "domain state",
+            :error,
+            "unexpected state #{inspect(other)} (cycles #{cycle_before} → #{cycle_after})"
+          )
+
+          {:error, other}
+      end
+
+    # Verify master entered :degraded
+    phase_status =
+      case FT.Helpers.poll_until_phase(:degraded, 2_000) do
+        :ok ->
+          FT.Helpers.print("master entered :degraded", :ok)
+          :ok
+
+        {:error, :timeout, phase} ->
+          FT.Helpers.print("master phase", :error, "expected :degraded, got #{inspect(phase)}")
+          :error
+      end
+
+    c_status =
+      if c_result == :ok and domain_status == :ok and phase_status == :ok do
+        :ok
+      else
+        :error
+      end
+
+    {Map.put(results, :c, c_status), domain_mode}
   end
 
 # ===========================================================================
-# Scenario D — Master recovery after cable reconnect
+# Scenario D — Recovery after slave reconnect
 # ===========================================================================
 
 results =
-  if skip_hardware or Map.get(results, :c) == :skipped do
-    IO.puts("\n── D. Recovery ── SKIPPED ─────────────────────────────────────────")
+  if skip_hardware or c_domain_mode == :skipped do
+    IO.puts("\n── D. Recovery after reconnect ── SKIPPED ──────────────────────────")
     Map.put(results, :d, :skipped)
   else
-    FT.Helpers.section("D. Recovery — reconnect and return to Op")
+    FT.Helpers.section("D. Recovery — reconnect and return to :running")
+    IO.puts("  Reconnect the cable. Slave will reconnect-poll, reinitialise,")
+    IO.puts("  reach :preop, and master will activate it back to :op.")
 
-    bus = EtherCAT.bus()
+    if c_domain_mode == :stopped do
+      IO.puts("  This topology stopped the domain during C, so recovery also waits")
+      IO.puts("  for the master to restart :main and clear the runtime fault.")
+    end
 
-    %{station: outputs_station} =
-      Enum.find(EtherCAT.slaves(), &(&1.name == :outputs)) ||
-        raise("slave :outputs not found")
-
-    FT.Helpers.prompt("Reconnect the EtherCAT cable now.")
+    FT.Helpers.prompt("Reconnect the cable after :outputs, then press ENTER.")
 
     t_reconnect = System.monotonic_time(:millisecond)
 
-    IO.puts("  Waiting for :outputs to return to Op (max 10s)...")
+    IO.puts("  Waiting for master to return to :running (max 15s)...")
 
     d_result =
-      case FT.Helpers.poll_until_al(bus, outputs_station, 0x08, 10_000) do
+      case FT.Helpers.poll_until_phase(:operational, 15_000) do
         :ok ->
           latency = System.monotonic_time(:millisecond) - t_reconnect
-          FT.Helpers.print("slave returned to Op", :ok, "in #{latency} ms")
-          :ok
+          FT.Helpers.print("master returned to :running / :operational", :ok, "in #{latency} ms")
 
-        {:error, :timeout, last} ->
-          FT.Helpers.print("slave did NOT return to Op", :error, "last AL=0x#{Integer.to_string(last, 16)}")
+          case EtherCAT.domain_info(:main) do
+            {:ok, %{state: :cycling}} ->
+              FT.Helpers.print("domain :main is cycling again", :ok)
+              :ok
+
+            {:ok, %{state: state}} ->
+              FT.Helpers.print(
+                "domain :main state after recovery",
+                :error,
+                "expected :cycling, got #{inspect(state)}"
+              )
+
+              :error
+
+            {:error, reason} ->
+              FT.Helpers.print(
+                "domain :main info after recovery",
+                :error,
+                inspect(reason)
+              )
+
+              :error
+          end
+
+        {:error, :timeout, last_phase} ->
+          FT.Helpers.print(
+            "master did NOT return to :running",
+            :error,
+            "last phase=#{inspect(last_phase)}"
+          )
+
           :error
       end
 
@@ -470,14 +560,14 @@ Enum.each(
   [
     {:a1, "A1 Domain crash detection"},
     {:a2, "A2 Slave crash detection"},
-    {:b, "B  Domain stop notification"},
-    {:c, "C  Health poll fault detection"},
-    {:d, "D  Slave recovery to Op"}
+    {:b, "B  Domain stop on total bus failure"},
+    {:c, "C  Slave disconnect → :down + degraded domain outcome"},
+    {:d, "D  Slave reconnect → :op + master :running"}
   ],
   fn {key, label} ->
     case Map.get(results, key, :skipped) do
-      :ok      -> IO.puts("  ✓ #{label}")
-      :error   -> IO.puts("  ✗ #{label}  ← FAILED")
+      :ok -> IO.puts("  ✓ #{label}")
+      :error -> IO.puts("  ✗ #{label}  ← FAILED")
       :skipped -> IO.puts("  - #{label}  (skipped)")
     end
   end
