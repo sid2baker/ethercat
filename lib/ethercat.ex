@@ -18,6 +18,7 @@ defmodule EtherCAT do
   - `:preop_ready`
   - `:operational`
   - `:degraded`
+  - `:recovering`
 
   `await_running/1` waits for a usable session. `await_operational/1` waits for
   cyclic OP.
@@ -31,10 +32,10 @@ defmodule EtherCAT do
       scanning --> configuring: ring counted and addressed
       configuring --> preop_ready: domains open\\nslaves in PREOP
       preop_ready --> operational: activate/0 or activatable config
-      operational --> degraded: slave_down / invalid cycle /\\ndomain stop / DC runtime loss
-      degraded --> operational: recovery succeeds
-      degraded --> preop_ready: rebuilt and ready,\\nnot yet cycling
-      degraded --> idle: stop or unrecoverable failure
+      operational --> recovering: slave_down / invalid cycle /\\ndomain stop / DC runtime loss
+      recovering --> operational: recovery succeeds
+      recovering --> preop_ready: rebuilt and ready,\\nnot yet cycling
+      recovering --> idle: stop or unrecoverable failure
       preop_ready --> idle: stop/0
       operational --> idle: stop/0
   ```
@@ -200,8 +201,10 @@ defmodule EtherCAT do
     - `:preop_ready`
     - `:operational`
     - `:degraded`
+    - `:recovering`
   """
-  @spec phase() :: :idle | :scanning | :configuring | :preop_ready | :operational | :degraded
+  @spec phase() ::
+          :idle | :scanning | :configuring | :preop_ready | :operational | :degraded | :recovering
   def phase, do: Master.phase()
 
   @doc "Return a Distributed Clocks status snapshot for the current session."

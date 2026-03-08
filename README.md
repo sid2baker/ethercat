@@ -14,7 +14,7 @@ Pure-Elixir EtherCAT master built on OTP.
 - Best for discrete I/O, Beckhoff terminal stacks, diagnostics, and 1 ms to 10 ms cyclic loops.
 - Not the right fit for sub-millisecond hard real-time control.
 
-The entry idea is simple: the **master owns the session lifecycle**, **domains own cyclic LRW exchange**, **slaves own ESM and slave-local configuration**, and **DC owns clock discipline**. When runtime faults happen, the public phase moves to `:degraded`, healthy parts keep running when possible, and the master decides how to recover.
+The entry idea is simple: the **master owns the session lifecycle**, **domains own cyclic LRW exchange**, **slaves own ESM and slave-local configuration**, and **DC owns clock discipline**. When runtime faults happen, the public phase moves to `:recovering`, healthy parts keep running when possible, and the master decides how to recover.
 
 ## Installation
 
@@ -129,13 +129,14 @@ Public startup and runtime health are exposed through `EtherCAT.phase/0`:
 - `:preop_ready`
 - `:operational`
 - `:degraded`
+- `:recovering`
 
 `await_running/1` waits for a usable session. `await_operational/1` waits for cyclic OP.
 
 ### 1. Master-owned lifecycle
 
 This is the actual user-facing model. Recovery is master-owned; the public recovery
-phase is `:degraded` until the cyclic path is healthy again.
+phase is `:recovering` until the cyclic path is healthy again.
 
 ```mermaid
 stateDiagram-v2
@@ -144,10 +145,10 @@ stateDiagram-v2
     scanning --> configuring: ring counted and addressed
     configuring --> preop_ready: domains open\nslaves in PREOP
     preop_ready --> operational: activate/0 or activatable config
-    operational --> degraded: slave_down / invalid cycle /\ndomain stop / DC runtime loss
-    degraded --> operational: recovery succeeds
-    degraded --> preop_ready: rebuilt and ready,\nnot yet cycling
-    degraded --> idle: stop or unrecoverable failure
+    operational --> recovering: slave_down / invalid cycle /\ndomain stop / DC runtime loss
+    recovering --> operational: recovery succeeds
+    recovering --> preop_ready: rebuilt and ready,\nnot yet cycling
+    recovering --> idle: stop or unrecoverable failure
     preop_ready --> idle: stop/0
     operational --> idle: stop/0
 ```
@@ -198,7 +199,7 @@ sequenceDiagram
     Domain-->>Master: cycle_invalid / domain_stopped
     Slave-->>Master: slave_down / slave_ready(:preop)
     DC-->>Master: runtime_failed / recovered
-    Master-->>Master: phase = :degraded
+    Master-->>Master: phase = :recovering
     opt cyclic path still valid
         Note over Domain,Master: healthy domains may keep cycling
     end
@@ -215,7 +216,7 @@ sequenceDiagram
 ## Failure Model
 
 - A slave disconnect does not automatically mean full-session teardown.
-- Invalid WKC or slave health loss moves the master to `:degraded`.
+- Invalid WKC or slave health loss moves the master to `:recovering`.
 - Healthy domains can keep cycling if the fault is localized and the transport is still usable.
 - Total bus loss can stop domains after the configured miss threshold; recovery can restart them.
 - Slave reconnect is PREOP-first: the slave rebuilds its local state, then the master decides when to return it to OP.

@@ -145,8 +145,8 @@ defmodule EtherCAT.Master do
   Return the current session phase.
 
   Unlike `state/0`, this is the public lifecycle view and distinguishes between
-  PREOP-ready startup and fully operational cyclic runtime. Runtime recovery is
-  reported through the public degraded phase.
+  PREOP-ready startup, degraded activation, and fully operational cyclic
+  runtime. Runtime recovery is reported through the public recovering phase.
   """
   @spec phase() ::
           :idle
@@ -155,6 +155,7 @@ defmodule EtherCAT.Master do
           | :preop_ready
           | :operational
           | :degraded
+          | :recovering
           | {:error, :not_started}
   def phase, do: safe_call(:phase)
 
@@ -1629,7 +1630,7 @@ defmodule EtherCAT.Master do
   defp phase_for(:scanning, _data), do: :scanning
   defp phase_for(:configuring, _data), do: :configuring
   defp phase_for(:degraded, _data), do: :degraded
-  defp phase_for(:recovering, _data), do: :degraded
+  defp phase_for(:recovering, _data), do: :recovering
   defp phase_for(:running, %{activation_phase: :operational}), do: :operational
   defp phase_for(:running, _data), do: :preop_ready
 

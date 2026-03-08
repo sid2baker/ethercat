@@ -106,7 +106,7 @@ defmodule EtherCAT.MasterTest do
                %EtherCAT.Master{}
              )
 
-    assert {:keep_state_and_data, [{:reply, ^from, :degraded}]} =
+    assert {:keep_state_and_data, [{:reply, ^from, :recovering}]} =
              EtherCAT.Master.handle_event(
                {:call, from},
                :phase,

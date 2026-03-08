@@ -15,7 +15,7 @@
 #   C. Slave disconnect → :down state (cable pull on slave segment)
 #      health_poll_ms: 500 on :outputs; pull cable after :outputs →
 #        - [:ethercat, :slave, :down] fires within ~500 ms
-#        - master enters :degraded
+#        - master enters :recovering
 #        - domain either keeps cycling or stops, depending on whether the
 #          physical topology still returns frames after the pull
 #
@@ -373,7 +373,7 @@ results =
     IO.puts("  Pull the cable AFTER the :outputs (EL2809) slave.")
     IO.puts("  Expected:")
     IO.puts("    - [:ethercat, :slave, :down] fires within ~#{poll_ms} ms")
-    IO.puts("    - master enters :degraded")
+    IO.puts("    - master enters :recovering")
     IO.puts("    - domain outcome depends on topology:")
     IO.puts("        cycling  → frame return path stayed intact")
     IO.puts("        stopped  → cable pull broke the return path / segment")
@@ -461,15 +461,15 @@ results =
           {:error, other}
       end
 
-    # Verify master entered :degraded
+    # Verify master entered :recovering
     phase_status =
-      case FT.Helpers.poll_until_phase(:degraded, 2_000) do
+      case FT.Helpers.poll_until_phase(:recovering, 2_000) do
         :ok ->
-          FT.Helpers.print("master entered :degraded", :ok)
+          FT.Helpers.print("master entered :recovering", :ok)
           :ok
 
         {:error, :timeout, phase} ->
-          FT.Helpers.print("master phase", :error, "expected :degraded, got #{inspect(phase)}")
+          FT.Helpers.print("master phase", :error, "expected :recovering, got #{inspect(phase)}")
           :error
       end
 
