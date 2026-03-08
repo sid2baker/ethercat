@@ -96,6 +96,22 @@ defmodule EtherCAT.TelemetryTest do
                     %{domain: :main, reason: :no_response}}
   end
 
+  test "events/0 exposes the canonical attach_many event list" do
+    handler_id = "ethercat-telemetry-many-#{System.unique_integer([:positive, :monotonic])}"
+
+    :ok =
+      :telemetry.attach_many(handler_id, Telemetry.events(), &__MODULE__.handle_event/4, self())
+
+    on_exit(fn ->
+      :telemetry.detach(handler_id)
+    end)
+
+    Telemetry.domain_cycle_done(:main, 42, 7)
+
+    assert_receive {:telemetry_event, [:ethercat, :domain, :cycle, :done],
+                    %{duration_us: 42, cycle_count: 7}, %{domain: :main}}
+  end
+
   def handle_event(event, measurements, metadata, pid) do
     send(pid, {:telemetry_event, event, measurements, metadata})
   end

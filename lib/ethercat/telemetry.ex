@@ -335,6 +335,25 @@ defmodule EtherCAT.Telemetry do
   @event_index @all_events |> Enum.with_index() |> Map.new()
 
   @doc """
+  Return the canonical list of public EtherCAT telemetry events.
+
+  This is the supported source of truth for external consumers that want to
+  subscribe via `:telemetry.attach_many/4` without duplicating event names.
+
+  ## Example
+
+      :ok =
+        :telemetry.attach_many(
+          "ethercat-dashboard",
+          EtherCAT.Telemetry.events(),
+          &MyDashboard.handle_event/4,
+          nil
+        )
+  """
+  @spec events() :: [[atom()]]
+  def events, do: @all_events
+
+  @doc """
   Attach counters to all EtherCAT telemetry events.
 
   Use `stats/0` to print current counts and `reset/0` to zero them.
@@ -353,7 +372,7 @@ defmodule EtherCAT.Telemetry do
 
     :telemetry.attach_many(
       @handler_id,
-      @all_events,
+      events(),
       &__MODULE__.count_event/4,
       ref
     )
@@ -379,7 +398,7 @@ defmodule EtherCAT.Telemetry do
         []
 
       ref ->
-        Enum.map(@all_events, fn event ->
+        Enum.map(events(), fn event ->
           idx = Map.fetch!(@event_index, event)
           {event, :counters.get(ref, idx + 1)}
         end)
@@ -412,7 +431,7 @@ defmodule EtherCAT.Telemetry do
     ref = :persistent_term.get({__MODULE__, :counters}, nil)
 
     if ref do
-      for idx <- 0..(length(@all_events) - 1) do
+      for idx <- 0..(length(events()) - 1) do
         :counters.put(ref, idx + 1, 0)
       end
     end
