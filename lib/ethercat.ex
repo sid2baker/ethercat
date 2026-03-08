@@ -254,6 +254,17 @@ defmodule EtherCAT do
   def domains, do: Master.domains()
 
   @doc """
+  Update the live cycle period of a running domain.
+
+  This changes the `Domain` runtime directly. The master keeps its initial
+  domain plan; `domains/0` and `domain_info/1` reflect the live period owned by
+  the `Domain` process.
+  """
+  @spec update_domain_cycle_time(atom(), pos_integer()) :: :ok | {:error, term()}
+  def update_domain_cycle_time(domain_id, cycle_time_us),
+    do: Master.update_domain_cycle_time(domain_id, cycle_time_us)
+
+  @doc """
   Return a diagnostic snapshot for a slave.
 
   Keys:

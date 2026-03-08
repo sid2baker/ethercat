@@ -179,6 +179,19 @@ defmodule EtherCAT.Master do
   end
 
   @doc """
+  Update the live cycle period of a configured domain.
+
+  This forwards the change to the running `Domain` process. The master keeps
+  the initial domain plan; live period changes are owned by the `Domain`
+  runtime and exposed through `domains/0` / `Domain.info/1`.
+  """
+  @spec update_domain_cycle_time(atom(), pos_integer()) :: :ok | {:error, term()}
+  def update_domain_cycle_time(domain_id, cycle_time_us)
+      when is_atom(domain_id) and is_integer(cycle_time_us) and cycle_time_us > 0 do
+    safe_call({:update_domain_cycle_time, domain_id, cycle_time_us})
+  end
+
+  @doc """
   Block until the master reaches `:running`, then return `:ok`.
 
   Returns immediately if already `:running`. Returns `{:error, :timeout}` if
@@ -652,8 +665,14 @@ defmodule EtherCAT.Master do
       (data.domain_configs || [])
       |> Enum.flat_map(fn config ->
         case Registry.lookup(EtherCAT.Registry, {:domain, config.id}) do
-          [{pid, _}] -> [{config.id, config.cycle_time_us, pid}]
-          [] -> []
+          [{pid, _}] ->
+            case Domain.info(config.id) do
+              {:ok, %{cycle_time_us: cycle_time_us}} -> [{config.id, cycle_time_us, pid}]
+              _ -> []
+            end
+
+          [] ->
+            []
         end
       end)
 
@@ -662,6 +681,22 @@ defmodule EtherCAT.Master do
 
   def handle_event({:call, from}, :bus, _state, data) do
     {:keep_state_and_data, [{:reply, from, bus_public_ref(data)}]}
+  end
+
+  def handle_event(
+        {:call, from},
+        {:update_domain_cycle_time, domain_id, cycle_time_us},
+        _state,
+        data
+      )
+      when is_atom(domain_id) and is_integer(cycle_time_us) and cycle_time_us > 0 do
+    case update_domain_cycle_time(data, domain_id, cycle_time_us) do
+      :ok ->
+        {:keep_state_and_data, [{:reply, from, :ok}]}
+
+      {:error, reason} ->
+        {:keep_state_and_data, [{:reply, from, {:error, reason}}]}
+    end
   end
 
   # Catch-all for unrecognized calls in any active state
@@ -893,6 +928,14 @@ defmodule EtherCAT.Master do
       )
     else
       :ok
+    end
+  end
+
+  defp update_domain_cycle_time(%{domain_configs: domain_configs}, domain_id, cycle_time_us) do
+    if Enum.any?(domain_configs || [], &(&1.id == domain_id)) do
+      Domain.update_cycle_time(domain_id, cycle_time_us)
+    else
+      {:error, {:unknown_domain, domain_id}}
     end
   end
 

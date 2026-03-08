@@ -91,6 +91,11 @@ defmodule EtherCAT.DomainTest do
     assert {:ok, %{logical_base: 32, state: :open}} = Domain.info(logical_domain_id)
   end
 
+  test "update_cycle_time changes the reported domain period", %{domain_id: domain_id} do
+    assert :ok = Domain.update_cycle_time(domain_id, 10_000)
+    assert {:ok, %{cycle_time_us: 10_000}} = Domain.info(domain_id)
+  end
+
   test "start_cycling fails fast for oversized LRW images", %{domain_id: domain_id} do
     assert {:ok, 0} = Domain.register_pdo(domain_id, {:big, :pdo}, 2036, :output)
 

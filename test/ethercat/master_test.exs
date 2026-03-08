@@ -4,6 +4,7 @@ defmodule EtherCAT.MasterTest do
   alias EtherCAT.DC.Config, as: DCConfig
   alias EtherCAT.DC.Status, as: DCStatus
   alias EtherCAT.Domain
+  alias EtherCAT.Master.DomainPlan
 
   defmodule FakeBus do
     use GenServer
@@ -25,6 +26,27 @@ defmodule EtherCAT.MasterTest do
     def handle_call({:transact, _tx, _deadline_us, _enqueued_at_us}, _from, []) do
       {:reply, {:ok, [%{data: <<0>>, wkc: 1, circular: false, irq: 0}]}, []}
     end
+  end
+
+  defmodule FakeDC do
+    @behaviour :gen_statem
+
+    def start_link(status) do
+      :gen_statem.start_link({:local, EtherCAT.DC}, __MODULE__, status, [])
+    end
+
+    @impl true
+    def callback_mode, do: :handle_event_function
+
+    @impl true
+    def init(status), do: {:ok, :running, status}
+
+    @impl true
+    def handle_event({:call, from}, :status, :running, status) do
+      {:keep_state_and_data, [{:reply, from, status}]}
+    end
+
+    def handle_event(_type, _event, _state, data), do: {:keep_state, data}
   end
 
   test "phase reports preop_ready and operational distinctly" do
@@ -153,6 +175,74 @@ defmodule EtherCAT.MasterTest do
     assert {:ok, %{state: :cycling}} = Domain.info(domain_id)
   end
 
+  test "update_domain_cycle_time updates the live domain without mutating the master plan" do
+    from = {self(), make_ref()}
+    domain_id = :"master_domain_update_#{System.unique_integer([:positive, :monotonic])}"
+
+    {:ok, _pid} =
+      start_supervised(
+        {Domain, [id: domain_id, bus: self(), cycle_time_us: 1_000, miss_threshold: 500]}
+      )
+
+    data = %EtherCAT.Master{
+      domain_configs: [
+        %DomainPlan{id: domain_id, cycle_time_us: 1_000, miss_threshold: 500, logical_base: 0}
+      ]
+    }
+
+    assert {:keep_state_and_data, [{:reply, ^from, :ok}]} =
+             EtherCAT.Master.handle_event(
+               {:call, from},
+               {:update_domain_cycle_time, domain_id, 10_000},
+               :running,
+               data
+             )
+
+    assert hd(data.domain_configs).cycle_time_us == 1_000
+    assert {:ok, %{cycle_time_us: 10_000}} = Domain.info(domain_id)
+  end
+
+  test "update_domain_cycle_time rejects domains outside the master plan" do
+    from = {self(), make_ref()}
+
+    assert {:keep_state_and_data, [{:reply, ^from, {:error, {:unknown_domain, :missing}}}]} =
+             EtherCAT.Master.handle_event(
+               {:call, from},
+               {:update_domain_cycle_time, :missing, 10_000},
+               :running,
+               %EtherCAT.Master{domain_configs: []}
+             )
+  end
+
+  test "domains reports the live domain cycle time instead of the initial plan" do
+    from = {self(), make_ref()}
+    domain_id = :"master_domain_live_#{System.unique_integer([:positive, :monotonic])}"
+
+    {:ok, _pid} =
+      start_supervised(
+        {Domain, [id: domain_id, bus: self(), cycle_time_us: 1_000, miss_threshold: 500]}
+      )
+
+    :ok = Domain.update_cycle_time(domain_id, 10_000)
+
+    assert {:keep_state_and_data, [{:reply, ^from, [{^domain_id, 10_000, _pid}]}]} =
+             EtherCAT.Master.handle_event(
+               {:call, from},
+               :domains,
+               :running,
+               %EtherCAT.Master{
+                 domain_configs: [
+                   %DomainPlan{
+                     id: domain_id,
+                     cycle_time_us: 1_000,
+                     miss_threshold: 500,
+                     logical_base: 0
+                   }
+                 ]
+               }
+             )
+  end
+
   test "last_failure is queryable in idle and active states" do
     from = {self(), make_ref()}
     failure = %{kind: :configuration_failed, reason: :no_response, at_ms: 123}
@@ -226,6 +316,46 @@ defmodule EtherCAT.MasterTest do
              EtherCAT.Master.handle_event({:call, from}, :dc_runtime, :running, data)
   end
 
+  test "dc_status prefers the live dc runtime snapshot once active" do
+    from = {self(), make_ref()}
+
+    start_supervised!(%{
+      id: make_ref(),
+      start:
+        {FakeDC, :start_link,
+         [
+           %DCStatus{
+             configured?: true,
+             active?: true,
+             cycle_ns: 2_000_000,
+             reference_station: 0x1002,
+             reference_clock: :runtime_ref,
+             lock_state: :locked
+           }
+         ]}
+    })
+
+    data = %EtherCAT.Master{
+      dc_config: %DCConfig{cycle_ns: 1_000_000},
+      dc_ref_station: 0x1001,
+      slaves: [{:planned_ref, 0x1001}]
+    }
+
+    assert {:keep_state_and_data,
+            [
+              {:reply, ^from,
+               %DCStatus{
+                 configured?: true,
+                 active?: true,
+                 cycle_ns: 2_000_000,
+                 reference_station: 0x1002,
+                 reference_clock: :planned_ref,
+                 lock_state: :locked
+               }}
+            ]} =
+             EtherCAT.Master.handle_event({:call, from}, :dc_status, :running, data)
+  end
+
   test "slaves query resolves registry-backed server refs and current pids" do
     from = {self(), make_ref()}
 
@@ -254,6 +384,65 @@ defmodule EtherCAT.MasterTest do
                :slaves,
                :running,
                %EtherCAT.Master{slaves: [{:sensor, 0x1001}]}
+             )
+  end
+
+  test "slaves query follows registry restarts" do
+    from = {self(), make_ref()}
+    slave_name = :sensor_restart
+
+    first =
+      Agent.start_link(fn -> :ok end,
+        name: {:via, Registry, {EtherCAT.Registry, {:slave, slave_name}}}
+      )
+      |> elem(1)
+
+    assert {:keep_state_and_data,
+            [
+              {:reply, ^from,
+               [
+                 %{
+                   pid: ^first,
+                   server: {:via, Registry, {EtherCAT.Registry, {:slave, ^slave_name}}}
+                 }
+               ]}
+            ]} =
+             EtherCAT.Master.handle_event(
+               {:call, from},
+               :slaves,
+               :running,
+               %EtherCAT.Master{slaves: [{slave_name, 0x1001}]}
+             )
+
+    Agent.stop(first)
+
+    second =
+      Agent.start_link(fn -> :ok end,
+        name: {:via, Registry, {EtherCAT.Registry, {:slave, slave_name}}}
+      )
+      |> elem(1)
+
+    on_exit(fn ->
+      if Process.alive?(second) do
+        Agent.stop(second)
+      end
+    end)
+
+    assert {:keep_state_and_data,
+            [
+              {:reply, ^from,
+               [
+                 %{
+                   pid: ^second,
+                   server: {:via, Registry, {EtherCAT.Registry, {:slave, ^slave_name}}}
+                 }
+               ]}
+            ]} =
+             EtherCAT.Master.handle_event(
+               {:call, from},
+               :slaves,
+               :running,
+               %EtherCAT.Master{slaves: [{slave_name, 0x1001}]}
              )
   end
 
