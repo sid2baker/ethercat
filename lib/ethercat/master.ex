@@ -87,7 +87,8 @@ defmodule EtherCAT.Master do
       dynamic default slaves are started for all discovered stations and held in
       `:preop` for runtime configuration.
     - `:domains` — list of domain specs, default `[]`. Each entry is a keyword list with
-      keys `:id` (atom, required) and `:cycle_time_us` (required), plus any Domain options
+      keys `:id` (atom, required), `:cycle_time_us` (required), and optional
+      `:miss_threshold`. The master owns logical address allocation.
     - `:base_station` — starting station address, default `0x1000`
     - `:dc` — `%EtherCAT.DC.Config{}` for master-wide Distributed Clocks, or `nil` to disable DC
     - `:frame_timeout_ms` — optional fixed bus frame response timeout (ms); if omitted,

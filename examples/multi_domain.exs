@@ -152,22 +152,17 @@ IO.puts("── 1. Start ──────────────────�
 EtherCAT.stop()
 Process.sleep(300)
 
-# Each split digital domain still maps the full 2-byte EL2809 SM and full
-# 2-byte EL1809 SM. Keep logical address ranges disjoint so each domain's FMMUs
-# respond only to their own LRW window.
 domain_configs =
   [
     %EtherCAT.Domain.Config{
       id: :fast,
       cycle_time_us: fast_period_ms * 1_000,
-      miss_threshold: 500,
-      logical_base: 0
+      miss_threshold: 500
     },
     %EtherCAT.Domain.Config{
       id: :slow,
       cycle_time_us: slow_period_ms * 1_000,
-      miss_threshold: 500,
-      logical_base: 16
+      miss_threshold: 500
     }
   ] ++
     if include_rtd,
@@ -175,8 +170,7 @@ domain_configs =
         %EtherCAT.Domain.Config{
           id: :rtd,
           cycle_time_us: rtd_period_ms * 1_000,
-          miss_threshold: 500,
-          logical_base: 32
+          miss_threshold: 500
         }
       ],
       else: []
@@ -209,6 +203,11 @@ rtd_slave = %EtherCAT.Slave.Config{
 
 :ok = EtherCAT.await_running(15_000)
 IO.puts("  Bus reached OP.")
+
+Enum.each([:fast, :slow] ++ if(include_rtd, do: [:rtd], else: []), fn domain_id ->
+  {:ok, info} = EtherCAT.domain_info(domain_id)
+  IO.puts("  #{inspect(domain_id)} domain logical_base=#{info.logical_base}")
+end)
 
 Enum.each([:inputs, :outputs], fn slave_name ->
   {:ok, info} = EtherCAT.slave_info(slave_name)

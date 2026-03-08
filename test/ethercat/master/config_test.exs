@@ -2,8 +2,8 @@ defmodule EtherCAT.Master.ConfigTest do
   use ExUnit.Case, async: true
 
   alias EtherCAT.DC.Config, as: DCConfig
-  alias EtherCAT.Domain.Config, as: DomainConfig
   alias EtherCAT.Master.Config
+  alias EtherCAT.Master.DomainPlan
   alias EtherCAT.Slave.Config, as: SlaveConfig
   alias EtherCAT.Slave.Sync.Config, as: SyncConfig
 
@@ -17,7 +17,9 @@ defmodule EtherCAT.Master.ConfigTest do
                backup_interface: "eth1"
              )
 
-    assert [%DomainConfig{id: :main, cycle_time_us: 1_000}] = config.domain_config
+    assert [%DomainPlan{id: :main, cycle_time_us: 1_000, logical_base: 0}] =
+             config.domain_config
+
     assert %DCConfig{cycle_ns: 1_000_000} = config.dc_config
 
     assert [
@@ -155,6 +157,16 @@ defmodule EtherCAT.Master.ConfigTest do
                domains: [[id: :fast, cycle_time_us: 1_000], [id: :slow, cycle_time_us: 10_000]]
              )
 
-    assert [%DomainConfig{id: :fast}, %DomainConfig{id: :slow}] = config.domain_config
+    assert [%DomainPlan{id: :fast, logical_base: 0}, %DomainPlan{id: :slow, logical_base: 2048}] =
+             config.domain_config
+  end
+
+  test "normalize_start_options rejects logical_base in master-facing domain config" do
+    assert {:error,
+            {:invalid_domain_config, {:invalid_options, 0, {:unsupported_option, :logical_base}}}} =
+             Config.normalize_start_options(
+               interface: "eth0",
+               domains: [[id: :fast, cycle_time_us: 1_000, logical_base: 4096]]
+             )
   end
 end

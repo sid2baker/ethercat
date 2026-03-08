@@ -3,18 +3,21 @@ defmodule EtherCAT.Master.Config do
 
   alias EtherCAT.DC.Config, as: DCConfig
   alias EtherCAT.Domain.Config, as: DomainConfig
+  alias EtherCAT.Master.DomainPlan
   alias EtherCAT.Slave.Config, as: SlaveConfig
   alias EtherCAT.Slave.Driver.Default, as: DefaultSlaveDriver
   alias EtherCAT.Slave.Sync.Config, as: SyncConfig
 
   @default_base_station 0x1000
+  @auto_logical_base_stride 2048
   @master_option_keys [:slaves, :domains, :base_station, :dc, :dc_cycle_ns, :frame_timeout_ms]
+  @domain_option_keys [:id, :cycle_time_us, :miss_threshold]
 
   @type t :: %__MODULE__{
           base_station: non_neg_integer(),
           bus_opts: keyword(),
           dc_config: DCConfig.t() | nil,
-          domain_config: [DomainConfig.t()],
+          domain_config: [DomainPlan.t()],
           slave_config: [SlaveConfig.t()],
           frame_timeout_override_ms: pos_integer() | nil
         }
@@ -40,13 +43,14 @@ defmodule EtherCAT.Master.Config do
          {:ok, dc_config} <- normalize_dc_config(dc),
          :ok <- validate_frame_timeout_override_ms(frame_timeout_override_ms),
          {:ok, normalized_domains} <- normalize_domain_configs(domain_config, dc_config),
+         {:ok, allocated_domains} <- allocate_domain_logical_bases(normalized_domains),
          {:ok, normalized_slaves} <- normalize_slave_configs(slave_config) do
       {:ok,
        %__MODULE__{
          base_station: base_station,
          bus_opts: build_bus_start_opts(opts, frame_timeout_override_ms),
          dc_config: dc_config,
-         domain_config: normalized_domains,
+         domain_config: allocated_domains,
          slave_config: normalized_slaves,
          frame_timeout_override_ms: frame_timeout_override_ms
        }}
@@ -100,12 +104,12 @@ defmodule EtherCAT.Master.Config do
     {:error, {:configured_slaves_exceed_bus, length(slave_config), bus_count}}
   end
 
-  @spec domain_ids([DomainConfig.t()]) :: [atom()]
+  @spec domain_ids([DomainPlan.t()]) :: [atom()]
   def domain_ids(domain_config) do
     Enum.map(domain_config, & &1.id)
   end
 
-  @spec unknown_domain_ids([DomainConfig.t()], SlaveConfig.t()) :: [atom()]
+  @spec unknown_domain_ids([DomainPlan.t()], SlaveConfig.t()) :: [atom()]
   def unknown_domain_ids(domain_config, %SlaveConfig{} = slave_config) do
     known_domains = MapSet.new(domain_ids(domain_config))
 
@@ -139,13 +143,13 @@ defmodule EtherCAT.Master.Config do
       current_config.health_poll_ms != updated_config.health_poll_ms
   end
 
-  @spec domain_start_opts(DomainConfig.t()) :: keyword()
-  def domain_start_opts(%DomainConfig{} = config) do
+  @spec domain_start_opts(DomainPlan.t()) :: keyword()
+  def domain_start_opts(%DomainPlan{logical_base: logical_base} = config) do
     [
       id: config.id,
       cycle_time_us: config.cycle_time_us,
       miss_threshold: config.miss_threshold,
-      logical_base: config.logical_base
+      logical_base: logical_base
     ]
   end
 
@@ -236,33 +240,64 @@ defmodule EtherCAT.Master.Config do
   defp normalize_domain_configs(_domain_config, _dc_config),
     do: {:error, {:invalid_domain_config, :invalid_list}}
 
-  defp normalize_domain_config(%DomainConfig{} = cfg), do: validate_domain_config(cfg)
+  defp normalize_domain_config(%DomainConfig{} = cfg) do
+    with :ok <- validate_domain_config(cfg) do
+      {:ok, cfg}
+    end
+  end
 
   defp normalize_domain_config(opts) when is_list(opts) do
-    with {:ok, id} <- Keyword.fetch(opts, :id),
-         {:ok, cycle_time_us} <- Keyword.fetch(opts, :cycle_time_us) do
-      validate_domain_config(%DomainConfig{
-        id: id,
-        cycle_time_us: cycle_time_us,
-        miss_threshold: Keyword.get(opts, :miss_threshold, 1000),
-        logical_base: Keyword.get(opts, :logical_base, 0)
-      })
+    with :ok <- validate_domain_option_keys(opts),
+         {:ok, id} <- Keyword.fetch(opts, :id),
+         {:ok, cycle_time_us} <- Keyword.fetch(opts, :cycle_time_us),
+         :ok <-
+           validate_domain_config(%DomainConfig{
+             id: id,
+             cycle_time_us: cycle_time_us,
+             miss_threshold: Keyword.get(opts, :miss_threshold, 1000)
+           }) do
+      {:ok,
+       %DomainConfig{
+         id: id,
+         cycle_time_us: cycle_time_us,
+         miss_threshold: Keyword.get(opts, :miss_threshold, 1000)
+       }}
     else
       :error -> {:error, :missing_required_field}
+      {:error, _} = err -> err
     end
   end
 
   defp normalize_domain_config(_opts), do: {:error, :invalid_entry}
 
+  defp validate_domain_option_keys(opts) do
+    case Enum.find(Keyword.keys(opts), &(&1 not in @domain_option_keys)) do
+      nil -> :ok
+      key -> {:error, {:unsupported_option, key}}
+    end
+  end
+
   defp validate_domain_config(%DomainConfig{id: id, cycle_time_us: cycle_time_us} = cfg)
        when is_atom(id) and is_integer(cycle_time_us) and cycle_time_us >= 1_000 and
               rem(cycle_time_us, 1_000) == 0 and
-              is_integer(cfg.miss_threshold) and cfg.miss_threshold > 0 and
-              is_integer(cfg.logical_base) and cfg.logical_base >= 0 do
-    {:ok, cfg}
+              is_integer(cfg.miss_threshold) and cfg.miss_threshold > 0 do
+    :ok
   end
 
   defp validate_domain_config(_cfg), do: {:error, :invalid_fields}
+
+  defp allocate_domain_logical_bases(domain_configs) when is_list(domain_configs) do
+    {:ok,
+     Enum.with_index(domain_configs)
+     |> Enum.map(fn {%DomainConfig{} = cfg, idx} ->
+       %DomainPlan{
+         id: cfg.id,
+         cycle_time_us: cfg.cycle_time_us,
+         miss_threshold: cfg.miss_threshold,
+         logical_base: idx * @auto_logical_base_stride
+       }
+     end)}
+  end
 
   defp normalize_slave_configs(slave_config) when is_list(slave_config) do
     case Enum.find_index(slave_config, &is_nil/1) do
