@@ -67,7 +67,7 @@ the current public API.
 | Script | Flags | What it measures |
 |--------|-------|-----------------|
 | `cycle_jitter.exs` | `--period-ms` `--samples` `--bucket-us` | Domain cycle jitter via hardware loopback self-clock; reports p50/p95/p99/p99.9 and a histogram |
-| `multi_domain.exs` | `--run-s` `--cross-samples` `--no-rtd` | Multi-rate multi-domain cycling (`:outputs` 1ms / `:inputs` 10ms / `:rtd` 50ms); cross-domain loopback latency; sub-ms feasibility probe |
+| `multi_domain.exs` | `--run-s` `--cross-samples` `--no-rtd` | Split-SM multi-rate cycling (`:fast` 1ms / `:slow` 10ms / `:rtd` 50ms); loopback latency on shared digital SyncManagers; sub-ms feasibility probe |
 
 ### Slave behaviour
 
@@ -92,6 +92,6 @@ APIs and were superseded by the maintained scripts and Livebooks above:
 | Constraint | Detail |
 |------------|--------|
 | **Minimum cycle time** | `cycle_time_us >= 1_000` (whole-millisecond; enforced in `Domain.Config`) |
-| **SM → domain** | One SyncManager maps to exactly one domain; a slave's channels cannot be split across domains |
-| **Logical base** | Multiple domains require non-overlapping `logical_base` values in `Domain.Config` (EL2809=2 B, EL1809=2 B, EL3202=8 B) |
+| **FMMU budget** | Each `{domain, SyncManager}` attachment consumes one FMMU in that slave. Splitting one SM across `:fast` and `:slow` is supported, but it reduces the remaining attachment budget on that slave |
+| **Logical base** | Domains still require non-overlapping `logical_base` values in `Domain.Config` so FMMU logical windows do not alias |
 | **DC capability** | EL1809, EL2809, EL3202 do not implement DC registers; only the EK1100 coupler responds to DC clock reads on this ring |

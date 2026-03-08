@@ -1,13 +1,23 @@
 #!/usr/bin/env elixir
-# Multi-domain multi-rate test + sub-millisecond feasibility probe.
+# Multi-domain multi-rate test + split-SM validation.
 #
-# Each EtherCAT slave's SyncManager maps to exactly one domain — you cannot
-# split one SM across multiple domains.  With the 4-slave test ring we can
-# run up to 3 meaningful domains, one per I/O slave:
+# This example deliberately splits one physical SyncManager-backed PDO area
+# across multiple domains:
 #
-#   :outputs (EL2809, 1ms)  — fast control loop, high-rate output writes
-#   :inputs  (EL1809, 10ms) — slower feedback loop, relaxed input sampling
-#   :rtd     (EL3202, 50ms) — slow thermal loop, analogue RTD conversion rate
+#   :fast (1ms)
+#     EL2809 :ch1 output
+#     EL1809 :ch1 input
+#
+#   :slow (10ms)
+#     EL2809 :ch2 output
+#     EL1809 :ch2 input
+#
+#   :rtd (50ms, optional)
+#     EL3202 RTD inputs
+#
+# The EL1809 and EL2809 each expose one process-data SyncManager, so putting
+# `:ch1` in `:fast` and `:ch2` in `:slow` exercises split `{domain, SM}`
+# attachments on both the input and output side.
 #
 # What it measures:
 #
@@ -15,14 +25,13 @@
 #     actual cycle count vs expected, miss count, cycle execution time
 #     p50/p95/p99/max via telemetry events
 #
-#   Phase 2 — cross-domain loopback latency
-#     write EL2809 ch1 in the 1ms :outputs domain, wait for EL1809 ch1
-#     to update in the 10ms :inputs domain.
-#     Expected: up to (outputs_period + inputs_period) = 11ms worst-case.
-#     Compare vs a same-domain loopback baseline.
+#   Phase 2 — split-SM loopback latency
+#     measure one loopback in the 1ms `:fast` domain and one in the 10ms
+#     `:slow` domain while both domains share the same digital I/O SMs.
 #
 #   Phase 3 — sub-millisecond feasibility
-#     measure actual LRW frame round-trip at 1ms, report headroom,
+#     measure actual LRW frame round-trip in the 1ms `:fast` domain, report
+#     headroom,
 #     and state the API floor (cycle_time_us >= 1_000).
 #
 # Hardware:
@@ -36,7 +45,7 @@
 #
 # Optional flags:
 #   --run-s N           multi-domain run duration in seconds  (default 10)
-#   --cross-samples N   cross-domain latency samples          (default 50)
+#   --cross-samples N   loopback latency samples              (default 50)
 #   --no-rtd            skip EL3202 (runs 2 domains only)
 
 # ---------------------------------------------------------------------------
@@ -49,6 +58,7 @@ defmodule MultiDomain.EL1809 do
   def process_data_model(_config) do
     Enum.map(1..16, fn i -> {String.to_atom("ch#{i}"), 0x1A00 + i - 1} end)
   end
+
   @impl true
   def encode_signal(_pdo, _config, _), do: <<>>
   @impl true
@@ -62,6 +72,7 @@ defmodule MultiDomain.EL2809 do
   def process_data_model(_config) do
     Enum.map(1..16, fn i -> {String.to_atom("ch#{i}"), 0x1600 + i - 1} end)
   end
+
   @impl true
   def encode_signal(_ch, _config, value), do: <<value::8>>
   @impl true
@@ -79,10 +90,26 @@ defmodule MultiDomain.EL3202 do
       {:sdo_download, 0x8010, 0x19, <<8::16-little>>}
     ]
   end
+
   @impl true
   def encode_signal(_pdo, _config, _value), do: <<>>
   @impl true
   def decode_signal(_pdo, _config, _), do: nil
+end
+
+defmodule MultiDomain.Telemetry do
+  def handle(
+        [:ethercat, :domain, :cycle, :done],
+        %{duration_us: duration_us},
+        %{domain: domain},
+        _cfg
+      ) do
+    :ets.insert(:md_durations, {domain, duration_us})
+  end
+
+  def handle([:ethercat, :domain, :cycle, :missed], _measurements, %{domain: domain}, _cfg) do
+    :ets.update_counter(:md_misses, domain, {2, 1}, {domain, 0})
+  end
 end
 
 # ---------------------------------------------------------------------------
@@ -99,21 +126,21 @@ end
     ]
   )
 
-interface     = opts[:interface] || raise "pass --interface, e.g. --interface enp0s31f6"
-run_s         = Keyword.get(opts, :run_s, 10)
+interface = opts[:interface] || raise "pass --interface, e.g. --interface enp0s31f6"
+run_s = Keyword.get(opts, :run_s, 10)
 cross_samples = Keyword.get(opts, :cross_samples, 50)
-include_rtd   = not Keyword.get(opts, :no_rtd, false)
+include_rtd = not Keyword.get(opts, :no_rtd, false)
 
-outputs_period_ms = 1
-inputs_period_ms  = 10
-rtd_period_ms     = 50
+fast_period_ms = 1
+slow_period_ms = 10
+rtd_period_ms = 50
 
 IO.puts("""
-EtherCAT multi-domain multi-rate test + sub-ms feasibility probe
+EtherCAT multi-domain multi-rate test + split-SM validation
   interface  : #{interface}
-  domains    : :outputs #{outputs_period_ms}ms  :inputs #{inputs_period_ms}ms#{if include_rtd, do: "  :rtd #{rtd_period_ms}ms", else: "  (no rtd)"}
+  domains    : :fast #{fast_period_ms}ms  :slow #{slow_period_ms}ms#{if include_rtd, do: "  :rtd #{rtd_period_ms}ms", else: "  (no rtd)"}
   run        : #{run_s} s
-  Note: SM constraint — one SyncManager per domain; max domains = slaves with PDOs
+  split SMs  : EL2809 ch1/ch2 and EL1809 ch1/ch2 are split across :fast/:slow
 """)
 
 # ---------------------------------------------------------------------------
@@ -125,15 +152,40 @@ IO.puts("── 1. Start ──────────────────�
 EtherCAT.stop()
 Process.sleep(300)
 
-# EL2809 = 16 output bits = 2 bytes image; EL1809 = 2 bytes; EL3202 = 8 bytes.
-# All domains must have non-overlapping logical address ranges or their FMMUs
-# will both respond to the other domain's LRW frame (unexpected WKC → all-miss).
-domain_configs = [
-  %EtherCAT.Domain.Config{id: :outputs, cycle_time_us: outputs_period_ms * 1_000, miss_threshold: 500, logical_base: 0},
-  %EtherCAT.Domain.Config{id: :inputs,  cycle_time_us: inputs_period_ms  * 1_000, miss_threshold: 500, logical_base: 8}
-] ++ if include_rtd, do: [%EtherCAT.Domain.Config{id: :rtd, cycle_time_us: rtd_period_ms * 1_000, miss_threshold: 500, logical_base: 16}], else: []
+# Each split digital domain still maps the full 2-byte EL2809 SM and full
+# 2-byte EL1809 SM. Keep logical address ranges disjoint so each domain's FMMUs
+# respond only to their own LRW window.
+domain_configs =
+  [
+    %EtherCAT.Domain.Config{
+      id: :fast,
+      cycle_time_us: fast_period_ms * 1_000,
+      miss_threshold: 500,
+      logical_base: 0
+    },
+    %EtherCAT.Domain.Config{
+      id: :slow,
+      cycle_time_us: slow_period_ms * 1_000,
+      miss_threshold: 500,
+      logical_base: 16
+    }
+  ] ++
+    if include_rtd,
+      do: [
+        %EtherCAT.Domain.Config{
+          id: :rtd,
+          cycle_time_us: rtd_period_ms * 1_000,
+          miss_threshold: 500,
+          logical_base: 32
+        }
+      ],
+      else: []
 
-rtd_slave = %EtherCAT.Slave.Config{name: :rtd, driver: MultiDomain.EL3202, process_data: {:all, :rtd}}
+rtd_slave = %EtherCAT.Slave.Config{
+  name: :rtd,
+  driver: MultiDomain.EL3202,
+  process_data: {:all, :rtd}
+}
 
 :ok =
   EtherCAT.start(
@@ -142,22 +194,46 @@ rtd_slave = %EtherCAT.Slave.Config{name: :rtd, driver: MultiDomain.EL3202, proce
     slaves:
       [
         %EtherCAT.Slave.Config{name: :coupler},
-        %EtherCAT.Slave.Config{name: :inputs,  driver: MultiDomain.EL1809, process_data: {:all, :inputs}},
-        %EtherCAT.Slave.Config{name: :outputs, driver: MultiDomain.EL2809, process_data: {:all, :outputs}}
+        %EtherCAT.Slave.Config{
+          name: :inputs,
+          driver: MultiDomain.EL1809,
+          process_data: [ch1: :fast, ch2: :slow]
+        },
+        %EtherCAT.Slave.Config{
+          name: :outputs,
+          driver: MultiDomain.EL2809,
+          process_data: [ch1: :fast, ch2: :slow]
+        }
       ] ++ if(include_rtd, do: [rtd_slave], else: [])
   )
 
 :ok = EtherCAT.await_running(15_000)
 IO.puts("  Bus reached OP.")
 
+Enum.each([:inputs, :outputs], fn slave_name ->
+  {:ok, info} = EtherCAT.slave_info(slave_name)
+
+  IO.puts(
+    "  #{inspect(slave_name)}: #{info.used_fmmus}/#{info.available_fmmus} FMMUs used " <>
+      "(#{length(info.attachments)} attachment(s))"
+  )
+
+  Enum.each(info.attachments, fn attachment ->
+    IO.puts(
+      "    SM#{attachment.sm_index} #{attachment.direction} -> #{inspect(attachment.domain)} " <>
+        "logical=#{attachment.logical_address} size=#{attachment.sm_size} signals=#{inspect(attachment.signals)}"
+    )
+  end)
+end)
+
 # ---------------------------------------------------------------------------
 # Telemetry accumulator (ETS bag per domain)
 # ---------------------------------------------------------------------------
 
 :ets.new(:md_durations, [:named_table, :public, :bag])
-:ets.new(:md_misses,    [:named_table, :public, :set])
+:ets.new(:md_misses, [:named_table, :public, :set])
 
-tracked_ids = [:outputs, :inputs] ++ if(include_rtd, do: [:rtd], else: [])
+tracked_ids = [:fast, :slow] ++ if(include_rtd, do: [:rtd], else: [])
 Enum.each(tracked_ids, fn id -> :ets.insert(:md_misses, {id, 0}) end)
 
 handler_id = "multi-domain-#{System.unique_integer([:positive, :monotonic])}"
@@ -165,12 +241,7 @@ handler_id = "multi-domain-#{System.unique_integer([:positive, :monotonic])}"
 :telemetry.attach_many(
   handler_id,
   [[:ethercat, :domain, :cycle, :done], [:ethercat, :domain, :cycle, :missed]],
-  fn
-    [:ethercat, :domain, :cycle, :done], %{duration_us: dur}, %{domain: domain}, _cfg ->
-      :ets.insert(:md_durations, {domain, dur})
-    [:ethercat, :domain, :cycle, :missed], _m, %{domain: domain}, _cfg ->
-      :ets.update_counter(:md_misses, domain, {2, 1}, {domain, 0})
-  end,
+  &MultiDomain.Telemetry.handle/4,
   nil
 )
 
@@ -191,10 +262,11 @@ actual_ms = t_end - t_start
 
 IO.puts("\n── 2. Per-domain health (#{actual_ms} ms run) ──────────────────────────")
 
-configured = [
-  {:outputs, outputs_period_ms},
-  {:inputs,  inputs_period_ms}
-] ++ if(include_rtd, do: [{:rtd, rtd_period_ms}], else: [])
+configured =
+  [
+    {:fast, fast_period_ms},
+    {:slow, slow_period_ms}
+  ] ++ if(include_rtd, do: [{:rtd, rtd_period_ms}], else: [])
 
 domain_stats =
   Enum.map(configured, fn {id, period_ms} ->
@@ -205,9 +277,11 @@ domain_stats =
 
     [{^id, miss_count}] = :ets.lookup(:md_misses, id)
 
-    actual_cycles   = length(durations)
+    actual_cycles = length(durations)
     expected_cycles = div(actual_ms, period_ms)
-    miss_rate_pct   = if actual_cycles > 0, do: Float.round(miss_count / actual_cycles * 100, 3), else: 0.0
+
+    miss_rate_pct =
+      if actual_cycles > 0, do: Float.round(miss_count / actual_cycles * 100, 3), else: 0.0
 
     {p50, p95, p99, max_dur, mean_dur} =
       if durations != [] do
@@ -242,118 +316,144 @@ domain_stats =
   end)
 
 # ---------------------------------------------------------------------------
-# Phase 2: Cross-domain loopback latency
+# Phase 2: Split-SM loopback latency
 # ---------------------------------------------------------------------------
 
-IO.puts("── 3. Cross-domain loopback latency ──────────────────────────────")
-IO.puts("  write EL2809 ch1 (:outputs #{outputs_period_ms}ms) → read EL1809 ch1 (:inputs #{inputs_period_ms}ms)")
-IO.puts("  expected worst-case: #{outputs_period_ms + inputs_period_ms}ms (output cycle + input cycle)\n")
+IO.puts("── 3. Split-SM loopback latency ─────────────────────────────────")
+IO.puts("  each pair shares the same slave SyncManagers but runs in a different domain\n")
 
 EtherCAT.subscribe(:inputs, :ch1, self())
+EtherCAT.subscribe(:inputs, :ch2, self())
 
-# Prime to 0, flush
-EtherCAT.write_output(:outputs, :ch1, 0)
-Process.sleep(inputs_period_ms * 5)
-
-Stream.repeatedly(fn ->
+flush_input = fn flush_input, signal_name ->
   receive do
-    {:ethercat, :signal, :inputs, :ch1, _} -> true
+    {:ethercat, :signal, :inputs, ^signal_name, _value} ->
+      flush_input.(flush_input, signal_name)
   after
-    0 -> false
+    0 -> :ok
   end
-end)
-|> Stream.take_while(& &1)
-|> Stream.run()
+end
 
-# Arm to 1
-EtherCAT.write_output(:outputs, :ch1, 1)
+measure_loopback = fn label, signal_name, period_ms ->
+  IO.puts(
+    "  #{inspect(signal_name)} in :#{label} (#{period_ms}ms): " <>
+      "EL2809 #{signal_name} -> EL1809 #{signal_name}"
+  )
 
-primed =
-  receive do
-    {:ethercat, :signal, :inputs, :ch1, 1} -> :ok
-  after
-    3_000 -> :timeout
-  end
+  IO.puts(
+    "    expected worst-case: #{period_ms * 2}ms " <>
+      "(one output cycle + one input cycle)"
+  )
 
-cross_latencies =
-  if primed == :ok do
-    IO.puts("  Collecting #{cross_samples} cross-domain latency samples...")
+  EtherCAT.write_output(:outputs, signal_name, 0)
+  Process.sleep(period_ms * 5)
+  flush_input.(flush_input, signal_name)
+  EtherCAT.write_output(:outputs, signal_name, 1)
 
-    {latencies_rev, _} =
-      Enum.reduce(1..cross_samples, {[], :primed}, fn idx, {acc, _prev} ->
-        target = rem(idx, 2)
-        t0 = System.monotonic_time(:microsecond)
-        EtherCAT.write_output(:outputs, :ch1, target)
-
-        latency_us =
-          receive do
-            {:ethercat, :signal, :inputs, :ch1, ^target} ->
-              System.monotonic_time(:microsecond) - t0
-          after
-            3_000 -> nil
-          end
-
-        {[latency_us | acc], target}
-      end)
-
-    latencies =
-      latencies_rev
-      |> Enum.reverse()
-      |> Enum.filter(&is_integer/1)
-      |> Enum.sort()
-
-    if latencies == [] do
-      IO.puts("  ✗ No cross-domain samples collected (loopback wire missing?)")
-      nil
-    else
-      n = length(latencies)
-      mean_us = Float.round(Enum.sum(latencies) / n, 1)
-      pct = fn p -> Enum.at(latencies, min(round(p / 100.0 * (n - 1)), n - 1)) end
-
-      IO.puts("""
-        #{n} samples:
-          min  : #{hd(latencies)} µs
-          p50  : #{pct.(50)} µs
-          p95  : #{pct.(95)} µs
-          p99  : #{pct.(99)} µs
-          max  : #{List.last(latencies)} µs
-          mean : #{mean_us} µs
-          expected worst-case : #{(outputs_period_ms + inputs_period_ms) * 1_000} µs
-      """)
-
-      %{p50_us: pct.(50), p99_us: pct.(99), max_us: List.last(latencies), mean_us: mean_us}
+  primed =
+    receive do
+      {:ethercat, :signal, :inputs, ^signal_name, 1} -> :ok
+    after
+      3_000 -> :timeout
     end
-  else
-    IO.puts("  ✗ Loopback prime timeout — check EL2809 ch1 → EL1809 ch1 wire")
-    nil
-  end
 
-# Zero outputs
-EtherCAT.write_output(:outputs, :ch1, 0)
+  result =
+    if primed == :ok do
+      {latencies_rev, _} =
+        Enum.reduce(1..cross_samples, {[], :primed}, fn idx, {acc, _prev} ->
+          target = rem(idx, 2)
+          t0 = System.monotonic_time(:microsecond)
+          EtherCAT.write_output(:outputs, signal_name, target)
+
+          latency_us =
+            receive do
+              {:ethercat, :signal, :inputs, ^signal_name, ^target} ->
+                System.monotonic_time(:microsecond) - t0
+            after
+              3_000 -> nil
+            end
+
+          {[latency_us | acc], target}
+        end)
+
+      latencies =
+        latencies_rev
+        |> Enum.reverse()
+        |> Enum.filter(&is_integer/1)
+        |> Enum.sort()
+
+      if latencies == [] do
+        IO.puts("    ✗ No latency samples collected (loopback wire missing?)\n")
+        nil
+      else
+        n = length(latencies)
+        mean_us = Float.round(Enum.sum(latencies) / n, 1)
+        pct = fn p -> Enum.at(latencies, min(round(p / 100.0 * (n - 1)), n - 1)) end
+
+        IO.puts("""
+            #{n} samples:
+              min  : #{hd(latencies)} µs
+              p50  : #{pct.(50)} µs
+              p95  : #{pct.(95)} µs
+              p99  : #{pct.(99)} µs
+              max  : #{List.last(latencies)} µs
+              mean : #{mean_us} µs
+        """)
+
+        %{
+          label: label,
+          signal_name: signal_name,
+          p50_us: pct.(50),
+          p99_us: pct.(99),
+          max_us: List.last(latencies),
+          mean_us: mean_us
+        }
+      end
+    else
+      IO.puts(
+        "    ✗ Loopback prime timeout — check EL2809 #{signal_name} -> EL1809 #{signal_name}\n"
+      )
+
+      nil
+    end
+
+  EtherCAT.write_output(:outputs, signal_name, 0)
+  result
+end
+
+latency_stats =
+  [
+    {:fast, :ch1, fast_period_ms},
+    {:slow, :ch2, slow_period_ms}
+  ]
+  |> Enum.map(fn {label, signal_name, period_ms} ->
+    measure_loopback.(label, signal_name, period_ms)
+  end)
+  |> Enum.filter(& &1)
 
 # ---------------------------------------------------------------------------
-# Phase 3: Sub-ms feasibility from :outputs domain (1ms)
+# Phase 3: Sub-ms feasibility from :fast domain (1ms)
 # ---------------------------------------------------------------------------
 
-IO.puts("── 4. Sub-ms feasibility (:outputs @ 1ms) ────────────────────────")
+IO.puts("── 4. Sub-ms feasibility (:fast @ 1ms) ───────────────────────────")
 
-outputs_stats = Enum.find(domain_stats, &(&1.id == :outputs))
+fast_stats = Enum.find(domain_stats, &(&1.id == :fast))
 
-if outputs_stats && outputs_stats.p99_us != nil do
-  p99_us   = outputs_stats.p99_us
-  mean_us  = outputs_stats.mean_us || 0.0
+if fast_stats && fast_stats.p99_us != nil do
+  p99_us = fast_stats.p99_us
+  mean_us = fast_stats.mean_us || 0.0
 
-  util_mean_pct = Float.round(mean_us / (outputs_period_ms * 1_000) * 100, 1)
-  util_p99_pct  = Float.round(p99_us / (outputs_period_ms * 1_000) * 100, 1)
+  util_mean_pct = Float.round(mean_us / (fast_period_ms * 1_000) * 100, 1)
+  util_p99_pct = Float.round(p99_us / (fast_period_ms * 1_000) * 100, 1)
 
   # Theoretical minimum: next whole-millisecond above p99 * 1.5 safety margin
   theoretical_floor_us = ceil(p99_us * 1.5 / 1_000) * 1_000
 
   IO.puts("""
-  LRW frame duration at 1ms cycle (:outputs, #{outputs_stats.actual_cycles} cycles):
+  LRW frame duration at 1ms cycle (:fast, #{fast_stats.actual_cycles} cycles):
     mean  : #{mean_us} µs    (#{util_mean_pct}% of 1000µs period)
     p99   : #{p99_us} µs    (#{util_p99_pct}% of 1000µs period)
-    max   : #{outputs_stats.max_us} µs
+    max   : #{fast_stats.max_us} µs
 
   API floor: cycle_time_us >= 1_000 µs (whole-millisecond constraint in master/config.ex)
   """)
@@ -375,7 +475,7 @@ if outputs_stats && outputs_stats.p99_us != nil do
       IO.puts("    Sub-ms cycles would cause excessive misses on this system.")
   end
 else
-  IO.puts("  No :outputs timing data — skipping feasibility analysis.")
+  IO.puts("  No :fast timing data — skipping feasibility analysis.")
 end
 
 # ---------------------------------------------------------------------------
@@ -388,17 +488,17 @@ total_misses = Enum.sum(Enum.map(domain_stats, & &1.miss_count))
 IO.puts("""
 
 ── Summary ───────────────────────────────────────────────────────────
-  Domains          : #{length(domain_stats)}  (SM constraint: 1 SM → 1 domain)
+  Domains          : #{length(domain_stats)}  (digital SMs split across :fast / :slow)
   Total LRW frames : #{total_cycles}  in #{actual_ms} ms
   Total misses     : #{total_misses}
 """)
 
-if cross_latencies do
+Enum.each(latency_stats, fn stats ->
   IO.puts(
-    "  Cross-domain latency (:outputs 1ms → :inputs 10ms):" <>
-    " p50=#{cross_latencies.p50_us}µs  p99=#{cross_latencies.p99_us}µs  max=#{cross_latencies.max_us}µs"
+    "  #{inspect(stats.signal_name)} in :#{stats.label}: " <>
+      "p50=#{stats.p50_us}µs  p99=#{stats.p99_us}µs  max=#{stats.max_us}µs"
   )
-end
+end)
 
 IO.puts("──────────────────────────────────────────────────────────────────")
 

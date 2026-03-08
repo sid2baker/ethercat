@@ -261,8 +261,12 @@ defmodule EtherCAT do
     - `:station` — assigned bus station address
     - `:al_state` — current ESM state: `:init | :preop | :safeop | :op`
     - `:identity` — `%{vendor_id, product_code, revision, serial_number}` from SII, or `nil`
+    - `:esc` — `%{fmmu_count, sm_count}` from ESC base registers, or `nil`
     - `:driver` — driver module in use
     - `:coe` — `true` if the slave has a mailbox (CoE-capable)
+    - `:available_fmmus` — FMMUs supported by the ESC, or `nil`
+    - `:used_fmmus` — count of active `{domain, SyncManager}` attachments
+    - `:attachments` — list of `%{domain, sm_index, direction, logical_address, sm_size, signal_count, signals}`
     - `:signals` — list of `%{name, domain, direction, bit_offset, bit_size}` for registered signals
     - `:configuration_error` — last configuration failure atom, or `nil`
 
@@ -274,8 +278,14 @@ defmodule EtherCAT do
         station: 0x1001,
         al_state: :op,
         identity: %{vendor_id: 0x2, product_code: 0x07111389, revision: 0x00190000, serial_number: 0},
+        esc: %{fmmu_count: 3, sm_count: 4},
         driver: MyApp.EL1809,
         coe: false,
+        available_fmmus: 3,
+        used_fmmus: 1,
+        attachments: [
+          %{domain: :main, sm_index: 3, direction: :input, logical_address: 0x0000, sm_size: 2, signal_count: 2, signals: [:ch1, :ch2]}
+        ],
         signals: [
           %{name: :ch1, domain: :main, direction: :input, bit_offset: 0, bit_size: 1},
           ...
@@ -296,6 +306,7 @@ defmodule EtherCAT do
     - `:cycle_count` — successful LRW cycles since last start
     - `:miss_count` — consecutive missed cycles (resets on success)
     - `:total_miss_count` — cumulative missed cycles since last start
+    - `:logical_base` — current LRW logical start address for this domain image
     - `:image_size` — PDO image size in bytes
     - `:expected_wkc` — expected working counter for a healthy bus
 
@@ -309,6 +320,7 @@ defmodule EtherCAT do
         cycle_count: 12345,
         miss_count: 0,
         total_miss_count: 2,
+        logical_base: 0,
         image_size: 4,
         expected_wkc: 3
       }}

@@ -18,6 +18,13 @@ Subsystem briefings (also `@moduledoc` source):
 - **Bitwise**: never `import Bitwise`; use binary pattern matching
 - **`gen_statem` enter callbacks**: side effects only, no state transitions
 
+## Design Direction
+
+- **Spec first**: prefer EtherCAT models, sequencing, and lifecycle ownership that match the spec and the bundled reference-master material.
+- **BEAM as implementation strength**: use OTP supervision, process isolation, registries, and restart tolerance to implement the model more robustly, not to invent protocol semantics that fight the spec.
+- **Document deliberate deviations**: if the implementation intentionally differs from the spec for pragmatic reasons, make that explicit in code and docs instead of letting it emerge accidentally.
+- **Faults stay visible**: use BEAM fault tolerance to recover cleanly where possible, but do not hide transport, WKC, AL-state, or topology faults behind overly optimistic state reporting.
+
 ## Checks
 
 - `mix test` — behavior

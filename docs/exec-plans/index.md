@@ -9,6 +9,8 @@ and decision logs for multi-step work.
   Remaining DC SYNC1 and latch work from the earlier narrower plan.
 - [docs/exec-plans/active/distributed-clocks-spec-alignment.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/active/distributed-clocks-spec-alignment.md)
   Current plan for aligning Distributed Clocks behavior and public API.
+- [docs/exec-plans/active/syncmanager-domain-spec-alignment.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/active/syncmanager-domain-spec-alignment.md)
+  Refactor plan for removing the one-SyncManager-one-domain restriction and aligning process-data mapping with the spec/reference master model.
 
 ## Completed
 

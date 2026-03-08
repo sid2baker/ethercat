@@ -2,6 +2,7 @@ defmodule EtherCAT.Slave.ProcessDataPlanTest do
   use ExUnit.Case, async: true
 
   alias EtherCAT.Slave.ProcessDataPlan
+  alias EtherCAT.Slave.ProcessDataPlan.DomainAttachment
   alias EtherCAT.Slave.ProcessDataSignal
 
   defmodule TestDriver do
@@ -68,24 +69,33 @@ defmodule EtherCAT.Slave.ProcessDataPlanTest do
              ProcessDataPlan.build(requested, model, sii_pdo_configs, sii_sm_configs)
 
     assert output_group.sm_index == 2
-    assert output_group.domain_id == :main
     assert output_group.direction == :output
     assert output_group.total_sm_size == 1
     assert output_group.fmmu_type == 0x02
-    assert [%{signal_name: :out1, bit_offset: 0, bit_size: 8}] = output_group.registrations
+
+    assert [
+             %DomainAttachment{
+               domain_id: :main,
+               registrations: [%{signal_name: :out1, bit_offset: 0, bit_size: 8}]
+             }
+           ] = output_group.attachments
 
     assert input_group.sm_index == 3
-    assert input_group.domain_id == :main
     assert input_group.direction == :input
     assert input_group.total_sm_size == 8
     assert input_group.fmmu_type == 0x01
 
     assert [
-             %{signal_name: :in1, bit_offset: 0, bit_size: 8},
-             %{signal_name: :in2, bit_offset: 8, bit_size: 8},
-             %{signal_name: :status_word, bit_offset: 16, bit_size: 16},
-             %{signal_name: :actual_position, bit_offset: 32, bit_size: 32}
-           ] = input_group.registrations
+             %DomainAttachment{
+               domain_id: :main,
+               registrations: [
+                 %{signal_name: :in1, bit_offset: 0, bit_size: 8},
+                 %{signal_name: :in2, bit_offset: 8, bit_size: 8},
+                 %{signal_name: :status_word, bit_offset: 16, bit_size: 16},
+                 %{signal_name: :actual_position, bit_offset: 32, bit_size: 32}
+               ]
+             }
+           ] = input_group.attachments
   end
 
   test "returns explicit planning errors" do
@@ -115,7 +125,7 @@ defmodule EtherCAT.Slave.ProcessDataPlanTest do
              )
   end
 
-  test "rejects out-of-bounds signal slices and mixed-domain sync managers" do
+  test "rejects out-of-bounds signal slices and allows split input and output SMs" do
     sii_pdo_configs = [
       %{index: 0x1A00, direction: :input, sm_index: 3, bit_size: 16, bit_offset: 0},
       %{index: 0x1A01, direction: :input, sm_index: 3, bit_size: 16, bit_offset: 16}
@@ -131,12 +141,53 @@ defmodule EtherCAT.Slave.ProcessDataPlanTest do
                sii_sm_configs
              )
 
-    assert {:error, {:sync_manager_spans_multiple_domains, 3}} =
+    assert {:ok, [input_group]} =
              ProcessDataPlan.build(
                [first: :main, second: :aux],
                [first: 0x1A00, second: 0x1A01],
                sii_pdo_configs,
                sii_sm_configs
              )
+
+    assert input_group.sm_index == 3
+
+    assert [
+             %DomainAttachment{
+               domain_id: :aux,
+               registrations: [%{signal_name: :second, bit_offset: 16, bit_size: 16}]
+             },
+             %DomainAttachment{
+               domain_id: :main,
+               registrations: [%{signal_name: :first, bit_offset: 0, bit_size: 16}]
+             }
+           ] = input_group.attachments
+
+    output_pdo_configs = [
+      %{index: 0x1600, direction: :output, sm_index: 2, bit_size: 8, bit_offset: 0},
+      %{index: 0x1601, direction: :output, sm_index: 2, bit_size: 8, bit_offset: 8}
+    ]
+
+    output_sm_configs = [{2, 0x1000, 2, 0x64}]
+
+    assert {:ok, [output_group]} =
+             ProcessDataPlan.build(
+               [first: :main, second: :aux],
+               [first: 0x1600, second: 0x1601],
+               output_pdo_configs,
+               output_sm_configs
+             )
+
+    assert output_group.sm_index == 2
+
+    assert [
+             %DomainAttachment{
+               domain_id: :aux,
+               registrations: [%{signal_name: :second, bit_offset: 8, bit_size: 8}]
+             },
+             %DomainAttachment{
+               domain_id: :main,
+               registrations: [%{signal_name: :first, bit_offset: 0, bit_size: 8}]
+             }
+           ] = output_group.attachments
   end
 end

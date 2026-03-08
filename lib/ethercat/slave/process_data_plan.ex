@@ -1,52 +1,63 @@
-defmodule EtherCAT.Slave.ProcessDataPlan.SmGroup do
+defmodule EtherCAT.Slave.ProcessDataPlan.DomainAttachment do
   @moduledoc false
 
   @type signal_registration :: %{
           required(:signal_name) => atom(),
-          required(:domain_id) => atom(),
           required(:bit_offset) => non_neg_integer(),
           required(:bit_size) => pos_integer()
         }
 
   @type t :: %__MODULE__{
+          domain_id: atom(),
+          registrations: [signal_registration()]
+        }
+
+  @enforce_keys [:domain_id, :registrations]
+  defstruct [:domain_id, :registrations]
+end
+
+defmodule EtherCAT.Slave.ProcessDataPlan.SmGroup do
+  @moduledoc false
+
+  alias EtherCAT.Slave.ProcessDataPlan.DomainAttachment
+
+  @type t :: %__MODULE__{
           sm_index: non_neg_integer(),
           sm_key: {:sm, non_neg_integer()},
-          domain_id: atom(),
           direction: :input | :output,
           phys: non_neg_integer(),
           ctrl: non_neg_integer(),
           total_sm_size: pos_integer(),
           fmmu_type: non_neg_integer(),
-          registrations: [signal_registration()]
+          attachments: [DomainAttachment.t()]
         }
 
   @enforce_keys [
     :sm_index,
     :sm_key,
-    :domain_id,
     :direction,
     :phys,
     :ctrl,
     :total_sm_size,
     :fmmu_type,
-    :registrations
+    :attachments
   ]
   defstruct [
     :sm_index,
     :sm_key,
-    :domain_id,
     :direction,
     :phys,
     :ctrl,
     :total_sm_size,
     :fmmu_type,
-    :registrations
+    :attachments
   ]
 end
 
 defmodule EtherCAT.Slave.ProcessDataPlan do
   @moduledoc false
 
+  alias EtherCAT.Slave.ProcessDataPlan.DomainAttachment
   alias EtherCAT.Slave.ProcessDataPlan.SmGroup
   alias EtherCAT.Slave.ProcessDataSignal
 
@@ -206,8 +217,8 @@ defmodule EtherCAT.Slave.ProcessDataPlan do
   defp build_sm_group(sm_index, sm_signals, sii_pdo_configs, sii_sm_configs) do
     {_signal_name, _domain_id, _signal_spec, first_cfg} = hd(sm_signals)
 
-    with {:ok, domain_id} <- resolve_sm_domain_id(sm_index, sm_signals),
-         {:ok, {^sm_index, phys, _sii_len, ctrl}} <- fetch_sm_config(sii_sm_configs, sm_index) do
+    with {:ok, {^sm_index, phys, _sii_len, ctrl}} <- fetch_sm_config(sii_sm_configs, sm_index),
+         {:ok, attachments} <- build_domain_attachments(sm_index, sm_signals, first_cfg.direction) do
       total_sm_bits =
         Enum.reduce(sii_pdo_configs, 0, fn
           %{sm_index: ^sm_index, bit_size: bit_size}, acc -> acc + bit_size
@@ -221,35 +232,43 @@ defmodule EtherCAT.Slave.ProcessDataPlan do
        %SmGroup{
          sm_index: sm_index,
          sm_key: {:sm, sm_index},
-         domain_id: domain_id,
          direction: direction,
          phys: phys,
          ctrl: ctrl,
          total_sm_size: div(total_sm_bits + 7, 8),
          fmmu_type: fmmu_type,
-         registrations:
-           Enum.map(sm_signals, fn {signal_name, reg_domain_id, signal_spec, pdo_cfg} ->
-             %{
-               signal_name: signal_name,
-               domain_id: reg_domain_id,
-               bit_offset: pdo_cfg.bit_offset + signal_spec.bit_offset,
-               bit_size: signal_spec.bit_size
-             }
-           end)
+         attachments: attachments
        }}
     end
   end
 
-  defp resolve_sm_domain_id(sm_index, sm_signals) do
-    domain_ids =
-      sm_signals
-      |> Enum.map(fn {_signal_name, domain_id, _signal_spec, _pdo_cfg} -> domain_id end)
-      |> Enum.uniq()
+  defp build_domain_attachments(_sm_index, sm_signals, _direction) do
+    {:ok,
+     sm_signals
+     |> grouped_domain_signals()
+     |> Enum.map(fn {domain_id, domain_signals} ->
+       build_domain_attachment(domain_id, domain_signals)
+     end)}
+  end
 
-    case domain_ids do
-      [domain_id] -> {:ok, domain_id}
-      _ -> {:error, {:sync_manager_spans_multiple_domains, sm_index}}
-    end
+  defp grouped_domain_signals(sm_signals) do
+    sm_signals
+    |> Enum.group_by(fn {_signal_name, domain_id, _signal_spec, _pdo_cfg} -> domain_id end)
+    |> Enum.sort_by(fn {domain_id, _signals} -> domain_id end)
+  end
+
+  defp build_domain_attachment(domain_id, domain_signals) do
+    %DomainAttachment{
+      domain_id: domain_id,
+      registrations:
+        Enum.map(domain_signals, fn {signal_name, _domain_id, signal_spec, pdo_cfg} ->
+          %{
+            signal_name: signal_name,
+            bit_offset: pdo_cfg.bit_offset + signal_spec.bit_offset,
+            bit_size: signal_spec.bit_size
+          }
+        end)
+    }
   end
 
   defp fetch_sm_config(sii_sm_configs, sm_index) do

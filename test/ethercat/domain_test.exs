@@ -73,6 +73,24 @@ defmodule EtherCAT.DomainTest do
     assert :ok = Domain.stop_cycling(domain_id)
   end
 
+  test "info reports the domain logical base", _context do
+    logical_domain_id = :"domain_test_#{System.unique_integer([:positive, :monotonic])}_logical"
+
+    {:ok, _pid} =
+      start_supervised(
+        {Domain,
+         [
+           id: logical_domain_id,
+           bus: self(),
+           cycle_time_us: 60_000,
+           miss_threshold: 500,
+           logical_base: 32
+         ]}
+      )
+
+    assert {:ok, %{logical_base: 32, state: :open}} = Domain.info(logical_domain_id)
+  end
+
   test "start_cycling fails fast for oversized LRW images", %{domain_id: domain_id} do
     assert {:ok, 0} = Domain.register_pdo(domain_id, {:big, :pdo}, 2036, :output)
 

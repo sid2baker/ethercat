@@ -18,6 +18,7 @@ defmodule EtherCAT.Slave do
   alias EtherCAT.{DC, Domain, Bus, Slave.ALTransition, Slave.CoE, Slave.SII}
   alias EtherCAT.Bus.Transaction
   alias EtherCAT.Slave.ProcessDataPlan
+  alias EtherCAT.Slave.ProcessDataPlan.DomainAttachment
   alias EtherCAT.Slave.ProcessDataPlan.SmGroup
   alias EtherCAT.Slave.Registers
   alias EtherCAT.Slave.Sync.Plan
@@ -53,6 +54,7 @@ defmodule EtherCAT.Slave do
     :error_code,
     :configuration_error,
     :identity,
+    :esc_info,
     :mailbox_config,
     :mailbox_counter,
     # SYNC0 cycle time in ns — set from start_link opts; nil = no DC
@@ -75,8 +77,12 @@ defmodule EtherCAT.Slave do
     :health_poll_ms,
     # %{signal_name => %{domain_id, sm_key, bit_offset, bit_size, direction, logical_address, sm_size}}
     :signal_registrations,
-    # %{{:sm, idx} => [{signal_name, %{bit_offset, bit_size}}]}
+    # %{{domain_id, {:sm, idx}} => [{signal_name, %{bit_offset, bit_size}}]}
     :signal_registrations_by_sm,
+    # %{{:sm, idx} => [domain_id]} for output attachments that must be kept coherent
+    :output_domain_ids_by_sm,
+    # %{{:sm, idx} => full_sm_bytes} canonical output image shared across attached domains
+    :output_sm_images,
     # %{signal_name_or_latch_name => MapSet.t(pid)}
     :subscriptions,
     # %{pid => reference()}
@@ -152,9 +158,11 @@ defmodule EtherCAT.Slave do
   end
 
   @doc false
-  @spec cached_domain_offset(map(), SmGroup.t()) :: {:ok, non_neg_integer()} | :error
-  def cached_domain_offset(registrations, %SmGroup{} = sm_group) when is_map(registrations) do
-    sm_group.registrations
+  @spec cached_domain_offset(map(), SmGroup.t(), DomainAttachment.t()) ::
+          {:ok, non_neg_integer()} | :error
+  def cached_domain_offset(registrations, %SmGroup{} = sm_group, %DomainAttachment{} = attachment)
+      when is_map(registrations) do
+    attachment.registrations
     |> Enum.reduce_while({:ok, nil}, fn registration, {:ok, current_offset} ->
       case Map.get(registrations, registration.signal_name) do
         %{
@@ -166,7 +174,7 @@ defmodule EtherCAT.Slave do
           logical_address: logical_address,
           sm_size: sm_size
         }
-        when domain_id == registration.domain_id and sm_key == sm_group.sm_key and
+        when domain_id == attachment.domain_id and sm_key == sm_group.sm_key and
                direction == sm_group.direction and bit_offset == registration.bit_offset and
                bit_size == registration.bit_size and is_integer(logical_address) and
                logical_address >= 0 and sm_size == sm_group.total_sm_size ->
@@ -208,8 +216,12 @@ defmodule EtherCAT.Slave do
     - `:station` — assigned bus station address
     - `:al_state` — current ESM state: `:init | :preop | :safeop | :op`
     - `:identity` — `%{vendor_id, product_code, revision, serial_number}` from SII, or `nil`
+    - `:esc` — `%{fmmu_count, sm_count}` from ESC base registers, or `nil`
     - `:driver` — driver module in use
     - `:coe` — `true` if the slave has a mailbox (CoE-capable)
+    - `:available_fmmus` — FMMUs supported by the ESC, or `nil`
+    - `:used_fmmus` — count of active `{domain, SyncManager}` attachments
+    - `:attachments` — list of `%{domain, sm_index, direction, logical_address, sm_size, signal_count, signals}`
     - `:signals` — list of `%{name, domain, direction, bit_offset, bit_size}` for registered signals
     - `:configuration_error` — last configuration failure atom, or `nil`
   """
@@ -276,6 +288,7 @@ defmodule EtherCAT.Slave do
       driver: driver,
       config: config,
       configuration_error: nil,
+      esc_info: nil,
       dc_cycle_ns: dc_cycle_ns,
       sync_config: sync_config,
       mailbox_counter: 0,
@@ -288,6 +301,8 @@ defmodule EtherCAT.Slave do
       health_poll_ms: health_poll_ms,
       signal_registrations: %{},
       signal_registrations_by_sm: %{},
+      output_domain_ids_by_sm: %{},
+      output_sm_images: %{},
       subscriptions: %{},
       subscriber_refs: %{}
     }
@@ -374,13 +389,19 @@ defmodule EtherCAT.Slave do
           |> Enum.sort_by(&{&1.sm_index, &1.bit_offset})
       end
 
+    attachments = attachment_summaries(data.signal_registrations)
+
     info = %{
       name: data.name,
       station: data.station,
       al_state: state,
       identity: data.identity,
+      esc: data.esc_info,
       driver: data.driver,
       coe: match?(%{recv_size: n} when n > 0, data.mailbox_config),
+      available_fmmus: data.esc_info && data.esc_info.fmmu_count,
+      used_fmmus: length(attachments),
+      attachments: attachments,
       signals: signals,
       configuration_error: data.configuration_error
     }
@@ -448,29 +469,33 @@ defmodule EtherCAT.Slave do
         sm_key: sm_key,
         bit_offset: bit_offset,
         bit_size: bit_size,
+        sm_size: sm_size,
         direction: :output
       } ->
-        key = {data.name, sm_key}
         encoded = data.driver.encode_signal(signal_name, data.config, value)
+        domain_ids = Map.get(data.output_domain_ids_by_sm || %{}, sm_key, [domain_id])
 
         result =
-          case Domain.read(domain_id, key) do
-            {:ok, current} ->
-              next_value = set_sm_bits(current, bit_offset, bit_size, encoded)
+          with {:ok, current} <- current_output_sm_image(data, domain_id, sm_key, sm_size) do
+            next_value = set_sm_bits(current, bit_offset, bit_size, encoded)
 
-              with :ok <- Domain.write(domain_id, key, next_value),
-                   {:ok, ^next_value} <- Domain.read(domain_id, key) do
-                :ok
-              else
-                {:ok, _other} -> {:error, {:staging_verification_failed, signal_name}}
-                {:error, _} = err -> err
-              end
+            case stage_output_sm_image(data, sm_key, domain_ids, next_value) do
+              :ok ->
+                {:ok, Map.put(data.output_sm_images, sm_key, next_value)}
 
-            {:error, _} = err ->
-              err
+              {:error, _} = err ->
+                err
+            end
           end
 
-        {:keep_state_and_data, [{:reply, from, result}]}
+        case result do
+          {:ok, next_output_sm_images} ->
+            {:keep_state, %{data | output_sm_images: next_output_sm_images},
+             [{:reply, from, :ok}]}
+
+          {:error, reason} ->
+            {:keep_state_and_data, [{:reply, from, {:error, reason}}]}
+        end
     end
   end
 
@@ -537,16 +562,16 @@ defmodule EtherCAT.Slave do
 
   # -- Domain input change notification (sent by Domain on cycle) ------------
 
-  # SM-grouped key: {slave_name, {:sm, idx}} — unpack per-signal bits and dispatch.
+  # SM-grouped key: {domain_id, {:sm, idx}} — unpack per-signal bits and dispatch.
   def handle_event(
         :info,
-        {:domain_input, _domain_id, {_slave_name, {:sm, _} = sm_key}, old_sm_bytes, new_sm_bytes},
+        {:domain_input, domain_id, {_slave_name, {:sm, _} = sm_key}, old_sm_bytes, new_sm_bytes},
         _state,
         data
       ) do
     notifications =
       data.signal_registrations_by_sm
-      |> Map.get(sm_key, [])
+      |> Map.get({domain_id, sm_key}, [])
       |> Enum.reduce([], fn {signal_name, %{bit_offset: bit_offset, bit_size: bit_size}}, acc ->
         if signal_changed?(old_sm_bytes, new_sm_bytes, bit_offset, bit_size) do
           raw = extract_sm_bits(new_sm_bytes, bit_offset, bit_size)
@@ -742,19 +767,21 @@ defmodule EtherCAT.Slave do
     )
 
     case read_sii(data.bus, data.station) do
-      {:ok, identity, mailbox_config, sm_configs, pdo_configs} ->
+      {:ok, esc_info, identity, mailbox_config, sm_configs, pdo_configs} ->
         sii_ms = System.monotonic_time(:millisecond) - t0
 
         Logger.debug(
           "[Slave #{data.name}] SII ok in #{sii_ms}ms — " <>
             "vendor=0x#{Integer.to_string(identity.vendor_id, 16)} " <>
             "product=0x#{Integer.to_string(identity.product_code, 16)} " <>
+            "fmmus=#{esc_info.fmmu_count} " <>
             "mbx_recv=#{mailbox_config.recv_size} pdos=#{length(pdo_configs)}"
         )
 
         new_data = %{
           data
           | identity: identity,
+            esc_info: esc_info,
             mailbox_config: mailbox_config,
             sii_sm_configs: sm_configs,
             sii_pdo_configs: pdo_configs
@@ -826,11 +853,17 @@ defmodule EtherCAT.Slave do
              mailbox_data.sii_pdo_configs,
              mailbox_data.sii_sm_configs
            ),
+         :ok <- validate_fmmu_capacity(mailbox_data, sm_groups),
          {:ok, registrations} <- apply_process_data_groups(mailbox_data, sm_groups) do
+      output_domain_ids_by_sm = build_output_domain_index(registrations)
+
       %{
         clear_configuration_error(mailbox_data)
         | signal_registrations: registrations,
-          signal_registrations_by_sm: build_signal_registration_index(registrations)
+          signal_registrations_by_sm: build_signal_registration_index(registrations),
+          output_domain_ids_by_sm: output_domain_ids_by_sm,
+          output_sm_images:
+            build_output_image_index(mailbox_data, registrations, output_domain_ids_by_sm)
       }
     else
       {:error, reason} ->
@@ -861,7 +894,124 @@ defmodule EtherCAT.Slave do
       entry =
         {signal_name, %{bit_offset: registration.bit_offset, bit_size: registration.bit_size}}
 
-      Map.update(acc, registration.sm_key, [entry], &[entry | &1])
+      Map.update(acc, {registration.domain_id, registration.sm_key}, [entry], &[entry | &1])
+    end)
+  end
+
+  defp attachment_summaries(nil), do: []
+
+  defp attachment_summaries(registrations) when is_map(registrations) do
+    registrations
+    |> Enum.reduce(%{}, fn {signal_name, registration}, acc ->
+      key = {registration.domain_id, registration.sm_key}
+
+      Map.update(
+        acc,
+        key,
+        %{
+          domain: registration.domain_id,
+          sm_index: elem(registration.sm_key, 1),
+          direction: registration.direction,
+          logical_address: Map.get(registration, :logical_address),
+          sm_size: Map.get(registration, :sm_size),
+          signals: [signal_name]
+        },
+        fn summary ->
+          %{summary | signals: [signal_name | summary.signals]}
+        end
+      )
+    end)
+    |> Enum.map(fn {_key, summary} ->
+      signals = summary.signals |> Enum.uniq() |> Enum.sort()
+      Map.merge(summary, %{signal_count: length(signals), signals: signals})
+    end)
+    |> Enum.sort_by(&{&1.sm_index, &1.domain})
+  end
+
+  defp validate_fmmu_capacity(%{esc_info: %{fmmu_count: available_fmmus}}, sm_groups)
+       when is_integer(available_fmmus) and available_fmmus >= 0 do
+    required_fmmus =
+      Enum.reduce(sm_groups, 0, fn %SmGroup{attachments: attachments}, acc ->
+        acc + length(attachments)
+      end)
+
+    if required_fmmus <= available_fmmus do
+      :ok
+    else
+      {:error, {:fmmu_limit_reached, required_fmmus, available_fmmus}}
+    end
+  end
+
+  defp validate_fmmu_capacity(_data, _sm_groups), do: :ok
+
+  defp build_output_domain_index(registrations) when is_map(registrations) do
+    registrations
+    |> Enum.reduce(%{}, fn
+      {_signal_name, %{direction: :output, sm_key: sm_key, domain_id: domain_id}}, acc ->
+        Map.update(acc, sm_key, MapSet.new([domain_id]), &MapSet.put(&1, domain_id))
+
+      _, acc ->
+        acc
+    end)
+    |> Enum.into(%{}, fn {sm_key, domain_ids} ->
+      {sm_key, domain_ids |> Enum.sort() |> Enum.to_list()}
+    end)
+  end
+
+  defp build_output_image_index(data, registrations, output_domain_ids_by_sm)
+       when is_map(registrations) and is_map(output_domain_ids_by_sm) do
+    Enum.reduce(output_domain_ids_by_sm, %{}, fn {sm_key, domain_ids}, acc ->
+      sm_size =
+        registrations
+        |> Enum.find_value(fn
+          {_signal_name, %{direction: :output, sm_key: ^sm_key, sm_size: sm_size}} -> sm_size
+          _ -> nil
+        end)
+
+      image = read_existing_output_image(data, domain_ids, sm_key, sm_size)
+      Map.put(acc, sm_key, image)
+    end)
+  end
+
+  defp read_existing_output_image(_data, _domain_ids, _sm_key, nil), do: <<>>
+
+  defp read_existing_output_image(data, domain_ids, sm_key, sm_size) do
+    key = {data.name, sm_key}
+
+    Enum.find_value(domain_ids, :binary.copy(<<0>>, sm_size), fn domain_id ->
+      case Domain.read(domain_id, key) do
+        {:ok, image} -> binary_pad(image, sm_size)
+        {:error, _} -> nil
+      end
+    end)
+  end
+
+  defp current_output_sm_image(data, domain_id, sm_key, sm_size) do
+    case Map.fetch(data.output_sm_images || %{}, sm_key) do
+      {:ok, image} when byte_size(image) == sm_size -> {:ok, image}
+      {:ok, image} -> {:ok, binary_pad(image, sm_size)}
+      :error -> read_output_sm_image_from_domain(data, domain_id, sm_key, sm_size)
+    end
+  end
+
+  defp read_output_sm_image_from_domain(data, domain_id, sm_key, sm_size) do
+    case Domain.read(domain_id, {data.name, sm_key}) do
+      {:ok, image} -> {:ok, binary_pad(image, sm_size)}
+      {:error, _} = err -> err
+    end
+  end
+
+  defp stage_output_sm_image(data, sm_key, domain_ids, next_value) do
+    key = {data.name, sm_key}
+
+    Enum.reduce_while(domain_ids, :ok, fn attached_domain_id, :ok ->
+      with :ok <- Domain.write(attached_domain_id, key, next_value),
+           {:ok, ^next_value} <- Domain.read(attached_domain_id, key) do
+        {:cont, :ok}
+      else
+        {:ok, _other} -> {:halt, {:error, {:staging_verification_failed, attached_domain_id}}}
+        {:error, _} = err -> {:halt, err}
+      end
     end)
   end
 
@@ -988,26 +1138,49 @@ defmodule EtherCAT.Slave do
   end
 
   defp apply_process_data_group(data, %SmGroup{} = sm_group, regs, fmmu_idx) do
-    with {:ok, offset} <-
-           register_process_data_domain(data, sm_group),
+    with {:ok, attachment_offsets} <-
+           register_process_data_domains(data, sm_group),
          :ok <- write_process_data_sync_manager(data, sm_group),
-         :ok <- write_process_data_fmmu(data, sm_group, fmmu_idx, offset),
+         :ok <- write_process_data_fmmus(data, sm_group, attachment_offsets, fmmu_idx),
          :ok <- activate_process_data_sync_manager(data, sm_group) do
-      {:ok, register_sm_group(sm_group, regs, offset), fmmu_idx + 1}
+      next_regs =
+        Enum.reduce(attachment_offsets, regs, fn {attachment, offset}, acc ->
+          register_domain_attachment(sm_group, attachment, acc, offset)
+        end)
+
+      {:ok, next_regs, fmmu_idx + length(attachment_offsets)}
     end
   end
 
-  defp register_process_data_domain(%{signal_registrations: registrations}, %SmGroup{} = sm_group)
+  defp register_process_data_domains(data, %SmGroup{} = sm_group) do
+    sm_group.attachments
+    |> Enum.reduce_while({:ok, []}, fn attachment, {:ok, acc} ->
+      case register_process_data_domain(data, sm_group, attachment) do
+        {:ok, offset} -> {:cont, {:ok, [{attachment, offset} | acc]}}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+    |> case do
+      {:ok, attachment_offsets} -> {:ok, Enum.reverse(attachment_offsets)}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp register_process_data_domain(
+         %{signal_registrations: registrations},
+         %SmGroup{} = sm_group,
+         %DomainAttachment{} = attachment
+       )
        when map_size(registrations) > 0 do
-    case cached_domain_offset(registrations, sm_group) do
+    case cached_domain_offset(registrations, sm_group, attachment) do
       {:ok, offset} -> {:ok, offset}
-      :error -> {:error, {:domain_reregister_required, sm_group.sm_index}}
+      :error -> {:error, {:domain_reregister_required, sm_group.sm_index, attachment.domain_id}}
     end
   end
 
-  defp register_process_data_domain(data, %SmGroup{} = sm_group) do
+  defp register_process_data_domain(data, %SmGroup{} = sm_group, %DomainAttachment{} = attachment) do
     case Domain.register_pdo(
-           sm_group.domain_id,
+           attachment.domain_id,
            {data.name, sm_group.sm_key},
            sm_group.total_sm_size,
            sm_group.direction
@@ -1017,10 +1190,15 @@ defmodule EtherCAT.Slave do
     end
   end
 
-  defp register_sm_group(%SmGroup{} = sm_group, regs, logical_address) do
-    Enum.reduce(sm_group.registrations, regs, fn registration, acc ->
+  defp register_domain_attachment(
+         %SmGroup{} = sm_group,
+         %DomainAttachment{} = attachment,
+         regs,
+         logical_address
+       ) do
+    Enum.reduce(attachment.registrations, regs, fn registration, acc ->
       Map.put(acc, registration.signal_name, %{
-        domain_id: registration.domain_id,
+        domain_id: attachment.domain_id,
         sm_key: sm_group.sm_key,
         direction: sm_group.direction,
         bit_offset: registration.bit_offset,
@@ -1028,6 +1206,17 @@ defmodule EtherCAT.Slave do
         logical_address: logical_address,
         sm_size: sm_group.total_sm_size
       })
+    end)
+  end
+
+  defp write_process_data_fmmus(data, %SmGroup{} = sm_group, attachment_offsets, fmmu_idx) do
+    attachment_offsets
+    |> Enum.with_index(fmmu_idx)
+    |> Enum.reduce_while(:ok, fn {{_attachment, offset}, idx}, :ok ->
+      case write_process_data_fmmu(data, sm_group, idx, offset) do
+        :ok -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
     end)
   end
 
@@ -1119,10 +1308,6 @@ defmodule EtherCAT.Slave do
     Logger.warning("[Slave #{data.name}] SM#{sm_index} not found in SII")
   end
 
-  defp log_process_data_error(data, {:sync_manager_spans_multiple_domains, sm_index}) do
-    Logger.warning("[Slave #{data.name}] SM#{sm_index} cannot span multiple domains")
-  end
-
   defp log_process_data_error(data, {:signal_name_conflicts_with_latch, signal_name}) do
     Logger.warning(
       "[Slave #{data.name}] #{inspect(signal_name)} conflicts with a configured latch name"
@@ -1145,9 +1330,15 @@ defmodule EtherCAT.Slave do
     )
   end
 
-  defp log_process_data_error(data, {:domain_reregister_required, sm_index}) do
+  defp log_process_data_error(data, {:domain_reregister_required, sm_index, domain_id}) do
     Logger.warning(
-      "[Slave #{data.name}] SM#{sm_index} needs domain re-registration; reconnect self-heal cannot reuse the cached logical address"
+      "[Slave #{data.name}] SM#{sm_index} in domain #{inspect(domain_id)} needs domain re-registration; reconnect self-heal cannot reuse the cached logical address"
+    )
+  end
+
+  defp log_process_data_error(data, {:fmmu_limit_reached, required_fmmus, available_fmmus}) do
+    Logger.warning(
+      "[Slave #{data.name}] process-data layout needs #{required_fmmus} FMMUs but hardware supports #{available_fmmus}"
     )
   end
 
@@ -1298,11 +1489,33 @@ defmodule EtherCAT.Slave do
   # -- SII -------------------------------------------------------------------
 
   defp read_sii(bus, station) do
-    with {:ok, identity} <- SII.read_identity(bus, station),
+    with {:ok, esc_info} <- read_esc_info(bus, station),
+         {:ok, identity} <- SII.read_identity(bus, station),
          {:ok, mailbox_config} <- SII.read_mailbox_config(bus, station),
          {:ok, sm_configs} <- SII.read_sm_configs(bus, station),
          {:ok, pdo_configs} <- SII.read_pdo_configs(bus, station) do
-      {:ok, identity, mailbox_config, sm_configs, pdo_configs}
+      {:ok, esc_info, identity, mailbox_config, sm_configs, pdo_configs}
+    end
+  end
+
+  defp read_esc_info(bus, station) do
+    case Bus.transaction(
+           bus,
+           Transaction.new()
+           |> Transaction.fprd(station, Registers.fmmu_count())
+           |> Transaction.fprd(station, Registers.sm_count())
+         ) do
+      {:ok, [%{data: <<fmmu_count::8>>, wkc: 1}, %{data: <<sm_count::8>>, wkc: 1}]} ->
+        {:ok, %{fmmu_count: fmmu_count, sm_count: sm_count}}
+
+      {:ok, replies} ->
+        case ensure_expected_wkcs(replies, 1, :esc_info_read_failed) do
+          :ok -> {:error, {:esc_info_read_failed, :unexpected_reply}}
+          {:error, reason} -> {:error, reason}
+        end
+
+      {:error, reason} ->
+        {:error, {:esc_info_read_failed, reason}}
     end
   end
 
@@ -1701,6 +1914,9 @@ defmodule EtherCAT.Slave do
     extract_sm_bits(old_sm_bytes, bit_offset, bit_size) !=
       extract_sm_bits(new_sm_bytes, bit_offset, bit_size)
   end
+
+  defp binary_pad(data, size) when byte_size(data) >= size, do: binary_part(data, 0, size)
+  defp binary_pad(data, size), do: data <> :binary.copy(<<0>>, size - byte_size(data))
 
   # Write `bit_size` bits from `encoded` into `sm_bytes` at `bit_offset`.
   # `encoded` is the driver's output binary; its LSB-aligned value is packed in.

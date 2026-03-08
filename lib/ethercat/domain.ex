@@ -159,7 +159,7 @@ defmodule EtherCAT.Domain do
 
   Returns `{:ok, map}` with keys: `:id`, `:cycle_time_us`, `:state`,
   `:cycle_count`, `:miss_count`, `:total_miss_count`, `:cycle_health`,
-  `:image_size`, `:expected_wkc`.
+  `:logical_base`, `:image_size`, `:expected_wkc`.
   """
   @spec info(domain_id()) :: {:ok, map()} | {:error, :not_found}
   def info(domain_id) do
@@ -347,6 +347,7 @@ defmodule EtherCAT.Domain do
       miss_count: data.miss_count,
       total_miss_count: data.total_miss_count,
       cycle_health: data.cycle_health,
+      logical_base: data.logical_base,
       image_size: Layout.image_size(data.layout),
       expected_wkc: Layout.expected_wkc(data.layout)
     }
