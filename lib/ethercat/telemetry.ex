@@ -112,6 +112,10 @@ defmodule EtherCAT.Telemetry do
         measurements: %{al_state: 1 | 2 | 4 | 8, error_code: non_neg_integer()}
         metadata:     %{slave: atom(), station: non_neg_integer()}
 
+      [:ethercat, :slave, :down]
+        measurements: %{}
+        metadata:     %{slave: atom(), station: non_neg_integer()}
+
   ## Timestamps
 
   `tx_timestamp` and `rx_timestamp` are `System.monotonic_time/0` values.
@@ -292,6 +296,11 @@ defmodule EtherCAT.Telemetry do
     )
   end
 
+  @doc false
+  def slave_down(slave_name, station) do
+    execute([:ethercat, :slave, :down], %{}, %{slave: slave_name, station: station})
+  end
+
   # ---------------------------------------------------------------------------
   # Lightweight event counters for IEx inspection
   # ---------------------------------------------------------------------------
@@ -319,7 +328,8 @@ defmodule EtherCAT.Telemetry do
     [:ethercat, :domain, :stopped],
     [:ethercat, :domain, :crashed],
     [:ethercat, :slave, :crashed],
-    [:ethercat, :slave, :health, :fault]
+    [:ethercat, :slave, :health, :fault],
+    [:ethercat, :slave, :down]
   ]
 
   @event_index @all_events |> Enum.with_index() |> Map.new()

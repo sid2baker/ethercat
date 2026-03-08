@@ -290,8 +290,20 @@ defmodule EtherCAT.Domain do
         {:keep_state, new_data, next_timeout}
 
       {:ok, [%{wkc: wkc}]} when wkc >= 0 ->
+        # WKC mismatch: frame completed but some slaves dropped off (ring loopback closed them
+        # out). Domain keeps cycling for remaining slaves. miss_count is reset — this is a
+        # successful frame, not a bus-level error. Slave health poll handles per-slave detection.
         reason = {:wkc_mismatch, %{expected: data.cycle_plan.expected_wkc, actual: wkc}}
-        mark_cycle_missed(data, reason, next_at, next_timeout)
+        Telemetry.domain_cycle_missed(data.id, data.miss_count + 1, reason)
+
+        new_data = %{
+          data
+          | miss_count: 0,
+            total_miss_count: data.total_miss_count + 1,
+            next_cycle_at: next_at
+        }
+
+        {:keep_state, new_data, next_timeout}
 
       {:ok, results} ->
         mark_cycle_missed(data, {:unexpected_reply, length(results)}, next_at, next_timeout)

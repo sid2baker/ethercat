@@ -621,23 +621,47 @@ defmodule EtherCAT.Slave do
         end
 
       {:ok, [%{wkc: 0}]} ->
-        # Slave not responding to addressed read — unreachable on bus
-        EtherCAT.Telemetry.slave_health_fault(data.name, data.station, 0, 0)
-
-        Logger.warning(
-          "[Slave #{data.name}] health poll: wkc=0 (slave unreachable) — fault event emitted"
-        )
-
-        {:keep_state_and_data, [{{:timeout, :health_poll}, data.health_poll_ms, nil}]}
+        # Slave not responding to addressed read — physically disconnected
+        EtherCAT.Telemetry.slave_down(data.name, data.station)
+        Logger.warning("[Slave #{data.name}] health poll: wkc=0 — disconnected, entering :down")
+        send(EtherCAT.Master, {:slave_down, data.name})
+        {:next_state, :down, data}
 
       {:error, reason} ->
         # Bus-level failure — entire segment unreachable
-        EtherCAT.Telemetry.slave_health_fault(data.name, data.station, 0, 0)
+        EtherCAT.Telemetry.slave_down(data.name, data.station)
+        Logger.warning("[Slave #{data.name}] health poll: bus error #{inspect(reason)} — entering :down")
+        send(EtherCAT.Master, {:slave_down, data.name})
+        {:next_state, :down, data}
+    end
+  end
 
-        Logger.warning(
-          "[Slave #{data.name}] health poll: bus error #{inspect(reason)} — fault event emitted"
-        )
+  # -- :down state (slave physically disconnected, polling for reconnect) -----
 
+  def handle_event(:enter, _old, :down, data) do
+    Logger.info("[Slave #{data.name}] entering :down — reconnect poll every #{data.health_poll_ms}ms")
+    {:keep_state_and_data, [{{:timeout, :health_poll}, data.health_poll_ms, nil}]}
+  end
+
+  def handle_event({:timeout, :health_poll}, nil, :down, data) do
+    deadline_us = data.health_poll_ms * 500
+
+    case Bus.transaction(
+           data.bus,
+           Transaction.fprd(data.station, Registers.al_status()),
+           deadline_us
+         ) do
+      {:ok, [%{wkc: wkc}]} when wkc > 0 ->
+        Logger.info("[Slave #{data.name}] reconnected — reinitialising")
+        # initialize_to_preop/1 returns a gen_statem init tuple.
+        # post_transition(:preop, data) inside transition_to/2 automatically sends
+        # {:slave_ready, name, :preop} to Master — no explicit notification needed here.
+        case initialize_to_preop(data) do
+          {:ok, next_state, new_data} -> {:next_state, next_state, new_data}
+          {:ok, next_state, new_data, actions} -> {:next_state, next_state, new_data, actions}
+        end
+
+      _ ->
         {:keep_state_and_data, [{{:timeout, :health_poll}, data.health_poll_ms, nil}]}
     end
   end

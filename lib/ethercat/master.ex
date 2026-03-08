@@ -711,12 +711,48 @@ defmodule EtherCAT.Master do
   # Slave retreated to a lower ESM state (AL fault detected by health poll)
   def handle_event(:info, {:slave_retreated, name, target_state}, :running, data) do
     Logger.warning("[Master] slave #{name} retreated to #{target_state} — entering degraded")
-    {:next_state, :degraded, %{data | activatable_slaves: [name]}}
+    new_failures = Map.put(data.activation_failures, name, {target_state, :health_fault})
+    {:next_state, :degraded, %{data | activation_failures: new_failures}}
   end
 
   def handle_event(:info, {:slave_retreated, name, target_state}, _state, _data) do
     Logger.warning("[Master] slave #{name} retreated to #{target_state} (already not running)")
     :keep_state_and_data
+  end
+
+  # Slave physically disconnected (health poll wkc=0 or bus error)
+  def handle_event(:info, {:slave_down, name}, :running, data) do
+    Logger.warning("[Master] slave #{name} disconnected — entering degraded")
+    new_failures = Map.put(data.activation_failures, name, {:down, :disconnected})
+    {:next_state, :degraded, %{data | activation_failures: new_failures}}
+  end
+
+  def handle_event(:info, {:slave_down, name}, :degraded, data) do
+    Logger.warning("[Master] slave #{name} disconnected (already degraded)")
+    new_failures = Map.put(data.activation_failures, name, {:down, :disconnected})
+    {:keep_state, %{data | activation_failures: new_failures}}
+  end
+
+  # Slave reconnected and reached :preop — attempt to bring it back to :op
+  def handle_event(:info, {:slave_ready, name, :preop}, :degraded, data) do
+    Logger.info("[Master] slave #{name} reconnected and in :preop — requesting :op")
+
+    case Slave.request(name, :op) do
+      :ok ->
+        new_failures = Map.delete(data.activation_failures, name)
+
+        if map_size(new_failures) == 0 do
+          Logger.info("[Master] all slaves recovered — returning to :running")
+          {:next_state, :running, %{data | activation_failures: %{}}}
+        else
+          {:keep_state, %{data | activation_failures: new_failures}}
+        end
+
+      {:error, reason} ->
+        Logger.warning("[Master] slave #{name} :op request failed after reconnect: #{inspect(reason)}")
+        new_failures = Map.put(data.activation_failures, name, {:preop, reason})
+        {:keep_state, %{data | activation_failures: new_failures}}
+    end
   end
 
   # :slave_ready arriving while not configuring (e.g. restart race) — ignore
@@ -1326,18 +1362,23 @@ defmodule EtherCAT.Master do
 
   defp retry_failed_activation(%{activation_failures: failures} = data) do
     retried_failures =
-      Enum.reduce(failures, %{}, fn {name, _last_failure}, acc ->
-        case Slave.request(name, :op) do
-          :ok ->
-            acc
+      Enum.reduce(failures, %{}, fn
+        {name, {:down, _}}, acc ->
+          # Slave is physically disconnected; waiting for {:slave_ready} notification from slave
+          Map.put(acc, name, {:down, :disconnected})
 
-          {:error, reason} ->
-            Logger.warning(
-              "[Master] degraded retry: #{inspect(name)} still not in :op: #{inspect(reason)}"
-            )
+        {name, _last_failure}, acc ->
+          case Slave.request(name, :op) do
+            :ok ->
+              acc
 
-            Map.put(acc, name, {:op, reason})
-        end
+            {:error, reason} ->
+              Logger.warning(
+                "[Master] degraded retry: #{inspect(name)} still not in :op: #{inspect(reason)}"
+              )
+
+              Map.put(acc, name, {:op, reason})
+          end
       end)
 
     if map_size(retried_failures) == 0 do
