@@ -92,6 +92,26 @@ defmodule EtherCAT.Telemetry do
         measurements: %{miss_count: pos_integer()}
         metadata:     %{domain: atom(), reason: term()}
 
+  ### Domain fault events
+
+      [:ethercat, :domain, :stopped]
+        measurements: %{}
+        metadata:     %{domain: atom(), reason: term()}
+
+      [:ethercat, :domain, :crashed]
+        measurements: %{}
+        metadata:     %{domain: atom(), reason: term()}
+
+  ### Slave fault events
+
+      [:ethercat, :slave, :crashed]
+        measurements: %{}
+        metadata:     %{slave: atom(), reason: term()}
+
+      [:ethercat, :slave, :health, :fault]
+        measurements: %{al_state: 1 | 2 | 4 | 8, error_code: non_neg_integer()}
+        metadata:     %{slave: atom(), station: non_neg_integer()}
+
   ## Timestamps
 
   `tx_timestamp` and `rx_timestamp` are `System.monotonic_time/0` values.
@@ -248,6 +268,30 @@ defmodule EtherCAT.Telemetry do
     )
   end
 
+  @doc false
+  def domain_stopped(domain_id, reason) do
+    execute([:ethercat, :domain, :stopped], %{}, %{domain: domain_id, reason: reason})
+  end
+
+  @doc false
+  def domain_crashed(domain_id, reason) do
+    execute([:ethercat, :domain, :crashed], %{}, %{domain: domain_id, reason: reason})
+  end
+
+  @doc false
+  def slave_crashed(slave_name, reason) do
+    execute([:ethercat, :slave, :crashed], %{}, %{slave: slave_name, reason: reason})
+  end
+
+  @doc false
+  def slave_health_fault(slave_name, station, al_state, error_code) do
+    execute(
+      [:ethercat, :slave, :health, :fault],
+      %{al_state: al_state, error_code: error_code},
+      %{slave: slave_name, station: station}
+    )
+  end
+
   # ---------------------------------------------------------------------------
   # Lightweight event counters for IEx inspection
   # ---------------------------------------------------------------------------
@@ -271,7 +315,11 @@ defmodule EtherCAT.Telemetry do
     [:ethercat, :dc, :sync_diff, :observed],
     [:ethercat, :dc, :lock, :changed],
     [:ethercat, :domain, :cycle, :done],
-    [:ethercat, :domain, :cycle, :missed]
+    [:ethercat, :domain, :cycle, :missed],
+    [:ethercat, :domain, :stopped],
+    [:ethercat, :domain, :crashed],
+    [:ethercat, :slave, :crashed],
+    [:ethercat, :slave, :health, :fault]
   ]
 
   @event_index @all_events |> Enum.with_index() |> Map.new()

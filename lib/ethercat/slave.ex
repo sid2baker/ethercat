@@ -71,6 +71,8 @@ defmodule EtherCAT.Slave do
     :active_latches,
     # poll period for hardware latch event registers while in :op
     :latch_poll_ms,
+    # poll period for AL Status background health check while in :op; nil = disabled
+    :health_poll_ms,
     # %{signal_name => %{domain_id, sm_key, bit_offset, bit_size, direction}}
     :signal_registrations,
     # %{{:sm, idx} => [{signal_name, %{bit_offset, bit_size}}]}
@@ -228,6 +230,7 @@ defmodule EtherCAT.Slave do
     dc_cycle_ns = Keyword.get(opts, :dc_cycle_ns)
     process_data_request = Keyword.get(opts, :process_data, :none)
     sync_config = Keyword.get(opts, :sync)
+    health_poll_ms = Keyword.get(opts, :health_poll_ms)
 
     data = %__MODULE__{
       bus: bus,
@@ -245,6 +248,7 @@ defmodule EtherCAT.Slave do
       latch_names: %{},
       active_latches: nil,
       latch_poll_ms: nil,
+      health_poll_ms: health_poll_ms,
       signal_registrations: %{},
       signal_registrations_by_sm: %{},
       subscriptions: %{},
@@ -264,11 +268,22 @@ defmodule EtherCAT.Slave do
   def handle_event(:enter, _old, :safeop, _data), do: :keep_state_and_data
 
   def handle_event(:enter, _old, :op, data) do
+    actions = []
+
     actions =
       if data.latch_poll_ms do
-        [{:state_timeout, data.latch_poll_ms, :latch_poll}]
+        [{:state_timeout, data.latch_poll_ms, :latch_poll} | actions]
       else
-        []
+        actions
+      end
+
+    actions =
+      case data.health_poll_ms do
+        ms when is_integer(ms) and ms > 0 ->
+          [{{:timeout, :health_poll}, ms, nil} | actions]
+
+        _ ->
+          actions
       end
 
     {:keep_state_and_data, actions}
@@ -556,6 +571,75 @@ defmodule EtherCAT.Slave do
       end
 
     {:keep_state_and_data, actions}
+  end
+
+  # -- AL Status health poll (background check per spec §20.4) ---------------
+
+  def handle_event({:timeout, :health_poll}, nil, :op, data) do
+    # Use a realtime transaction so the health poll is not starved behind DC realtime queue.
+    # The deadline (half of health_poll_ms) bounds the wait; {:error, :expired} is treated as a fault.
+    deadline_us = data.health_poll_ms * 500
+
+    case Bus.transaction(
+           data.bus,
+           Transaction.fprd(data.station, Registers.al_status()),
+           deadline_us
+         ) do
+      {:ok, [%{data: al_bytes, wkc: wkc}]} when wkc > 0 ->
+        {al_state, error_ind} = Registers.decode_al_status(al_bytes)
+
+        if al_state != @al_codes.op or error_ind do
+          error_code =
+            case Bus.transaction(
+                   data.bus,
+                   Transaction.fprd(data.station, Registers.al_status_code()),
+                   deadline_us
+                 ) do
+              {:ok, [%{data: <<code::16-little>>}]} -> code
+              _ -> 0
+            end
+
+          EtherCAT.Telemetry.slave_health_fault(data.name, data.station, al_state, error_code)
+
+          Logger.warning(
+            "[Slave #{data.name}] AL fault detected: state=0x#{Integer.to_string(al_state, 16)} code=0x#{Integer.to_string(error_code, 16)} — retreating to safeop"
+          )
+
+          # Acknowledge error and request SafeOp — reuses existing transition_to/2 which
+          # calls ack_error/2 internally if the error indication bit is set.
+          case transition_to(data, :safeop) do
+            {:ok, new_data} ->
+              send(EtherCAT.Master, {:slave_retreated, data.name, :safeop})
+              {:next_state, :safeop, new_data}
+
+            {:error, reason, new_data} ->
+              Logger.error("[Slave #{data.name}] SafeOp retreat failed: #{inspect(reason)}")
+              {:keep_state, new_data, [{{:timeout, :health_poll}, data.health_poll_ms, nil}]}
+          end
+        else
+          {:keep_state_and_data, [{{:timeout, :health_poll}, data.health_poll_ms, nil}]}
+        end
+
+      {:ok, [%{wkc: 0}]} ->
+        # Slave not responding to addressed read — unreachable on bus
+        EtherCAT.Telemetry.slave_health_fault(data.name, data.station, 0, 0)
+
+        Logger.warning(
+          "[Slave #{data.name}] health poll: wkc=0 (slave unreachable) — fault event emitted"
+        )
+
+        {:keep_state_and_data, [{{:timeout, :health_poll}, data.health_poll_ms, nil}]}
+
+      {:error, reason} ->
+        # Bus-level failure — entire segment unreachable
+        EtherCAT.Telemetry.slave_health_fault(data.name, data.station, 0, 0)
+
+        Logger.warning(
+          "[Slave #{data.name}] health poll: bus error #{inspect(reason)} — fault event emitted"
+        )
+
+        {:keep_state_and_data, [{{:timeout, :health_poll}, data.health_poll_ms, nil}]}
+    end
   end
 
   # -- Catch-all -------------------------------------------------------------

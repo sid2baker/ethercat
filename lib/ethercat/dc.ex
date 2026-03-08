@@ -89,7 +89,7 @@ defmodule EtherCAT.DC do
     %{
       id: __MODULE__,
       start: {__MODULE__, :start_link, [opts]},
-      restart: :permanent,
+      restart: :temporary,
       shutdown: 5000
     }
   end

@@ -108,8 +108,8 @@ poll_until_state = fn bus, station, target_state, poll_ms, timeout_ms, al_state_
              bus,
              EtherCAT.Bus.Transaction.fprd(station, EtherCAT.Slave.Registers.al_status())
            ) do
-        {:ok, [%{data: <<status::16-little>>, wkc: 1}]} ->
-          actual = Bitwise.band(status, 0x0F)
+        {:ok, [%{data: bytes, wkc: 1}]} ->
+          {actual, _error_ind} = EtherCAT.Slave.Registers.decode_al_status(bytes)
           state_name = al_state_name.(actual)
 
           if state_name == target_state do
@@ -211,8 +211,9 @@ case EtherCAT.Bus.transaction(
        bus,
        EtherCAT.Bus.Transaction.fprd(outputs_station, EtherCAT.Slave.Registers.al_status())
      ) do
-  {:ok, [%{data: <<status::16-little>>, wkc: 1}]} ->
-    state = al_state_name.(Bitwise.band(status, 0x0F))
+  {:ok, [%{data: bytes, wkc: 1}]} ->
+    {al_code, _} = EtherCAT.Slave.Registers.decode_al_status(bytes)
+    state = al_state_name.(al_code)
     IO.puts("  :outputs AL status: #{state}")
 
     if state != :op, do: raise("Expected :op, got #{state}")
@@ -311,9 +312,8 @@ wdt_status_val =
   end
 
 if wdt_status_val != nil do
-  # WDT_status bit 0: 0 = watchdog expired, 1 = watchdog OK
-  wdt_ok = Bitwise.band(wdt_status_val, 0x01) == 1
-  IO.puts("  WDT_status=0x#{Integer.to_string(wdt_status_val, 16)} → watchdog #{if wdt_ok, do: "still running (outputs NOT safe)", else: "EXPIRED (outputs went safe)"}")
+  wdt_expired = EtherCAT.Slave.Registers.wdt_status_expired?(<<wdt_status_val::16-little>>)
+  IO.puts("  WDT_status=0x#{Integer.to_string(wdt_status_val, 16)} → watchdog #{if wdt_expired, do: "EXPIRED (outputs went safe)", else: "still running (outputs NOT safe)"}")
 end
 
 # ---------------------------------------------------------------------------
@@ -400,7 +400,7 @@ IO.puts("  #{restored_count}/16 loopback inputs back HIGH after recovery")
 # reset to safe state (0), but the AL status remains OP (no SAFEOP transition).
 # This is valid EtherCAT behaviour — the master can still communicate with the
 # slave in OP even while outputs are held at safe state.
-wdt_ok = wdt_status_val != nil and Bitwise.band(wdt_status_val, 0x01) == 0
+wdt_ok = wdt_status_val != nil and EtherCAT.Slave.Registers.wdt_status_expired?(<<wdt_status_val::16-little>>)
 
 IO.puts("""
 

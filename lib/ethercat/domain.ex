@@ -451,6 +451,8 @@ defmodule EtherCAT.Domain do
 
     if new_data.miss_count >= data.miss_threshold do
       Logger.error("[Domain #{data.id}] #{data.miss_threshold} consecutive misses — stopping")
+      Telemetry.domain_stopped(data.id, reason)
+      send(EtherCAT.Master, {:domain_stopped, data.id, reason})
       {:next_state, :stopped, new_data}
     else
       {:keep_state, new_data, next_timeout}

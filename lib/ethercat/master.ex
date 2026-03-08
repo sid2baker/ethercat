@@ -5,7 +5,7 @@ defmodule EtherCAT.Master do
 
   require Logger
 
-  alias EtherCAT.{DC, Domain, Bus, Slave}
+  alias EtherCAT.{DC, Domain, Bus, Slave, Telemetry}
   alias EtherCAT.Bus.Transaction
   alias EtherCAT.DC.Status, as: DCStatus
   alias EtherCAT.Master.Config
@@ -62,7 +62,11 @@ defmodule EtherCAT.Master do
     # blocked await_running callers — replied when :running is entered
     await_callers: [],
     # blocked await_operational callers — replied when cyclic operation is live
-    await_operational_callers: []
+    await_operational_callers: [],
+    # %{monitor_ref => domain_id} — crash detection for running domains
+    domain_refs: %{},
+    # %{monitor_ref => slave_name} — crash detection for running slaves
+    slave_refs: %{}
   ]
 
   # -- Public API ------------------------------------------------------------
@@ -675,8 +679,43 @@ defmodule EtherCAT.Master do
     {:next_state, :idle, reset_master(failure_snapshot(:bus_down, reason))}
   end
 
+  # Domain process crashed unexpectedly
+  def handle_event(:info, {:DOWN, ref, :process, _pid, reason}, _state, data)
+      when is_map_key(data.domain_refs, ref) do
+    {id, refs} = Map.pop(data.domain_refs, ref)
+    Logger.error("[Master] domain #{id} crashed: #{inspect(reason)}")
+    Telemetry.domain_crashed(id, reason)
+    {:keep_state, %{data | domain_refs: refs}}
+  end
+
+  # Slave process crashed unexpectedly
+  def handle_event(:info, {:DOWN, ref, :process, _pid, reason}, _state, data)
+      when is_map_key(data.slave_refs, ref) do
+    {name, refs} = Map.pop(data.slave_refs, ref)
+    Logger.error("[Master] slave #{name} crashed: #{inspect(reason)}")
+    Telemetry.slave_crashed(name, reason)
+    {:keep_state, %{data | slave_refs: refs}}
+  end
+
   # Stale :DOWN from a previous session — ignore
   def handle_event(:info, {:DOWN, _ref, :process, _pid, _reason}, _state, _data) do
+    :keep_state_and_data
+  end
+
+  # Domain stopped cycling due to consecutive misses
+  def handle_event(:info, {:domain_stopped, id, reason}, _state, _data) do
+    Logger.error("[Master] domain #{id} stopped cycling: #{inspect(reason)}")
+    :keep_state_and_data
+  end
+
+  # Slave retreated to a lower ESM state (AL fault detected by health poll)
+  def handle_event(:info, {:slave_retreated, name, target_state}, :running, data) do
+    Logger.warning("[Master] slave #{name} retreated to #{target_state} — entering degraded")
+    {:next_state, :degraded, %{data | activatable_slaves: [name]}}
+  end
+
+  def handle_event(:info, {:slave_retreated, name, target_state}, _state, _data) do
+    Logger.warning("[Master] slave #{name} retreated to #{target_state} (already not running)")
     :keep_state_and_data
   end
 
@@ -838,9 +877,12 @@ defmodule EtherCAT.Master do
          {:ok, slave_topology} <- read_topology_statuses(data, stations),
          :ok <- reset_slaves_to_init(data, stations),
          {:ok, dc_ref_station, dc_stations} <- initialize_distributed_clocks(data, slave_topology),
-         :ok <- start_domains(data, dc_ref_station),
+         {:ok, domain_refs} <- start_domains(data, dc_ref_station),
          {:ok, effective_slave_configs, slaves, pending_preop, activatable_slaves} <-
            start_slaves(data, count, if(dc_ref_station, do: dc_cycle_ns(data), else: nil)) do
+      slave_refs =
+        Map.new(slaves, fn {name, _station, pid} -> {Process.monitor(pid), name} end)
+
       {:ok,
        %{
          data
@@ -851,7 +893,9 @@ defmodule EtherCAT.Master do
            pending_preop: MapSet.new(pending_preop),
            activatable_slaves: activatable_slaves,
            activation_failures: %{},
-           activation_phase: :preop_ready
+           activation_phase: :preop_ready,
+           domain_refs: domain_refs,
+           slave_refs: slave_refs
        }}
     else
       {:error, reason} ->
@@ -1061,8 +1105,9 @@ defmodule EtherCAT.Master do
     end
   end
 
+  # Returns {:ok, domain_refs} where domain_refs is %{monitor_ref => domain_id}
   defp start_domains(data, _dc_ref_station) do
-    Enum.reduce_while(data.domain_configs || [], :ok, fn entry, :ok ->
+    Enum.reduce_while(data.domain_configs || [], {:ok, %{}}, fn entry, {:ok, refs} ->
       domain_opts = Config.domain_start_opts(entry)
 
       id = entry.id
@@ -1071,11 +1116,11 @@ defmodule EtherCAT.Master do
              EtherCAT.SessionSupervisor,
              {Domain, [{:bus, data.bus_pid} | domain_opts]}
            ) do
-        {:ok, _pid} ->
-          {:cont, :ok}
+        {:ok, pid} ->
+          {:cont, {:ok, Map.put(refs, Process.monitor(pid), id)}}
 
-        {:error, {:already_started, _pid}} ->
-          {:cont, :ok}
+        {:error, {:already_started, pid}} ->
+          {:cont, {:ok, Map.put(refs, Process.monitor(pid), id)}}
 
         {:error, reason} ->
           {:halt, {:error, {:domain_start_failed, id, reason}}}
@@ -1101,7 +1146,8 @@ defmodule EtherCAT.Master do
           config: entry.config,
           process_data: entry.process_data,
           dc_cycle_ns: dc_cycle_ns,
-          sync: entry.sync
+          sync: entry.sync,
+          health_poll_ms: entry.health_poll_ms
         ]
 
         case DynamicSupervisor.start_child(EtherCAT.SlaveSupervisor, {Slave, opts}) do
@@ -1176,6 +1222,9 @@ defmodule EtherCAT.Master do
   # -- Session teardown ------------------------------------------------------
 
   defp stop_session(data) do
+    Enum.each(data.domain_refs, fn {ref, _id} -> Process.demonitor(ref, [:flush]) end)
+    Enum.each(data.slave_refs, fn {ref, _name} -> Process.demonitor(ref, [:flush]) end)
+
     if data.dc_pid do
       DynamicSupervisor.terminate_child(EtherCAT.SessionSupervisor, data.dc_pid)
     end

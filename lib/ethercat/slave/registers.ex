@@ -86,6 +86,41 @@ defmodule EtherCAT.Slave.Registers do
   @spec al_status_code() :: reg()
   def al_status_code, do: {0x0134, 2}
 
+  @doc """
+  Decode the 2-byte `al_status/0` response.
+
+  Returns `{al_state, error_indicated?}` where `al_state` is one of:
+  - `0x1` Init, `0x2` Pre-Op, `0x4` Safe-Op, `0x8` Op
+
+  `error_indicated?` is `true` when the slave has faulted or refused the
+  last transition (bit 4 of 0x0130).
+  """
+  @spec decode_al_status(binary()) :: {non_neg_integer(), boolean()}
+  def decode_al_status(<<_reserved::3, error_ind::1, al_state::4, _::8>>),
+    do: {al_state, error_ind == 1}
+
+  @doc """
+  Decode the 2-byte `wdt_status/0` response.
+
+  Returns `true` when the SyncManager watchdog has expired (bit 0 of 0x0440).
+  """
+  @spec wdt_status_expired?(binary()) :: boolean()
+  def wdt_status_expired?(<<_::7, expired::1, _::8>>), do: expired == 1
+
+  @doc """
+  Decode the 8-byte `rx_error_counter/0` response into a per-port map.
+
+  Each value is the count of invalid frames received on that port.
+  """
+  @spec decode_rx_errors(binary()) :: %{
+          port0: integer(),
+          port1: integer(),
+          port2: integer(),
+          port3: integer()
+        }
+  def decode_rx_errors(<<p0::16-little, p1::16-little, p2::16-little, p3::16-little>>),
+    do: %{port0: p0, port1: p1, port2: p2, port3: p3}
+
   # -- Interrupts / AL event (§2.8) -----------------------------------------
 
   @spec al_event_mask() :: reg()
