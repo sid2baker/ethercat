@@ -73,6 +73,7 @@ the current public API.
 
 | Script | Flags | What it measures |
 |--------|-------|-----------------|
+| `fault_tolerance.exs` | `--poll-ms` `--miss-threshold` `--split-sm` `--skip-hardware` `--no-rtd` | Fault-tolerance validation — domain/slave crash detection, cable-pull recovery, and optional split-SM reconnect checks across `:fast` / `:slow` domains |
 | `watchdog_recovery.exs` | `--period-ms` `--poll-ms` `--trip-timeout` `--op-timeout` `--no-rtd` | SM watchdog trip and recovery — measures trip latency, reads WDT_status and WDT_SM registers, verifies safe-state loopback |
 | `rtd_stability.exs` | `--period-ms` `--duration-s` `--report-s` `--sigma` | Long-duration RTD stability analysis — Welford running statistics, toggle-bit continuity, outlier detection |
 | `dc_sync.exs` | `--period-ms` `--lock-timeout` `--drift-samples` `--lock-threshold` `--no-rtd` | Distributed Clocks test — DC lock convergence, per-slave system time via FPRD, sync-diff monitoring, loopback jitter baseline |

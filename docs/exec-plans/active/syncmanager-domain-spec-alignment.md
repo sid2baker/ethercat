@@ -246,11 +246,13 @@ Status: IN PROGRESS
 Completed:
 - `examples/multi_domain.exs` now uses a real split-SM layout
 - `examples/README.md` documents split-domain behavior
+- `examples/fault_tolerance.exs --split-sm` provides a maintained split-SM
+  reconnect scenario under the master-owned recovery model
 - live hardware validation exists for split input/output attachments
 
 Remaining:
-- add or extend a maintained recovery scenario that exercises split-SM
-  disconnect/reconnect under the master-owned recovery flow
+- run the maintained split-SM recovery scenario on hardware and record the
+  expected outcomes in the example docs
 
 ## Risks and Decision Gates
 

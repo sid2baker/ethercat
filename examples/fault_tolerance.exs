@@ -33,10 +33,12 @@
 #
 # Usage:
 #   mix run examples/fault_tolerance.exs --interface enp0s31f6
+#   mix run examples/fault_tolerance.exs --interface enp0s31f6 --split-sm
 #
 # Optional flags:
 #   --poll-ms N           health poll interval (default 500)
 #   --miss-threshold N    domain miss threshold for scenario B (default 2)
+#   --split-sm            split EL1809/EL2809 ch1/ch2 across :fast / :slow domains
 #   --skip-hardware       run only scenario A (no cable pulls required)
 #   --no-rtd              skip EL3202 slave
 
@@ -134,6 +136,56 @@ defmodule FT.Helpers do
     end)
   end
 
+  def poll_until_domains_state(domain_ids, target_state, timeout_ms, poll_ms \\ 100) do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+
+    Stream.repeatedly(fn -> :ok end)
+    |> Enum.reduce_while(:polling, fn _, _ ->
+      states =
+        Enum.map(domain_ids, fn domain_id ->
+          case EtherCAT.domain_info(domain_id) do
+            {:ok, %{state: state}} -> {domain_id, {:ok, state}}
+            {:error, reason} -> {domain_id, {:error, reason}}
+          end
+        end)
+
+      if Enum.all?(states, fn
+           {_domain_id, {:ok, ^target_state}} -> true
+           _other -> false
+         end) do
+        {:halt, {:ok, states}}
+      else
+        if System.monotonic_time(:millisecond) >= deadline do
+          {:halt, {:error, :timeout, states}}
+        else
+          Process.sleep(poll_ms)
+          {:cont, :polling}
+        end
+      end
+    end)
+  end
+
+  def domain_snapshot(domain_ids) do
+    Enum.into(domain_ids, %{}, fn domain_id ->
+      {:ok, stats} = EtherCAT.Domain.stats(domain_id)
+      {:ok, info} = EtherCAT.domain_info(domain_id)
+
+      {domain_id, %{cycle_count: stats.cycle_count, state: info.state}}
+    end)
+  end
+
+  def attachment_domains(slave_name) do
+    with {:ok, info} <- EtherCAT.slave_info(slave_name) do
+      domains =
+        info.attachments
+        |> Enum.map(& &1.domain)
+        |> Enum.uniq()
+        |> Enum.sort()
+
+      {:ok, domains}
+    end
+  end
+
   def print(label, status, detail \\ "") do
     mark = if status == :ok, do: "✓", else: "✗"
     extra = if detail != "", do: "  #{detail}", else: ""
@@ -168,6 +220,7 @@ end
       poll_ms: :integer,
       miss_threshold: :integer,
       skip_hardware: :boolean,
+      split_sm: :boolean,
       no_rtd: :boolean
     ]
   )
@@ -177,10 +230,16 @@ poll_ms = Keyword.get(opts, :poll_ms, 500)
 miss_threshold = Keyword.get(opts, :miss_threshold, 2)
 skip_hardware = Keyword.get(opts, :skip_hardware, false)
 include_rtd = not Keyword.get(opts, :no_rtd, false)
+split_sm = Keyword.get(opts, :split_sm, false)
+
+main_domain_ids = if split_sm, do: [:fast, :slow], else: [:main]
+split_slow_cycle_us = 20_000
+split_rtd_cycle_us = 50_000
 
 IO.puts("""
 EtherCAT fault tolerance validation
   interface      : #{interface}
+  topology       : #{if split_sm, do: "split-sm (:fast / :slow)", else: "single-domain (:main)"}
   health_poll_ms : #{poll_ms}
   miss_threshold : #{miss_threshold}
   hardware tests : #{if skip_hardware, do: "SKIPPED (--skip-hardware)", else: "enabled"}
@@ -194,34 +253,77 @@ start_bus = fn health_poll_ms_opt ->
   EtherCAT.stop()
   Process.sleep(500)
 
-  rtd_config = %EtherCAT.Slave.Config{
-    name: :rtd,
-    driver: FT.EL3202,
-    process_data: {:all, :main}
-  }
-
-  :ok =
-    EtherCAT.start(
-      interface: interface,
-      domains: [
+  domains =
+    if split_sm do
+      [
+        %EtherCAT.Domain.Config{
+          id: :fast,
+          cycle_time_us: 10_000,
+          miss_threshold: miss_threshold
+        },
+        %EtherCAT.Domain.Config{
+          id: :slow,
+          cycle_time_us: split_slow_cycle_us,
+          miss_threshold: miss_threshold
+        }
+      ] ++
+        if(include_rtd,
+          do: [
+            %EtherCAT.Domain.Config{
+              id: :rtd,
+              cycle_time_us: split_rtd_cycle_us,
+              miss_threshold: miss_threshold
+            }
+          ],
+          else: []
+        )
+    else
+      [
         %EtherCAT.Domain.Config{
           id: :main,
           cycle_time_us: 10_000,
           miss_threshold: miss_threshold
         }
-      ],
+      ]
+    end
+
+  input_process_data =
+    if split_sm do
+      [ch1: :fast, ch2: :slow]
+    else
+      {:all, :main}
+    end
+
+  output_process_data =
+    if split_sm do
+      [ch1: :fast, ch2: :slow]
+    else
+      {:all, :main}
+    end
+
+  rtd_config =
+    %EtherCAT.Slave.Config{
+      name: :rtd,
+      driver: FT.EL3202,
+      process_data: if(split_sm, do: {:all, :rtd}, else: {:all, :main})
+    }
+
+  :ok =
+    EtherCAT.start(
+      interface: interface,
+      domains: domains,
       slaves:
         [
           %EtherCAT.Slave.Config{name: :coupler},
           %EtherCAT.Slave.Config{
             name: :inputs,
             driver: FT.EL1809,
-            process_data: {:all, :main}
+            process_data: input_process_data
           },
           %EtherCAT.Slave.Config{
             name: :outputs,
             driver: FT.EL2809,
-            process_data: {:all, :main},
+            process_data: output_process_data,
             health_poll_ms: health_poll_ms_opt
           }
         ] ++ if(include_rtd, do: [rtd_config], else: [])
@@ -337,7 +439,7 @@ results =
       "Pull the MAIN EtherCAT cable (PC → EK1100). Domain stops after #{miss_threshold} frame errors."
     )
 
-    b_result =
+    b_event_result =
       receive do
         {:got_domain_stopped, meta} ->
           FT.Helpers.print(
@@ -354,6 +456,29 @@ results =
       end
 
     :telemetry.detach("ft-domain-stop")
+
+    b_state_result =
+      case FT.Helpers.poll_until_domains_state(main_domain_ids, :stopped, 5_000) do
+        {:ok, states} ->
+          domains =
+            states
+            |> Enum.map(fn {domain_id, _state} -> inspect(domain_id) end)
+            |> Enum.join(", ")
+
+          FT.Helpers.print("tracked domains reached :stopped", :ok, domains)
+          :ok
+
+        {:error, :timeout, states} ->
+          FT.Helpers.print(
+            "tracked domains reached :stopped",
+            :error,
+            inspect(states)
+          )
+
+          :error
+      end
+
+    b_result = if b_event_result == :ok and b_state_result == :ok, do: :ok, else: :error
 
     FT.Helpers.prompt("Reconnect the main cable, then press ENTER.")
 
@@ -378,10 +503,14 @@ results =
     IO.puts("        cycling  → frame return path stayed intact")
     IO.puts("        stopped  → cable pull broke the return path / segment")
 
+    if split_sm do
+      IO.puts("    - split-SM attachments on :inputs / :outputs should remain")
+      IO.puts("      mapped to :fast and :slow after recovery")
+    end
+
     start_bus.(poll_ms)
 
-    {:ok, stats_before} = EtherCAT.Domain.stats(:main)
-    cycle_before = stats_before.cycle_count
+    domain_snapshot_before = FT.Helpers.domain_snapshot(main_domain_ids)
 
     :telemetry.attach(
       "ft-slave-down",
@@ -416,50 +545,67 @@ results =
 
     :telemetry.detach("ft-slave-down")
 
-    # Give the domain enough time to either keep cycling or trip miss_threshold.
-    Process.sleep(200)
-    {:ok, stats_after} = EtherCAT.Domain.stats(:main)
-    {:ok, domain_info_after} = EtherCAT.domain_info(:main)
-    cycle_after = stats_after.cycle_count
+    # Give the domains enough time to either keep cycling or trip miss_threshold.
+    Process.sleep(max(200, poll_ms))
 
-    {domain_status, domain_mode} =
-      case domain_info_after.state do
-        :cycling when cycle_after > cycle_before ->
-          FT.Helpers.print(
-            "domain stayed in :cycling after disconnect",
-            :ok,
-            "#{cycle_before} → #{cycle_after} (+#{cycle_after - cycle_before} cycles)"
-          )
+    {domain_status, domain_modes} =
+      main_domain_ids
+      |> Enum.map(fn domain_id ->
+        before = Map.fetch!(domain_snapshot_before, domain_id)
+        domain_after = FT.Helpers.domain_snapshot([domain_id]) |> Map.fetch!(domain_id)
 
-          {:ok, :cycling}
+        case domain_after.state do
+          :cycling when domain_after.cycle_count > before.cycle_count ->
+            FT.Helpers.print(
+              "domain stayed in :cycling after disconnect",
+              :ok,
+              "#{inspect(domain_id)} #{before.cycle_count} → #{domain_after.cycle_count} (+#{domain_after.cycle_count - before.cycle_count} cycles)"
+            )
 
-        :stopped ->
-          FT.Helpers.print(
-            "domain stopped after disconnect",
-            :ok,
-            "segment pull broke the return path; recovery will restart it"
-          )
+            {domain_id, {:ok, :cycling}}
 
-          {:ok, :stopped}
+          :stopped ->
+            FT.Helpers.print(
+              "domain stopped after disconnect",
+              :ok,
+              "#{inspect(domain_id)} segment pull broke the return path; recovery will restart it"
+            )
 
-        :cycling ->
-          FT.Helpers.print(
-            "domain state",
-            :error,
-            "still :cycling but cycle_count did not advance (#{cycle_before} → #{cycle_after})"
-          )
+            {domain_id, {:ok, :stopped}}
 
-          {:error, :cycling}
+          :cycling ->
+            FT.Helpers.print(
+              "domain state",
+              :error,
+              "#{inspect(domain_id)} still :cycling but cycle_count did not advance (#{before.cycle_count} → #{domain_after.cycle_count})"
+            )
 
-        other ->
-          FT.Helpers.print(
-            "domain state",
-            :error,
-            "unexpected state #{inspect(other)} (cycles #{cycle_before} → #{cycle_after})"
-          )
+            {domain_id, {:error, :cycling}}
 
-          {:error, other}
-      end
+          other ->
+            FT.Helpers.print(
+              "domain state",
+              :error,
+              "#{inspect(domain_id)} unexpected state #{inspect(other)} (cycles #{before.cycle_count} → #{domain_after.cycle_count})"
+            )
+
+            {domain_id, {:error, other}}
+        end
+      end)
+      |> then(fn results_by_domain ->
+        ok? =
+          Enum.all?(results_by_domain, fn
+            {_domain_id, {:ok, _mode}} -> true
+            _other -> false
+          end)
+
+        modes =
+          Enum.into(results_by_domain, %{}, fn {domain_id, result} ->
+            {domain_id, elem(result, 1)}
+          end)
+
+        {if(ok?, do: :ok, else: :error), modes}
+      end)
 
     # Verify master entered :recovering
     phase_status =
@@ -474,13 +620,9 @@ results =
       end
 
     c_status =
-      if c_result == :ok and domain_status == :ok and phase_status == :ok do
-        :ok
-      else
-        :error
-      end
+      if c_result == :ok and domain_status == :ok and phase_status == :ok, do: :ok, else: :error
 
-    {Map.put(results, :c, c_status), domain_mode}
+    {Map.put(results, :c, c_status), domain_modes}
   end
 
 # ===========================================================================
@@ -496,9 +638,9 @@ results =
     IO.puts("  Reconnect the cable. Slave will reconnect-poll, reinitialise,")
     IO.puts("  reach :preop, and master will activate it back to :op.")
 
-    if c_domain_mode == :stopped do
+    if Enum.any?(c_domain_mode, fn {_domain_id, mode} -> mode == :stopped end) do
       IO.puts("  This topology stopped the domain during C, so recovery also waits")
-      IO.puts("  for the master to restart :main and clear the runtime fault.")
+      IO.puts("  for the master to restart the affected domains and clear the runtime fault.")
     end
 
     FT.Helpers.prompt("Reconnect the cable after :outputs, then press ENTER.")
@@ -513,29 +655,76 @@ results =
           latency = System.monotonic_time(:millisecond) - t_reconnect
           FT.Helpers.print("master returned to :running / :operational", :ok, "in #{latency} ms")
 
-          case EtherCAT.domain_info(:main) do
-            {:ok, %{state: :cycling}} ->
-              FT.Helpers.print("domain :main is cycling again", :ok)
+          domain_result =
+            case FT.Helpers.poll_until_domains_state(main_domain_ids, :cycling, 5_000) do
+              {:ok, _states} ->
+                FT.Helpers.print(
+                  "tracked domains are cycling again",
+                  :ok,
+                  Enum.map_join(main_domain_ids, ", ", &inspect/1)
+                )
+
+                :ok
+
+              {:error, :timeout, states} ->
+                FT.Helpers.print(
+                  "tracked domains after recovery",
+                  :error,
+                  inspect(states)
+                )
+
+                :error
+            end
+
+          split_attachment_result =
+            if split_sm do
+              expected_domains = Enum.sort(main_domain_ids)
+
+              with {:ok, input_domains} <- FT.Helpers.attachment_domains(:inputs),
+                   {:ok, output_domains} <- FT.Helpers.attachment_domains(:outputs) do
+                cond do
+                  input_domains != expected_domains ->
+                    FT.Helpers.print(
+                      "split-SM attachments on :inputs",
+                      :error,
+                      "expected #{inspect(expected_domains)}, got #{inspect(input_domains)}"
+                    )
+
+                    :error
+
+                  output_domains != expected_domains ->
+                    FT.Helpers.print(
+                      "split-SM attachments on :outputs",
+                      :error,
+                      "expected #{inspect(expected_domains)}, got #{inspect(output_domains)}"
+                    )
+
+                    :error
+
+                  true ->
+                    FT.Helpers.print(
+                      "split-SM attachments restored after recovery",
+                      :ok,
+                      "#{inspect(expected_domains)}"
+                    )
+
+                    :ok
+                end
+              else
+                {:error, reason} ->
+                  FT.Helpers.print(
+                    "split-SM attachment info after recovery",
+                    :error,
+                    inspect(reason)
+                  )
+
+                  :error
+              end
+            else
               :ok
+            end
 
-            {:ok, %{state: state}} ->
-              FT.Helpers.print(
-                "domain :main state after recovery",
-                :error,
-                "expected :cycling, got #{inspect(state)}"
-              )
-
-              :error
-
-            {:error, reason} ->
-              FT.Helpers.print(
-                "domain :main info after recovery",
-                :error,
-                inspect(reason)
-              )
-
-              :error
-          end
+          if domain_result == :ok and split_attachment_result == :ok, do: :ok, else: :error
 
         {:error, :timeout, last_phase} ->
           FT.Helpers.print(
