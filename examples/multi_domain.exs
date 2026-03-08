@@ -454,7 +454,7 @@ if fast_stats && fast_stats.p99_us != nil do
     p99   : #{p99_us} µs    (#{util_p99_pct}% of 1000µs period)
     max   : #{fast_stats.max_us} µs
 
-  API floor: cycle_time_us >= 1_000 µs (whole-millisecond constraint in master/config.ex)
+  High-level API floor: cycle_time_us >= 1_000 µs (whole-millisecond scheduler contract)
   """)
 
   cond do

@@ -22,8 +22,10 @@ It is designed for:
 
 ## Current runtime constraints
 
-- `Domain.cycle_time_us` must currently be a whole-millisecond value
-- `DC.Config.cycle_ns` must currently be a whole-millisecond value
+- High-level `%DomainConfig{}` periods must currently be whole milliseconds
+- High-level `%EtherCAT.DC.Config{}` cycle times must currently be whole milliseconds
+- `EtherCAT.start/1` domains do not take `logical_base`; the master allocates logical windows automatically
+- Runtime faults surface as `EtherCAT.phase() == :recovering`
 - Practical minimum cycle is `1 ms`
 
 ```elixir

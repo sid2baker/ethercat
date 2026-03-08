@@ -18,6 +18,12 @@ It measures three things separately:
 - Run with the privileges needed for raw socket access on your EtherCAT interface
 - Adjust the config cell before starting the stack
 
+## Current runtime model
+
+- High-level `%DomainConfig{}` periods must currently be whole milliseconds
+- `EtherCAT.start/1` domains do not take `logical_base`; the master allocates logical windows automatically
+- Runtime faults surface as `EtherCAT.phase() == :recovering`
+
 ## What the numbers mean
 
 - `single_channel_latency` measures `EtherCAT.write_output/3` to the matching

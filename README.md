@@ -250,4 +250,5 @@ Recommended first stops:
 
 ## Mapping Rules
 
-- Minimum domain cycle time is `1_000 us` and domain periods are whole milliseconds.
+- High-level `%EtherCAT.Domain.Config{}` periods currently use a whole-millisecond scheduling contract with a minimum of `1_000 us`.
+- High-level `EtherCAT.start/1` domain configs do not take `logical_base`; the master allocates logical windows automatically.

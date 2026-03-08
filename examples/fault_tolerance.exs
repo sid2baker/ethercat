@@ -561,7 +561,7 @@ Enum.each(
     {:a1, "A1 Domain crash detection"},
     {:a2, "A2 Slave crash detection"},
     {:b, "B  Domain stop on total bus failure"},
-    {:c, "C  Slave disconnect → :down + degraded domain outcome"},
+    {:c, "C  Slave disconnect → :down + recovery domain outcome"},
     {:d, "D  Slave reconnect → :op + master :running"}
   ],
   fn {key, label} ->

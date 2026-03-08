@@ -3,6 +3,8 @@
 ## Navigation
 
 - `ARCHITECTURE.md` — subsystem boundaries and runtime data flow
+- `docs/references/` — bundled EtherCAT spec notes, reference-master material, and source references
+- `docs/references/ethercat-spec/01-llm-reference-index.md` — primary EtherCAT spec/reference entry point for implementation and review work
 - `docs/index.md` — documentation map
 - `docs/design-docs/index.md` — architecture decisions
 - `docs/exec-plans/index.md` — active work and debt tracker

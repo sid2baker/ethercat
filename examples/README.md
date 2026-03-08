@@ -91,7 +91,7 @@ APIs and were superseded by the maintained scripts and Livebooks above:
 
 | Constraint | Detail |
 |------------|--------|
-| **Minimum cycle time** | `cycle_time_us >= 1_000` (whole-millisecond; enforced in `Domain.Config`) |
+| **Minimum cycle time** | High-level `%EtherCAT.Domain.Config{}` periods must be whole milliseconds with `cycle_time_us >= 1_000`. This is the current scheduler contract, not an EtherCAT protocol rule |
 | **FMMU budget** | Each `{domain, SyncManager}` attachment consumes one FMMU in that slave. Splitting one SM across `:fast` and `:slow` is supported, but it reduces the remaining attachment budget on that slave |
 | **Logical windows** | The master owns logical address allocation for `EtherCAT.start/1` domains and assigns non-overlapping LRW windows automatically. `logical_base` remains only on the low-level `Domain.start_link/1` API |
 | **DC capability** | EL1809, EL2809, EL3202 do not implement DC registers; only the EK1100 coupler responds to DC clock reads on this ring |
