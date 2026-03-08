@@ -100,6 +100,26 @@ defmodule EtherCAT.SlaveTest do
     end
   end
 
+  defmodule FakeBus do
+    use GenServer
+
+    def start_link(responses) do
+      GenServer.start_link(__MODULE__, responses)
+    end
+
+    @impl true
+    def init(responses), do: {:ok, responses}
+
+    @impl true
+    def handle_call({:transact, _tx, _deadline_us, _enqueued_at_us}, _from, [reply | rest]) do
+      {:reply, reply, rest}
+    end
+
+    def handle_call({:transact, _tx, _deadline_us, _enqueued_at_us}, _from, []) do
+      {:reply, {:ok, [%{wkc: 0}]}, []}
+    end
+  end
+
   test "only dispatches subscribed signal updates when that signal changes inside a shared SM" do
     data = %EtherCAT.Slave{
       name: :sensor,
@@ -685,6 +705,31 @@ defmodule EtherCAT.SlaveTest do
              )
 
     refute_receive {:driver_on_op, :axis}
+  end
+
+  test "down waits for master reconnect authorization after the link returns" do
+    bus =
+      start_supervised!({FakeBus, [{:ok, [%{data: <<0>>, wkc: 1, circular: false, irq: 0}]}]})
+
+    data = %EtherCAT.Slave{
+      bus: bus,
+      station: 0x1001,
+      name: :sensor,
+      health_poll_ms: 250
+    }
+
+    assert {:keep_state, %EtherCAT.Slave{reconnect_ready?: true}, _actions} =
+             EtherCAT.Slave.handle_event({:timeout, :health_poll}, nil, :down, data)
+
+    from = {self(), make_ref()}
+
+    assert {:keep_state_and_data, [{:reply, ^from, {:error, :not_reconnected}}]} =
+             EtherCAT.Slave.handle_event(
+               {:call, from},
+               :authorize_reconnect,
+               :down,
+               %EtherCAT.Slave{reconnect_ready?: false}
+             )
   end
 
   test "sdo upload and download reject calls before mailbox setup" do

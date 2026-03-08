@@ -275,6 +275,7 @@ defmodule EtherCAT.DC do
 
   defp process_runtime_replies(data, %{diagnostics?: false}, [%{wkc: wkc}]) when wkc > 0 do
     maybe_log_runtime_recovered(data.fail_count)
+    maybe_notify_runtime_recovered(data.fail_count)
     Telemetry.dc_tick(data.ref_station, wkc)
     %{data | fail_count: 0}
   end
@@ -284,6 +285,7 @@ defmodule EtherCAT.DC do
     case decode_sync_diffs(data.monitored_stations, diag_replies, []) do
       {:ok, sync_diffs} ->
         maybe_log_runtime_recovered(data.fail_count)
+        maybe_notify_runtime_recovered(data.fail_count)
         Telemetry.dc_tick(data.ref_station, wkc)
 
         now_ms = System.system_time(:millisecond)
@@ -321,6 +323,10 @@ defmodule EtherCAT.DC do
       Logger.warning("[DC] runtime tick failed: #{inspect(reason)} (#{failures} consecutive)")
     end
 
+    if failures == 3 do
+      send(EtherCAT.Master, {:dc_runtime_failed, reason})
+    end
+
     updated =
       if diagnostics? and data.monitored_stations != [] do
         now_ms = System.system_time(:millisecond)
@@ -348,6 +354,12 @@ defmodule EtherCAT.DC do
     Logger.info("[DC] runtime recovered after #{fail_count} failure(s)")
   end
 
+  defp maybe_notify_runtime_recovered(fail_count) when fail_count >= 3 do
+    send(EtherCAT.Master, {:dc_runtime_recovered})
+  end
+
+  defp maybe_notify_runtime_recovered(_fail_count), do: :ok
+
   defp emit_monitor_telemetry(old_data, new_data) do
     maybe_emit_sync_diff(new_data)
     maybe_emit_lock_change(old_data, new_data)
@@ -374,9 +386,23 @@ defmodule EtherCAT.DC do
       new_data.lock_state,
       new_data.max_sync_diff_ns
     )
+
+    maybe_notify_lock_change(old_data, new_data)
   end
 
   defp maybe_emit_lock_change(_old_data, _new_data), do: :ok
+
+  defp maybe_notify_lock_change(%{lock_state: :locked}, %{lock_state: new_state} = new_data)
+       when new_state != :locked do
+    send(EtherCAT.Master, {:dc_lock_lost, new_state, new_data.max_sync_diff_ns})
+  end
+
+  defp maybe_notify_lock_change(%{lock_state: old_state}, %{lock_state: :locked} = new_data)
+       when old_state != :locked do
+    send(EtherCAT.Master, {:dc_lock_regained, new_data.max_sync_diff_ns})
+  end
+
+  defp maybe_notify_lock_change(_old_data, _new_data), do: :ok
 
   defp decode_sync_diffs([], [], acc), do: {:ok, Enum.reverse(acc)}
 

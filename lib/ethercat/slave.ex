@@ -86,7 +86,9 @@ defmodule EtherCAT.Slave do
     # %{signal_name_or_latch_name => MapSet.t(pid)}
     :subscriptions,
     # %{pid => reference()}
-    subscriber_refs: %{}
+    subscriber_refs: %{},
+    # true once a disconnected slave responds again and is waiting for master-owned reconnect authorization
+    reconnect_ready?: false
   ]
 
   # -- child_spec / start_link -----------------------------------------------
@@ -145,6 +147,10 @@ defmodule EtherCAT.Slave do
   def request(slave_name, target) do
     safe_call(slave_name, {:request, target})
   end
+
+  @doc false
+  @spec authorize_reconnect(atom()) :: :ok | {:error, term()}
+  def authorize_reconnect(slave_name), do: safe_call(slave_name, :authorize_reconnect)
 
   @doc """
   Apply PREOP-local configuration to an already discovered slave.
@@ -299,6 +305,7 @@ defmodule EtherCAT.Slave do
       active_latches: nil,
       latch_poll_ms: nil,
       health_poll_ms: health_poll_ms,
+      reconnect_ready?: false,
       signal_registrations: %{},
       signal_registrations_by_sm: %{},
       output_domain_ids_by_sm: %{},
@@ -411,6 +418,27 @@ defmodule EtherCAT.Slave do
 
   def handle_event({:call, from}, {:request, target}, state, _data) when state == target do
     {:keep_state_and_data, [{:reply, from, :ok}]}
+  end
+
+  def handle_event({:call, from}, :authorize_reconnect, :down, %{reconnect_ready?: true} = data) do
+    reconnect_data = %{data | reconnect_ready?: false}
+
+    case initialize_to_preop(reconnect_data) do
+      {:ok, next_state, new_data} ->
+        {:next_state, next_state, %{new_data | reconnect_ready?: false}, [{:reply, from, :ok}]}
+
+      {:ok, next_state, new_data, actions} ->
+        {:next_state, next_state, %{new_data | reconnect_ready?: false},
+         [{:reply, from, :ok} | actions]}
+    end
+  end
+
+  def handle_event({:call, from}, :authorize_reconnect, :down, _data) do
+    {:keep_state_and_data, [{:reply, from, {:error, :not_reconnected}}]}
+  end
+
+  def handle_event({:call, from}, :authorize_reconnect, _state, _data) do
+    {:keep_state_and_data, [{:reply, from, {:error, :not_down}}]}
   end
 
   def handle_event({:call, from}, {:request, target}, :preop, %{configuration_error: reason})
@@ -709,10 +737,11 @@ defmodule EtherCAT.Slave do
       "[Slave #{data.name}] entering :down — reconnect poll every #{data.health_poll_ms}ms"
     )
 
-    {:keep_state_and_data, [{{:timeout, :health_poll}, data.health_poll_ms, nil}]}
+    {:keep_state, %{data | reconnect_ready?: false},
+     [{{:timeout, :health_poll}, data.health_poll_ms, nil}]}
   end
 
-  def handle_event({:timeout, :health_poll}, nil, :down, data) do
+  def handle_event({:timeout, :health_poll}, nil, :down, %{reconnect_ready?: false} = data) do
     deadline_us = data.health_poll_ms * 500
 
     case Bus.transaction(
@@ -721,17 +750,31 @@ defmodule EtherCAT.Slave do
            deadline_us
          ) do
       {:ok, [%{wkc: wkc}]} when wkc > 0 ->
-        Logger.info("[Slave #{data.name}] reconnected — reinitialising")
-        # initialize_to_preop/1 returns a gen_statem init tuple.
-        # post_transition(:preop, data) inside transition_to/2 automatically sends
-        # {:slave_ready, name, :preop} to Master — no explicit notification needed here.
-        case initialize_to_preop(data) do
-          {:ok, next_state, new_data} -> {:next_state, next_state, new_data}
-          {:ok, next_state, new_data, actions} -> {:next_state, next_state, new_data, actions}
-        end
+        Logger.info("[Slave #{data.name}] reconnected — waiting for master authorization")
+        send(EtherCAT.Master, {:slave_reconnected, data.name})
+
+        {:keep_state, %{data | reconnect_ready?: true},
+         [{{:timeout, :health_poll}, data.health_poll_ms, nil}]}
 
       _ ->
         {:keep_state_and_data, [{{:timeout, :health_poll}, data.health_poll_ms, nil}]}
+    end
+  end
+
+  def handle_event({:timeout, :health_poll}, nil, :down, %{reconnect_ready?: true} = data) do
+    deadline_us = data.health_poll_ms * 500
+
+    case Bus.transaction(
+           data.bus,
+           Transaction.fprd(data.station, Registers.al_status()),
+           deadline_us
+         ) do
+      {:ok, [%{wkc: wkc}]} when wkc > 0 ->
+        {:keep_state_and_data, [{{:timeout, :health_poll}, data.health_poll_ms, nil}]}
+
+      _ ->
+        {:keep_state, %{data | reconnect_ready?: false},
+         [{{:timeout, :health_poll}, data.health_poll_ms, nil}]}
     end
   end
 

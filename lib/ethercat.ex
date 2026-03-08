@@ -176,7 +176,17 @@ defmodule EtherCAT do
   @spec await_operational(timeout_ms :: pos_integer()) :: :ok | {:error, term()}
   def await_operational(timeout_ms \\ 10_000), do: Master.await_operational(timeout_ms)
 
-  @doc "Return the current master state: `:idle | :scanning | :configuring | :running | :degraded`."
+  @doc """
+  Return the current master state.
+
+  Internal states:
+    - `:idle`
+    - `:scanning`
+    - `:configuring`
+    - `:running`
+    - `:degraded` — startup/activation degraded
+    - `:recovering` — runtime recovery in progress
+  """
   @spec state() :: atom()
   def state, do: Master.state()
 

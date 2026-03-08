@@ -49,6 +49,36 @@ defmodule EtherCAT.MasterTest do
     def handle_event(_type, _event, _state, data), do: {:keep_state, data}
   end
 
+  defmodule FakeSlave do
+    @behaviour :gen_statem
+
+    def start_link(name, authorize_reply \\ :ok) do
+      :gen_statem.start_link(
+        {:via, Registry, {EtherCAT.Registry, {:slave, name}}},
+        __MODULE__,
+        authorize_reply,
+        []
+      )
+    end
+
+    @impl true
+    def callback_mode, do: :handle_event_function
+
+    @impl true
+    def init(authorize_reply), do: {:ok, :down, authorize_reply}
+
+    @impl true
+    def handle_event({:call, from}, :authorize_reconnect, :down, authorize_reply) do
+      {:keep_state_and_data, [{:reply, from, authorize_reply}]}
+    end
+
+    def handle_event({:call, from}, {:request, :op}, _state, _data) do
+      {:keep_state_and_data, [{:reply, from, :ok}]}
+    end
+
+    def handle_event(_type, _event, _state, data), do: {:keep_state, data}
+  end
+
   test "phase reports preop_ready and operational distinctly" do
     from = {self(), make_ref()}
 
@@ -73,6 +103,14 @@ defmodule EtherCAT.MasterTest do
                {:call, from},
                :phase,
                :degraded,
+               %EtherCAT.Master{}
+             )
+
+    assert {:keep_state_and_data, [{:reply, ^from, :degraded}]} =
+             EtherCAT.Master.handle_event(
+               {:call, from},
+               :phase,
+               :recovering,
                %EtherCAT.Master{}
              )
   end
@@ -110,7 +148,7 @@ defmodule EtherCAT.MasterTest do
              )
   end
 
-  test "await_operational reports runtime degradation details in degraded mode" do
+  test "await_operational reports runtime degradation details in recovering mode" do
     from = {self(), make_ref()}
     faults = %{{:domain, :main} => {:cycle_invalid, {:wkc_mismatch, %{expected: 2, actual: 1}}}}
 
@@ -118,15 +156,15 @@ defmodule EtherCAT.MasterTest do
              EtherCAT.Master.handle_event(
                {:call, from},
                :await_operational,
-               :degraded,
+               :recovering,
                %EtherCAT.Master{runtime_faults: faults}
              )
   end
 
-  test "domain cycle invalid enters degraded and recovery returns to running" do
+  test "domain cycle invalid enters recovering and recovery returns to running" do
     reason = {:wkc_mismatch, %{expected: 2, actual: 1}}
 
-    assert {:next_state, :degraded, %EtherCAT.Master{} = degraded_data} =
+    assert {:next_state, :recovering, %EtherCAT.Master{} = recovering_data} =
              EtherCAT.Master.handle_event(
                :info,
                {:domain_cycle_invalid, :main, reason},
@@ -134,18 +172,18 @@ defmodule EtherCAT.MasterTest do
                %EtherCAT.Master{activation_phase: :operational}
              )
 
-    assert degraded_data.runtime_faults == %{{:domain, :main} => {:cycle_invalid, reason}}
+    assert recovering_data.runtime_faults == %{{:domain, :main} => {:cycle_invalid, reason}}
 
     assert {:next_state, :running, %EtherCAT.Master{runtime_faults: %{}}} =
              EtherCAT.Master.handle_event(
                :info,
                {:domain_cycle_recovered, :main},
-               :degraded,
-               degraded_data
+               :recovering,
+               recovering_data
              )
   end
 
-  test "degraded retry restarts stopped domains once activation failures are clear" do
+  test "recovering retry restarts stopped domains once runtime faults remain" do
     domain_id = :"master_domain_retry_#{System.unique_integer([:positive, :monotonic])}"
 
     bus =
@@ -168,11 +206,56 @@ defmodule EtherCAT.MasterTest do
       runtime_faults: %{{:domain, domain_id} => {:stopped, :down}}
     }
 
-    assert {:keep_state, %EtherCAT.Master{} = degraded_data, _actions} =
-             EtherCAT.Master.handle_event({:timeout, :degraded_retry}, nil, :degraded, data)
+    assert {:keep_state, %EtherCAT.Master{} = recovering_data, _actions} =
+             EtherCAT.Master.handle_event({:timeout, :degraded_retry}, nil, :recovering, data)
 
-    assert degraded_data.runtime_faults == %{{:domain, domain_id} => {:stopped, :down}}
+    assert recovering_data.runtime_faults == %{{:domain, domain_id} => {:stopped, :down}}
     assert {:ok, %{state: :cycling}} = Domain.info(domain_id)
+  end
+
+  test "slave_reconnected authorizes reconnect through the master in recovering" do
+    from = {self(), make_ref()}
+
+    start_supervised!(%{
+      id: make_ref(),
+      start: {FakeSlave, :start_link, [:sensor, :ok]}
+    })
+
+    data =
+      %EtherCAT.Master{
+        runtime_faults: %{{:slave, :sensor} => {:down, :disconnected}},
+        slaves: [{:sensor, 0x1001}]
+      }
+
+    assert {:keep_state, %EtherCAT.Master{} = updated} =
+             EtherCAT.Master.handle_event(:info, {:slave_reconnected, :sensor}, :recovering, data)
+
+    assert updated.runtime_faults == %{{:slave, :sensor} => {:reconnecting, :authorized}}
+
+    assert {:keep_state_and_data, [{:reply, ^from, {:error, {:runtime_degraded, _faults}}}]} =
+             EtherCAT.Master.handle_event({:call, from}, :await_operational, :recovering, updated)
+  end
+
+  test "dc runtime failure enters recovering and clears on recovery" do
+    data = %EtherCAT.Master{activation_phase: :operational}
+
+    assert {:next_state, :recovering, %EtherCAT.Master{} = recovering} =
+             EtherCAT.Master.handle_event(
+               :info,
+               {:dc_runtime_failed, :timeout},
+               :running,
+               data
+             )
+
+    assert recovering.runtime_faults == %{{:dc, :runtime} => {:failed, :timeout}}
+
+    assert {:next_state, :running, %EtherCAT.Master{runtime_faults: %{}}} =
+             EtherCAT.Master.handle_event(
+               :info,
+               {:dc_runtime_recovered},
+               :recovering,
+               recovering
+             )
   end
 
   test "update_domain_cycle_time updates the live domain without mutating the master plan" do

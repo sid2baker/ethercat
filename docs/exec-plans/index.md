@@ -5,6 +5,8 @@ and decision logs for multi-step work.
 
 ## Active
 
+- [docs/exec-plans/active/refactor-roadmap.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/active/refactor-roadmap.md)
+  Umbrella ordering document for the remaining architecture and spec-alignment refactors.
 - [docs/exec-plans/active/dc-sync1-latch-complete.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/active/dc-sync1-latch-complete.md)
   Remaining DC SYNC1 and latch work from the earlier narrower plan.
 - [docs/exec-plans/active/distributed-clocks-spec-alignment.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/active/distributed-clocks-spec-alignment.md)
