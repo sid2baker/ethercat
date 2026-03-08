@@ -4,7 +4,7 @@
 [![Hexdocs](https://img.shields.io/badge/docs-hexdocs-purple)](https://hexdocs.pm/ethercat)
 [![License](https://img.shields.io/hexpm/l/ethercat)](https://github.com/sid2baker/ethercat/blob/main/LICENSE)
 
-<!-- gif goes here -->
+[![EtherCAT demo](https://img.youtube.com/vi/huwbTsmTPHc/maxresdefault.jpg)](https://www.youtube.com/watch?v=huwbTsmTPHc)
 
 - **Pure-Elixir EtherCAT master**
 - **[Nerves](https://nerves-project.org/)-first**, runs on standard Linux too
