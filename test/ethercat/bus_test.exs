@@ -129,6 +129,20 @@ defmodule EtherCAT.BusTest do
     def interface(%__MODULE__{interface: interface}), do: interface
   end
 
+  test "init returns an explicit bus runtime struct" do
+    test_pid = self()
+
+    assert {:ok, :idle,
+            %Bus{
+              link: %FakeLink{test_pid: ^test_pid},
+              link_mod: FakeLink,
+              idx: 0,
+              in_flight: nil,
+              frame_timeout_ms: 10,
+              timeout_count: 0
+            }} = Bus.init(link_mod: FakeLink, test_pid: test_pid, frame_timeout_ms: 10)
+  end
+
   test "realtime work expires while waiting for an earlier frame" do
     {:ok, bus} = start_bus()
 

@@ -27,6 +27,7 @@ defmodule EtherCAT.Bus do
   @debounce_interval 200
   @call_timeout_ms 5_000
 
+  @enforce_keys [:link, :link_mod, :idx]
   defstruct [
     :link,
     :link_mod,
@@ -37,6 +38,17 @@ defmodule EtherCAT.Bus do
     realtime: :queue.new(),
     reliable: :queue.new()
   ]
+
+  @type t :: %__MODULE__{
+          link: term(),
+          link_mod: module(),
+          idx: non_neg_integer(),
+          in_flight: InFlight.t() | nil,
+          frame_timeout_ms: pos_integer(),
+          timeout_count: non_neg_integer(),
+          realtime: :queue.queue(Submission.t()),
+          reliable: :queue.queue(Submission.t())
+        }
 
   @doc false
   def child_spec(opts) do

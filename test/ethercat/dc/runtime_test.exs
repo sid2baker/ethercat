@@ -26,6 +26,33 @@ defmodule EtherCAT.DC.RuntimeTest do
     assert {:unavailable, nil} = DC.classify_lock([], 100)
   end
 
+  test "init returns an explicit DC runtime struct" do
+    bus = self()
+
+    assert {:ok, :running,
+            %DC{
+              bus: ^bus,
+              ref_station: 0x1000,
+              config: %DCConfig{},
+              monitored_stations: [0x1000],
+              tick_interval_ms: 10_000,
+              diagnostic_interval_cycles: 7,
+              cycle_count: 0,
+              fail_count: 0,
+              lock_state: :locking,
+              max_sync_diff_ns: nil,
+              last_sync_check_at_ms: nil
+            }} =
+             DC.init(
+               bus: bus,
+               ref_station: 0x1000,
+               monitored_stations: [0x1000],
+               tick_interval_ms: 10_000,
+               diagnostic_interval_cycles: 7,
+               config: %DCConfig{}
+             )
+  end
+
   test "await_locked times out while lock state is still converging" do
     {:ok, pid} =
       start_supervised(

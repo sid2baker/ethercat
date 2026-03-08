@@ -51,8 +51,47 @@ defmodule EtherCAT.DC do
   alias EtherCAT.Slave.Registers
   alias EtherCAT.Telemetry
 
+  @type server :: :gen_statem.server_ref()
+
   @ethercat_epoch_offset_ns 946_684_800_000_000_000
   @default_diagnostic_interval_ns 10_000_000
+
+  @enforce_keys [
+    :bus,
+    :ref_station,
+    :config,
+    :monitored_stations,
+    :tick_interval_ms,
+    :diagnostic_interval_cycles,
+    :lock_state
+  ]
+  defstruct [
+    :bus,
+    :ref_station,
+    :config,
+    :monitored_stations,
+    :tick_interval_ms,
+    :diagnostic_interval_cycles,
+    :lock_state,
+    :max_sync_diff_ns,
+    :last_sync_check_at_ms,
+    cycle_count: 0,
+    fail_count: 0
+  ]
+
+  @type t :: %__MODULE__{
+          bus: Bus.server(),
+          ref_station: non_neg_integer(),
+          config: EtherCAT.DC.Config.t(),
+          monitored_stations: [non_neg_integer()],
+          tick_interval_ms: pos_integer(),
+          diagnostic_interval_cycles: pos_integer(),
+          cycle_count: non_neg_integer(),
+          fail_count: non_neg_integer(),
+          lock_state: Status.lock_state(),
+          max_sync_diff_ns: non_neg_integer() | nil,
+          last_sync_check_at_ms: integer() | nil
+        }
 
   @doc """
   One-time DC initialization. Must be called after `assign_stations` and before
@@ -111,7 +150,7 @@ defmodule EtherCAT.DC do
   end
 
   @doc "Return a runtime Distributed Clocks status snapshot."
-  @spec status(:gen_statem.server_ref()) :: Status.t() | {:error, :not_running}
+  @spec status(server()) :: Status.t() | {:error, :not_running}
   def status(server \\ __MODULE__) do
     try do
       :gen_statem.call(server, :status)
@@ -121,7 +160,7 @@ defmodule EtherCAT.DC do
   end
 
   @doc "Block until the DC runtime reports `:locked`."
-  @spec await_locked(:gen_statem.server_ref(), pos_integer()) :: :ok | {:error, term()}
+  @spec await_locked(server(), pos_integer()) :: :ok | {:error, term()}
   def await_locked(server \\ __MODULE__, timeout_ms \\ 5_000)
       when is_integer(timeout_ms) and timeout_ms > 0 do
     deadline_ms = System.monotonic_time(:millisecond) + timeout_ms
@@ -171,15 +210,13 @@ defmodule EtherCAT.DC do
     diagnostic_interval_cycles =
       Keyword.get(opts, :diagnostic_interval_cycles, diagnostic_interval_cycles(config.cycle_ns))
 
-    data = %{
+    data = %__MODULE__{
       bus: bus,
       ref_station: ref_station,
       config: config,
       monitored_stations: monitored_stations,
       tick_interval_ms: tick_interval_ms,
       diagnostic_interval_cycles: diagnostic_interval_cycles,
-      cycle_count: 0,
-      fail_count: 0,
       lock_state: initial_lock_state(monitored_stations),
       max_sync_diff_ns: nil,
       last_sync_check_at_ms: nil
