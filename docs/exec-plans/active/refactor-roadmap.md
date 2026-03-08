@@ -17,11 +17,8 @@ The target architecture is:
    process wiring details
 4. deviations from the EtherCAT model remain deliberate, documented, and small
 
-This is an ordering document. Detailed execution for some topics already lives
-in child plans:
-
-- `docs/exec-plans/active/syncmanager-domain-spec-alignment.md`
-- `docs/exec-plans/active/distributed-clocks-spec-alignment.md`
+This is an ordering document. The earlier SyncManager/domain and Distributed
+Clocks child plans have now moved to `completed/`.
 
 ## Already Landed
 
@@ -97,22 +94,19 @@ finished before more feature work piles on top of it.
 
 ### Changes
 
-1. refresh `syncmanager-domain-spec-alignment.md` so it reflects what already
-   landed and what still remains
-2. prove reconnect/recovery correctness for multi-attachment slaves after the
+1. prove reconnect/recovery correctness for multi-attachment slaves after the
    master-owned recovery refactor
-3. review whether any remaining runtime indexes or caches are still keyed too
+2. review whether any remaining runtime indexes or caches are still keyed too
    narrowly for attachment-aware recovery
-4. either implement bit-level packing or explicitly keep byte-level packing as
+3. either implement bit-level packing or explicitly keep byte-level packing as
    a documented non-goal for the current line
-5. make maintained examples and docs use split-domain layouts as the normal
+4. make maintained examples and docs use split-domain layouts as the normal
    reference examples, not the special case
 
 ### Exit Criteria
 
-1. the SyncManager/domain plan can move to `completed/`
-2. split-SM configs are covered in examples, tests, and recovery scenarios
-3. no public docs imply the old one-SM-one-domain model
+1. split-SM configs are covered in examples, tests, and recovery scenarios
+2. no public docs imply the old one-SM-one-domain model
 
 ## Phase 3 - Complete Distributed Clocks and sync semantics
 
@@ -128,10 +122,8 @@ for drives and richer timing use cases.
 
 ### Changes
 
-1. finish the active DC alignment plan:
-   - CoE sync-mode objects `0x1C32` / `0x1C33`
-   - remaining SYNC1/latch cleanup
-   - docs/tooling cleanup around startup `await_lock?` vs runtime `lock_policy`
+1. add maintained hardware validation for at least one sync-sensitive slave
+   that really needs `0x1C32` / `0x1C33`
 2. surface redundancy/DC runtime status as a first-class public status surface
 3. extend topology/delay handling beyond the current linear-chain assumption
 4. tighten docs so the stack promises hardware-side alignment, not sub-ms BEAM
@@ -139,7 +131,8 @@ for drives and richer timing use cases.
 
 ### Exit Criteria
 
-1. the active DC plan can move to `completed/`
+1. maintained hardware examples cover both simple DC I/O and at least one
+   sync-sensitive CoE-mode slave
 2. drives that require CoE sync-mode configuration have a clean integration path
 3. DC runtime loss feeds the same lifecycle policy as other cyclic faults
 
@@ -247,11 +240,7 @@ roadmap above:
 
 ## Recommended Next Move
 
-Start with Phase 1 and carve it into a focused child plan:
+Start with Phase 4.
 
-- master-owned recovery state/sub-phase
-- affected-domain rebuild policy
-- slave reconnect authorization
-- DC runtime fault integration
-
-That is the highest-leverage refactor left in the stack.
+That is the cleanest remaining architecture work now that the lifecycle,
+SyncManager/domain, and DC ownership refactors have landed.

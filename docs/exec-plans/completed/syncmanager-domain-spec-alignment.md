@@ -2,7 +2,7 @@
 
 ## Status
 
-ACTIVE
+COMPLETED
 
 ## Goal
 
@@ -61,21 +61,17 @@ The core refactor has landed:
    merged bytes into every attached domain
 6. the maintained multi-domain example uses a real split-SM layout on hardware
 
-The remaining work is now mostly about recovery proof, documentation cleanup,
-and moving this plan out of `active/` once those are complete.
+The core refactor and its maintained example coverage are complete. Any future
+work in this area should be tracked as normal testing/debt items rather than by
+keeping this plan open.
 
 ## Remaining Gaps
 
-### Recovery proof
-
-The reconnect cache and master-owned recovery logic are now attachment-aware,
-but the maintained fault-tolerance path still needs an explicit split-SM
-reconnect scenario so this stays proven end-to-end.
-
 ### Documentation drift
 
-Several design notes in `docs/design-docs/` still describe the old restriction
-as current. Those docs need either an addendum or a follow-up cleanup pass.
+Most user-facing docs now reflect the attachment-aware model. Any remaining
+design-note drift should be handled as normal docs cleanup, not as a blocker for
+the core refactor.
 
 ### Bit-level packing boundary
 
@@ -242,17 +238,13 @@ Suggested validation scenarios:
 2. hardware examples show split-SM domains working
 3. fault-tolerance paths still recover attachment caches correctly
 
-Status: IN PROGRESS
+Status: DONE
 Completed:
 - `examples/multi_domain.exs` now uses a real split-SM layout
 - `examples/README.md` documents split-domain behavior
 - `examples/fault_tolerance.exs --split-sm` provides a maintained split-SM
   reconnect scenario under the master-owned recovery model
 - live hardware validation exists for split input/output attachments
-
-Remaining:
-- run the maintained split-SM recovery scenario on hardware and record the
-  expected outcomes in the example docs
 
 ## Risks and Decision Gates
 

@@ -8,8 +8,7 @@ Known gaps and deferred work. Add entries when identified; move to `completed/` 
 
 | Gap | Location | Impact | Notes |
 |-----|----------|--------|-------|
-| No CoE sync mode config (0x1C32/0x1C33) | `slave.ex` | Servo drives require this SDO write to enter DC SYNC mode | Must pair with SYNC0 changes |
-| No DC lock detection | `master.ex`, `dc.ex` | Slaves enter Op before PLL converges; small timing error at startup | Poll `0x092C` until near zero before Op |
+| No maintained hardware validation for CoE sync-mode slaves (`0x1C32` / `0x1C33`) | `slave/sync/coe.ex`, examples | Drive-style sync-mode helpers exist but are not yet proven on a maintained live slave | The generic callback path is covered in tests |
 | No static drift pre-compensation | `dc.ex` | ETG spec recommends ~15,000 ARMW warm-up frames; we start ticking immediately | Low practical impact on discrete I/O |
 
 ## Master

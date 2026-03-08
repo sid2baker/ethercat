@@ -4,7 +4,7 @@
 
 Superseded by:
 
-- `docs/exec-plans/active/distributed-clocks-spec-alignment.md`
+- `docs/exec-plans/completed/distributed-clocks-spec-alignment.md`
 
 Reason:
 

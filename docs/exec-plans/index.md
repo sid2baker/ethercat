@@ -7,10 +7,6 @@ and decision logs for multi-step work.
 
 - [docs/exec-plans/active/refactor-roadmap.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/active/refactor-roadmap.md)
   Umbrella ordering document for the remaining architecture and spec-alignment refactors.
-- [docs/exec-plans/active/distributed-clocks-spec-alignment.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/active/distributed-clocks-spec-alignment.md)
-  Current plan for aligning Distributed Clocks behavior and public API.
-- [docs/exec-plans/active/syncmanager-domain-spec-alignment.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/active/syncmanager-domain-spec-alignment.md)
-  Refactor plan for removing the one-SyncManager-one-domain restriction and aligning process-data mapping with the spec/reference master model.
 
 ## Completed
 
@@ -20,8 +16,12 @@ and decision logs for multi-step work.
   Segmented CoE SDO upload and download support.
 - [docs/exec-plans/completed/dc-sync1-latch-complete.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/completed/dc-sync1-latch-complete.md)
   Historical narrow DC SYNC1/latch plan superseded by the broader DC alignment plan.
+- [docs/exec-plans/completed/distributed-clocks-spec-alignment.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/completed/distributed-clocks-spec-alignment.md)
+  Distributed Clocks runtime/API alignment plan for the current library line.
 - [docs/exec-plans/completed/link-transaction-api.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/completed/link-transaction-api.md)
   Bus transaction API cleanup and link-boundary refactor.
+- [docs/exec-plans/completed/syncmanager-domain-spec-alignment.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/completed/syncmanager-domain-spec-alignment.md)
+  Process-data attachment-model refactor for split `{domain, SyncManager}` support.
 
 ## Ongoing Debt
 

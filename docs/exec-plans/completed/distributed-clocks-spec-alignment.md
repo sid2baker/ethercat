@@ -2,7 +2,10 @@
 
 ## Status
 
-ACTIVE
+COMPLETED
+
+This plan established the current DC model. Remaining work in this area is now
+normal debt/future work, not unfinished execution inside this plan.
 
 Implemented so far:
 
@@ -23,14 +26,11 @@ Implemented so far:
 
 Supersedes the old narrow SYNC/latch plan in:
 
-- `docs/exec-plans/active/dc-sync1-latch-complete.md`
+- `docs/exec-plans/completed/dc-sync1-latch-complete.md`
 
 That older plan focused on register coverage and latch plumbing. The master-wide
-DC/runtime pieces are now mostly in place. The real remaining work is:
-
-1. finish richer slave/application sync semantics
-2. keep public docs and tooling aligned with the split startup/runtime DC contract
-3. align the remaining sync usage details with the spec and reference masters
+DC/runtime pieces covered here are now in place. Remaining follow-up belongs in
+the tech-debt tracker and roadmap.
 
 ---
 
@@ -370,6 +370,8 @@ Drivers should own device-specific CoE mapping, not the generic public sync mode
 2. generic latch and SYNC definitions are no longer driver-owned
 3. drivers can still translate sync intent into mailbox writes when needed
 
+Status: DONE
+
 ---
 
 ## Phase 6 — Named latches and unified subscription surface
@@ -417,6 +419,8 @@ EtherCAT.subscribe(slave, name, pid \\ self())
 1. user subscribes by semantic name, not by “input vs latch” transport kind
 2. named latch delivery works through the same public API as normal signals
 
+Status: DONE
+
 ---
 
 ## Phase 7 — Improve slave sync programming to match SOEM/IgH more closely
@@ -457,6 +461,8 @@ Make slave-local sync setup robust and spec-shaped.
 2. `shift_ns` participates in start-time alignment
 3. `0x0980` is part of the explicit sync model
 
+Status: DONE
+
 ---
 
 ## Phase 8 — Acknowledge-mode SYNC support
@@ -475,6 +481,11 @@ Support `pulse_ns == 0` honestly.
 
 1. `pulse_ns == 0` is either fully supported or rejected explicitly
 2. no silent partial support
+
+Status: DONE
+Current behavior:
+- acknowledge mode is rejected explicitly in config validation
+- there is no silent partial support
 
 ---
 
@@ -499,6 +510,15 @@ Support slaves that need CoE sync mode objects in addition to ESC DC setup.
 1. drive-style slaves can express sync mode cleanly
 2. the public API stays generic and does not expose raw object indices
 
+Status: DONE FOR CURRENT LINE
+Completed:
+- `sync_mode/2` is the public driver callback for device-specific mailbox sync mode
+- `EtherCAT.Slave.Sync.CoE` provides helpers for common `0x1C32` / `0x1C33` writes
+- tests cover the mailbox-step helpers and driver callback path
+
+Follow-up hardware validation for a sync-sensitive CoE-mode slave is tracked as
+normal debt, not as an open item in this plan.
+
 ---
 
 ## Phase 10 — Optional future: integrate DC reference-time datagram into the cyclic frame
@@ -520,6 +540,8 @@ This is architecturally larger than the other fixes. It should only happen after
 1. the public API shape is stable
 2. lock/status semantics are in place
 3. current runtime correctness issues are fixed
+
+Status: DEFERRED
 
 ---
 
