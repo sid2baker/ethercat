@@ -4,6 +4,25 @@ Date: 2026-03-08
 
 Reviewed commit: `4f477f392ed58e9a456b3e205313811b199aebbd` (`feat(resilience): slave disconnect resilience with :down state`)
 
+## Status Update
+
+This review is historically important, but it no longer describes the current
+runtime as a whole.
+
+The main issues identified here have since been addressed:
+
+- runtime recovery is now master-owned
+- public runtime-fault reporting uses `:recovering`
+- slave reconnect requires master authorization
+- split `{domain, SyncManager}` attachments and attachment-aware reconnect
+  caches are landed
+
+What still remains relevant from this review:
+
+- use it as rationale for why recovery ownership lives in `Master`
+- use it as background when evaluating future `Domain` invalid-cycle behavior
+- treat it as historical analysis, not as the live architecture contract
+
 ## Scope
 
 This review aligns the current `Master`, `Slave`, `Domain`, and `DC` lifecycles against the local EtherCAT reference index:

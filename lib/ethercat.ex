@@ -142,7 +142,9 @@ defmodule EtherCAT do
 
   Options:
     - `:interface` (required) — network interface, e.g. `"eth0"`
-    - `:domains` — list of `%EtherCAT.Domain.Config{}` structs
+    - `:domains` — list of `%EtherCAT.Domain.Config{}` structs describing
+      domain intent. High-level domain configs do not take `:logical_base`;
+      the master allocates logical windows automatically.
     - `:slaves` — list of `%EtherCAT.Slave.Config{}` structs
       (position matters — station address = `base_station + index`).
       `nil` entries are rejected; use `%EtherCAT.Slave.Config{name: :coupler}` for
@@ -165,6 +167,8 @@ defmodule EtherCAT do
 
   Returns `{:error, :timeout}` if startup does not complete within `timeout_ms` ms.
   Returns `{:error, :not_started}` if `start/1` has not been called.
+  Returns startup degradation or runtime recovery errors if the session is not
+  currently usable.
   """
   @spec await_running(timeout_ms :: pos_integer()) :: :ok | {:error, term()}
   def await_running(timeout_ms \\ 10_000), do: Master.await_running(timeout_ms)
@@ -199,9 +203,9 @@ defmodule EtherCAT do
     - `:scanning`
     - `:configuring`
     - `:preop_ready`
-    - `:operational`
-    - `:degraded`
-    - `:recovering`
+    - `:operational` — cyclic OP path is healthy
+    - `:degraded` — startup/activation degraded before operational cyclic runtime
+    - `:recovering` — runtime fault recovery in progress
   """
   @spec phase() ::
           :idle | :scanning | :configuring | :preop_ready | :operational | :degraded | :recovering

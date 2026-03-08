@@ -200,6 +200,9 @@ defmodule EtherCAT.Master do
   Returns immediately if already `:running`. Returns `{:error, :timeout}` if
   the master does not reach `:running` within `timeout_ms` milliseconds.
   Returns `{:error, :not_started}` if the master process is not running.
+  Returns `{:error, {:activation_failed, failures}}` or
+  `{:error, {:runtime_degraded, faults}}` when the current session is not
+  usable.
   """
   @spec await_running(timeout_ms :: pos_integer()) :: :ok | {:error, term()}
   def await_running(timeout_ms \\ 10_000) do
@@ -211,8 +214,9 @@ defmodule EtherCAT.Master do
 
   This waits for DC/domain runtime to start and for `:op` promotion to complete.
   Returns `{:error, :not_started}` if the master is idle or not running.
-  Returns `{:error, {:activation_failed, failures}}` for startup degradations and
-  `{:error, {:runtime_degraded, faults}}` when runtime health has degraded.
+  Returns `{:error, {:activation_failed, failures}}` for startup degradations,
+  `{:error, {:runtime_degraded, faults}}` while runtime recovery is in progress,
+  and `{:error, :timeout}` if the deadline expires first.
   """
   @spec await_operational(timeout_ms :: pos_integer()) :: :ok | {:error, term()}
   def await_operational(timeout_ms \\ 10_000) do
