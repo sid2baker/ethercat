@@ -427,6 +427,8 @@ defmodule EtherCAT.DC do
       configured?: true,
       active?: true,
       cycle_ns: data.config.cycle_ns,
+      await_lock?: data.config.await_lock?,
+      lock_policy: data.config.lock_policy,
       reference_station: data.ref_station,
       lock_state: data.lock_state,
       max_sync_diff_ns: data.max_sync_diff_ns,

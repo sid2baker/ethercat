@@ -58,4 +58,11 @@ defmodule EtherCATTest do
     assert driver.encode_signal(:unused, %{}, 1) == <<>>
     assert driver.decode_signal(:unused, %{}, <<0xAB, 0xCD>>) == <<0xAB, 0xCD>>
   end
+
+  test "dc_status reports either idle-disabled or not_started without an active session" do
+    status = EtherCAT.dc_status()
+
+    assert match?({:error, :not_started}, status) or
+             match?(%EtherCAT.DC.Status{lock_state: :disabled}, status)
+  end
 end

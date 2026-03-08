@@ -217,8 +217,12 @@ defmodule EtherCAT do
           :idle | :scanning | :configuring | :preop_ready | :operational | :degraded | :recovering
   def phase, do: Master.phase()
 
-  @doc "Return a Distributed Clocks status snapshot for the current session."
-  @spec dc_status() :: EtherCAT.DC.Status.t()
+  @doc """
+  Return a Distributed Clocks status snapshot for the current session.
+
+  Returns `{:error, :not_started}` if the master process does not exist.
+  """
+  @spec dc_status() :: EtherCAT.DC.Status.t() | {:error, :not_started}
   def dc_status, do: Master.dc_status()
 
   @doc "Return the current DC reference clock as `%{name, station}`."

@@ -223,7 +223,14 @@ defmodule EtherCAT.Master do
     safe_call(:await_operational, timeout_ms)
   end
 
-  @doc "Return a Distributed Clocks status snapshot for the current session."
+  @doc """
+  Return a Distributed Clocks status snapshot for the current session.
+
+  The returned `%EtherCAT.DC.Status{}` includes both:
+
+  - activation-time lock gating via `await_lock?`
+  - runtime lock-loss behavior via `lock_policy`
+  """
   @spec dc_status() :: DCStatus.t() | {:error, :not_started}
   def dc_status do
     safe_call(:dc_status)
@@ -1908,6 +1915,8 @@ defmodule EtherCAT.Master do
       configured?: true,
       active?: false,
       cycle_ns: dc_cycle_ns(data),
+      await_lock?: data.dc_config.await_lock?,
+      lock_policy: data.dc_config.lock_policy,
       reference_station: data.dc_ref_station,
       reference_clock: reference_clock_name(data),
       lock_state: :inactive

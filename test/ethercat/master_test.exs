@@ -427,7 +427,11 @@ defmodule EtherCAT.MasterTest do
   test "dc_status reports disabled when no DC config is present" do
     from = {self(), make_ref()}
 
-    assert {:keep_state_and_data, [{:reply, ^from, %DCStatus{lock_state: :disabled}}]} =
+    assert {:keep_state_and_data,
+            [
+              {:reply, ^from,
+               %DCStatus{lock_state: :disabled, await_lock?: false, lock_policy: nil}}
+            ]} =
              EtherCAT.Master.handle_event(
                {:call, from},
                :dc_status,
@@ -440,7 +444,7 @@ defmodule EtherCAT.MasterTest do
     from = {self(), make_ref()}
 
     data = %EtherCAT.Master{
-      dc_config: %DCConfig{cycle_ns: 1_000_000},
+      dc_config: %DCConfig{cycle_ns: 1_000_000, await_lock?: true, lock_policy: :recovering},
       dc_ref_station: 0x1001,
       slaves: [{:sensor, 0x1001}]
     }
@@ -452,6 +456,8 @@ defmodule EtherCAT.MasterTest do
                  configured?: true,
                  active?: false,
                  cycle_ns: 1_000_000,
+                 await_lock?: true,
+                 lock_policy: :recovering,
                  reference_station: 0x1001,
                  reference_clock: :sensor,
                  lock_state: :inactive
@@ -488,6 +494,8 @@ defmodule EtherCAT.MasterTest do
              configured?: true,
              active?: true,
              cycle_ns: 2_000_000,
+             await_lock?: false,
+             lock_policy: :advisory,
              reference_station: 0x1002,
              reference_clock: :runtime_ref,
              lock_state: :locked
@@ -496,7 +504,7 @@ defmodule EtherCAT.MasterTest do
     })
 
     data = %EtherCAT.Master{
-      dc_config: %DCConfig{cycle_ns: 1_000_000},
+      dc_config: %DCConfig{cycle_ns: 1_000_000, await_lock?: true, lock_policy: :fatal},
       dc_ref_station: 0x1001,
       slaves: [{:planned_ref, 0x1001}]
     }
@@ -508,6 +516,8 @@ defmodule EtherCAT.MasterTest do
                  configured?: true,
                  active?: true,
                  cycle_ns: 2_000_000,
+                 await_lock?: false,
+                 lock_policy: :advisory,
                  reference_station: 0x1002,
                  reference_clock: :planned_ref,
                  lock_state: :locked

@@ -80,4 +80,30 @@ defmodule EtherCAT.DC.RuntimeTest do
 
     assert {:error, :dc_lock_unavailable} = DC.await_locked(pid, 10)
   end
+
+  test "status exposes the configured activation and runtime lock contract" do
+    {:ok, pid} =
+      start_supervised(
+        {DC,
+         bus: self(),
+         ref_station: 0x1000,
+         monitored_stations: [0x1000],
+         tick_interval_ms: 10_000,
+         config: %DCConfig{
+           cycle_ns: 1_000_000,
+           await_lock?: true,
+           lock_policy: :recovering
+         }}
+      )
+
+    assert %DC.Status{
+             configured?: true,
+             active?: true,
+             cycle_ns: 1_000_000,
+             await_lock?: true,
+             lock_policy: :recovering,
+             reference_station: 0x1000,
+             lock_state: :locking
+           } = DC.status(pid)
+  end
 end

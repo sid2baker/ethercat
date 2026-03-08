@@ -12,14 +12,22 @@ defmodule EtherCAT.DC.Status do
   `monitor_failures` counts consecutive runtime failures inside the
   `EtherCAT.DC` worker. That includes diagnostic decode failures and
   transport/runtime tick failures before the next successful DC frame.
+
+  `await_lock?` and `lock_policy` expose the configured DC contract:
+
+  - `await_lock?` applies during activation
+  - `lock_policy` applies after activation if lock is later lost
   """
 
   @type lock_state :: :disabled | :inactive | :unavailable | :locking | :locked
+  @type lock_policy :: :advisory | :recovering | :fatal
 
   @type t :: %__MODULE__{
           configured?: boolean(),
           active?: boolean(),
           cycle_ns: pos_integer() | nil,
+          await_lock?: boolean(),
+          lock_policy: lock_policy() | nil,
           reference_station: non_neg_integer() | nil,
           reference_clock: atom() | nil,
           lock_state: lock_state(),
@@ -31,6 +39,8 @@ defmodule EtherCAT.DC.Status do
   defstruct configured?: false,
             active?: false,
             cycle_ns: nil,
+            await_lock?: false,
+            lock_policy: nil,
             reference_station: nil,
             reference_clock: nil,
             lock_state: :inactive,
