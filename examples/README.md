@@ -1,8 +1,6 @@
 # EtherCAT Examples
 
-Runnable scripts and Livebooks for testing the library against real hardware.
-If you are starting fresh, use the Livebooks first. They are the maintained,
-interactive harnesses.
+Runnable scripts for testing the library against real hardware.
 
 All scripts assume the 4-slave test ring unless noted:
 
@@ -29,17 +27,15 @@ Raw Ethernet socket access requires `CAP_NET_RAW` or root.
 
 ## Start Here
 
-Open one of these Livebooks with [Livebook](https://livebook.dev) using a
-**Mix project runtime** pointed at the repository root.
+Start with the maintained scripts below. Recommended order:
 
-| Notebook | What it covers |
-|----------|---------------|
-| `livebooks/hardware_validation_livebook.livemd` | Full interactive hardware validation: startup, manual I/O, latency benchmarks, full-width loopback, priority stress, DC lock |
-| `livebooks/el1809_el2809_benchmarks.livemd` | Focused EL1809/EL2809 benchmarks and PDO inspection |
+1. `scan.exs` — verify the ring, station assignment, and SII identity
+2. `multi_domain.exs` — exercise the maintained split-domain runtime model
+3. `fault_tolerance.exs` — validate crash/disconnect recovery behavior
+4. `dc_sync.exs` — inspect DC lock and runtime sync behavior
 
-If you prefer scripts, start with the maintained ones below. Some older
-low-level scripts in `examples/` are historical maintainer probes and may lag
-the current public API.
+Some older low-level scripts in `examples/` are historical maintainer probes
+and may lag the current public API.
 
 ## Maintained Scripts
 
@@ -81,10 +77,10 @@ the current public API.
 ## Removed legacy scripts
 
 The following historical examples were removed because they targeted obsolete
-APIs and were superseded by the maintained scripts and Livebooks above:
+APIs and were superseded by the maintained scripts above:
 
-- `io_quick.exs` (removed; superseded by Livebooks and current examples)
-- `hardware_test.exs` (removed; superseded by `livebooks/hardware_validation_livebook.livemd`)
+- `io_quick.exs` (removed; superseded by current examples)
+- `hardware_test.exs` (removed; superseded by maintained hardware scripts)
 
 ---
 

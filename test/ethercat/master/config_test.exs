@@ -20,7 +20,7 @@ defmodule EtherCAT.Master.ConfigTest do
     assert [%DomainPlan{id: :main, cycle_time_us: 1_000, logical_base: 0}] =
              config.domain_config
 
-    assert %DCConfig{cycle_ns: 1_000_000} = config.dc_config
+    assert %DCConfig{cycle_ns: 1_000_000, lock_policy: :advisory} = config.dc_config
 
     assert [
              %SlaveConfig{
@@ -120,6 +120,17 @@ defmodule EtherCAT.Master.ConfigTest do
 
     assert {:error, {:invalid_start_options, :invalid_dc}} =
              Config.normalize_start_options(interface: "eth0", dc: [cycle_ns: 1_500_000])
+
+    assert {:error, {:invalid_start_options, :invalid_dc}} =
+             Config.normalize_start_options(interface: "eth0", dc: [lock_policy: :auto])
+
+    assert {:ok, config} =
+             Config.normalize_start_options(
+               interface: "eth0",
+               dc: [cycle_ns: 1_000_000, lock_policy: :fatal]
+             )
+
+    assert %DCConfig{lock_policy: :fatal} = config.dc_config
 
     assert {:error, {:invalid_start_options, :invalid_frame_timeout_ms}} =
              Config.normalize_start_options(interface: "eth0", frame_timeout_ms: 0)

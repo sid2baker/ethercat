@@ -182,6 +182,7 @@ defmodule EtherCAT.Master.Config do
     validate_dc_config(%DCConfig{
       cycle_ns: Keyword.get(opts, :cycle_ns, 1_000_000),
       await_lock?: Keyword.get(opts, :await_lock?, false),
+      lock_policy: Keyword.get(opts, :lock_policy, :advisory),
       lock_threshold_ns: Keyword.get(opts, :lock_threshold_ns, 100),
       lock_timeout_ms: Keyword.get(opts, :lock_timeout_ms, 5_000),
       warmup_cycles: Keyword.get(opts, :warmup_cycles, 0)
@@ -194,6 +195,7 @@ defmodule EtherCAT.Master.Config do
        when is_integer(dc_config.cycle_ns) and dc_config.cycle_ns >= 1_000_000 and
               rem(dc_config.cycle_ns, 1_000_000) == 0 and
               is_boolean(dc_config.await_lock?) and
+              dc_config.lock_policy in [:advisory, :recovering, :fatal] and
               is_integer(dc_config.lock_threshold_ns) and dc_config.lock_threshold_ns > 0 and
               is_integer(dc_config.lock_timeout_ms) and dc_config.lock_timeout_ms > 0 and
               is_integer(dc_config.warmup_cycles) and dc_config.warmup_cycles >= 0 do

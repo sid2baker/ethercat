@@ -13,6 +13,8 @@ Use this file as the entry point. Keep it small, stable, and cross-linked.
   System map, boundaries, and subsystem responsibilities.
 - [README.md](/home/n0gg1n/Development/Work/opencode/ethercat/README.md)
   User-facing startup, examples, and public API overview.
+- [examples/README.md](/home/n0gg1n/Development/Work/opencode/ethercat/examples/README.md)
+  Maintained hardware scripts and validation entry points.
 
 ## System Of Record
 
@@ -33,13 +35,6 @@ Use this file as the entry point. Keep it small, stable, and cross-linked.
   Slave ESM lifecycle, driver contract, PREOP/SAFEOP behavior.
 - [lib/ethercat/domain.md](/home/n0gg1n/Development/Work/opencode/ethercat/lib/ethercat/domain.md)
   Domain cycle loop, ETS image layout, and LRW hot path.
-
-## Operational Harness
-
-- [hardware_validation_livebook.livemd](/home/n0gg1n/Development/Work/opencode/ethercat/examples/livebooks/hardware_validation_livebook.livemd)
-  Interactive hardware validation harness.
-- [el1809_el2809_benchmarks.livemd](/home/n0gg1n/Development/Work/opencode/ethercat/examples/livebooks/el1809_el2809_benchmarks.livemd)
-  Benchmark notebook for latency, throughput, and priority checks.
 
 ## Mechanical Checks
 

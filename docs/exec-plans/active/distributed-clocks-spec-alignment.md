@@ -15,16 +15,22 @@ Implemented so far:
    - `EtherCAT.DC` owns the cyclic FRMW maintenance datagram
    - diagnostics (`0x092C`) ride on the DC frame itself
    - domains remain LRW/process-image owners only
+7. activation-time DC lock gating through `await_lock?`
+8. explicit runtime `lock_policy` handling:
+   - `:advisory`
+   - `:recovering`
+   - `:fatal`
 
 Supersedes the old narrow SYNC/latch plan in:
 
 - `docs/exec-plans/active/dc-sync1-latch-complete.md`
 
-That older plan focused on register coverage and latch plumbing. The real remaining work is broader:
+That older plan focused on register coverage and latch plumbing. The master-wide
+DC/runtime pieces are now mostly in place. The real remaining work is:
 
-1. fix runtime DC correctness
-2. expose a clean user-facing DC/sync API
-3. align slave sync usage with the spec and reference masters
+1. finish richer slave/application sync semantics
+2. keep public docs and tooling aligned with the split startup/runtime DC contract
+3. align the remaining sync usage details with the spec and reference masters
 
 ---
 
@@ -142,6 +148,7 @@ EtherCAT.start(
   dc: %EtherCAT.DC.Config{
     cycle_ns: 1_000_000,
     await_lock?: true,
+    lock_policy: :recovering,
     lock_threshold_ns: 100,
     lock_timeout_ms: 5_000,
     warmup_cycles: 0
@@ -188,7 +195,10 @@ Important:
 
 ---
 
-## Execution Order
+## Historical Landed Phases
+
+Phases 1 through 4 are already implemented. They remain here as rationale for
+how the current DC architecture was reached.
 
 ## Phase 1 — Correct the runtime DC datagram path
 
@@ -521,17 +531,19 @@ This is architecturally larger than the other fixes. It should only happen after
 2. domain `cycle_time_us` validation
 3. runtime drift datagram selection/addressing
 4. lock-detection state transitions
-5. sync config normalization
-6. latch-name resolution
-7. start-time alignment math
-8. acknowledge-mode behavior
+5. runtime lock-policy transitions
+6. sync config normalization
+7. latch-name resolution
+8. start-time alignment math
+9. acknowledge-mode behavior
 
 ### Integration tests
 
 1. DC init with DC-capable and non-DC-capable snapshots
 2. activation with and without `await_lock?`
-3. latch delivery through unified `subscribe/3`
-4. drive-like `sync_mode/2` mailbox planning
+3. runtime lock loss under each `lock_policy`
+4. latch delivery through unified `subscribe/3`
+5. drive-like `sync_mode/2` mailbox planning
 
 ### Hardware validation
 

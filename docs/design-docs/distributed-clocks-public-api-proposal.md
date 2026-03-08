@@ -128,6 +128,7 @@ Use a real struct instead of a bare `dc_cycle_ns`.
 %EtherCAT.DC.Config{
   cycle_ns: 1_000_000,
   await_lock?: true,
+  lock_policy: :recovering,
   lock_threshold_ns: 100,
   lock_timeout_ms: 5_000,
   warmup_cycles: 0
@@ -142,6 +143,7 @@ EtherCAT.start(
   dc: %EtherCAT.DC.Config{
     cycle_ns: 1_000_000,
     await_lock?: true,
+    lock_policy: :recovering,
     lock_threshold_ns: 100
   },
   domains: [
@@ -158,6 +160,8 @@ EtherCAT.start(
   - shared reference period for slaves that opt into sync usage
 - `await_lock?`
   - if `true`, activation does not complete until DC lock converges or times out
+- `lock_policy`
+  - runtime reaction when DC lock is later lost after activation
 - `lock_threshold_ns`
   - acceptable absolute sync difference from `0x092C`
 - `lock_timeout_ms`
@@ -406,7 +410,8 @@ EtherCAT.start(
   interface: "eth1",
   dc: %EtherCAT.DC.Config{
     cycle_ns: 1_000_000,
-    await_lock?: true
+    await_lock?: true,
+    lock_policy: :recovering
   },
   domains: [
     %EtherCAT.Domain.Config{id: :main, cycle_time_us: 1_000}
@@ -450,6 +455,7 @@ EtherCAT.start(
   dc: %EtherCAT.DC.Config{
     cycle_ns: 1_000_000,
     await_lock?: true,
+    lock_policy: :recovering,
     lock_threshold_ns: 100
   },
   domains: [

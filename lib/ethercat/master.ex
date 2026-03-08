@@ -956,35 +956,119 @@ defmodule EtherCAT.Master do
   end
 
   def handle_event(:info, {:dc_lock_lost, lock_state, max_sync_diff_ns}, :running, data)
-      when not is_nil(data.dc_config) and data.dc_config.await_lock? do
-    Logger.warning(
-      "[Master] DC lock lost: state=#{inspect(lock_state)} max_sync_diff_ns=#{inspect(max_sync_diff_ns)} — entering recovery"
-    )
+      when not is_nil(data.dc_config) do
+    case dc_lock_policy(data) do
+      :advisory ->
+        Logger.warning(
+          "[Master] DC lock lost: state=#{inspect(lock_state)} max_sync_diff_ns=#{inspect(max_sync_diff_ns)} — advisory only"
+        )
 
-    {:next_state, :recovering,
-     put_runtime_fault(data, {:dc, :lock}, {lock_state, max_sync_diff_ns})}
+        :keep_state_and_data
+
+      :recovering ->
+        Logger.warning(
+          "[Master] DC lock lost: state=#{inspect(lock_state)} max_sync_diff_ns=#{inspect(max_sync_diff_ns)} — entering recovery"
+        )
+
+        {:next_state, :recovering,
+         put_runtime_fault(data, {:dc, :lock}, {lock_state, max_sync_diff_ns})}
+
+      :fatal ->
+        Logger.error(
+          "[Master] DC lock lost: state=#{inspect(lock_state)} max_sync_diff_ns=#{inspect(max_sync_diff_ns)} — stopping session"
+        )
+
+        stop_session(data)
+
+        {:next_state, :idle,
+         reset_master(failure_snapshot(:dc_lock_lost, {lock_state, max_sync_diff_ns}))}
+    end
+  end
+
+  def handle_event(:info, {:dc_lock_lost, _lock_state, _max_sync_diff_ns}, :running, _data) do
+    :keep_state_and_data
   end
 
   def handle_event(:info, {:dc_lock_lost, lock_state, max_sync_diff_ns}, :recovering, data)
-      when not is_nil(data.dc_config) and data.dc_config.await_lock? do
-    Logger.warning(
-      "[Master] DC lock still lost: state=#{inspect(lock_state)} max_sync_diff_ns=#{inspect(max_sync_diff_ns)}"
-    )
+      when not is_nil(data.dc_config) do
+    case dc_lock_policy(data) do
+      :advisory ->
+        Logger.warning(
+          "[Master] DC lock lost while recovering: state=#{inspect(lock_state)} max_sync_diff_ns=#{inspect(max_sync_diff_ns)} — advisory only"
+        )
 
-    {:keep_state, put_runtime_fault(data, {:dc, :lock}, {lock_state, max_sync_diff_ns})}
+        :keep_state_and_data
+
+      :recovering ->
+        Logger.warning(
+          "[Master] DC lock still lost: state=#{inspect(lock_state)} max_sync_diff_ns=#{inspect(max_sync_diff_ns)}"
+        )
+
+        {:keep_state, put_runtime_fault(data, {:dc, :lock}, {lock_state, max_sync_diff_ns})}
+
+      :fatal ->
+        Logger.error(
+          "[Master] DC lock lost while recovering: state=#{inspect(lock_state)} max_sync_diff_ns=#{inspect(max_sync_diff_ns)} — stopping session"
+        )
+
+        stop_session(data)
+
+        {:next_state, :idle,
+         reset_master(failure_snapshot(:dc_lock_lost, {lock_state, max_sync_diff_ns}))}
+    end
+  end
+
+  def handle_event(:info, {:dc_lock_lost, _lock_state, _max_sync_diff_ns}, :recovering, _data) do
+    :keep_state_and_data
+  end
+
+  def handle_event(:info, {:dc_lock_regained, max_sync_diff_ns}, :running, data)
+      when not is_nil(data.dc_config) do
+    case dc_lock_policy(data) do
+      :advisory ->
+        Logger.info("[Master] DC lock regained (max_sync_diff_ns=#{inspect(max_sync_diff_ns)})")
+        :keep_state_and_data
+
+      :recovering ->
+        :keep_state_and_data
+
+      :fatal ->
+        :keep_state_and_data
+    end
+  end
+
+  def handle_event(:info, {:dc_lock_regained, _max_sync_diff_ns}, :running, _data) do
+    :keep_state_and_data
   end
 
   def handle_event(:info, {:dc_lock_regained, max_sync_diff_ns}, :recovering, data)
-      when not is_nil(data.dc_config) and data.dc_config.await_lock? do
-    Logger.info("[Master] DC lock regained (max_sync_diff_ns=#{inspect(max_sync_diff_ns)})")
+      when not is_nil(data.dc_config) do
+    case dc_lock_policy(data) do
+      :advisory ->
+        Logger.info(
+          "[Master] DC lock regained while recovering (max_sync_diff_ns=#{inspect(max_sync_diff_ns)})"
+        )
 
-    case maybe_resume_running(clear_runtime_fault(data, {:dc, :lock})) do
-      {:ok, healed_data} ->
-        {:next_state, :running, healed_data}
+        :keep_state_and_data
 
-      {:recovering, still_recovering} ->
-        {:keep_state, still_recovering}
+      :recovering ->
+        Logger.info("[Master] DC lock regained (max_sync_diff_ns=#{inspect(max_sync_diff_ns)})")
+
+        case maybe_resume_running(clear_runtime_fault(data, {:dc, :lock})) do
+          {:ok, healed_data} ->
+            {:next_state, :running, healed_data}
+
+          {:recovering, still_recovering} ->
+            {:keep_state, still_recovering}
+        end
+
+      :fatal ->
+        :keep_state_and_data
     end
+  end
+
+  def handle_event(:info, {:dc_lock_regained, _max_sync_diff_ns}, :recovering, _data) do
+    :keep_state_and_data
   end
 
   # :slave_ready arriving while not configuring (e.g. restart race) — ignore
@@ -1648,6 +1732,13 @@ defmodule EtherCAT.Master do
   defp phase_for(:recovering, _data), do: :recovering
   defp phase_for(:running, %{activation_phase: :operational}), do: :operational
   defp phase_for(:running, _data), do: :preop_ready
+
+  defp dc_lock_policy(%{dc_config: %{lock_policy: lock_policy}})
+       when lock_policy in [:advisory, :recovering, :fatal] do
+    lock_policy
+  end
+
+  defp dc_lock_policy(_data), do: :advisory
 
   defp dc_cycle_ns(%{dc_config: %{cycle_ns: cycle_ns}})
        when is_integer(cycle_ns) and cycle_ns > 0,

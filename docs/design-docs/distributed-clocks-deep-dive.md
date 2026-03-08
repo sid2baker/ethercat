@@ -322,6 +322,7 @@ EtherCAT.start(
   dc: %EtherCAT.DC.Config{
     cycle_ns: 1_000_000,
     await_lock?: true,
+    lock_policy: :recovering,
     lock_threshold_ns: 100,
     warmup_cycles: 0
   }

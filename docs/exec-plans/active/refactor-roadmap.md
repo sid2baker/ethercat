@@ -130,8 +130,8 @@ for drives and richer timing use cases.
 
 1. finish the active DC alignment plan:
    - CoE sync-mode objects `0x1C32` / `0x1C33`
-   - explicit runtime lock policy: advisory vs degraded vs fatal
    - remaining SYNC1/latch cleanup
+   - docs/tooling cleanup around startup `await_lock?` vs runtime `lock_policy`
 2. surface redundancy/DC runtime status as a first-class public status surface
 3. extend topology/delay handling beyond the current linear-chain assumption
 4. tighten docs so the stack promises hardware-side alignment, not sub-ms BEAM

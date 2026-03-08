@@ -277,6 +277,64 @@ defmodule EtherCAT.MasterTest do
              )
   end
 
+  test "dc lock loss is advisory by default" do
+    data = %EtherCAT.Master{
+      activation_phase: :operational,
+      dc_config: %DCConfig{cycle_ns: 1_000_000, lock_policy: :advisory}
+    }
+
+    assert :keep_state_and_data =
+             EtherCAT.Master.handle_event(
+               :info,
+               {:dc_lock_lost, :locking, 250},
+               :running,
+               data
+             )
+  end
+
+  test "dc lock loss can enter recovering independently of await_lock?" do
+    data = %EtherCAT.Master{
+      activation_phase: :operational,
+      dc_config: %DCConfig{cycle_ns: 1_000_000, await_lock?: false, lock_policy: :recovering}
+    }
+
+    assert {:next_state, :recovering, %EtherCAT.Master{} = recovering} =
+             EtherCAT.Master.handle_event(
+               :info,
+               {:dc_lock_lost, :locking, 250},
+               :running,
+               data
+             )
+
+    assert recovering.runtime_faults == %{{:dc, :lock} => {:locking, 250}}
+
+    assert {:next_state, :running, %EtherCAT.Master{runtime_faults: %{}}} =
+             EtherCAT.Master.handle_event(
+               :info,
+               {:dc_lock_regained, 42},
+               :recovering,
+               recovering
+             )
+  end
+
+  test "dc lock loss can be fatal" do
+    data = %EtherCAT.Master{
+      activation_phase: :operational,
+      dc_config: %DCConfig{cycle_ns: 1_000_000, lock_policy: :fatal}
+    }
+
+    assert {:next_state, :idle, %EtherCAT.Master{last_failure: failure}} =
+             EtherCAT.Master.handle_event(
+               :info,
+               {:dc_lock_lost, :locking, 250},
+               :running,
+               data
+             )
+
+    assert failure.kind == :dc_lock_lost
+    assert failure.reason == {:locking, 250}
+  end
+
   test "update_domain_cycle_time updates the live domain without mutating the master plan" do
     from = {self(), make_ref()}
     domain_id = :"master_domain_update_#{System.unique_integer([:positive, :monotonic])}"

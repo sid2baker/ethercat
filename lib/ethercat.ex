@@ -73,7 +73,11 @@ defmodule EtherCAT do
 
       EtherCAT.start(
         interface: "eth0",
-        dc: %EtherCAT.DC.Config{cycle_ns: 1_000_000},
+        dc: %EtherCAT.DC.Config{
+          cycle_ns: 1_000_000,
+          await_lock?: true,
+          lock_policy: :recovering
+        },
         domains: [
           %EtherCAT.Domain.Config{id: :main, cycle_time_us: 1_000}
         ],
@@ -151,7 +155,9 @@ defmodule EtherCAT do
       unnamed couplers. If omitted or empty, one default slave process is started
       per discovered station and held in `:preop` for dynamic configuration.
     - `:base_station` — first station address, default `0x1000`
-    - `:dc` — `%EtherCAT.DC.Config{}` for master-wide Distributed Clocks, or `nil` to disable DC
+    - `:dc` — `%EtherCAT.DC.Config{}` for master-wide Distributed Clocks, or
+      `nil` to disable DC. `await_lock?` gates startup activation; `lock_policy`
+      controls the runtime reaction to DC lock loss.
     - `:frame_timeout_ms` — optional fixed bus frame response timeout in ms
       (otherwise auto-tuned from slave count and cycle time)
   """
