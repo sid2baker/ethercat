@@ -7,8 +7,6 @@ and decision logs for multi-step work.
 
 - [docs/exec-plans/active/refactor-roadmap.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/active/refactor-roadmap.md)
   Umbrella ordering document for the remaining architecture and spec-alignment refactors.
-- [docs/exec-plans/active/dc-sync1-latch-complete.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/active/dc-sync1-latch-complete.md)
-  Remaining DC SYNC1 and latch work from the earlier narrower plan.
 - [docs/exec-plans/active/distributed-clocks-spec-alignment.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/active/distributed-clocks-spec-alignment.md)
   Current plan for aligning Distributed Clocks behavior and public API.
 - [docs/exec-plans/active/syncmanager-domain-spec-alignment.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/active/syncmanager-domain-spec-alignment.md)
@@ -20,6 +18,8 @@ and decision logs for multi-step work.
   Centralized bus scheduling and batching policy.
 - [docs/exec-plans/completed/coe-sdo-segmentation.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/completed/coe-sdo-segmentation.md)
   Segmented CoE SDO upload and download support.
+- [docs/exec-plans/completed/dc-sync1-latch-complete.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/completed/dc-sync1-latch-complete.md)
+  Historical narrow DC SYNC1/latch plan superseded by the broader DC alignment plan.
 - [docs/exec-plans/completed/link-transaction-api.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/completed/link-transaction-api.md)
   Bus transaction API cleanup and link-boundary refactor.
 

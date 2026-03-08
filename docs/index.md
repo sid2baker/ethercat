@@ -38,8 +38,6 @@ Use this file as the entry point. Keep it small, stable, and cross-linked.
 
 ## Mechanical Checks
 
-- `mix ethercat.harness.doctor`
-  Validate that the documentation spine, indices, and AGENTS map are coherent.
 - `mix test`
   Validate behavior.
 

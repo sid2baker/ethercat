@@ -49,7 +49,7 @@ available to later agent runs.
 For this project, the main harnesses are:
 
 - focused ExUnit coverage
-- hardware validation notebooks
+- maintained hardware scripts
 - loopback and latency benchmarks
 - telemetry surfaces that expose runtime state clearly
 
@@ -58,16 +58,14 @@ can prove the behavior.
 
 ## Mechanical Enforcement
 
-Use `mix ethercat.harness.doctor` to validate the documentation spine.
+Keep the documentation spine simple enough that normal refactor work can keep it
+current:
 
-The doctor currently checks:
+1. required entry docs should exist
+2. index files should stay accurate
+3. the human-authored section of `AGENTS.md` should remain a map, not a dump
 
-1. the required documentation spine exists
-2. docs indices reference the files they are supposed to index
-3. the human-authored section of `AGENTS.md` stays small enough to act as a map
-
-This is intentionally narrow. The goal is to enforce structure, not to create a
-second CI system inside markdown.
+The goal is structure, not a second CI system inside markdown.
 
 ## Practical Standard
 

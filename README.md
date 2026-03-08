@@ -229,12 +229,12 @@ The maintained end-to-end hardware walkthrough for this is:
 
 ### Fastest path
 
-[`kino_ethercat`](https://github.com/sid2baker/kino_ethercat) gives you interactive
-Livebook cells for ring discovery, I/O control, and diagnostics.
+[`kino_ethercat`](https://github.com/sid2baker/kino_ethercat) gives you an
+interactive UI for ring discovery, I/O control, and diagnostics.
 
 ### Maintained hardware examples
 
-See [`examples/README.md`](examples/README.md) for the maintained scripts and Livebooks.
+See [`examples/README.md`](examples/README.md) for the maintained hardware scripts.
 Recommended first stops:
 
 - `examples/scan.exs`

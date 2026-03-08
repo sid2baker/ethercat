@@ -182,11 +182,11 @@ not the history of how the implementation got there.
 ### Why fifth
 
 Several internal leaks have already been removed. This phase finishes that
-cleanup and keeps notebooks/examples from reintroducing stale patterns.
+cleanup and keeps examples and tooling from reintroducing stale patterns.
 
 ### Changes
 
-1. audit Livebooks, example templates, and diagnostics panels for stale config
+1. audit example scripts, example templates, and diagnostics panels for stale config
    fields and outdated lifecycle assumptions
 2. standardize how live-vs-initial state is described in docs:
    - domain timing
@@ -201,7 +201,7 @@ cleanup and keeps notebooks/examples from reintroducing stale patterns.
 
 ### Exit Criteria
 
-1. README, examples, and Livebooks all use the same mental model
+1. README, examples, and diagnostics surfaces all use the same mental model
 2. user-facing docs no longer expose removed internal details
 3. generated/starter code does not reintroduce deprecated patterns
 
