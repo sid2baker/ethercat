@@ -2,7 +2,7 @@
 
 ## Status
 
-ACTIVE
+COMPLETE FOR CURRENT LINE
 
 ## Goal
 
@@ -20,6 +20,15 @@ The target architecture is:
 This is an ordering document. The earlier SyncManager/domain and Distributed
 Clocks child plans have now moved to `completed/`.
 
+## Outcome
+
+This roadmap is complete for the current library line.
+
+Phases 1 through 4 landed as runtime/code changes. Phase 6 landed as public
+surface and docs cleanup. The remaining Phase 5 and Phase 7 items were not
+promoted into new active execution plans; they now live in the tech-debt
+tracker as bounded future work instead of keeping this umbrella roadmap open.
+
 ## Already Landed
 
 These are no longer the main refactor targets:
@@ -31,7 +40,8 @@ These are no longer the main refactor targets:
 5. live-owned domain cycle-time updates with master plan kept immutable
 6. explicit runtime structs for `Bus` and `DC`
 
-The roadmap below focuses on what still needs cleanup or completion.
+The roadmap below records the order that was used to land the current runtime
+shape and to decide what was left as debt.
 
 ## Structural Note
 
@@ -61,9 +71,9 @@ cleanup and spec-alignment work.
 2. Phase 2 — COMPLETE
 3. Phase 3 — COMPLETE for the current library line; remaining richer DC work is tracked as debt/future work
 4. Phase 4 — COMPLETE
-5. Phase 5 — PENDING
-6. Phase 6 — PENDING
-7. Phase 7 — PENDING
+5. Phase 5 — CLOSED INTO DEBT
+6. Phase 6 — COMPLETE FOR CURRENT LINE
+7. Phase 7 — CLOSED INTO DEBT
 
 ## Phase 1 - Finish master-owned runtime recovery
 
@@ -244,6 +254,10 @@ module-doc/source files instead of stale `lib/**/*.md` paths.
 
 Make the domain hot path stricter, more observable, and safer under load.
 
+### Status
+
+CLOSED INTO DEBT
+
 ### Why fifth
 
 The architecture should be decomposed before optimizing or enriching the hot
@@ -266,12 +280,28 @@ easier to evaluate in isolation.
 2. hot-path behavior under overload is explicit instead of accidental
 3. the domain module has a crisp documented contract for valid vs invalid cycles
 
+### Notes
+
+Part of this phase landed:
+
+1. input reads now expose `updated_at_us`
+2. invalid vs valid cycle timestamps are visible in domain status
+3. max LRW image size is enforced through `Domain.Layout.prepare/1`
+
+The unresolved hot-path hardening items now live in:
+
+- [docs/exec-plans/tech-debt-tracker.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/tech-debt-tracker.md)
+
 ## Phase 6 - Clean the public surface and generated examples
 
 ### Goal
 
 Make the user-facing API and examples reflect the architecture that now exists,
 not the history of how the implementation got there.
+
+### Status
+
+COMPLETE FOR CURRENT LINE
 
 ### Why sixth
 
@@ -299,12 +329,25 @@ cleanup and keeps examples and tooling from reintroducing stale patterns.
 2. user-facing docs no longer expose removed internal details
 3. generated/starter code does not reintroduce deprecated patterns
 
+### Notes
+
+This phase is complete for the current library line:
+
+1. master-owned logical address planning is internalized
+2. stale Livebooks and missing harness-doctor references were removed
+3. `EtherCAT.Telemetry.events/0` defines the supported event list
+4. docs/examples now describe live-vs-initial runtime ownership consistently
+
 ## Phase 7 - Raise the validation bar
 
 ### Goal
 
 Turn hardware validation from ad-hoc manual confidence into a maintained part of
 the project workflow.
+
+### Status
+
+CLOSED INTO DEBT
 
 ### Why last
 
@@ -329,6 +372,12 @@ the intended architecture has settled.
 2. docs match what is actually exercised on the live ring
 3. future refactors have a repeatable hardware confidence loop
 
+### Notes
+
+Maintained hardware scripts exist and are used as the practical validation
+surface today. The remaining work to turn that into a first-class runner or CI
+loop is tracked as testing debt instead of keeping this umbrella roadmap open.
+
 ## Things Not To Fold In Right Now
 
 These may become future projects, but they should not be bundled into the
@@ -339,10 +388,12 @@ roadmap above:
 3. speculative protocol features without a maintained hardware example
 4. large public API expansion before the current boundaries are stable
 
-## Recommended Next Move
+## Current Follow-Up
 
-Start with Phase 4.
+There is no active umbrella refactor roadmap after this closure.
 
-The next highest-leverage change is structural decomposition of `Master`,
-`Slave`, and `Domain` now that the lifecycle, SyncManager/domain, and DC
-ownership refactors have landed.
+Use the debt tracker to decide whether a remaining item should:
+
+1. stay as bounded debt
+2. be promoted into a new focused execution plan
+3. be closed as intentionally out of scope for the current line

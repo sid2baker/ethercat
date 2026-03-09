@@ -5,8 +5,8 @@ and decision logs for multi-step work.
 
 ## Active
 
-- [docs/exec-plans/active/refactor-roadmap.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/active/refactor-roadmap.md)
-  Umbrella ordering document for the remaining architecture and spec-alignment refactors.
+No active execution plans right now. Promote focused work from the debt tracker
+when it becomes concrete enough to execute.
 
 ## Completed
 
@@ -20,6 +20,9 @@ and decision logs for multi-step work.
   Distributed Clocks runtime/API alignment plan for the current library line.
 - [docs/exec-plans/completed/link-transaction-api.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/completed/link-transaction-api.md)
   Bus transaction API cleanup and link-boundary refactor.
+- [docs/exec-plans/completed/refactor-roadmap.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/completed/refactor-roadmap.md)
+  Umbrella ordering document that landed the current spec-aligned runtime shape
+  and moved the remaining gaps into focused debt.
 - [docs/exec-plans/completed/runtime-module-decomposition.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/completed/runtime-module-decomposition.md)
   Structural decomposition of the oversized `Master`, `Slave`, and `Domain`
   runtime modules into clearer subsystem collaborators.

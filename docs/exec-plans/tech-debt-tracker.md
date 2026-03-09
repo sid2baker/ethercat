@@ -33,15 +33,15 @@ Known gaps and deferred work. Add entries when identified; move to `completed/` 
 
 | Gap | Location | Impact | Notes |
 |-----|----------|--------|-------|
-| No per-PDO timestamp | `domain.ex` | Application cannot detect stale inputs | Could be added to ETS record as `{key, value, pid, last_changed_us}` |
-| No backpressure on slave pid notification | `domain.ex:dispatch_inputs` | Slow slaves accumulate messages | `send/2` is fire-and-forget; add mailbox size guard or cast drop |
-| No max frame size guard | `domain.ex` | `image_size` > ~1486 bytes silently fails at LRW level | Add assertion in `start_cycling/1` |
+| No overload/backpressure policy on signal fan-out | `domain/cycle.ex`, `slave/signals.ex` | Slow subscribers or slave-side consumers can accumulate messages | `send/2` is fire-and-forget; add mailbox size guard, cast drop, or explicit overload policy |
 | Sub-byte PDOs are byte-padded | `slave.ex`, `domain.ex` | 1-bit digital channels waste 7 bits per channel in process image | Bit-level domain packing not implemented |
+| No higher-level batched domain write API | `domain.ex`, `ethercat.ex` | Applications that stage many outputs must coordinate raw writes themselves | Current line intentionally keeps raw ETS staging and `write_output/3` as the public write boundary |
 
 ## Testing
 
 | Gap | Location | Impact | Notes |
 |-----|----------|--------|-------|
 | No hardware-in-the-loop CI | `test/` | Hardware bugs only caught manually | Requires physical EK1100 + NIC in CI environment |
+| No maintained local hardware smoke runner | `examples/README.md`, `docs/` | Hardware validation still depends on manual command selection and operator workflow | Maintained example scripts exist, but there is no single supported runner that executes the smoke matrix |
 | SDO send/receive untested | `sii.ex`, `slave.ex` | CoE mailbox path has no automated coverage | |
 | No DC timing accuracy test | `dc.ex` | PLL convergence not verified under load | |

@@ -39,16 +39,16 @@ defmodule EtherCAT.Bus do
     reliable: :queue.new()
   ]
 
-  @type t :: %__MODULE__{
-          link: term(),
-          link_mod: module(),
-          idx: non_neg_integer(),
-          in_flight: InFlight.t() | nil,
-          frame_timeout_ms: pos_integer(),
-          timeout_count: non_neg_integer(),
-          realtime: :queue.queue(Submission.t()),
-          reliable: :queue.queue(Submission.t())
-        }
+  @opaque t :: %__MODULE__{
+            link: term(),
+            link_mod: module(),
+            idx: non_neg_integer(),
+            in_flight: term() | nil,
+            frame_timeout_ms: pos_integer(),
+            timeout_count: non_neg_integer(),
+            realtime: term(),
+            reliable: term()
+          }
 
   @doc false
   def child_spec(opts) do
