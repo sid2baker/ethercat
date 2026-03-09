@@ -7,6 +7,9 @@ and decision logs for multi-step work.
 
 - [docs/exec-plans/active/refactor-roadmap.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/active/refactor-roadmap.md)
   Umbrella ordering document for the remaining architecture and spec-alignment refactors.
+- [docs/exec-plans/active/runtime-module-decomposition.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/active/runtime-module-decomposition.md)
+  Detailed plan for splitting the oversized `Master`, `Slave`, and `Domain`
+  runtime modules into clearer subsystem collaborators.
 
 ## Completed
 

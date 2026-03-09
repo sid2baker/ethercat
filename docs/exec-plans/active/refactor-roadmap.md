@@ -33,6 +33,15 @@ These are no longer the main refactor targets:
 
 The roadmap below focuses on what still needs cleanup or completion.
 
+## Structural Note
+
+`Master` and `Slave` are still carrying too much behavior inline. The protocol
+complexity is real and expected. The current concentration of that complexity
+inside ~2000-line modules is not.
+
+The roadmap below now treats runtime-module decomposition as explicit work, not
+an incidental cleanup.
+
 ## Design Rules
 
 1. Spec first. Use EtherCAT semantics as the default model.
@@ -46,12 +55,26 @@ The roadmap below focuses on what still needs cleanup or completion.
 
 ## Execution Order
 
+## Phase Status Snapshot
+
+1. Phase 1 — COMPLETE
+2. Phase 2 — COMPLETE
+3. Phase 3 — COMPLETE for the current library line; remaining richer DC work is tracked as debt/future work
+4. Phase 4 — ACTIVE
+5. Phase 5 — PENDING
+6. Phase 6 — PENDING
+7. Phase 7 — PENDING
+
 ## Phase 1 - Finish master-owned runtime recovery
 
 ### Goal
 
 Make runtime recovery fully master-owned and explicit instead of being a partial
 extension of startup/degraded handling.
+
+### Status
+
+COMPLETE
 
 ### Why first
 
@@ -80,12 +103,24 @@ reporting.
 2. public phase reporting distinguishes startup, operational, and recovery
 3. the master plan stays immutable while child runtimes own live state
 
+### Notes
+
+This work is already landed in the runtime:
+
+1. public `:recovering` phase exists
+2. runtime domain/slave/DC faults route through one master-owned recovery policy
+3. child runtimes own live state while the master retains the initial plan
+
 ## Phase 2 - Close the remaining process-data alignment work
 
 ### Goal
 
 Finish the remaining work from the SyncManager/domain refactor and remove the
 last library-shaped shortcuts from the process-data model.
+
+### Status
+
+COMPLETE
 
 ### Why second
 
@@ -108,12 +143,23 @@ finished before more feature work piles on top of it.
 1. split-SM configs are covered in examples, tests, and recovery scenarios
 2. no public docs imply the old one-SM-one-domain model
 
+### Notes
+
+This phase is complete for the current library line. The detailed execution work
+moved to:
+
+- [docs/exec-plans/completed/syncmanager-domain-spec-alignment.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/completed/syncmanager-domain-spec-alignment.md)
+
 ## Phase 3 - Complete Distributed Clocks and sync semantics
 
 ### Goal
 
 Finish the remaining Distributed Clocks refactor so DC behavior and public API
 match the spec/reference-master model more closely.
+
+### Status
+
+COMPLETE FOR CURRENT LINE
 
 ### Why third
 
@@ -136,23 +182,68 @@ for drives and richer timing use cases.
 2. drives that require CoE sync-mode configuration have a clean integration path
 3. DC runtime loss feeds the same lifecycle policy as other cyclic faults
 
-## Phase 4 - Harden the domain data plane
+### Notes
+
+The main DC alignment work is complete for the current library line and moved
+to:
+
+- [docs/exec-plans/completed/distributed-clocks-spec-alignment.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/completed/distributed-clocks-spec-alignment.md)
+
+Remaining richer DC work stays visible as debt/future work rather than blocking
+the roadmap:
+
+1. maintained hardware validation for sync-sensitive CoE-mode slaves
+2. richer redundancy/public status surfacing
+3. non-linear topology delay handling
+
+## Phase 4 - Decompose oversized runtime modules
+
+### Goal
+
+Reduce `Master`, `Slave`, and `Domain` to clearer runtime shells with extracted
+protocol collaborators.
+
+### Why fourth
+
+The architecture is now correct enough that structural decomposition will pay
+off. Without this step, every remaining feature/refactor continues to pile onto
+large mixed-concern modules.
+
+### Changes
+
+1. extract `Master` startup / activation / recovery / session helpers
+2. extract `Slave` bootstrap / process-data / mailbox / DC / transition helpers
+3. extract dense `Domain` cycle / image / diagnostics helpers while keeping one
+   runtime process module
+4. keep `gen_statem` shell modules focused on state ownership and event routing
+5. document the new subsystem boundaries
+
+Detailed execution plan:
+
+- [docs/exec-plans/active/runtime-module-decomposition.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/active/runtime-module-decomposition.md)
+
+### Exit Criteria
+
+1. `Master` and `Slave` are no longer giant mixed-concern runtime modules
+2. `Domain` remains one concern but with extracted hot-path helpers
+3. protocol behavior stays intact while module boundaries become clearer
+
+## Phase 5 - Harden the domain data plane
 
 ### Goal
 
 Make the domain hot path stricter, more observable, and safer under load.
 
-### Why fourth
+### Why fifth
 
-The architecture should be correct before optimizing or enriching the hot path.
-Once lifecycle and DC ownership are settled, the remaining domain gaps become
+The architecture should be decomposed before optimizing or enriching the hot
+path. Once the shells and helpers are clearer, the remaining domain gaps become
 easier to evaluate in isolation.
 
 ### Changes
 
-1. add per-signal or per-PDO freshness timestamps so applications can detect
-   stale values
-2. add a backpressure policy for input fan-out to slow slave processes
+1. keep per-PDO freshness timestamps so applications can detect stale values
+2. decide whether input fan-out needs an explicit overload policy
 3. keep the max-frame/image-size guard explicit and covered
 4. review invalid-cycle behavior so "hold last safe image" semantics are
    consistent and documented
@@ -161,18 +252,18 @@ easier to evaluate in isolation.
 
 ### Exit Criteria
 
-1. domain info and telemetry can explain data freshness, misses, and fan-out loss
+1. domain info and telemetry can explain data freshness and misses
 2. hot-path behavior under overload is explicit instead of accidental
 3. the domain module has a crisp documented contract for valid vs invalid cycles
 
-## Phase 5 - Clean the public surface and generated examples
+## Phase 6 - Clean the public surface and generated examples
 
 ### Goal
 
 Make the user-facing API and examples reflect the architecture that now exists,
 not the history of how the implementation got there.
 
-### Why fifth
+### Why sixth
 
 Several internal leaks have already been removed. This phase finishes that
 cleanup and keeps examples and tooling from reintroducing stale patterns.
@@ -198,7 +289,7 @@ cleanup and keeps examples and tooling from reintroducing stale patterns.
 2. user-facing docs no longer expose removed internal details
 3. generated/starter code does not reintroduce deprecated patterns
 
-## Phase 6 - Raise the validation bar
+## Phase 7 - Raise the validation bar
 
 ### Goal
 
@@ -207,8 +298,8 @@ the project workflow.
 
 ### Why last
 
-The earlier phases change semantics. Validation should harden once the intended
-architecture has settled.
+The earlier phases change semantics and structure. Validation should harden once
+the intended architecture has settled.
 
 ### Changes
 
@@ -242,5 +333,6 @@ roadmap above:
 
 Start with Phase 4.
 
-That is the cleanest remaining architecture work now that the lifecycle,
-SyncManager/domain, and DC ownership refactors have landed.
+The next highest-leverage change is structural decomposition of `Master`,
+`Slave`, and `Domain` now that the lifecycle, SyncManager/domain, and DC
+ownership refactors have landed.

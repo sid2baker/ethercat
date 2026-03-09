@@ -7,10 +7,11 @@ defmodule EtherCAT.Master do
 
   alias EtherCAT.{DC, Domain, Bus, Slave, Telemetry}
   alias EtherCAT.Bus.Transaction
-  alias EtherCAT.DC.Status, as: DCStatus
   alias EtherCAT.Master.Config
   alias EtherCAT.Master.InitReset
   alias EtherCAT.Master.InitRecovery
+  alias EtherCAT.Master.Session
+  alias EtherCAT.Master.Status
   alias EtherCAT.Master.InitVerification
   alias EtherCAT.Slave.Registers
 
@@ -231,7 +232,7 @@ defmodule EtherCAT.Master do
   - activation-time lock gating via `await_lock?`
   - runtime lock-loss behavior via `lock_policy`
   """
-  @spec dc_status() :: DCStatus.t() | {:error, :not_started}
+  @spec dc_status() :: EtherCAT.DC.Status.t() | {:error, :not_started}
   def dc_status do
     safe_call(:dc_status)
   end
@@ -345,11 +346,11 @@ defmodule EtherCAT.Master do
   end
 
   def handle_event({:call, from}, :dc_status, :idle, data) do
-    {:keep_state_and_data, [{:reply, from, dc_status_for(data)}]}
+    {:keep_state_and_data, [{:reply, from, Status.dc_status(data)}]}
   end
 
   def handle_event({:call, from}, :reference_clock, :idle, data) do
-    {:keep_state_and_data, [{:reply, from, reference_clock_reply(dc_status_for(data))}]}
+    {:keep_state_and_data, [{:reply, from, Status.reference_clock_reply(Status.dc_status(data))}]}
   end
 
   def handle_event({:call, from}, :dc_runtime, :idle, _data) do
@@ -590,10 +591,10 @@ defmodule EtherCAT.Master do
   # :degraded ----------------------------------------------------------------
 
   def handle_event(:enter, _old, :degraded, data) do
-    Logger.warning("[Master] degraded — #{degraded_summary(data)}")
+    Logger.warning("[Master] degraded — #{Status.degraded_summary(data)}")
 
-    reply_await_callers(data.await_callers, degraded_reply(data))
-    reply_await_callers(data.await_operational_callers, degraded_reply(data))
+    reply_await_callers(data.await_callers, Status.degraded_reply(data))
+    reply_await_callers(data.await_operational_callers, Status.degraded_reply(data))
 
     {:keep_state, %{data | await_callers: [], await_operational_callers: []},
      [{{:timeout, :degraded_retry}, @degraded_retry_ms, nil}]}
@@ -616,11 +617,11 @@ defmodule EtherCAT.Master do
   end
 
   def handle_event({:call, from}, :await_running, :degraded, data) do
-    {:keep_state_and_data, [{:reply, from, degraded_reply(data)}]}
+    {:keep_state_and_data, [{:reply, from, Status.degraded_reply(data)}]}
   end
 
   def handle_event({:call, from}, :await_operational, :degraded, data) do
-    {:keep_state_and_data, [{:reply, from, degraded_reply(data)}]}
+    {:keep_state_and_data, [{:reply, from, Status.degraded_reply(data)}]}
   end
 
   def handle_event({:call, from}, {:configure_slave, _slave_name, _spec}, :degraded, _data) do
@@ -634,10 +635,10 @@ defmodule EtherCAT.Master do
   # :recovering --------------------------------------------------------------
 
   def handle_event(:enter, _old, :recovering, data) do
-    Logger.warning("[Master] recovering — #{recovering_summary(data)}")
+    Logger.warning("[Master] recovering — #{Status.recovering_summary(data)}")
 
-    reply_await_callers(data.await_callers, recovering_reply(data))
-    reply_await_callers(data.await_operational_callers, recovering_reply(data))
+    reply_await_callers(data.await_callers, Status.recovering_reply(data))
+    reply_await_callers(data.await_operational_callers, Status.recovering_reply(data))
 
     {:keep_state, %{data | await_callers: [], await_operational_callers: []},
      [{{:timeout, :degraded_retry}, @degraded_retry_ms, nil}]}
@@ -671,11 +672,11 @@ defmodule EtherCAT.Master do
   end
 
   def handle_event({:call, from}, :await_running, :recovering, data) do
-    {:keep_state_and_data, [{:reply, from, recovering_reply(data)}]}
+    {:keep_state_and_data, [{:reply, from, Status.recovering_reply(data)}]}
   end
 
   def handle_event({:call, from}, :await_operational, :recovering, data) do
-    {:keep_state_and_data, [{:reply, from, recovering_reply(data)}]}
+    {:keep_state_and_data, [{:reply, from, Status.recovering_reply(data)}]}
   end
 
   def handle_event({:call, from}, {:configure_slave, _slave_name, _spec}, :recovering, _data) do
@@ -694,7 +695,7 @@ defmodule EtherCAT.Master do
   end
 
   def handle_event({:call, from}, :phase, state, data) do
-    {:keep_state_and_data, [{:reply, from, phase_for(state, data)}]}
+    {:keep_state_and_data, [{:reply, from, Status.phase(state, data)}]}
   end
 
   def handle_event({:call, from}, :last_failure, _state, data) do
@@ -702,11 +703,11 @@ defmodule EtherCAT.Master do
   end
 
   def handle_event({:call, from}, :dc_status, _state, data) do
-    {:keep_state_and_data, [{:reply, from, dc_status_for(data)}]}
+    {:keep_state_and_data, [{:reply, from, Status.dc_status(data)}]}
   end
 
   def handle_event({:call, from}, :reference_clock, _state, data) do
-    {:keep_state_and_data, [{:reply, from, reference_clock_reply(dc_status_for(data))}]}
+    {:keep_state_and_data, [{:reply, from, Status.reference_clock_reply(Status.dc_status(data))}]}
   end
 
   def handle_event({:call, from}, :dc_runtime, _state, %{dc_config: nil}) do
@@ -722,35 +723,15 @@ defmodule EtherCAT.Master do
   end
 
   def handle_event({:call, from}, :slaves, _state, data) do
-    result =
-      Enum.map(data.slaves, fn {name, station} ->
-        %{name: name, station: station, server: slave_server(name), pid: lookup_slave_pid(name)}
-      end)
-
-    {:keep_state_and_data, [{:reply, from, result}]}
+    {:keep_state_and_data, [{:reply, from, Status.slaves(data)}]}
   end
 
   def handle_event({:call, from}, :domains, _state, data) do
-    result =
-      (data.domain_configs || [])
-      |> Enum.flat_map(fn config ->
-        case Registry.lookup(EtherCAT.Registry, {:domain, config.id}) do
-          [{pid, _}] ->
-            case Domain.info(config.id) do
-              {:ok, %{cycle_time_us: cycle_time_us}} -> [{config.id, cycle_time_us, pid}]
-              _ -> []
-            end
-
-          [] ->
-            []
-        end
-      end)
-
-    {:keep_state_and_data, [{:reply, from, result}]}
+    {:keep_state_and_data, [{:reply, from, Status.domains(data)}]}
   end
 
   def handle_event({:call, from}, :bus, _state, data) do
-    {:keep_state_and_data, [{:reply, from, bus_public_ref(data)}]}
+    {:keep_state_and_data, [{:reply, from, Status.bus_public_ref(data)}]}
   end
 
   def handle_event(
@@ -1596,21 +1577,7 @@ defmodule EtherCAT.Master do
   # -- Session teardown ------------------------------------------------------
 
   defp stop_session(data) do
-    Enum.each(data.domain_refs, fn {ref, _id} -> Process.demonitor(ref, [:flush]) end)
-    Enum.each(data.slave_refs, fn {ref, _name} -> Process.demonitor(ref, [:flush]) end)
-    maybe_demonitor_dc(data.dc_ref)
-
-    stop_dc_runtime()
-
-    Enum.each(data.slaves || [], fn {name, _station} ->
-      terminate_slave(name)
-    end)
-
-    Enum.each(Config.domain_ids(data.domain_configs || []), fn domain_id ->
-      terminate_domain(domain_id)
-    end)
-
-    stop_bus()
+    Session.stop(data)
   end
 
   defp start_dc_runtime(%{dc_ref_station: nil} = data), do: {:ok, %{data | dc_ref: nil}}
@@ -1660,7 +1627,7 @@ defmodule EtherCAT.Master do
           :ok
 
         {:error, :timeout} ->
-          {:error, {:dc_lock_timeout, dc_status_for(data)}}
+          {:error, {:dc_lock_timeout, Status.dc_status(data)}}
 
         {:error, reason} ->
           {:error, {:dc_lock_failed, reason}}
@@ -1731,14 +1698,6 @@ defmodule EtherCAT.Master do
     |> maybe_restart_dc_runtime()
     |> maybe_resume_running()
   end
-
-  defp phase_for(:idle, _data), do: :idle
-  defp phase_for(:scanning, _data), do: :scanning
-  defp phase_for(:configuring, _data), do: :configuring
-  defp phase_for(:degraded, _data), do: :degraded
-  defp phase_for(:recovering, _data), do: :recovering
-  defp phase_for(:running, %{activation_phase: :operational}), do: :operational
-  defp phase_for(:running, _data), do: :preop_ready
 
   defp dc_lock_policy(%{dc_config: %{lock_policy: lock_policy}})
        when lock_policy in [:advisory, :recovering, :fatal] do
@@ -1875,94 +1834,8 @@ defmodule EtherCAT.Master do
     end
   end
 
-  defp degraded_reply(data) do
-    activation_failures = data.activation_failures
-    runtime_faults = data.runtime_faults
-
-    cond do
-      map_size(activation_failures) > 0 and map_size(runtime_faults) == 0 ->
-        {:error, {:activation_failed, activation_failures}}
-
-      map_size(activation_failures) == 0 and map_size(runtime_faults) > 0 ->
-        {:error, {:runtime_degraded, runtime_faults}}
-
-      true ->
-        {:error,
-         {:degraded, %{activation_failures: activation_failures, runtime_faults: runtime_faults}}}
-    end
-  end
-
-  defp recovering_reply(%{runtime_faults: runtime_faults}) do
-    {:error, {:runtime_degraded, runtime_faults}}
-  end
-
-  defp degraded_summary(data) do
-    activation_count = map_size(data.activation_failures)
-    runtime_count = map_size(data.runtime_faults)
-    "activation_failures=#{activation_count} runtime_faults=#{runtime_count}"
-  end
-
-  defp recovering_summary(data) do
-    "runtime_faults=#{map_size(data.runtime_faults)} activation_failures=#{map_size(data.activation_failures)}"
-  end
-
-  defp dc_status_for(%{dc_config: nil}) do
-    %DCStatus{lock_state: :disabled}
-  end
-
-  defp dc_status_for(data) do
-    base_status = %DCStatus{
-      configured?: true,
-      active?: false,
-      cycle_ns: dc_cycle_ns(data),
-      await_lock?: data.dc_config.await_lock?,
-      lock_policy: data.dc_config.lock_policy,
-      reference_station: data.dc_ref_station,
-      reference_clock: reference_clock_name(data),
-      lock_state: :inactive
-    }
-
-    if dc_running?() do
-      case DC.status(dc_server()) do
-        %DCStatus{} = status ->
-          %{status | reference_clock: reference_clock_name(data)}
-
-        {:error, _reason} ->
-          base_status
-      end
-    else
-      base_status
-    end
-  end
-
-  defp reference_clock_name(%{dc_ref_station: nil}), do: nil
-
-  defp reference_clock_name(data) do
-    case Enum.find(data.slaves || [], fn {_name, station} ->
-           station == data.dc_ref_station
-         end) do
-      {name, _station} -> name
-      nil -> nil
-    end
-  end
-
-  defp reference_clock_reply(%DCStatus{reference_station: station, reference_clock: name})
-       when is_integer(station) do
-    {:ok, %{name: name, station: station}}
-  end
-
-  defp reference_clock_reply(%DCStatus{configured?: false}), do: {:error, :dc_disabled}
-  defp reference_clock_reply(_status), do: {:error, :no_reference_clock}
-
   defp reply_await_callers(callers, reply) do
     Enum.each(callers, fn from -> :gen_statem.reply(from, reply) end)
-  end
-
-  defp terminate_domain(domain_id) do
-    case lookup_domain_pid(domain_id) do
-      pid when is_pid(pid) -> DynamicSupervisor.terminate_child(EtherCAT.SessionSupervisor, pid)
-      nil -> :ok
-    end
   end
 
   defp safe_call(msg) do
@@ -1984,10 +1857,6 @@ defmodule EtherCAT.Master do
 
   defp bus_server(_data), do: Bus
 
-  defp bus_public_ref(_data) do
-    if bus_running?(), do: bus_server(nil), else: nil
-  end
-
   defp bus_running? do
     is_pid(Process.whereis(Bus))
   end
@@ -1997,44 +1866,4 @@ defmodule EtherCAT.Master do
   defp dc_running? do
     is_pid(Process.whereis(DC))
   end
-
-  defp stop_bus do
-    case Process.whereis(Bus) do
-      pid when is_pid(pid) -> DynamicSupervisor.terminate_child(EtherCAT.SessionSupervisor, pid)
-      nil -> :ok
-    end
-  end
-
-  defp stop_dc_runtime do
-    case Process.whereis(DC) do
-      pid when is_pid(pid) -> DynamicSupervisor.terminate_child(EtherCAT.SessionSupervisor, pid)
-      nil -> :ok
-    end
-  end
-
-  defp maybe_demonitor_dc(ref) when is_reference(ref), do: Process.demonitor(ref, [:flush])
-  defp maybe_demonitor_dc(_ref), do: :ok
-
-  defp terminate_slave(name) do
-    case lookup_slave_pid(name) do
-      pid when is_pid(pid) -> DynamicSupervisor.terminate_child(EtherCAT.SlaveSupervisor, pid)
-      nil -> :ok
-    end
-  end
-
-  defp lookup_slave_pid(name) do
-    case Registry.lookup(EtherCAT.Registry, {:slave, name}) do
-      [{pid, _}] -> pid
-      [] -> nil
-    end
-  end
-
-  defp lookup_domain_pid(domain_id) do
-    case Registry.lookup(EtherCAT.Registry, {:domain, domain_id}) do
-      [{pid, _}] -> pid
-      [] -> nil
-    end
-  end
-
-  defp slave_server(name), do: {:via, Registry, {EtherCAT.Registry, {:slave, name}}}
 end
