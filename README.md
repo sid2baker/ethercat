@@ -111,7 +111,7 @@ EtherCAT.start(
 
 ## Mental Model
 
-- The master owns startup, activation, degraded mode, and recovery decisions.
+- The master owns startup, activation-blocked startup, and runtime recovery decisions.
 - The bus is the single serialization point for all frames.
 - Domains own logical PDO images and cyclic LRW exchange.
 - Slaves own AL transitions, SII/mailbox/PDO setup, and signal decode/encode.
@@ -124,11 +124,11 @@ If you understand those five roles, the rest of the API is predictable.
 Public startup and runtime health are exposed through `EtherCAT.phase/0`:
 
 - `:idle`
-- `:scanning`
-- `:configuring`
+- `:discovering`
+- `:awaiting_preop`
 - `:preop_ready`
 - `:operational`
-- `:degraded`
+- `:activation_blocked`
 - `:recovering`
 
 `await_running/1` waits for a usable session. `await_operational/1` waits for cyclic OP.
@@ -136,27 +136,27 @@ Public startup and runtime health are exposed through `EtherCAT.phase/0`:
 ### 1. Master-owned lifecycle
 
 This is the actual user-facing `phase/0` model. Activation problems surface as
-`:degraded`; runtime path faults surface as `:recovering`.
+`:activation_blocked`; runtime path faults surface as `:recovering`.
 
 ```mermaid
 stateDiagram-v2
     [*] --> idle
-    idle --> scanning: start/1
-    scanning --> configuring: configured slaves are still pending
-    scanning --> preop_ready: discovery-only workflow
-    scanning --> operational: immediate activation succeeds
-    scanning --> degraded: immediate activation is incomplete
-    scanning --> idle: configuration fails or stop/0
-    configuring --> preop_ready: all slaves are ready, no activation requested
-    configuring --> operational: all slaves are ready, activation succeeds
-    configuring --> degraded: activation is incomplete
-    configuring --> idle: timeout, activation failure, or stop/0
+    idle --> discovering: start/1
+    discovering --> awaiting_preop: configured slaves are still pending
+    discovering --> preop_ready: discovery-only workflow
+    discovering --> operational: immediate activation succeeds
+    discovering --> activation_blocked: immediate activation is incomplete
+    discovering --> idle: configuration fails or stop/0
+    awaiting_preop --> preop_ready: all slaves are ready, no activation requested
+    awaiting_preop --> operational: all slaves are ready, activation succeeds
+    awaiting_preop --> activation_blocked: activation is incomplete
+    awaiting_preop --> idle: timeout, activation failure, or stop/0
     preop_ready --> operational: activate/0 succeeds
-    preop_ready --> degraded: activate/0 is incomplete
+    preop_ready --> activation_blocked: activate/0 is incomplete
     preop_ready --> idle: stop/0
-    degraded --> operational: retry clears activation failures and no runtime faults remain
-    degraded --> recovering: activation failures clear but runtime faults remain
-    degraded --> idle: stop/0 or bus down
+    activation_blocked --> operational: retry clears activation failures and no runtime faults remain
+    activation_blocked --> recovering: activation failures clear but runtime faults remain
+    activation_blocked --> idle: stop/0 or bus down
     operational --> recovering: runtime fault in domain, slave, or DC
     operational --> idle: stop/0 or fatal failure
     recovering --> operational: runtime faults are cleared
@@ -251,32 +251,36 @@ one to read first. The charts below are implementation-facing.
 #### Master (`lib/ethercat/master.ex`)
 
 `Master` has real `gen_statem` states plus a split public phase inside `:running`.
-This chart uses `running / <phase>` to make that split explicit.
+This chart uses a hierarchical `running` state so the PREOP-ready vs operational
+split is visible without flattening everything.
 
 ```mermaid
 stateDiagram-v2
-    state "running / preop_ready" as running_preop
-    state "running / operational" as running_op
     [*] --> idle
-    idle --> scanning: start/1
-    scanning --> configuring: configured slaves are still pending
-    scanning --> running_preop: dynamic PREOP workflow
-    scanning --> running_op: immediate activation succeeds
-    scanning --> degraded: activation is incomplete
-    scanning --> idle: configuration fails, stop, or bus down
-    configuring --> running_preop: all slaves are ready, no activation requested
-    configuring --> running_op: all slaves are ready, activation succeeds
-    configuring --> degraded: activation is incomplete
-    configuring --> idle: timeout, activation failure, stop, or bus down
-    running_preop --> running_op: activate/0 succeeds
-    running_preop --> degraded: activate/0 is incomplete
-    running_preop --> idle: stop or bus down
-    running_op --> recovering: runtime fault in domain, slave, or DC
-    running_op --> idle: stop, bus down, or fatal DC policy
-    degraded --> running_op: activation failures clear and no runtime faults remain
-    degraded --> recovering: activation failures clear but runtime faults remain
-    degraded --> idle: stop or bus down
-    recovering --> running_op: runtime faults are cleared
+    idle --> discovering: start/1
+    discovering --> awaiting_preop: configured slaves are still pending
+    discovering --> preop_ready: discovery-only workflow
+    discovering --> operational: immediate activation succeeds
+    discovering --> activation_blocked: activation is incomplete
+    discovering --> idle: configuration fails, stop, or bus down
+    awaiting_preop --> preop_ready: all slaves are ready, no activation requested
+    awaiting_preop --> operational: all slaves are ready, activation succeeds
+    awaiting_preop --> activation_blocked: activation is incomplete
+    awaiting_preop --> idle: timeout, activation failure, stop, or bus down
+
+    state running {
+        [*] --> preop_ready
+        preop_ready --> operational: activate/0 succeeds
+    }
+
+    preop_ready --> activation_blocked: activate/0 is incomplete
+    preop_ready --> idle: stop or bus down
+    operational --> recovering: runtime fault in domain, slave, or DC
+    operational --> idle: stop, bus down, or fatal DC policy
+    activation_blocked --> operational: activation failures clear and no runtime faults remain
+    activation_blocked --> recovering: activation failures clear but runtime faults remain
+    activation_blocked --> idle: stop or bus down
+    recovering --> operational: runtime faults are cleared
     recovering --> idle: stop, bus down, or recovery fails
 ```
 

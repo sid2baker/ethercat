@@ -6,14 +6,14 @@ defmodule EtherCAT.Master.Recovery do
   alias EtherCAT.{Domain, Slave}
   alias EtherCAT.Master.Activation
 
-  @spec retry_degraded_state(%EtherCAT.Master{}) ::
+  @spec retry_activation_blocked_state(%EtherCAT.Master{}) ::
           {:ok, %EtherCAT.Master{}} | {:recovering, %EtherCAT.Master{}}
-  def retry_degraded_state(%{activation_failures: failures} = data)
+  def retry_activation_blocked_state(%{activation_failures: failures} = data)
       when map_size(failures) == 0 do
     maybe_resume_running(data)
   end
 
-  def retry_degraded_state(%{activation_failures: failures} = data) do
+  def retry_activation_blocked_state(%{activation_failures: failures} = data) do
     retried_failures =
       Enum.reduce(failures, %{}, fn
         {name, {:down, _}}, acc ->
@@ -26,7 +26,7 @@ defmodule EtherCAT.Master.Recovery do
 
             {:error, reason} ->
               Logger.warning(
-                "[Master] degraded retry: #{inspect(name)} still not in :op: #{inspect(reason)}"
+                "[Master] activation-blocked retry: #{inspect(name)} still not in :op: #{inspect(reason)}"
               )
 
               Map.put(acc, name, {:op, reason})

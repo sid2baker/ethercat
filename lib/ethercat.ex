@@ -4,7 +4,7 @@ defmodule EtherCAT do
 
   `EtherCAT` is the entry point for a master-owned session lifecycle:
 
-  - `Master` owns startup, activation, degraded mode, and recovery policy
+  - `Master` owns startup, activation-blocked startup, and recovery policy
   - `Domain` owns cyclic LRW exchange and the logical PDO image
   - `Slave` owns ESM transitions and slave-local configuration
   - `DC` owns distributed-clock initialization and runtime maintenance
@@ -13,11 +13,11 @@ defmodule EtherCAT do
   Public session health is exposed through `phase/0`:
 
   - `:idle`
-  - `:scanning`
-  - `:configuring`
+  - `:discovering`
+  - `:awaiting_preop`
   - `:preop_ready`
   - `:operational`
-  - `:degraded`
+  - `:activation_blocked`
   - `:recovering`
 
   `await_running/1` waits for a usable session. `await_operational/1` waits for
@@ -31,22 +31,22 @@ defmodule EtherCAT do
   ```mermaid
   stateDiagram-v2
       [*] --> idle
-      idle --> scanning: start/1
-      scanning --> configuring: configured slaves are still pending
-      scanning --> preop_ready: discovery-only workflow
-      scanning --> operational: immediate activation succeeds
-      scanning --> degraded: immediate activation is incomplete
-      scanning --> idle: configuration fails or stop/0
-      configuring --> preop_ready: all slaves are ready, no activation requested
-      configuring --> operational: all slaves are ready, activation succeeds
-      configuring --> degraded: activation is incomplete
-      configuring --> idle: timeout, activation failure, or stop/0
+      idle --> discovering: start/1
+      discovering --> awaiting_preop: configured slaves are still pending
+      discovering --> preop_ready: discovery-only workflow
+      discovering --> operational: immediate activation succeeds
+      discovering --> activation_blocked: immediate activation is incomplete
+      discovering --> idle: configuration fails or stop/0
+      awaiting_preop --> preop_ready: all slaves are ready, no activation requested
+      awaiting_preop --> operational: all slaves are ready, activation succeeds
+      awaiting_preop --> activation_blocked: activation is incomplete
+      awaiting_preop --> idle: timeout, activation failure, or stop/0
       preop_ready --> operational: activate/0 succeeds
-      preop_ready --> degraded: activate/0 is incomplete
+      preop_ready --> activation_blocked: activate/0 is incomplete
       preop_ready --> idle: stop/0
-      degraded --> operational: retry clears activation failures and no runtime faults remain
-      degraded --> recovering: activation failures clear but runtime faults remain
-      degraded --> idle: stop/0 or bus down
+      activation_blocked --> operational: retry clears activation failures and no runtime faults remain
+      activation_blocked --> recovering: activation failures clear but runtime faults remain
+      activation_blocked --> idle: stop/0 or bus down
       operational --> recovering: runtime fault in domain, slave, or DC
       operational --> idle: stop/0 or fatal failure
       recovering --> operational: runtime faults are cleared
@@ -156,10 +156,10 @@ defmodule EtherCAT do
   def bus, do: Master.bus()
 
   @doc """
-  Start the master: open the interface, scan for slaves, and begin
+  Start the master: open the interface, discover slaves, and begin
   self-driving configuration.
 
-  Returns `:ok` once scanning has started. Call `await_running/1` to block
+  Returns `:ok` once discovery has started. Call `await_running/1` to block
   until startup finishes. If the master falls back to `:idle`, inspect
   `last_failure/0` for the retained reason. For dynamic PREOP workflows, call
   `activate/0` afterwards to enter cyclic operation.
@@ -212,15 +212,21 @@ defmodule EtherCAT do
 
   Values:
     - `:idle`
-    - `:scanning`
-    - `:configuring`
+    - `:discovering`
+    - `:awaiting_preop`
     - `:preop_ready`
     - `:operational` — cyclic OP path is healthy
-    - `:degraded` — startup/activation degraded before operational cyclic runtime
+    - `:activation_blocked` — startup/activation is blocked before operational cyclic runtime
     - `:recovering` — runtime fault recovery in progress
   """
   @spec phase() ::
-          :idle | :scanning | :configuring | :preop_ready | :operational | :degraded | :recovering
+          :idle
+          | :discovering
+          | :awaiting_preop
+          | :preop_ready
+          | :operational
+          | :activation_blocked
+          | :recovering
   def phase, do: Master.phase()
 
   @doc """

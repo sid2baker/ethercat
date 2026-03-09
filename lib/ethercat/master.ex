@@ -17,14 +17,14 @@ defmodule EtherCAT.Master do
 
   @base_station 0x1000
 
-  # Scanning: poll every 100 ms, require 1 s of stable identical readings
+  # Discovering: poll every 100 ms, require 1 s of stable identical readings
   @scan_poll_ms 100
   @scan_stable_ms 1_000
 
-  # Configuring: 30 s to receive :preop notifications from all slaves
-  @configuring_timeout_ms 30_000
+  # Awaiting PREOP: 30 s to receive :preop notifications from all slaves
+  @awaiting_preop_timeout_ms 30_000
 
-  @degraded_retry_ms 1_000
+  @retry_ms 1_000
 
   defstruct [
     :bus_ref,
@@ -64,7 +64,7 @@ defmodule EtherCAT.Master do
   # -- Public API ------------------------------------------------------------
 
   @doc """
-  Start the master: open a bus and begin scanning for slaves.
+  Start the master: open a bus and begin discovering slaves.
 
   Options:
     - `:interface` (required) — e.g. `"eth0"`
@@ -132,16 +132,16 @@ defmodule EtherCAT.Master do
   Return the current session phase.
 
   This is the public lifecycle view and distinguishes between PREOP-ready
-  startup, degraded activation, fully operational cyclic runtime, and runtime
-  recovery.
+  startup, activation-blocked startup, fully operational cyclic runtime, and
+  runtime recovery.
   """
   @spec phase() ::
           :idle
-          | :scanning
-          | :configuring
+          | :discovering
+          | :awaiting_preop
           | :preop_ready
           | :operational
-          | :degraded
+          | :activation_blocked
           | :recovering
           | {:error, :not_started}
   def phase, do: safe_call(:phase)
@@ -300,7 +300,7 @@ defmodule EtherCAT.Master do
           await_operational_callers: []
       }
 
-      {:next_state, :scanning, new_data, [{:reply, from, :ok}]}
+      {:next_state, :discovering, new_data, [{:reply, from, :ok}]}
     else
       {:error, _} = err ->
         {:keep_state_and_data, [{:reply, from, err}]}
@@ -347,13 +347,13 @@ defmodule EtherCAT.Master do
     {:keep_state_and_data, [{:reply, from, {:error, :not_started}}]}
   end
 
-  # :scanning ----------------------------------------------------------------
+  # :discovering -------------------------------------------------------------
 
-  def handle_event(:enter, _old, :scanning, _data) do
+  def handle_event(:enter, _old, :discovering, _data) do
     {:keep_state_and_data, [{{:timeout, :scan_poll}, 0, nil}]}
   end
 
-  def handle_event({:timeout, :scan_poll}, nil, :scanning, data) do
+  def handle_event({:timeout, :scan_poll}, nil, :discovering, data) do
     now_ms = System.monotonic_time(:millisecond)
 
     new_window =
@@ -383,8 +383,8 @@ defmodule EtherCAT.Master do
               {:ok, active_data} ->
                 {:next_state, :running, active_data}
 
-              {:degraded, degraded_data} ->
-                {:next_state, :degraded, degraded_data}
+              {:activation_blocked, blocked_data} ->
+                {:next_state, :activation_blocked, blocked_data}
 
               {:error, reason, failed_data} ->
                 Logger.error("[Master] activation failed: #{inspect(reason)}")
@@ -403,7 +403,7 @@ defmodule EtherCAT.Master do
                 {:next_state, :idle, reset_master(failure_snapshot(:activation_failed, reason))}
             end
           else
-            {:next_state, :configuring, configured}
+            {:next_state, :awaiting_preop, configured}
           end
 
         {:error, reason, failed_data} ->
@@ -428,27 +428,27 @@ defmodule EtherCAT.Master do
     end
   end
 
-  def handle_event({:call, from}, :stop, :scanning, data) do
+  def handle_event({:call, from}, :stop, :discovering, data) do
     stop_session(data)
     reply_await_callers(data.await_operational_callers, {:error, :stopped})
     {:next_state, :idle, reset_master(data.last_failure), [{:reply, from, :ok}]}
   end
 
-  def handle_event({:call, from}, :await_running, :scanning, data) do
+  def handle_event({:call, from}, :await_running, :discovering, data) do
     {:keep_state, %{data | await_callers: [from | data.await_callers]}}
   end
 
-  def handle_event({:call, from}, :await_operational, :scanning, data) do
+  def handle_event({:call, from}, :await_operational, :discovering, data) do
     {:keep_state, %{data | await_operational_callers: [from | data.await_operational_callers]}}
   end
 
-  # :configuring -------------------------------------------------------------
+  # :awaiting_preop ----------------------------------------------------------
 
-  def handle_event(:enter, _old, :configuring, _data) do
-    {:keep_state_and_data, [{{:timeout, :configuring}, @configuring_timeout_ms, nil}]}
+  def handle_event(:enter, _old, :awaiting_preop, _data) do
+    {:keep_state_and_data, [{{:timeout, :awaiting_preop}, @awaiting_preop_timeout_ms, nil}]}
   end
 
-  def handle_event(:info, {:slave_ready, name, :preop}, :configuring, data) do
+  def handle_event(:info, {:slave_ready, name, :preop}, :awaiting_preop, data) do
     new_pending = MapSet.delete(data.pending_preop, name)
     Logger.debug("[Master] slave #{inspect(name)} reached :preop")
 
@@ -457,10 +457,11 @@ defmodule EtherCAT.Master do
 
       case Activation.activate_network(%{data | pending_preop: new_pending}) do
         {:ok, active_data} ->
-          {:next_state, :running, active_data, [{{:timeout, :configuring}, :cancel}]}
+          {:next_state, :running, active_data, [{{:timeout, :awaiting_preop}, :cancel}]}
 
-        {:degraded, degraded_data} ->
-          {:next_state, :degraded, degraded_data, [{{:timeout, :configuring}, :cancel}]}
+        {:activation_blocked, blocked_data} ->
+          {:next_state, :activation_blocked, blocked_data,
+           [{{:timeout, :awaiting_preop}, :cancel}]}
 
         {:error, reason, failed_data} ->
           Logger.error("[Master] activation failed: #{inspect(reason)}")
@@ -477,34 +478,34 @@ defmodule EtherCAT.Master do
           )
 
           {:next_state, :idle, reset_master(failure_snapshot(:activation_failed, reason)),
-           [{{:timeout, :configuring}, :cancel}]}
+           [{{:timeout, :awaiting_preop}, :cancel}]}
       end
     else
       {:keep_state, %{data | pending_preop: new_pending}}
     end
   end
 
-  def handle_event({:timeout, :configuring}, nil, :configuring, data) do
+  def handle_event({:timeout, :awaiting_preop}, nil, :awaiting_preop, data) do
     remaining = MapSet.to_list(data.pending_preop)
-    Logger.error("[Master] configuring timed out; slaves not in :preop: #{inspect(remaining)}")
+    Logger.error("[Master] awaiting PREOP timed out; slaves not in :preop: #{inspect(remaining)}")
     stop_session(data)
-    reply_await_callers(data.await_callers, {:error, :configuring_timeout})
-    reply_await_callers(data.await_operational_callers, {:error, :configuring_timeout})
-    {:next_state, :idle, reset_master(failure_snapshot(:configuring_timeout, remaining))}
+    reply_await_callers(data.await_callers, {:error, :awaiting_preop_timeout})
+    reply_await_callers(data.await_operational_callers, {:error, :awaiting_preop_timeout})
+    {:next_state, :idle, reset_master(failure_snapshot(:awaiting_preop_timeout, remaining))}
   end
 
-  def handle_event({:call, from}, :stop, :configuring, data) do
+  def handle_event({:call, from}, :stop, :awaiting_preop, data) do
     stop_session(data)
     reply_await_callers(data.await_callers, {:error, :stopped})
     reply_await_callers(data.await_operational_callers, {:error, :stopped})
     {:next_state, :idle, reset_master(data.last_failure), [{:reply, from, :ok}]}
   end
 
-  def handle_event({:call, from}, :await_running, :configuring, data) do
+  def handle_event({:call, from}, :await_running, :awaiting_preop, data) do
     {:keep_state, %{data | await_callers: [from | data.await_callers]}}
   end
 
-  def handle_event({:call, from}, :await_operational, :configuring, data) do
+  def handle_event({:call, from}, :await_operational, :awaiting_preop, data) do
     {:keep_state, %{data | await_operational_callers: [from | data.await_operational_callers]}}
   end
 
@@ -562,56 +563,60 @@ defmodule EtherCAT.Master do
 
         {:keep_state, %{active_data | await_operational_callers: []}, [{:reply, from, :ok}]}
 
-      {:degraded, degraded_data} ->
-        {:next_state, :degraded, degraded_data, [{:reply, from, :ok}]}
+      {:activation_blocked, blocked_data} ->
+        {:next_state, :activation_blocked, blocked_data, [{:reply, from, :ok}]}
 
       {:error, reason, _failed_data} ->
         {:keep_state_and_data, [{:reply, from, {:error, reason}}]}
     end
   end
 
-  # :degraded ----------------------------------------------------------------
+  # :activation_blocked ------------------------------------------------------
 
-  def handle_event(:enter, _old, :degraded, data) do
-    Logger.warning("[Master] degraded — #{Status.degraded_summary(data)}")
+  def handle_event(:enter, _old, :activation_blocked, data) do
+    Logger.warning("[Master] activation blocked — #{Status.activation_blocked_summary(data)}")
 
-    reply_await_callers(data.await_callers, Status.degraded_reply(data))
-    reply_await_callers(data.await_operational_callers, Status.degraded_reply(data))
+    reply_await_callers(data.await_callers, Status.activation_blocked_reply(data))
+    reply_await_callers(data.await_operational_callers, Status.activation_blocked_reply(data))
 
     {:keep_state, %{data | await_callers: [], await_operational_callers: []},
-     [{{:timeout, :degraded_retry}, @degraded_retry_ms, nil}]}
+     [{{:timeout, :retry}, @retry_ms, nil}]}
   end
 
-  def handle_event({:timeout, :degraded_retry}, nil, :degraded, data) do
-    case Recovery.retry_degraded_state(data) do
+  def handle_event({:timeout, :retry}, nil, :activation_blocked, data) do
+    case Recovery.retry_activation_blocked_state(data) do
       {:ok, healed_data} ->
         {:next_state, :running, healed_data}
 
       {:recovering, still_recovering} ->
-        {:next_state, :recovering, still_recovering,
-         [{{:timeout, :degraded_retry}, @degraded_retry_ms, nil}]}
+        {:next_state, :recovering, still_recovering, [{{:timeout, :retry}, @retry_ms, nil}]}
     end
   end
 
-  def handle_event({:call, from}, :stop, :degraded, data) do
+  def handle_event({:call, from}, :stop, :activation_blocked, data) do
     stop_session(data)
     reply_await_callers(data.await_operational_callers, {:error, :stopped})
     {:next_state, :idle, reset_master(data.last_failure), [{:reply, from, :ok}]}
   end
 
-  def handle_event({:call, from}, :await_running, :degraded, data) do
-    {:keep_state_and_data, [{:reply, from, Status.degraded_reply(data)}]}
+  def handle_event({:call, from}, :await_running, :activation_blocked, data) do
+    {:keep_state_and_data, [{:reply, from, Status.activation_blocked_reply(data)}]}
   end
 
-  def handle_event({:call, from}, :await_operational, :degraded, data) do
-    {:keep_state_and_data, [{:reply, from, Status.degraded_reply(data)}]}
+  def handle_event({:call, from}, :await_operational, :activation_blocked, data) do
+    {:keep_state_and_data, [{:reply, from, Status.activation_blocked_reply(data)}]}
   end
 
-  def handle_event({:call, from}, {:configure_slave, _slave_name, _spec}, :degraded, _data) do
+  def handle_event(
+        {:call, from},
+        {:configure_slave, _slave_name, _spec},
+        :activation_blocked,
+        _data
+      ) do
     {:keep_state_and_data, [{:reply, from, {:error, :activation_in_progress}}]}
   end
 
-  def handle_event({:call, from}, :activate, :degraded, _data) do
+  def handle_event({:call, from}, :activate, :activation_blocked, _data) do
     {:keep_state_and_data, [{:reply, from, {:error, :activation_in_progress}}]}
   end
 
@@ -624,10 +629,10 @@ defmodule EtherCAT.Master do
     reply_await_callers(data.await_operational_callers, Status.recovering_reply(data))
 
     {:keep_state, %{data | await_callers: [], await_operational_callers: []},
-     [{{:timeout, :degraded_retry}, @degraded_retry_ms, nil}]}
+     [{{:timeout, :retry}, @retry_ms, nil}]}
   end
 
-  def handle_event({:timeout, :degraded_retry}, nil, :recovering, data) do
+  def handle_event({:timeout, :retry}, nil, :recovering, data) do
     case Recovery.retry_recovering_state(data) do
       {:ok, healed_data} ->
         {:next_state, :running, healed_data}
@@ -635,8 +640,7 @@ defmodule EtherCAT.Master do
       {:recovering, still_recovering} ->
         case Recovery.unrecoverable_recovery_reason(still_recovering) do
           nil ->
-            {:keep_state, still_recovering,
-             [{{:timeout, :degraded_retry}, @degraded_retry_ms, nil}]}
+            {:keep_state, still_recovering, [{{:timeout, :retry}, @retry_ms, nil}]}
 
           reason ->
             Logger.error("[Master] recovery failed and requires full restart: #{inspect(reason)}")
@@ -1050,7 +1054,7 @@ defmodule EtherCAT.Master do
     :keep_state_and_data
   end
 
-  # :slave_ready arriving while not configuring (e.g. restart race) — ignore
+  # :slave_ready arriving while not awaiting_preop (e.g. restart race) — ignore
   def handle_event(:info, {:slave_ready, _name, _ready_state}, _state, _data) do
     :keep_state_and_data
   end

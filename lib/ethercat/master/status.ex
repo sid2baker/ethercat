@@ -5,17 +5,23 @@ defmodule EtherCAT.Master.Status do
   alias EtherCAT.DC.Status, as: DCStatus
 
   @spec phase(atom(), %EtherCAT.Master{}) ::
-          :idle | :scanning | :configuring | :preop_ready | :operational | :degraded | :recovering
+          :idle
+          | :discovering
+          | :awaiting_preop
+          | :preop_ready
+          | :operational
+          | :activation_blocked
+          | :recovering
   def phase(:idle, _data), do: :idle
-  def phase(:scanning, _data), do: :scanning
-  def phase(:configuring, _data), do: :configuring
-  def phase(:degraded, _data), do: :degraded
+  def phase(:discovering, _data), do: :discovering
+  def phase(:awaiting_preop, _data), do: :awaiting_preop
+  def phase(:activation_blocked, _data), do: :activation_blocked
   def phase(:recovering, _data), do: :recovering
   def phase(:running, %{activation_phase: :operational}), do: :operational
   def phase(:running, _data), do: :preop_ready
 
-  @spec degraded_reply(%EtherCAT.Master{}) :: {:error, term()}
-  def degraded_reply(data) do
+  @spec activation_blocked_reply(%EtherCAT.Master{}) :: {:error, term()}
+  def activation_blocked_reply(data) do
     activation_failures = data.activation_failures
     runtime_faults = data.runtime_faults
 
@@ -28,7 +34,8 @@ defmodule EtherCAT.Master.Status do
 
       true ->
         {:error,
-         {:degraded, %{activation_failures: activation_failures, runtime_faults: runtime_faults}}}
+         {:activation_blocked,
+          %{activation_failures: activation_failures, runtime_faults: runtime_faults}}}
     end
   end
 
@@ -37,8 +44,8 @@ defmodule EtherCAT.Master.Status do
     {:error, {:runtime_degraded, runtime_faults}}
   end
 
-  @spec degraded_summary(%EtherCAT.Master{}) :: String.t()
-  def degraded_summary(data) do
+  @spec activation_blocked_summary(%EtherCAT.Master{}) :: String.t()
+  def activation_blocked_summary(data) do
     activation_count = map_size(data.activation_failures)
     runtime_count = map_size(data.runtime_faults)
     "activation_failures=#{activation_count} runtime_faults=#{runtime_count}"

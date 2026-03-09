@@ -41,7 +41,7 @@ Domains register as `{:domain, id}`.
 ### Startup (Master coordinates)
 
 ```
-Master :scanning ──── BRD 0x0000, count stable ──── Master :configuring
+Master :discovering ──── BRD 0x0000, count stable ──── Master :awaiting_preop
   │
   ├── APWR 0x0010 × N        assign station addresses
   ├── DC.initialize_clocks/2 snapshot read + init-plan apply
@@ -169,7 +169,7 @@ Each subsystem has a co-located module doc / source entry file:
 | File | Component |
 |------|-----------|
 | `lib/ethercat/slave.ex` | Slave gen_statem shell — ESM lifecycle, driver boundary, PREOP/SAFEOP/OP routing |
-| `lib/ethercat/master.ex` | Master gen_statem shell — scanning, activation, recovery, public status |
+| `lib/ethercat/master.ex` | Master gen_statem shell — discovery, activation, recovery, public status |
 | `lib/ethercat/domain.ex` | Domain gen_statem shell — cyclic LRW ownership, ETS image contract, hot-path coordination |
 | `lib/ethercat/bus.ex` | Bus scheduler — transaction classes, frame dispatch, transport boundary |
 | `lib/ethercat/dc.ex` | DC runtime — maintenance loop, lock/runtime status, master notifications |
