@@ -33,14 +33,14 @@ defmodule EtherCAT do
       [*] --> idle
       idle --> discovering: start/1
       discovering --> awaiting_preop: configured slaves are still pending
-      discovering --> startup_outcome: startup path is ready
+      discovering --> preop_ready: startup completes without activation
+      discovering --> operational: startup completes and activation succeeds
+      discovering --> activation_blocked: startup completes but activation is incomplete
       discovering --> idle: configuration fails or stop/0
-      awaiting_preop --> startup_outcome: all slaves reached PREOP
+      awaiting_preop --> preop_ready: all slaves reached PREOP, no activation requested
+      awaiting_preop --> operational: all slaves reached PREOP and activation succeeds
+      awaiting_preop --> activation_blocked: all slaves reached PREOP but activation is incomplete
       awaiting_preop --> idle: timeout, activation failure, or stop/0
-      state startup_outcome <<choice>>
-      startup_outcome --> preop_ready: no activation requested
-      startup_outcome --> operational: activation succeeds
-      startup_outcome --> activation_blocked: activation is incomplete
       preop_ready --> operational: activate/0 succeeds
       preop_ready --> activation_blocked: activate/0 is incomplete
       preop_ready --> idle: stop/0

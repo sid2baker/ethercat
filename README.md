@@ -143,16 +143,14 @@ stateDiagram-v2
     [*] --> idle
     idle --> discovering: start/1
     discovering --> awaiting_preop: configured slaves are still pending
-    discovering --> startup_outcome: startup path is ready
+    discovering --> preop_ready: startup completes without activation
+    discovering --> operational: startup completes and activation succeeds
+    discovering --> activation_blocked: startup completes but activation is incomplete
     discovering --> idle: configuration fails or stop/0
-    awaiting_preop --> startup_outcome: all slaves reached PREOP
+    awaiting_preop --> preop_ready: all slaves reached PREOP, no activation requested
+    awaiting_preop --> operational: all slaves reached PREOP and activation succeeds
+    awaiting_preop --> activation_blocked: all slaves reached PREOP but activation is incomplete
     awaiting_preop --> idle: timeout, activation failure, or stop/0
-
-    state startup_outcome <<choice>>
-    startup_outcome --> preop_ready: no activation requested
-    startup_outcome --> operational: activation succeeds
-    startup_outcome --> activation_blocked: activation is incomplete
-
     preop_ready --> operational: activate/0 succeeds
     preop_ready --> activation_blocked: activate/0 is incomplete
     preop_ready --> idle: stop/0
@@ -253,37 +251,35 @@ one to read first. The charts below are implementation-facing.
 #### Master (`lib/ethercat/master.ex`)
 
 `Master` uses real tuple-based running states, `{:running, :preop_ready}` and
-`{:running, :operational}`, plus a public `phase/0` projection. This chart uses
-a hierarchical `running` state and a startup choice node so the PREOP-ready vs
-operational split stays visible without repeating the same startup edges twice.
+`{:running, :operational}`, plus a public `phase/0` projection. This chart now
+maps the implementation 1:1: every node is an actual `Master` state, and the
+running tuple states are shown directly instead of through helper nodes.
 
 ```mermaid
 stateDiagram-v2
+    state "{:running, :preop_ready}" as running_preop
+    state "{:running, :operational}" as running_operational
+
     [*] --> idle
     idle --> discovering: start/1
     discovering --> awaiting_preop: configured slaves are still pending
-    discovering --> startup_outcome: startup path is ready
+    discovering --> running_preop: startup completes without activation
+    discovering --> running_operational: startup completes and activation succeeds
+    discovering --> activation_blocked: startup completes but activation is incomplete
     discovering --> idle: configuration fails, stop, or bus down
-    awaiting_preop --> startup_outcome: all slaves reached PREOP
+    awaiting_preop --> running_preop: all slaves reached PREOP, no activation requested
+    awaiting_preop --> running_operational: all slaves reached PREOP and activation succeeds
+    awaiting_preop --> activation_blocked: all slaves reached PREOP but activation is incomplete
     awaiting_preop --> idle: timeout, activation failure, stop, or bus down
-
-    state startup_outcome <<choice>>
-    startup_outcome --> running: startup enters running
-    startup_outcome --> activation_blocked: activation is incomplete
-
-    state running {
-        [*] --> preop_ready
-        preop_ready --> operational: activate/0 succeeds
-    }
-
-    preop_ready --> activation_blocked: activate/0 is incomplete
-    preop_ready --> idle: stop or bus down
-    operational --> recovering: runtime fault in domain, slave, or DC
-    operational --> idle: stop, bus down, or fatal DC policy
-    activation_blocked --> operational: activation failures clear and no runtime faults remain
+    running_preop --> running_operational: activate/0 succeeds
+    running_preop --> activation_blocked: activate/0 is incomplete
+    running_preop --> idle: stop or bus down
+    running_operational --> recovering: runtime fault in domain, slave, or DC
+    running_operational --> idle: stop, bus down, or fatal DC policy
+    activation_blocked --> running_operational: activation failures clear and no runtime faults remain
     activation_blocked --> recovering: activation failures clear but runtime faults remain
     activation_blocked --> idle: stop or bus down
-    recovering --> operational: runtime faults are cleared
+    recovering --> running_operational: runtime faults are cleared
     recovering --> idle: stop, bus down, or recovery fails
 ```
 
