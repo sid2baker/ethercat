@@ -20,6 +20,7 @@ defmodule EtherCAT.Slave do
   alias EtherCAT.Slave.ProcessDataPlan
   alias EtherCAT.Slave.ProcessDataPlan.DomainAttachment
   alias EtherCAT.Slave.ProcessDataPlan.SmGroup
+  alias EtherCAT.Slave.Signals
   alias EtherCAT.Slave.Registers
   alias EtherCAT.Slave.Sync.Plan
 
@@ -398,7 +399,7 @@ defmodule EtherCAT.Slave do
           |> Enum.sort_by(&{&1.sm_index, &1.bit_offset})
       end
 
-    attachments = attachment_summaries(data.signal_registrations)
+    attachments = Signals.attachment_summaries(data.signal_registrations)
 
     info = %{
       name: data.name,
@@ -481,7 +482,7 @@ defmodule EtherCAT.Slave do
   # -- Subscribe -------------------------------------------------------------
 
   def handle_event({:call, from}, {:subscribe, signal_name, pid}, _state, data) do
-    {:keep_state, subscribe_pid(data, signal_name, pid), [{:reply, from, :ok}]}
+    {:keep_state, Signals.subscribe_pid(data, signal_name, pid), [{:reply, from, :ok}]}
   end
 
   # -- Set output ------------------------------------------------------------
@@ -532,37 +533,7 @@ defmodule EtherCAT.Slave do
   # -- Read input ------------------------------------------------------------
 
   def handle_event({:call, from}, {:read_input, signal_name}, _state, data) do
-    result =
-      case Map.get(data.signal_registrations, signal_name) do
-        nil ->
-          {:error, {:not_registered, signal_name}}
-
-        %{direction: :output} ->
-          {:error, {:not_input, signal_name}}
-
-        %{
-          domain_id: domain_id,
-          sm_key: sm_key,
-          bit_offset: bit_offset,
-          bit_size: bit_size,
-          direction: :input
-        } ->
-          case Domain.sample(domain_id, {data.name, sm_key}) do
-            {:ok, %{value: sm_bytes, updated_at_us: updated_at_us}} ->
-              raw = extract_sm_bits(sm_bytes, bit_offset, bit_size)
-
-              {:ok,
-               %{
-                 value: data.driver.decode_signal(signal_name, data.config, raw),
-                 updated_at_us: updated_at_us
-               }}
-
-            {:error, _} = err ->
-              err
-          end
-      end
-
-    {:keep_state_and_data, [{:reply, from, result}]}
+    {:keep_state_and_data, [{:reply, from, Signals.read_input(data, signal_name)}]}
   end
 
   def handle_event({:call, from}, {:download_sdo, index, subindex, sdo_data}, state, data)
@@ -604,41 +575,14 @@ defmodule EtherCAT.Slave do
         _state,
         data
       ) do
-    notifications =
-      data.signal_registrations_by_sm
-      |> Map.get({domain_id, sm_key}, [])
-      |> Enum.reduce([], fn {signal_name, %{bit_offset: bit_offset, bit_size: bit_size}}, acc ->
-        if signal_changed?(old_sm_bytes, new_sm_bytes, bit_offset, bit_size) do
-          raw = extract_sm_bits(new_sm_bytes, bit_offset, bit_size)
-
-          decoded =
-            if data.driver != nil do
-              data.driver.decode_signal(signal_name, data.config, raw)
-            else
-              raw
-            end
-
-          data.subscriptions
-          |> Map.get(signal_name, MapSet.new())
-          |> Enum.reduce(acc, fn pid, pid_acc ->
-            [{pid, signal_name, decoded} | pid_acc]
-          end)
-        else
-          acc
-        end
-      end)
-
-    Enum.each(Enum.reverse(notifications), fn {pid, signal_name, decoded} ->
-      send(pid, {:ethercat, :signal, data.name, signal_name, decoded})
-    end)
-
+    Signals.dispatch_domain_input(data, domain_id, sm_key, old_sm_bytes, new_sm_bytes)
     :keep_state_and_data
   end
 
   def handle_event(:info, {:DOWN, ref, :process, pid, _reason}, _state, data) do
     case Map.get(data.subscriber_refs, pid) do
       ^ref ->
-        {:keep_state, drop_subscriber(data, pid)}
+        {:keep_state, Signals.drop_subscriber(data, pid)}
 
       _ ->
         :keep_state_and_data
@@ -948,36 +892,6 @@ defmodule EtherCAT.Slave do
     end)
   end
 
-  defp attachment_summaries(nil), do: []
-
-  defp attachment_summaries(registrations) when is_map(registrations) do
-    registrations
-    |> Enum.reduce(%{}, fn {signal_name, registration}, acc ->
-      key = {registration.domain_id, registration.sm_key}
-
-      Map.update(
-        acc,
-        key,
-        %{
-          domain: registration.domain_id,
-          sm_index: elem(registration.sm_key, 1),
-          direction: registration.direction,
-          logical_address: Map.get(registration, :logical_address),
-          sm_size: Map.get(registration, :sm_size),
-          signals: [signal_name]
-        },
-        fn summary ->
-          %{summary | signals: [signal_name | summary.signals]}
-        end
-      )
-    end)
-    |> Enum.map(fn {_key, summary} ->
-      signals = summary.signals |> Enum.uniq() |> Enum.sort()
-      Map.merge(summary, %{signal_count: length(signals), signals: signals})
-    end)
-    |> Enum.sort_by(&{&1.sm_index, &1.domain})
-  end
-
   defp validate_fmmu_capacity(%{esc_info: %{fmmu_count: available_fmmus}}, sm_groups)
        when is_integer(available_fmmus) and available_fmmus >= 0 do
     required_fmmus =
@@ -1121,55 +1035,6 @@ defmodule EtherCAT.Slave do
         log_process_data_error(updated_data, reason)
         {:error, reason}
     end
-  end
-
-  defp subscribe_pid(data, signal_name, pid) do
-    {subscriber_refs, pid_set} =
-      ensure_subscriber_monitor(
-        data.subscriber_refs,
-        Map.get(data.subscriptions, signal_name, MapSet.new()),
-        pid
-      )
-
-    %{
-      data
-      | subscriber_refs: subscriber_refs,
-        subscriptions: Map.put(data.subscriptions, signal_name, pid_set)
-    }
-  end
-
-  defp ensure_subscriber_monitor(subscriber_refs, current_set, pid) do
-    refs =
-      if Map.has_key?(subscriber_refs, pid) do
-        subscriber_refs
-      else
-        Map.put(subscriber_refs, pid, Process.monitor(pid))
-      end
-
-    {refs, MapSet.put(current_set, pid)}
-  end
-
-  defp drop_subscriber(data, pid) do
-    subscriptions =
-      prune_subscription_pid(data.subscriptions, pid)
-
-    %{
-      data
-      | subscriptions: subscriptions,
-        subscriber_refs: Map.delete(data.subscriber_refs, pid)
-    }
-  end
-
-  defp prune_subscription_pid(subscriptions, pid) do
-    Enum.reduce(subscriptions, %{}, fn {key, pid_set}, acc ->
-      next_set = MapSet.delete(pid_set, pid)
-
-      if MapSet.size(next_set) == 0 do
-        acc
-      else
-        Map.put(acc, key, next_set)
-      end
-    end)
   end
 
   defp apply_process_data_groups(data, sm_groups) do
@@ -1876,12 +1741,6 @@ defmodule EtherCAT.Slave do
     }
   end
 
-  defp ceil_div(value, divisor) when value <= 0 and divisor > 0, do: 0
-
-  defp ceil_div(value, divisor) when is_integer(value) and is_integer(divisor) and divisor > 0 do
-    div(value + divisor - 1, divisor)
-  end
-
   defp latch_poll_timeout_us(%{latch_poll_ms: poll_ms, dc_cycle_ns: dc_cycle_ns})
        when is_integer(poll_ms) and poll_ms > 0 do
     poll_budget_us = div(poll_ms * 1_000 * 9, 10)
@@ -1933,37 +1792,6 @@ defmodule EtherCAT.Slave do
   end
 
   # -- Bit-level SM packing helpers ------------------------------------------
-
-  # Extract `bit_size` bits starting at `bit_offset` from `sm_bytes`.
-  # Returns a binary of ceil(bit_size / 8) bytes with the value in the LSB.
-  # Bit numbering is little-endian: bit 0 is the LSB of byte 0.
-  defp extract_sm_bits(sm_bytes, bit_offset, bit_size) do
-    if rem(bit_offset, 8) == 0 and rem(bit_size, 8) == 0 do
-      # Byte-aligned fast path
-      binary_part(sm_bytes, div(bit_offset, 8), div(bit_size, 8))
-    else
-      total_bits = byte_size(sm_bytes) * 8
-      <<sm_value::unsigned-little-size(total_bits)>> = sm_bytes
-      high_bits = total_bits - bit_offset - bit_size
-
-      <<_::size(high_bits), raw::size(bit_size), _::size(bit_offset)>> =
-        <<sm_value::size(total_bits)>>
-
-      encoded_bits = ceil_div(bit_size, 8) * 8
-
-      <<encoded_value::size(encoded_bits)>> =
-        <<0::size(encoded_bits - bit_size), raw::size(bit_size)>>
-
-      <<encoded_value::unsigned-little-size(encoded_bits)>>
-    end
-  end
-
-  defp signal_changed?(:unset, _new_sm_bytes, _bit_offset, _bit_size), do: true
-
-  defp signal_changed?(old_sm_bytes, new_sm_bytes, bit_offset, bit_size) do
-    extract_sm_bits(old_sm_bytes, bit_offset, bit_size) !=
-      extract_sm_bits(new_sm_bytes, bit_offset, bit_size)
-  end
 
   defp binary_pad(data, size) when byte_size(data) >= size, do: binary_part(data, 0, size)
   defp binary_pad(data, size), do: data <> :binary.copy(<<0>>, size - byte_size(data))
