@@ -14,7 +14,7 @@ defmodule El3202Driver do
   @impl true
   def process_data_model(_config) do
     # Two 32-bit TxPDOs on SM3; master derives SM, size, and bit offsets from SII.
-    %{channel1: 0x1A00, channel2: 0x1A01}
+    [channel1: 0x1A00, channel2: 0x1A01]
   end
 
   @impl true

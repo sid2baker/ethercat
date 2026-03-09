@@ -21,12 +21,13 @@ Process.sleep(300)
 # Minimal start: no domains, no PDOs — we just need the link and PREOP
 EtherCAT.start(
   interface: interface,
+  dc: nil,
   domains: [],
   slaves: [
-    %Config{name: :coupler},
-    %Config{name: :bridge_1},
-    %Config{name: :bridge_2},
-    %Config{name: :thermo, process_data: :none}
+    %Config{name: :coupler, target_state: :preop},
+    %Config{name: :bridge_1, target_state: :preop},
+    %Config{name: :bridge_2, target_state: :preop},
+    %Config{name: :thermo, process_data: :none, target_state: :preop}
   ]
 )
 
@@ -34,7 +35,10 @@ EtherCAT.start(
 :ok = EtherCAT.await_running(10_000)
 
 bus = EtherCAT.bus()
-[%{name: :thermo, station: station}] = EtherCAT.slaves()
+
+%{station: station} =
+  EtherCAT.slaves()
+  |> Enum.find(fn %{name: name} -> name == :thermo end)
 
 IO.puts("station: 0x#{Integer.to_string(station, 16)}\n")
 
