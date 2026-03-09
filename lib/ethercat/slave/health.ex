@@ -9,7 +9,8 @@ defmodule EtherCAT.Slave.Health do
   alias EtherCAT.Slave.Registers
 
   @type opts :: [
-          transition_to: (%Slave{}, atom() -> {:ok, %Slave{}} | {:error, term(), %Slave{}})
+          transition_to: (%Slave{}, atom() -> {:ok, %Slave{}} | {:error, term(), %Slave{}}),
+          op_code: non_neg_integer()
         ]
 
   @spec poll_op(%Slave{}, opts()) ::
@@ -18,6 +19,7 @@ defmodule EtherCAT.Slave.Health do
           | {:next_state, atom(), %Slave{}}
   def poll_op(data, opts) do
     transition_to = Keyword.fetch!(opts, :transition_to)
+    op_code = Keyword.fetch!(opts, :op_code)
     deadline_us = data.health_poll_ms * 500
 
     case Bus.transaction(
@@ -28,7 +30,7 @@ defmodule EtherCAT.Slave.Health do
       {:ok, [%{data: al_bytes, wkc: wkc}]} when wkc > 0 ->
         {al_state, error_ind} = Registers.decode_al_status(al_bytes)
 
-        if al_state != al_code(:op) or error_ind do
+        if al_state != op_code or error_ind do
           error_code = read_error_code(data, deadline_us)
           EtherCAT.Telemetry.slave_health_fault(data.name, data.station, al_state, error_code)
 
@@ -117,6 +119,4 @@ defmodule EtherCAT.Slave.Health do
       _ -> 0
     end
   end
-
-  defp al_code(:op), do: 0x08
 end

@@ -46,6 +46,12 @@ defmodule EtherCAT.Slave do
 
   @poll_limit 200
   @poll_interval_ms 1
+  @transition_opts [
+    al_codes: @al_codes,
+    poll_limit: @poll_limit,
+    poll_interval_ms: @poll_interval_ms,
+    post_transition: &Configuration.post_transition/2
+  ]
 
   defstruct [
     :bus,
@@ -418,7 +424,7 @@ defmodule EtherCAT.Slave do
   # -- AL Status health poll (background check per spec §20.4) ---------------
 
   def handle_event({:timeout, :health_poll}, nil, :op, data) do
-    Health.poll_op(data, transition_to: &transition_to/2)
+    Health.poll_op(data, transition_to: &transition_to/2, op_code: @al_codes.op)
   end
 
   # -- :down state (slave physically disconnected, polling for reconnect) -----
@@ -460,13 +466,9 @@ defmodule EtherCAT.Slave do
 
   # -- Transition helpers ----------------------------------------------------
 
-  defp walk_path(data, steps), do: Transition.walk_path(data, steps, transition_opts())
+  defp walk_path(data, steps), do: Transition.walk_path(data, steps, @transition_opts)
 
-  defp transition_to(data, target), do: Transition.transition_to(data, target, transition_opts())
-
-  defp transition_opts do
-    Configuration.transition_opts(@al_codes, @poll_limit, @poll_interval_ms)
-  end
+  defp transition_to(data, target), do: Transition.transition_to(data, target, @transition_opts)
 
   # -- Registry helpers -------------------------------------------------------
 

@@ -8,18 +8,44 @@ defmodule EtherCAT.Slave.Configuration do
   alias EtherCAT.Slave.Mailbox
   alias EtherCAT.Slave.ProcessData
 
-  @type transition_opts :: [
-          al_codes: %{required(atom()) => non_neg_integer()},
-          poll_limit: pos_integer(),
-          poll_interval_ms: non_neg_integer(),
-          post_transition: (atom(), %Slave{} ->
-                              {:ok, %Slave{}} | {:error, term(), %Slave{}})
-        ]
-
   @spec maybe_reconfigure_preop(%Slave{}, keyword()) ::
           {:ok, %Slave{}} | {:error, term(), %Slave{}}
+  # A PREOP slave with registered signals can only hot-apply sync changes.
+  # Driver/config/process-data changes would invalidate the open-domain plan.
   def maybe_reconfigure_preop(%{signal_registrations: registrations} = data, opts)
-      when map_size(registrations) > 0 do
+      when map_size(registrations) > 0,
+      do: reconfigure_registered_preop(data, opts)
+
+  # A PREOP slave without registered signals can still run the full PREOP setup.
+  def maybe_reconfigure_preop(data, opts), do: reconfigure_unregistered_preop(data, opts)
+
+  @doc false
+  @spec post_transition(atom(), %Slave{}) ::
+          {:ok, %Slave{}} | {:error, term(), %Slave{}}
+  def post_transition(:preop, data) do
+    new_data = configure_preop_process_data(data)
+
+    Logger.debug(
+      "[Slave #{data.name}] preop: ready (#{map_size(new_data.signal_registrations)} signal(s) registered)"
+    )
+
+    send(EtherCAT.Master, {:slave_ready, data.name, :preop})
+    {:ok, new_data}
+  end
+
+  def post_transition(:safeop, data) do
+    invoke_driver(data, :on_safeop)
+    DCSignals.configure(data)
+  end
+
+  def post_transition(:op, data) do
+    invoke_driver(data, :on_op)
+    {:ok, data}
+  end
+
+  def post_transition(_target, data), do: {:ok, data}
+
+  defp reconfigure_registered_preop(data, opts) do
     requested_driver = Keyword.get(opts, :driver, data.driver)
     requested_config = Keyword.get(opts, :config, data.config)
     requested_process_data = Keyword.get(opts, :process_data, data.process_data_request)
@@ -40,7 +66,7 @@ defmodule EtherCAT.Slave.Configuration do
     end
   end
 
-  def maybe_reconfigure_preop(data, opts) do
+  defp reconfigure_unregistered_preop(data, opts) do
     updated_data = %{
       data
       | driver: Keyword.get(opts, :driver, data.driver),
@@ -56,21 +82,6 @@ defmodule EtherCAT.Slave.Configuration do
       nil -> {:ok, configured}
       reason -> {:error, reason, configured}
     end
-  end
-
-  @spec transition_opts(
-          %{required(atom()) => non_neg_integer()},
-          pos_integer(),
-          non_neg_integer()
-        ) ::
-          transition_opts()
-  def transition_opts(al_codes, poll_limit, poll_interval_ms) do
-    [
-      al_codes: al_codes,
-      poll_limit: poll_limit,
-      poll_interval_ms: poll_interval_ms,
-      post_transition: &post_transition/2
-    ]
   end
 
   defp configure_preop_process_data(%{driver: nil} = data) do
@@ -99,29 +110,6 @@ defmodule EtherCAT.Slave.Configuration do
         {:error, reason}
     end
   end
-
-  defp post_transition(:preop, data) do
-    new_data = configure_preop_process_data(data)
-
-    Logger.debug(
-      "[Slave #{data.name}] preop: ready (#{map_size(new_data.signal_registrations)} signal(s) registered)"
-    )
-
-    send(EtherCAT.Master, {:slave_ready, data.name, :preop})
-    {:ok, new_data}
-  end
-
-  defp post_transition(:safeop, data) do
-    invoke_driver(data, :on_safeop)
-    DCSignals.configure(data)
-  end
-
-  defp post_transition(:op, data) do
-    invoke_driver(data, :on_op)
-    {:ok, data}
-  end
-
-  defp post_transition(_target, data), do: {:ok, data}
 
   defp invoke_driver(data, cb), do: invoke_driver(data, cb, [])
 

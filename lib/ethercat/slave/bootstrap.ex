@@ -8,6 +8,12 @@ defmodule EtherCAT.Slave.Bootstrap do
   alias EtherCAT.Slave.Registers
   alias EtherCAT.Slave.SII
 
+  # ETG.1000 §6.7 SyncManager control byte: mailbox/handshake + PDI IRQ.
+  # `0x26` = ECAT writes (master->slave mailbox receive), `0x22` = ECAT reads
+  # (slave->master mailbox send).
+  @mailbox_receive_sm_control 0x26
+  @mailbox_send_sm_control 0x22
+
   @type transition_fun ::
           (%EtherCAT.Slave{}, atom() ->
              {:ok, %EtherCAT.Slave{}} | {:error, term(), %EtherCAT.Slave{}})
@@ -40,6 +46,35 @@ defmodule EtherCAT.Slave.Bootstrap do
       "[Slave #{data.name}] init: reading SII (station=0x#{Integer.to_string(data.station, 16)})"
     )
 
+    with {:ok, sii_data} <- read_sii_data(data, t0),
+         {:ok, mailbox_data} <- configure_mailbox_sync_managers(sii_data),
+         {:ok, preop_data} <- transition_to_preop(mailbox_data, transition, t0) do
+      {:ok, :preop, preop_data}
+    else
+      {:error, reason} ->
+        Logger.warning(
+          "[Slave #{data.name}] SII read failed: #{inspect(reason)} — retrying in #{retry_ms} ms"
+        )
+
+        {:ok, :init, data, [{{:timeout, :auto_advance}, retry_ms, nil}]}
+
+      {:error, {:mailbox_sync_manager_setup_failed, reason}, failed_data} ->
+        Logger.warning(
+          "[Slave #{data.name}] mailbox SM setup failed: #{inspect(reason)} — retrying in #{retry_ms} ms"
+        )
+
+        {:ok, :init, failed_data, [{{:timeout, :auto_advance}, retry_ms, nil}]}
+
+      {:error, {:preop_transition_failed, reason}, failed_data} ->
+        Logger.warning(
+          "[Slave #{data.name}] preop failed: #{inspect(reason)} — retrying in #{retry_ms} ms"
+        )
+
+        {:ok, :init, failed_data, [{{:timeout, :auto_advance}, retry_ms, nil}]}
+    end
+  end
+
+  defp read_sii_data(data, t0) do
     case read_sii(data.bus, data.station) do
       {:ok, esc_info, identity, mailbox_config, sm_configs, pdo_configs} ->
         sii_ms = System.monotonic_time(:millisecond) - t0
@@ -52,49 +87,18 @@ defmodule EtherCAT.Slave.Bootstrap do
             "mbx_recv=#{mailbox_config.recv_size} pdos=#{length(pdo_configs)}"
         )
 
-        new_data = %{
-          data
-          | identity: identity,
-            esc_info: esc_info,
-            mailbox_config: mailbox_config,
-            sii_sm_configs: sm_configs,
-            sii_pdo_configs: pdo_configs
-        }
-
-        Logger.debug("[Slave #{data.name}] init: setting up mailbox SMs")
-
-        case configure_mailbox_sync_managers(new_data) do
-          :ok ->
-            Logger.debug("[Slave #{data.name}] init: transitioning to PREOP")
-
-            case transition.(new_data, :preop) do
-              {:ok, new_data2} ->
-                preop_ms = System.monotonic_time(:millisecond) - t0
-                Logger.debug("[Slave #{data.name}] init: PREOP reached in #{preop_ms}ms total")
-                {:ok, :preop, new_data2}
-
-              {:error, reason, new_data2} ->
-                Logger.warning(
-                  "[Slave #{data.name}] preop failed: #{inspect(reason)} — retrying in #{retry_ms} ms"
-                )
-
-                {:ok, :init, new_data2, [{{:timeout, :auto_advance}, retry_ms, nil}]}
-            end
-
-          {:error, reason} ->
-            Logger.warning(
-              "[Slave #{data.name}] mailbox SM setup failed: #{inspect(reason)} — retrying in #{retry_ms} ms"
-            )
-
-            {:ok, :init, new_data, [{{:timeout, :auto_advance}, retry_ms, nil}]}
-        end
+        {:ok,
+         %{
+           data
+           | identity: identity,
+             esc_info: esc_info,
+             mailbox_config: mailbox_config,
+             sii_sm_configs: sm_configs,
+             sii_pdo_configs: pdo_configs
+         }}
 
       {:error, reason} ->
-        Logger.warning(
-          "[Slave #{data.name}] SII read failed: #{inspect(reason)} — retrying in #{retry_ms} ms"
-        )
-
-        {:ok, :init, data, [{{:timeout, :auto_advance}, retry_ms, nil}]}
+        {:error, reason}
     end
   end
 
@@ -129,13 +133,30 @@ defmodule EtherCAT.Slave.Bootstrap do
     end
   end
 
-  defp configure_mailbox_sync_managers(%{mailbox_config: %{recv_size: 0}}), do: :ok
+  defp transition_to_preop(data, transition, t0) do
+    Logger.debug("[Slave #{data.name}] init: transitioning to PREOP")
+
+    case transition.(data, :preop) do
+      {:ok, preop_data} ->
+        preop_ms = System.monotonic_time(:millisecond) - t0
+        Logger.debug("[Slave #{data.name}] init: PREOP reached in #{preop_ms}ms total")
+        {:ok, preop_data}
+
+      {:error, reason, failed_data} ->
+        {:error, {:preop_transition_failed, reason}, failed_data}
+    end
+  end
+
+  defp configure_mailbox_sync_managers(%{mailbox_config: %{recv_size: 0}} = data),
+    do: {:ok, data}
 
   defp configure_mailbox_sync_managers(data) do
     %{recv_offset: ro, recv_size: rs, send_offset: so, send_size: ss} = data.mailbox_config
 
-    sm0 = <<ro::16-little, rs::16-little, 0x26::8, 0::8, 0x00::8, 0::8>>
-    sm1 = <<so::16-little, ss::16-little, 0x22::8, 0::8, 0x00::8, 0::8>>
+    Logger.debug("[Slave #{data.name}] init: setting up mailbox SMs")
+
+    sm0 = <<ro::16-little, rs::16-little, @mailbox_receive_sm_control::8, 0::8, 0x00::8, 0::8>>
+    sm1 = <<so::16-little, ss::16-little, @mailbox_send_sm_control::8, 0::8, 0x00::8, 0::8>>
 
     case Bus.transaction(
            data.bus,
@@ -148,10 +169,13 @@ defmodule EtherCAT.Slave.Bootstrap do
            |> Transaction.fpwr(data.station, Registers.sm_activate(1, 1))
          ) do
       {:ok, replies} ->
-        ensure_expected_wkcs(replies, 1, :mailbox_sync_manager_setup_failed)
+        case ensure_expected_wkcs(replies, 1, :mailbox_sync_manager_setup_failed) do
+          :ok -> {:ok, data}
+          {:error, reason} -> {:error, reason, data}
+        end
 
       {:error, reason} ->
-        {:error, {:mailbox_sync_manager_setup_failed, reason}}
+        {:error, {:mailbox_sync_manager_setup_failed, reason}, data}
     end
   end
 
