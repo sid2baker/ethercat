@@ -6,6 +6,7 @@ defmodule EtherCAT.Master.Startup do
   alias EtherCAT.{Bus, DC, Domain, Slave}
   alias EtherCAT.Bus.Transaction
   alias EtherCAT.Master.Config
+  alias EtherCAT.Master.Config.DomainPlan
   alias EtherCAT.Master.Startup.InitRecovery
   alias EtherCAT.Master.Startup.Reset, as: InitReset
   alias EtherCAT.Master.Startup.Verification, as: InitVerification
@@ -13,8 +14,7 @@ defmodule EtherCAT.Master.Startup do
 
   @frame_timeout_base_us 200
   @frame_timeout_per_slave_us 40
-  @frame_timeout_cycle_margin_pct 90
-  @frame_timeout_min_us 500
+  @frame_timeout_host_floor_ms 2
   @frame_timeout_max_ms 10
   @init_poll_limit 100
   @init_poll_interval_ms 10
@@ -79,34 +79,69 @@ defmodule EtherCAT.Master.Startup do
     end
   end
 
-  defp recommended_frame_timeout_ms(%{frame_timeout_override_ms: timeout_ms}, _slave_count)
-       when is_integer(timeout_ms) and timeout_ms > 0 do
+  @doc false
+  @spec recommended_frame_timeout_ms(%EtherCAT.Master{}, non_neg_integer()) :: pos_integer()
+  def recommended_frame_timeout_ms(%{frame_timeout_override_ms: timeout_ms}, _slave_count)
+      when is_integer(timeout_ms) and timeout_ms > 0 do
     timeout_ms
   end
 
-  defp recommended_frame_timeout_ms(data, slave_count)
-       when is_integer(slave_count) and slave_count > 0 do
-    by_topology_us = @frame_timeout_base_us + slave_count * @frame_timeout_per_slave_us
+  def recommended_frame_timeout_ms(data, slave_count)
+      when is_integer(slave_count) and slave_count > 0 do
+    topology_timeout_ms =
+      @frame_timeout_base_us
+      |> Kernel.+(slave_count * @frame_timeout_per_slave_us)
+      |> ceil_div(1_000)
 
-    by_cycle_us =
-      case dc_cycle_ns(data) do
-        cycle_ns when is_integer(cycle_ns) and cycle_ns > 0 ->
-          div(cycle_ns * @frame_timeout_cycle_margin_pct, 100)
+    cycle_cap_ms = cycle_relative_timeout_cap_ms(data)
+    floor_ms = min(@frame_timeout_host_floor_ms, cycle_cap_ms)
 
-        _ ->
-          @frame_timeout_max_ms * 1_000
-      end
-
-    budget_us = min(by_topology_us, by_cycle_us)
-    timeout_us = max(budget_us, @frame_timeout_min_us)
-    timeout_ms = ceil_div(timeout_us, 1_000)
-    min(timeout_ms, @frame_timeout_max_ms)
+    topology_timeout_ms
+    |> max(floor_ms)
+    |> min(cycle_cap_ms)
+    |> min(@frame_timeout_max_ms)
   end
 
-  defp recommended_frame_timeout_ms(_data, _slave_count), do: 1
+  def recommended_frame_timeout_ms(data, _slave_count) do
+    min(@frame_timeout_host_floor_ms, cycle_relative_timeout_cap_ms(data))
+  end
 
   defp ceil_div(value, divisor) when is_integer(value) and is_integer(divisor) and divisor > 0 do
     div(value + divisor - 1, divisor)
+  end
+
+  defp cycle_relative_timeout_cap_ms(%{domain_configs: domain_configs})
+       when is_list(domain_configs) and domain_configs != [] do
+    domain_configs
+    |> Enum.map(&domain_cycle_time_us/1)
+    |> Enum.min()
+    |> half_cycle_timeout_ms()
+    |> min(@frame_timeout_max_ms)
+    |> max(1)
+  end
+
+  defp cycle_relative_timeout_cap_ms(data) do
+    case dc_cycle_ns(data) do
+      cycle_ns when is_integer(cycle_ns) and cycle_ns > 0 ->
+        cycle_ns
+        |> div(1_000)
+        |> half_cycle_timeout_ms()
+        |> min(@frame_timeout_max_ms)
+        |> max(1)
+
+      _ ->
+        @frame_timeout_max_ms
+    end
+  end
+
+  defp domain_cycle_time_us(%DomainPlan{cycle_time_us: cycle_time_us}), do: cycle_time_us
+  defp domain_cycle_time_us(%{cycle_time_us: cycle_time_us}), do: cycle_time_us
+
+  defp half_cycle_timeout_ms(cycle_time_us)
+       when is_integer(cycle_time_us) and cycle_time_us > 0 do
+    cycle_time_us
+    |> ceil_div(2)
+    |> ceil_div(1_000)
   end
 
   defp station_for_position(data, pos), do: data.base_station + pos
