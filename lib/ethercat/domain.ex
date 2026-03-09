@@ -30,12 +30,10 @@ defmodule EtherCAT.Domain do
 
   @behaviour :gen_statem
 
-  require Logger
-
-  alias EtherCAT.Bus
-  alias EtherCAT.Bus.Transaction
+  alias EtherCAT.Domain.Calls
+  alias EtherCAT.Domain.Cycle
+  alias EtherCAT.Domain.Image
   alias EtherCAT.Domain.Layout
-  alias EtherCAT.Telemetry
 
   @type domain_id :: atom()
   @type pdo_key :: {slave_name :: atom(), pdo_name :: atom()}
@@ -132,10 +130,7 @@ defmodule EtherCAT.Domain do
     updated_at_us = System.monotonic_time(:microsecond)
 
     try do
-      case :ets.update_element(domain_id, key, [{2, binary}, {3, updated_at_us}]) do
-        true -> :ok
-        false -> {:error, :not_found}
-      end
+      Image.write(domain_id, key, binary, updated_at_us)
     rescue
       ArgumentError -> {:error, :not_found}
     end
@@ -145,7 +140,7 @@ defmodule EtherCAT.Domain do
   @spec read(domain_id(), pdo_key()) :: {:ok, binary()} | {:error, :not_found | :not_ready}
   def read(domain_id, key) when is_atom(domain_id) do
     try do
-      case stored_value(domain_id, key) do
+      case Image.read(domain_id, key) do
         {:ok, :unset} -> {:error, :not_ready}
         {:ok, value} -> {:ok, value}
         :error -> {:error, :not_found}
@@ -166,16 +161,7 @@ defmodule EtherCAT.Domain do
           | {:error, :not_found | :not_ready}
   def sample(domain_id, key) when is_atom(domain_id) do
     try do
-      case stored_entry(domain_id, key) do
-        {:ok, :unset, _meta} ->
-          {:error, :not_ready}
-
-        {:ok, value, meta} ->
-          {:ok, %{value: value, updated_at_us: sample_updated_at_us(meta)}}
-
-        :error ->
-          {:error, :not_found}
-      end
+      Image.sample(domain_id, key)
     rescue
       ArgumentError -> {:error, :not_found}
     end
@@ -260,277 +246,42 @@ defmodule EtherCAT.Domain do
   @impl true
   def handle_event(:enter, _old, :open, _data), do: :keep_state_and_data
 
-  def handle_event(:enter, _old, :cycling, data) do
-    now = System.monotonic_time(:microsecond)
-    delay_us = max(0, data.next_cycle_at - now)
-    delay_ms = div(delay_us + 999, 1000)
-    {:keep_state_and_data, [{:state_timeout, delay_ms, :tick}]}
-  end
+  def handle_event(:enter, _old, :cycling, data),
+    do: {:keep_state_and_data, Cycle.enter_actions(data)}
 
   def handle_event(:enter, _old, :stopped, _data), do: :keep_state_and_data
 
   def handle_event({:call, from}, {:register_pdo, key, size, direction}, :open, data) do
-    {offset, layout} = Layout.register(data.layout, key, size, direction)
-
-    ets_value = if direction == :input, do: :unset, else: :binary.copy(<<0>>, size)
-    :ets.insert(data.table, {key, ets_value, initial_sample_meta(direction)})
-
-    new_data = %{data | layout: layout}
-
-    {:keep_state, new_data, [{:reply, from, {:ok, data.logical_base + offset}}]}
+    Calls.register_pdo(from, key, size, direction, data)
   end
 
   def handle_event({:call, from}, {:register_pdo, _, _, _}, _state, _data) do
     {:keep_state_and_data, [{:reply, from, {:error, :not_open}}]}
   end
 
-  def handle_event({:call, from}, :start_cycling, :cycling, _data) do
-    {:keep_state_and_data, [{:reply, from, {:error, :already_cycling}}]}
-  end
+  def handle_event({:call, from}, :start_cycling, state, data)
+      when state in [:open, :stopped, :cycling],
+      do: Calls.start_cycling(from, state, data)
 
-  def handle_event({:call, from}, :start_cycling, state, data) when state in [:open, :stopped],
-    do: start_cycling_reply(from, data, reset_miss_count?(state))
+  def handle_event({:call, from}, :stop_cycling, state, data)
+      when state in [:open, :stopped, :cycling],
+      do: Calls.stop_cycling(from, state, data)
 
-  def handle_event({:call, from}, :stop_cycling, state, _data) when state in [:open, :stopped] do
-    {:keep_state_and_data, [{:reply, from, :ok}]}
-  end
-
-  def handle_event(:state_timeout, :tick, :cycling, data) do
-    t0 = System.monotonic_time(:microsecond)
-    cycle_index = data.cycle_count + 1
-    image = build_frame(data.cycle_plan.image_size, data.cycle_plan.output_patches, data.table)
-
-    result =
-      Bus.transaction(
-        data.bus,
-        Transaction.lrw({data.logical_base, image}),
-        cycle_transaction_timeout_us(data.period_us)
-      )
-
-    next_at = data.next_cycle_at + data.period_us
-
-    now_after = System.monotonic_time(:microsecond)
-    delay_us = max(0, next_at - now_after)
-    delay_ms = div(delay_us + 999, 1000)
-    next_timeout = [{:state_timeout, delay_ms, :tick}]
-
-    case result do
-      {:ok, [%{data: response, wkc: wkc}]}
-      when wkc == data.cycle_plan.expected_wkc and wkc > 0 ->
-        maybe_notify_cycle_recovered(data)
-        completed_at_us = System.monotonic_time(:microsecond)
-
-        dispatch_inputs(
-          response,
-          data.cycle_plan.input_slices,
-          data.table,
-          data.id,
-          completed_at_us
-        )
-
-        duration_us = System.monotonic_time(:microsecond) - t0
-
-        Telemetry.domain_cycle_done(data.id, duration_us, cycle_index, completed_at_us)
-
-        new_data = %{
-          data
-          | cycle_count: cycle_index,
-            miss_count: 0,
-            cycle_health: :healthy,
-            last_cycle_started_at_us: t0,
-            last_cycle_completed_at_us: completed_at_us,
-            last_valid_cycle_at_us: completed_at_us,
-            next_cycle_at: next_at
-        }
-
-        {:keep_state, new_data, next_timeout}
-
-      {:ok, [%{wkc: wkc}]} when wkc >= 0 ->
-        reason = {:wkc_mismatch, %{expected: data.cycle_plan.expected_wkc, actual: wkc}}
-        invalid_at_us = System.monotonic_time(:microsecond)
-
-        Telemetry.domain_cycle_missed(
-          data.id,
-          data.miss_count + 1,
-          data.total_miss_count + 1,
-          reason,
-          invalid_at_us
-        )
-
-        maybe_notify_cycle_invalid(data, reason)
-
-        new_data = %{
-          data
-          | miss_count: 0,
-            cycle_health: {:invalid, reason},
-            last_cycle_started_at_us: t0,
-            last_invalid_cycle_at_us: invalid_at_us,
-            last_invalid_reason: reason,
-            total_miss_count: data.total_miss_count + 1,
-            next_cycle_at: next_at
-        }
-
-        {:keep_state, new_data, next_timeout}
-
-      {:ok, results} ->
-        mark_cycle_missed(data, {:unexpected_reply, length(results)}, next_at, next_timeout)
-
-      {:error, reason} ->
-        mark_cycle_missed(data, reason, next_at, next_timeout)
-    end
-  end
-
-  def handle_event({:call, from}, :stop_cycling, :cycling, data) do
-    {:next_state, :stopped, data, [{:reply, from, :ok}]}
-  end
-
-  def handle_event({:call, from}, :stop_cycling, :stopped, _data) do
-    {:keep_state_and_data, [{:reply, from, :ok}]}
-  end
+  def handle_event(:state_timeout, :tick, :cycling, data), do: Cycle.handle_tick(data)
 
   def handle_event({:call, from}, :stats, state, data) do
-    stats = %{
-      state: state,
-      cycle_count: data.cycle_count,
-      miss_count: data.miss_count,
-      total_miss_count: data.total_miss_count,
-      cycle_health: data.cycle_health,
-      image_size: Layout.image_size(data.layout),
-      expected_wkc: Layout.expected_wkc(data.layout),
-      last_valid_cycle_at_us: data.last_valid_cycle_at_us,
-      last_invalid_cycle_at_us: data.last_invalid_cycle_at_us,
-      last_invalid_reason: data.last_invalid_reason
-    }
-
-    {:keep_state_and_data, [{:reply, from, {:ok, stats}}]}
+    Calls.stats(from, state, data)
   end
 
   def handle_event({:call, from}, :info, state, data) do
-    info = %{
-      id: data.id,
-      cycle_time_us: data.period_us,
-      state: state,
-      cycle_count: data.cycle_count,
-      miss_count: data.miss_count,
-      total_miss_count: data.total_miss_count,
-      cycle_health: data.cycle_health,
-      logical_base: data.logical_base,
-      image_size: Layout.image_size(data.layout),
-      expected_wkc: Layout.expected_wkc(data.layout),
-      last_cycle_started_at_us: data.last_cycle_started_at_us,
-      last_cycle_completed_at_us: data.last_cycle_completed_at_us,
-      last_valid_cycle_at_us: data.last_valid_cycle_at_us,
-      last_invalid_cycle_at_us: data.last_invalid_cycle_at_us,
-      last_invalid_reason: data.last_invalid_reason
-    }
-
-    {:keep_state_and_data, [{:reply, from, {:ok, info}}]}
+    Calls.info(from, state, data)
   end
 
   def handle_event({:call, from}, {:update_cycle_time, new_us}, _state, data) do
-    {:keep_state, %{data | period_us: new_us}, [{:reply, from, :ok}]}
+    Calls.update_cycle_time(from, new_us, data)
   end
 
   def handle_event(_type, _event, _state, _data), do: :keep_state_and_data
-
-  defp build_frame(image_size, output_patches, table) do
-    zeros = :binary.copy(<<0>>, image_size)
-    iodata = build_iodata(zeros, output_patches, table, 0)
-    :erlang.iolist_to_binary(iodata)
-  end
-
-  defp build_iodata(frame, [], _table, cursor) do
-    [binary_part(frame, cursor, byte_size(frame) - cursor)]
-  end
-
-  defp build_iodata(frame, [{offset, size, key} | rest], table, cursor) do
-    prefix_len = offset - cursor
-
-    replacement = table |> stored_value(key) |> replacement_value(size)
-
-    [
-      binary_part(frame, cursor, prefix_len),
-      replacement
-      | build_iodata(frame, rest, table, offset + size)
-    ]
-  end
-
-  defp dispatch_inputs(
-         response,
-         input_slices,
-         table,
-         domain_id,
-         updated_at_us
-       ) do
-    Enum.each(input_slices, fn {offset, size, {slave_name, _} = key} ->
-      new_val = binary_part(response, offset, size)
-      old_val = stored_value(table, key, nil)
-
-      if new_val != old_val do
-        :ets.update_element(table, key, [{2, new_val}, {3, updated_at_us}])
-        maybe_dispatch_input(slave_name, {:domain_input, domain_id, key, old_val, new_val})
-      end
-    end)
-  end
-
-  defp binary_pad(data, size) when byte_size(data) >= size, do: binary_part(data, 0, size)
-  defp binary_pad(data, size), do: data <> :binary.copy(<<0>>, size - byte_size(data))
-
-  defp start_cycling_reply(from, data, reset_miss_count?) do
-    data = if reset_miss_count?, do: %{data | miss_count: 0}, else: data
-
-    case prepare_cycle(data) do
-      {:ok, new_data} ->
-        {:next_state, :cycling, new_data, [{:reply, from, :ok}]}
-
-      {:error, reason} ->
-        {:keep_state_and_data, [{:reply, from, {:error, reason}}]}
-    end
-  end
-
-  defp reset_miss_count?(:stopped), do: true
-  defp reset_miss_count?(:open), do: false
-
-  defp prepare_cycle(data) do
-    case Layout.prepare(data.layout) do
-      {:ok, cycle_plan} ->
-        now = System.monotonic_time(:microsecond)
-
-        {:ok,
-         %{
-           data
-           | cycle_plan: cycle_plan,
-             next_cycle_at: now + data.period_us
-         }}
-
-      {:error, _} = err ->
-        err
-    end
-  end
-
-  defp stored_value(table, key) do
-    case stored_entry(table, key) do
-      {:ok, value, _meta} -> {:ok, value}
-      :error -> :error
-    end
-  end
-
-  defp stored_value(table, key, default) do
-    case stored_value(table, key) do
-      {:ok, value} -> value
-      :error -> default
-    end
-  end
-
-  defp replacement_value({:ok, value}, size), do: binary_pad(value, size)
-  defp replacement_value(:error, size), do: :binary.copy(<<0>>, size)
-
-  defp stored_entry(table, key) do
-    case :ets.lookup(table, key) do
-      [{^key, value, meta}] -> {:ok, value, meta}
-      [] -> :error
-    end
-  end
 
   defp safe_call(domain_id, msg) do
     try do
@@ -541,70 +292,4 @@ defmodule EtherCAT.Domain do
   end
 
   defp via(domain_id), do: {:via, Registry, {EtherCAT.Registry, {:domain, domain_id}}}
-
-  defp mark_cycle_missed(data, reason, next_at, next_timeout) do
-    invalid_at_us = System.monotonic_time(:microsecond)
-
-    Telemetry.domain_cycle_missed(
-      data.id,
-      data.miss_count + 1,
-      data.total_miss_count + 1,
-      reason,
-      invalid_at_us
-    )
-
-    maybe_notify_cycle_invalid(data, reason)
-
-    new_data = %{
-      data
-      | miss_count: data.miss_count + 1,
-        cycle_health: {:invalid, reason},
-        last_invalid_cycle_at_us: invalid_at_us,
-        last_invalid_reason: reason,
-        total_miss_count: data.total_miss_count + 1,
-        next_cycle_at: next_at
-    }
-
-    if new_data.miss_count >= data.miss_threshold do
-      Logger.error("[Domain #{data.id}] #{data.miss_threshold} consecutive misses — stopping")
-      Telemetry.domain_stopped(data.id, reason)
-      send(EtherCAT.Master, {:domain_stopped, data.id, reason})
-      {:next_state, :stopped, new_data}
-    else
-      {:keep_state, new_data, next_timeout}
-    end
-  end
-
-  defp cycle_transaction_timeout_us(period_us)
-       when is_integer(period_us) and period_us > 0 do
-    max(div(period_us * 9, 10), 200)
-  end
-
-  defp maybe_notify_cycle_invalid(%{cycle_health: :healthy, id: id}, reason) do
-    send(EtherCAT.Master, {:domain_cycle_invalid, id, reason})
-  end
-
-  defp maybe_notify_cycle_invalid(_data, _reason), do: :ok
-
-  defp maybe_notify_cycle_recovered(%{cycle_health: {:invalid, _reason}, id: id}) do
-    send(EtherCAT.Master, {:domain_cycle_recovered, id})
-  end
-
-  defp maybe_notify_cycle_recovered(_data), do: :ok
-
-  defp initial_sample_meta(:input), do: nil
-  defp initial_sample_meta(:output), do: nil
-
-  defp sample_updated_at_us(updated_at_us) when is_integer(updated_at_us), do: updated_at_us
-  defp sample_updated_at_us(_meta), do: nil
-
-  defp maybe_dispatch_input(slave_name, msg) do
-    case Registry.lookup(EtherCAT.Registry, {:slave, slave_name}) do
-      [{pid, _}] ->
-        send(pid, msg)
-
-      [] ->
-        :ok
-    end
-  end
 end
