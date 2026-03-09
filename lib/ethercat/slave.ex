@@ -20,8 +20,6 @@ defmodule EtherCAT.Slave do
   alias EtherCAT.Slave.Configuration
   alias EtherCAT.Slave.DCSignals
   alias EtherCAT.Slave.Health
-  alias EtherCAT.Slave.ProcessDataPlan.DomainAttachment
-  alias EtherCAT.Slave.ProcessDataPlan.SmGroup
   alias EtherCAT.Slave.Signals
   alias EtherCAT.Slave.Transition
 
@@ -171,45 +169,6 @@ defmodule EtherCAT.Slave do
     safe_call(slave_name, {:configure, opts})
   end
 
-  @doc false
-  @spec cached_domain_offset(map(), SmGroup.t(), DomainAttachment.t()) ::
-          {:ok, non_neg_integer()} | :error
-  def cached_domain_offset(registrations, %SmGroup{} = sm_group, %DomainAttachment{} = attachment)
-      when is_map(registrations) do
-    attachment.registrations
-    |> Enum.reduce_while({:ok, nil}, fn registration, {:ok, current_offset} ->
-      case Map.get(registrations, registration.signal_name) do
-        %{
-          domain_id: domain_id,
-          sm_key: sm_key,
-          direction: direction,
-          bit_offset: bit_offset,
-          bit_size: bit_size,
-          logical_address: logical_address,
-          sm_size: sm_size
-        }
-        when domain_id == attachment.domain_id and sm_key == sm_group.sm_key and
-               direction == sm_group.direction and bit_offset == registration.bit_offset and
-               bit_size == registration.bit_size and is_integer(logical_address) and
-               logical_address >= 0 and sm_size == sm_group.total_sm_size ->
-          next_offset = current_offset || logical_address
-
-          if next_offset == logical_address do
-            {:cont, {:ok, next_offset}}
-          else
-            {:halt, :error}
-          end
-
-        _ ->
-          {:halt, :error}
-      end
-    end)
-    |> case do
-      {:ok, logical_address} when is_integer(logical_address) -> {:ok, logical_address}
-      _ -> :error
-    end
-  end
-
   @doc "Return the current ESM state atom."
   @spec state(atom()) :: atom() | {:error, :not_found}
   def state(slave_name), do: safe_call(slave_name, :state)
@@ -337,25 +296,7 @@ defmodule EtherCAT.Slave do
   def handle_event(:enter, _old, :safeop, _data), do: :keep_state_and_data
 
   def handle_event(:enter, _old, :op, data) do
-    actions = []
-
-    actions =
-      if data.latch_poll_ms do
-        [{:state_timeout, data.latch_poll_ms, :latch_poll} | actions]
-      else
-        actions
-      end
-
-    actions =
-      case data.health_poll_ms do
-        ms when is_integer(ms) and ms > 0 ->
-          [Health.health_poll_action(ms) | actions]
-
-        _ ->
-          actions
-      end
-
-    {:keep_state_and_data, actions}
+    {:keep_state_and_data, op_enter_actions(data)}
   end
 
   def handle_event(:enter, _old, :bootstrap, _data), do: :keep_state_and_data
@@ -408,17 +349,10 @@ defmodule EtherCAT.Slave do
     end
   end
 
-  def handle_event(:state_timeout, :latch_poll, :op, data) do
+  def handle_event(:state_timeout, :latch_poll, :op, %{latch_poll_ms: poll_ms} = data)
+      when is_integer(poll_ms) and poll_ms > 0 do
     DCSignals.poll_latches(data)
-
-    actions =
-      if data.latch_poll_ms do
-        [{:state_timeout, data.latch_poll_ms, :latch_poll}]
-      else
-        []
-      end
-
-    {:keep_state_and_data, actions}
+    {:keep_state_and_data, [{:state_timeout, poll_ms, :latch_poll}]}
   end
 
   # -- AL Status health poll (background check per spec §20.4) ---------------
@@ -469,6 +403,23 @@ defmodule EtherCAT.Slave do
   defp walk_path(data, steps), do: Transition.walk_path(data, steps, @transition_opts)
 
   defp transition_to(data, target), do: Transition.transition_to(data, target, @transition_opts)
+
+  defp op_enter_actions(data) do
+    latch_poll_actions(data) ++ health_poll_actions(data)
+  end
+
+  defp latch_poll_actions(%{latch_poll_ms: poll_ms}) when is_integer(poll_ms) and poll_ms > 0 do
+    [{:state_timeout, poll_ms, :latch_poll}]
+  end
+
+  defp latch_poll_actions(_data), do: []
+
+  defp health_poll_actions(%{health_poll_ms: poll_ms})
+       when is_integer(poll_ms) and poll_ms > 0 do
+    [Health.health_poll_action(poll_ms)]
+  end
+
+  defp health_poll_actions(_data), do: []
 
   # -- Registry helpers -------------------------------------------------------
 

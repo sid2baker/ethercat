@@ -13,10 +13,10 @@ defmodule EtherCAT.Slave.ProcessData do
   alias EtherCAT.Slave.Registers
 
   @type opts :: [
-          run_mailbox_config: (%EtherCAT.Slave{} -> {:ok, %EtherCAT.Slave{}} | {:error, term()})
+          run_mailbox_config: (%Slave{} -> {:ok, %Slave{}} | {:error, term()})
         ]
 
-  @spec configure_preop(%EtherCAT.Slave{}, opts()) :: %EtherCAT.Slave{}
+  @spec configure_preop(%Slave{}, opts()) :: %Slave{}
   def configure_preop(%{driver: nil} = data, _opts) do
     clear_configuration_error(data)
   end
@@ -61,7 +61,7 @@ defmodule EtherCAT.Slave.ProcessData do
     end
   end
 
-  @spec current_output_sm_image(%EtherCAT.Slave{}, atom(), tuple(), non_neg_integer()) ::
+  @spec current_output_sm_image(%Slave{}, atom(), tuple(), non_neg_integer()) ::
           {:ok, binary()} | {:error, term()}
   def current_output_sm_image(data, domain_id, sm_key, sm_size) do
     case Map.fetch(data.output_sm_images || %{}, sm_key) do
@@ -71,7 +71,7 @@ defmodule EtherCAT.Slave.ProcessData do
     end
   end
 
-  @spec stage_output_sm_image(%EtherCAT.Slave{}, tuple(), [atom()], binary()) ::
+  @spec stage_output_sm_image(%Slave{}, tuple(), [atom()], binary()) ::
           :ok | {:error, term()}
   def stage_output_sm_image(data, sm_key, domain_ids, next_value) do
     key = {data.name, sm_key}
@@ -87,7 +87,7 @@ defmodule EtherCAT.Slave.ProcessData do
     end)
   end
 
-  @spec log_configuration_error(%EtherCAT.Slave{}, term()) :: :ok
+  @spec log_configuration_error(%Slave{}, term()) :: :ok
   def log_configuration_error(data, :invalid_process_data_request) do
     Logger.warning("[Slave #{data.name}] invalid process_data request")
   end
@@ -323,7 +323,7 @@ defmodule EtherCAT.Slave.ProcessData do
          %DomainAttachment{} = attachment
        )
        when is_map(registrations) and map_size(registrations) > 0 do
-    case Slave.cached_domain_offset(registrations, sm_group, attachment) do
+    case cached_domain_offset(registrations, sm_group, attachment) do
       {:ok, offset} -> {:ok, offset}
       :error -> {:error, {:domain_reregister_required, sm_group.sm_index, attachment.domain_id}}
     end
@@ -358,6 +358,49 @@ defmodule EtherCAT.Slave.ProcessData do
         sm_size: sm_group.total_sm_size
       })
     end)
+  end
+
+  @doc false
+  @spec cached_domain_offset(map(), SmGroup.t(), DomainAttachment.t()) ::
+          {:ok, non_neg_integer()} | :error
+  def cached_domain_offset(
+        registrations,
+        %SmGroup{} = sm_group,
+        %DomainAttachment{} = attachment
+      )
+      when is_map(registrations) do
+    attachment.registrations
+    |> Enum.reduce_while({:ok, nil}, fn registration, {:ok, current_offset} ->
+      case Map.get(registrations, registration.signal_name) do
+        %{
+          domain_id: domain_id,
+          sm_key: sm_key,
+          direction: direction,
+          bit_offset: bit_offset,
+          bit_size: bit_size,
+          logical_address: logical_address,
+          sm_size: sm_size
+        }
+        when domain_id == attachment.domain_id and sm_key == sm_group.sm_key and
+               direction == sm_group.direction and bit_offset == registration.bit_offset and
+               bit_size == registration.bit_size and is_integer(logical_address) and
+               logical_address >= 0 and sm_size == sm_group.total_sm_size ->
+          next_offset = current_offset || logical_address
+
+          if next_offset == logical_address do
+            {:cont, {:ok, next_offset}}
+          else
+            {:halt, :error}
+          end
+
+        _ ->
+          {:halt, :error}
+      end
+    end)
+    |> case do
+      {:ok, logical_address} when is_integer(logical_address) -> {:ok, logical_address}
+      _ -> :error
+    end
   end
 
   defp write_process_data_fmmus(data, %SmGroup{} = sm_group, attachment_offsets, fmmu_idx) do

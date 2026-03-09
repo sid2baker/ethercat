@@ -1,6 +1,7 @@
 defmodule EtherCAT.SlaveTest do
   use ExUnit.Case, async: true
 
+  alias EtherCAT.Slave.ProcessData
   alias EtherCAT.Slave.ProcessDataPlan.DomainAttachment
   alias EtherCAT.Slave.ProcessDataPlan.SmGroup
 
@@ -691,10 +692,10 @@ defmodule EtherCAT.SlaveTest do
     }
 
     assert {:ok, 0x2000} =
-             EtherCAT.Slave.cached_domain_offset(registrations, sm_group, attachment)
+             ProcessData.cached_domain_offset(registrations, sm_group, attachment)
 
     assert :error =
-             EtherCAT.Slave.cached_domain_offset(
+             ProcessData.cached_domain_offset(
                put_in(registrations, [:ch2, :logical_address], 0x2001),
                sm_group,
                attachment
@@ -746,13 +747,13 @@ defmodule EtherCAT.SlaveTest do
     }
 
     assert {:ok, 0x3000} =
-             EtherCAT.Slave.cached_domain_offset(registrations, sm_group, fast_attachment)
+             ProcessData.cached_domain_offset(registrations, sm_group, fast_attachment)
 
     assert {:ok, 0x3010} =
-             EtherCAT.Slave.cached_domain_offset(registrations, sm_group, slow_attachment)
+             ProcessData.cached_domain_offset(registrations, sm_group, slow_attachment)
 
     assert :error =
-             EtherCAT.Slave.cached_domain_offset(
+             ProcessData.cached_domain_offset(
                put_in(registrations, [:ch2, :bit_offset], 0),
                sm_group,
                slow_attachment
