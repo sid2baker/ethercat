@@ -230,7 +230,7 @@ defmodule EtherCAT.MasterTest do
     assert {:ok, %{state: :cycling}} = Domain.info(domain_id)
   end
 
-  test "recovering returns to idle for unrecoverable slave preop configuration failures" do
+  test "recovering returns to operational for unrecoverable slave preop configuration failures" do
     data = %EtherCAT.Master{
       runtime_faults: %{
         {:slave, :outputs} =>
@@ -238,14 +238,10 @@ defmodule EtherCAT.MasterTest do
       }
     }
 
-    assert {:next_state, :idle, %EtherCAT.Master{last_failure: failure}} =
+    assert {:next_state, :operational, %EtherCAT.Master{} = op_data} =
              EtherCAT.Master.handle_event({:timeout, :retry}, nil, :recovering, data)
 
-    assert failure.kind == :recovery_unrecoverable
-
-    assert failure.reason ==
-             {:slave_preop_configuration_failed, :outputs,
-              {:domain_reregister_required, 2, :main}}
+    assert %{{:slave, :outputs} => _} = op_data.runtime_faults
   end
 
   test "slave_reconnected authorizes reconnect through the master in recovering" do

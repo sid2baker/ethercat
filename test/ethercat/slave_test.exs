@@ -142,7 +142,7 @@ defmodule EtherCAT.SlaveTest do
     assert :keep_state_and_data =
              EtherCAT.Slave.handle_event(
                :info,
-               {:domain_input, :main, {:sensor, {:sm, 0}}, :unset, <<0>>},
+               {:domain_inputs, :main, [{{:sensor, {:sm, 0}}, :unset, <<0>>}]},
                :op,
                data
              )
@@ -154,7 +154,7 @@ defmodule EtherCAT.SlaveTest do
     assert :keep_state_and_data =
              EtherCAT.Slave.handle_event(
                :info,
-               {:domain_input, :main, {:sensor, {:sm, 0}}, <<0>>, <<2>>},
+               {:domain_inputs, :main, [{{:sensor, {:sm, 0}}, <<0>>, <<2>>}]},
                :op,
                data
              )
@@ -166,7 +166,7 @@ defmodule EtherCAT.SlaveTest do
     assert :keep_state_and_data =
              EtherCAT.Slave.handle_event(
                :info,
-               {:domain_input, :main, {:sensor, {:sm, 0}}, <<2>>, <<2>>},
+               {:domain_inputs, :main, [{{:sensor, {:sm, 0}}, <<2>>, <<2>>}]},
                :op,
                data
              )
@@ -176,7 +176,7 @@ defmodule EtherCAT.SlaveTest do
     assert :keep_state_and_data =
              EtherCAT.Slave.handle_event(
                :info,
-               {:domain_input, :main, {:sensor, {:sm, 0}}, <<2>>, <<3>>},
+               {:domain_inputs, :main, [{{:sensor, {:sm, 0}}, <<2>>, <<3>>}]},
                :op,
                data
              )
@@ -204,7 +204,7 @@ defmodule EtherCAT.SlaveTest do
     assert :keep_state_and_data =
              EtherCAT.Slave.handle_event(
                :info,
-               {:domain_input, :fast, {:sensor, {:sm, 3}}, <<0>>, <<1>>},
+               {:domain_inputs, :fast, [{{:sensor, {:sm, 3}}, <<0>>, <<1>>}]},
                :op,
                data
              )
@@ -215,7 +215,7 @@ defmodule EtherCAT.SlaveTest do
     assert :keep_state_and_data =
              EtherCAT.Slave.handle_event(
                :info,
-               {:domain_input, :slow, {:sensor, {:sm, 3}}, <<0>>, <<2>>},
+               {:domain_inputs, :slow, [{{:sensor, {:sm, 3}}, <<0>>, <<2>>}]},
                :op,
                data
              )

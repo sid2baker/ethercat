@@ -362,11 +362,14 @@ defmodule EtherCAT.Slave do
   # SM-grouped key: {domain_id, {:sm, idx}} — unpack per-signal bits and dispatch.
   def handle_event(
         :info,
-        {:domain_input, domain_id, {_slave_name, {:sm, _} = sm_key}, old_sm_bytes, new_sm_bytes},
+        {:domain_inputs, domain_id, changes},
         _state,
         data
       ) do
-    Signals.dispatch_domain_input(data, domain_id, sm_key, old_sm_bytes, new_sm_bytes)
+    Enum.each(changes, fn {{_slave_name, {:sm, _} = sm_key}, old_sm_bytes, new_sm_bytes} ->
+      Signals.dispatch_domain_input(data, domain_id, sm_key, old_sm_bytes, new_sm_bytes)
+    end)
+
     :keep_state_and_data
   end
 

@@ -198,7 +198,7 @@ defmodule EtherCAT.DomainTest do
     assert {:keep_state, next_data, _actions} =
              Domain.handle_event(:state_timeout, :tick, :cycling, data)
 
-    assert_receive {:relay, ^first_relay, {:domain_input, :main, ^key, :unset, <<0>>}}
+    assert_receive {:relay, ^first_relay, {:domain_inputs, :main, [{^key, :unset, <<0>>}]}}
 
     first_ref = Process.monitor(first_relay)
     GenServer.stop(first_relay, :normal)
@@ -209,6 +209,6 @@ defmodule EtherCAT.DomainTest do
     assert {:keep_state, _final_data, _actions} =
              Domain.handle_event(:state_timeout, :tick, :cycling, next_data)
 
-    assert_receive {:relay, ^second_relay, {:domain_input, :main, ^key, <<0>>, <<1>>}}
+    assert_receive {:relay, ^second_relay, {:domain_inputs, :main, [{^key, <<0>>, <<1>>}]}}
   end
 end

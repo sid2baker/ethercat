@@ -89,13 +89,31 @@ defmodule EtherCAT.Master.Recovery do
     end)
   end
 
+  @spec put_slave_fault(%EtherCAT.Master{}, atom(), term()) :: %EtherCAT.Master{}
+  def put_slave_fault(data, name, reason) do
+    %{data | runtime_faults: Map.put(data.runtime_faults, {:slave, name}, reason)}
+  end
+
+  @spec clear_slave_fault(%EtherCAT.Master{}, atom()) :: %EtherCAT.Master{}
+  def clear_slave_fault(data, name) do
+    %{data | runtime_faults: Map.delete(data.runtime_faults, {:slave, name})}
+  end
+
   @spec maybe_resume_running(%EtherCAT.Master{}) ::
           {:ok, :operational, %EtherCAT.Master{}}
           | {:recovering, %EtherCAT.Master{}}
   def maybe_resume_running(data) do
-    if map_size(data.activation_failures) == 0 and map_size(data.runtime_faults) == 0 do
+    critical_faults =
+      Enum.reject(data.runtime_faults, fn
+        {{:slave, _name}, _reason} -> true
+        _ -> false
+      end)
+
+    if map_size(data.activation_failures) == 0 and length(critical_faults) == 0 do
       Logger.info("[Master] recovery succeeded; operational path is healthy again")
-      {:ok, :operational, %{data | activation_failures: %{}, runtime_faults: %{}}}
+      # Keep slave faults in runtime_faults, but clear others
+      slave_faults = Map.new(Enum.filter(data.runtime_faults, fn {{k, _}, _} -> k == :slave end))
+      {:ok, :operational, %{data | activation_failures: %{}, runtime_faults: slave_faults}}
     else
       {:recovering, data}
     end

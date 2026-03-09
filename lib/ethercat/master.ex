@@ -130,10 +130,7 @@ defmodule EtherCAT.Master do
 
   @base_station 0x1000
 
-  # Discovering: poll every 100 ms, require 1 s of stable identical readings
-  @scan_poll_ms 100
-  @scan_stable_ms 1_000
-
+  # Discovering: poll interval and stability window (ms)
   # Awaiting PREOP: 30 s to receive :preop notifications from all slaves
   @awaiting_preop_timeout_ms 30_000
 
@@ -150,6 +147,8 @@ defmodule EtherCAT.Master do
     :slave_configs,
     :dc_config,
     :frame_timeout_override_ms,
+    :scan_poll_ms,
+    :scan_stable_ms,
     base_station: @base_station,
     activatable_slaves: [],
     slaves: [],
@@ -398,6 +397,8 @@ defmodule EtherCAT.Master do
           domain_configs: start_config.domain_config,
           dc_config: start_config.dc_config,
           frame_timeout_override_ms: start_config.frame_timeout_override_ms,
+          scan_poll_ms: start_config.scan_poll_ms,
+          scan_stable_ms: start_config.scan_stable_ms,
           activatable_slaves: [],
           slaves: [],
           scan_window: [],
@@ -470,14 +471,15 @@ defmodule EtherCAT.Master do
         {:ok, [%{wkc: n}]} ->
           # Prepend new reading; keep enough history to measure a full stable span
           window = [{now_ms, n} | data.scan_window]
-          Enum.filter(window, fn {t, _} -> now_ms - t <= @scan_stable_ms + @scan_poll_ms end)
+
+          Enum.filter(window, fn {t, _} -> now_ms - t <= data.scan_stable_ms + data.scan_poll_ms end)
 
         _ ->
           # Failed transaction resets the window
           []
       end
 
-    if stable?(new_window, now_ms) do
+    if stable?(new_window, now_ms, data.scan_stable_ms) do
       [{_, slave_count} | _] = new_window
       Startup.tune_bus_frame_timeout(data, slave_count)
       Logger.info("[Master] bus stable — #{slave_count} slave(s)")
@@ -533,7 +535,7 @@ defmodule EtherCAT.Master do
       end
     else
       {:keep_state, %{data | scan_window: new_window},
-       [{{:timeout, :scan_poll}, @scan_poll_ms, nil}]}
+       [{{:timeout, :scan_poll}, data.scan_poll_ms, nil}]}
     end
   end
 
@@ -890,18 +892,15 @@ defmodule EtherCAT.Master do
   end
 
   # Slave process crashed unexpectedly
-  def handle_event(:info, {:DOWN, ref, :process, _pid, reason}, state, data)
+  def handle_event(:info, {:DOWN, ref, :process, _pid, reason}, _state, data)
       when is_map_key(data.slave_refs, ref) do
     {name, refs} = Map.pop(data.slave_refs, ref)
     Logger.error("[Master] slave #{name} crashed: #{inspect(reason)}")
     Telemetry.slave_crashed(name, reason)
 
-    recovering_data =
-      data
-      |> Map.put(:slave_refs, refs)
-      |> Recovery.put_runtime_fault({:slave, name}, {:crashed, reason})
-
-    Recovery.transition_runtime_fault(state, recovering_data)
+    # Slaves are non-critical to the domain cycle; we don't enter recovery for them
+    data_with_refs = Map.put(data, :slave_refs, refs)
+    {:keep_state, Recovery.put_slave_fault(data_with_refs, name, {:crashed, reason})}
   end
 
   # DC runtime crashed unexpectedly
@@ -963,15 +962,13 @@ defmodule EtherCAT.Master do
 
   # Slave retreated to a lower ESM state (AL fault detected by health poll)
   def handle_event(:info, {:slave_retreated, name, target_state}, @operational, data) do
-    Logger.warning("[Master] slave #{name} retreated to #{target_state} — entering recovery")
-
-    {:next_state, :recovering,
-     Recovery.put_runtime_fault(data, {:slave, name}, {:retreated, target_state})}
+    Logger.warning("[Master] slave #{name} retreated to #{target_state}")
+    {:keep_state, Recovery.put_slave_fault(data, name, {:retreated, target_state})}
   end
 
   def handle_event(:info, {:slave_retreated, name, target_state}, :recovering, data) do
-    Logger.warning("[Master] slave #{name} retreated to #{target_state} (already recovering)")
-    {:keep_state, Recovery.put_runtime_fault(data, {:slave, name}, {:retreated, target_state})}
+    Logger.warning("[Master] slave #{name} retreated to #{target_state}")
+    {:keep_state, Recovery.put_slave_fault(data, name, {:retreated, target_state})}
   end
 
   def handle_event(:info, {:slave_retreated, name, target_state}, _state, _data) do
@@ -981,24 +978,23 @@ defmodule EtherCAT.Master do
 
   # Slave physically disconnected (health poll wkc=0 or bus error)
   def handle_event(:info, {:slave_down, name}, @operational, data) do
-    Logger.warning("[Master] slave #{name} disconnected — entering recovery")
-
-    {:next_state, :recovering,
-     Recovery.put_runtime_fault(data, {:slave, name}, {:down, :disconnected})}
+    Logger.warning("[Master] slave #{name} disconnected")
+    {:keep_state, Recovery.put_slave_fault(data, name, {:down, :disconnected})}
   end
 
   def handle_event(:info, {:slave_down, name}, :recovering, data) do
-    Logger.warning("[Master] slave #{name} disconnected (already recovering)")
-    {:keep_state, Recovery.put_runtime_fault(data, {:slave, name}, {:down, :disconnected})}
+    Logger.warning("[Master] slave #{name} disconnected")
+    {:keep_state, Recovery.put_slave_fault(data, name, {:down, :disconnected})}
   end
 
-  def handle_event(:info, {:slave_reconnected, name}, :recovering, data) do
+  def handle_event(:info, {:slave_reconnected, name}, state, data)
+      when state in [:operational, :recovering] do
     Logger.info("[Master] slave #{name} link restored — authorizing reconnect")
 
     case Slave.authorize_reconnect(name) do
       :ok ->
         {:keep_state,
-         Recovery.put_runtime_fault(data, {:slave, name}, {:reconnecting, :authorized})}
+         Recovery.put_slave_fault(data, name, {:reconnecting, :authorized})}
 
       {:error, reason} ->
         Logger.warning(
@@ -1006,28 +1002,33 @@ defmodule EtherCAT.Master do
         )
 
         {:keep_state,
-         Recovery.put_runtime_fault(data, {:slave, name}, {:reconnect_failed, reason})}
+         Recovery.put_slave_fault(data, name, {:reconnect_failed, reason})}
     end
   end
 
   # Slave reconnected and reached :preop — attempt to bring it back to :op
-  def handle_event(:info, {:slave_ready, name, :preop}, :recovering, data) do
+  def handle_event(:info, {:slave_ready, name, :preop}, state, data)
+      when state in [:operational, :recovering] do
     Logger.info("[Master] slave #{name} reconnected and in :preop — requesting :op")
 
     case Slave.request(name, :op) do
       :ok ->
         recovered_data =
           data
-          |> Recovery.clear_runtime_fault({:slave, name})
+          |> Recovery.clear_slave_fault(name)
           |> Recovery.maybe_restart_stopped_domains()
           |> Recovery.maybe_restart_dc_runtime()
 
-        case Recovery.maybe_resume_running(recovered_data) do
-          {:ok, next_state, healed_data} ->
-            {:next_state, next_state, healed_data}
+        if state == :recovering do
+          case Recovery.maybe_resume_running(recovered_data) do
+            {:ok, next_state, healed_data} ->
+              {:next_state, next_state, healed_data}
 
-          {:recovering, still_recovering} ->
-            {:keep_state, still_recovering}
+            {:recovering, still_recovering} ->
+              {:keep_state, still_recovering}
+          end
+        else
+          {:keep_state, recovered_data}
         end
 
       {:error, reason} ->
@@ -1035,7 +1036,7 @@ defmodule EtherCAT.Master do
           "[Master] slave #{name} :op request failed after reconnect: #{inspect(reason)}"
         )
 
-        {:keep_state, Recovery.put_runtime_fault(data, {:slave, name}, {:preop, reason})}
+        {:keep_state, Recovery.put_slave_fault(data, name, {:preop, reason})}
     end
   end
 
@@ -1200,14 +1201,14 @@ defmodule EtherCAT.Master do
 
   # -- Scan stability --------------------------------------------------------
 
-  defp stable?([], _now_ms), do: false
+  defp stable?([], _now_ms, _scan_stable_ms), do: false
 
-  defp stable?(window, now_ms) do
+  defp stable?(window, now_ms, scan_stable_ms) do
     counts = Enum.map(window, fn {_, c} -> c end)
     oldest_t = elem(List.last(window), 0)
     span = now_ms - oldest_t
 
-    span >= @scan_stable_ms and
+    span >= scan_stable_ms and
       length(counts) >= 2 and
       length(Enum.uniq(counts)) == 1 and
       hd(counts) > 0

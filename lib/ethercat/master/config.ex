@@ -16,7 +16,9 @@ defmodule EtherCAT.Master.Config do
           dc_config: DCConfig.t() | nil,
           domain_config: [DomainPlan.t()],
           slave_config: [SlaveConfig.t()],
-          frame_timeout_override_ms: pos_integer() | nil
+          frame_timeout_override_ms: pos_integer() | nil,
+          scan_stable_ms: pos_integer(),
+          scan_poll_ms: pos_integer()
         }
 
   defstruct base_station: @default_base_station,
@@ -24,7 +26,9 @@ defmodule EtherCAT.Master.Config do
             dc_config: %DCConfig{},
             domain_config: [],
             slave_config: [],
-            frame_timeout_override_ms: nil
+            frame_timeout_override_ms: nil,
+            scan_stable_ms: 1_000,
+            scan_poll_ms: 100
 
   @spec normalize_start_options(term()) :: {:ok, t()} | {:error, term()}
   def normalize_start_options(opts) when is_list(opts) do
@@ -33,6 +37,8 @@ defmodule EtherCAT.Master.Config do
     base_station = Keyword.get(opts, :base_station, @default_base_station)
     dc = Keyword.get(opts, :dc, %DCConfig{})
     frame_timeout_override_ms = Keyword.get(opts, :frame_timeout_ms)
+    scan_stable_ms = Keyword.get(opts, :scan_stable_ms, 1_000)
+    scan_poll_ms = Keyword.get(opts, :scan_poll_ms, 100)
 
     with {:ok, _interface} <- Keyword.fetch(opts, :interface),
          :ok <- reject_legacy_start_options(opts),
@@ -41,7 +47,8 @@ defmodule EtherCAT.Master.Config do
          :ok <- validate_frame_timeout_override_ms(frame_timeout_override_ms),
          {:ok, normalized_domains} <- Domain.normalize_configs(domain_config),
          {:ok, allocated_domains} <- Domain.allocate_logical_bases(normalized_domains),
-         {:ok, normalized_slaves} <- Slave.normalize_configs(slave_config) do
+         {:ok, normalized_slaves} <- Slave.normalize_configs(slave_config),
+         :ok <- validate_scan_opts(scan_stable_ms, scan_poll_ms) do
       {:ok,
        %__MODULE__{
          base_station: base_station,
@@ -49,7 +56,9 @@ defmodule EtherCAT.Master.Config do
          dc_config: dc_config,
          domain_config: allocated_domains,
          slave_config: normalized_slaves,
-         frame_timeout_override_ms: frame_timeout_override_ms
+         frame_timeout_override_ms: frame_timeout_override_ms,
+         scan_stable_ms: scan_stable_ms,
+         scan_poll_ms: scan_poll_ms
        }}
     else
       :error -> {:error, :missing_interface}
@@ -155,6 +164,14 @@ defmodule EtherCAT.Master.Config do
 
   defp validate_frame_timeout_override_ms(_timeout_ms),
     do: {:error, {:invalid_start_options, :invalid_frame_timeout_ms}}
+
+  defp validate_scan_opts(scan_stable_ms, scan_poll_ms)
+       when is_integer(scan_stable_ms) and scan_stable_ms >= 0 and
+              is_integer(scan_poll_ms) and scan_poll_ms > 0,
+       do: :ok
+
+  defp validate_scan_opts(_scan_stable_ms, _scan_poll_ms),
+    do: {:error, {:invalid_start_options, :invalid_scan_options}}
 
   defp maybe_put_frame_timeout(opts, timeout_ms) when is_integer(timeout_ms) and timeout_ms > 0 do
     Keyword.put(opts, :frame_timeout_ms, timeout_ms)

@@ -115,14 +115,23 @@ defmodule EtherCAT.Domain.Cycle do
   end
 
   defp dispatch_inputs(response, input_slices, table, domain_id, updated_at_us) do
-    Enum.each(input_slices, fn {offset, size, {slave_name, _} = key} ->
-      new_val = binary_part(response, offset, size)
-      old_val = Image.stored_value(table, key, nil)
+    # Group changes by slave_name to prevent fan-out message flooding
+    changes_by_slave =
+      Enum.reduce(input_slices, %{}, fn {offset, size, {slave_name, _} = key}, acc ->
+        new_val = binary_part(response, offset, size)
+        old_val = Image.stored_value(table, key, nil)
 
-      if new_val != old_val do
-        Image.update_input(table, key, new_val, updated_at_us)
-        maybe_dispatch_input(slave_name, {:domain_input, domain_id, key, old_val, new_val})
-      end
+        if new_val != old_val do
+          Image.update_input(table, key, new_val, updated_at_us)
+          change = {key, old_val, new_val}
+          Map.update(acc, slave_name, [change], &[change | &1])
+        else
+          acc
+        end
+      end)
+
+    Enum.each(changes_by_slave, fn {slave_name, changes} ->
+      maybe_dispatch_input(slave_name, {:domain_inputs, domain_id, changes})
     end)
   end
 
