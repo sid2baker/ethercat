@@ -16,10 +16,10 @@ defmodule EtherCAT.Slave do
   require Logger
 
   alias EtherCAT.Slave.Bootstrap
+  alias EtherCAT.Slave.Calls
+  alias EtherCAT.Slave.Configuration
   alias EtherCAT.Slave.DCSignals
   alias EtherCAT.Slave.Health
-  alias EtherCAT.Slave.Mailbox
-  alias EtherCAT.Slave.ProcessData
   alias EtherCAT.Slave.ProcessDataPlan.DomainAttachment
   alias EtherCAT.Slave.ProcessDataPlan.SmGroup
   alias EtherCAT.Slave.Signals
@@ -367,205 +367,16 @@ defmodule EtherCAT.Slave do
 
   # -- ESM API calls ---------------------------------------------------------
 
-  def handle_event({:call, from}, :state, state, _data) do
-    {:keep_state_and_data, [{:reply, from, state}]}
-  end
-
-  def handle_event({:call, from}, :identity, _state, data) do
-    {:keep_state_and_data, [{:reply, from, data.identity}]}
-  end
-
-  def handle_event({:call, from}, :error, _state, data) do
-    {:keep_state_and_data, [{:reply, from, data.error_code}]}
-  end
-
-  def handle_event({:call, from}, :info, state, data) do
-    signals =
-      case data.signal_registrations do
-        nil ->
-          []
-
-        regs ->
-          regs
-          |> Enum.map(fn {name, reg} ->
-            %{
-              name: name,
-              domain: reg.domain_id,
-              direction: reg.direction,
-              sm_index: elem(reg.sm_key, 1),
-              bit_offset: reg.bit_offset,
-              bit_size: reg.bit_size
-            }
-          end)
-          |> Enum.sort_by(&{&1.sm_index, &1.bit_offset})
-      end
-
-    attachments = Signals.attachment_summaries(data.signal_registrations)
-
-    info = %{
-      name: data.name,
-      station: data.station,
-      al_state: state,
-      identity: data.identity,
-      esc: data.esc_info,
-      driver: data.driver,
-      coe: match?(%{recv_size: n} when n > 0, data.mailbox_config),
-      available_fmmus: data.esc_info && data.esc_info.fmmu_count,
-      used_fmmus: length(attachments),
-      attachments: attachments,
-      signals: signals,
-      configuration_error: data.configuration_error
-    }
-
-    {:keep_state_and_data, [{:reply, from, {:ok, info}}]}
-  end
-
-  def handle_event({:call, from}, {:request, target}, state, _data) when state == target do
-    {:keep_state_and_data, [{:reply, from, :ok}]}
-  end
-
-  def handle_event({:call, from}, :authorize_reconnect, :down, %{reconnect_ready?: true} = data) do
-    reconnect_data = %{data | reconnect_ready?: false}
-
-    case initialize_to_preop(reconnect_data) do
-      {:ok, next_state, new_data} ->
-        {:next_state, next_state, %{new_data | reconnect_ready?: false}, [{:reply, from, :ok}]}
-
-      {:ok, next_state, new_data, actions} ->
-        {:next_state, next_state, %{new_data | reconnect_ready?: false},
-         [{:reply, from, :ok} | actions]}
-    end
-  end
-
-  def handle_event({:call, from}, :authorize_reconnect, :down, _data) do
-    {:keep_state_and_data, [{:reply, from, {:error, :not_reconnected}}]}
-  end
-
-  def handle_event({:call, from}, :authorize_reconnect, _state, _data) do
-    {:keep_state_and_data, [{:reply, from, {:error, :not_down}}]}
-  end
-
-  def handle_event({:call, from}, {:request, target}, :preop, %{configuration_error: reason})
-      when target in [:safeop, :op] and not is_nil(reason) do
-    {:keep_state_and_data, [{:reply, from, {:error, {:preop_configuration_failed, reason}}}]}
-  end
-
-  def handle_event({:call, from}, {:request, target}, state, data) do
-    case Map.get(@paths, {state, target}) do
-      nil ->
-        {:keep_state_and_data, [{:reply, from, {:error, :invalid_transition}}]}
-
-      steps ->
-        case walk_path(data, steps) do
-          {:ok, new_data} ->
-            {:next_state, target, new_data, [{:reply, from, :ok}]}
-
-          {:error, reason, new_data} ->
-            {:keep_state, new_data, [{:reply, from, {:error, reason}}]}
-        end
-    end
-  end
-
-  def handle_event({:call, from}, {:configure, opts}, :preop, data) do
-    case maybe_reconfigure_preop(data, opts) do
-      {:ok, new_data} ->
-        {:keep_state, new_data, [{:reply, from, :ok}]}
-
-      {:error, reason, new_data} ->
-        {:keep_state, new_data, [{:reply, from, {:error, reason}}]}
-    end
-  end
-
-  def handle_event({:call, from}, {:configure, _opts}, _state, _data) do
-    {:keep_state_and_data, [{:reply, from, {:error, :not_preop}}]}
-  end
-
-  # -- Subscribe -------------------------------------------------------------
-
-  def handle_event({:call, from}, {:subscribe, signal_name, pid}, _state, data) do
-    {:keep_state, Signals.subscribe_pid(data, signal_name, pid), [{:reply, from, :ok}]}
-  end
-
-  # -- Set output ------------------------------------------------------------
-
-  def handle_event({:call, from}, {:write_output, signal_name, value}, _state, data) do
-    case Map.get(data.signal_registrations, signal_name) do
-      nil ->
-        {:keep_state_and_data, [{:reply, from, {:error, {:not_registered, signal_name}}}]}
-
-      %{direction: :input} ->
-        {:keep_state_and_data, [{:reply, from, {:error, {:not_output, signal_name}}}]}
-
-      %{
-        domain_id: domain_id,
-        sm_key: sm_key,
-        bit_offset: bit_offset,
-        bit_size: bit_size,
-        sm_size: sm_size,
-        direction: :output
-      } ->
-        encoded = data.driver.encode_signal(signal_name, data.config, value)
-        domain_ids = Map.get(data.output_domain_ids_by_sm || %{}, sm_key, [domain_id])
-
-        result =
-          with {:ok, current} <-
-                 ProcessData.current_output_sm_image(data, domain_id, sm_key, sm_size) do
-            next_value = set_sm_bits(current, bit_offset, bit_size, encoded)
-
-            case ProcessData.stage_output_sm_image(data, sm_key, domain_ids, next_value) do
-              :ok ->
-                {:ok, Map.put(data.output_sm_images, sm_key, next_value)}
-
-              {:error, _} = err ->
-                err
-            end
-          end
-
-        case result do
-          {:ok, next_output_sm_images} ->
-            {:keep_state, %{data | output_sm_images: next_output_sm_images},
-             [{:reply, from, :ok}]}
-
-          {:error, reason} ->
-            {:keep_state_and_data, [{:reply, from, {:error, reason}}]}
-        end
-    end
-  end
-
-  # -- Read input ------------------------------------------------------------
-
-  def handle_event({:call, from}, {:read_input, signal_name}, _state, data) do
-    {:keep_state_and_data, [{:reply, from, Signals.read_input(data, signal_name)}]}
-  end
-
-  def handle_event({:call, from}, {:download_sdo, index, subindex, sdo_data}, state, data)
-      when state in [:preop, :safeop, :op] do
-    case Mailbox.download_sdo(data, index, subindex, sdo_data) do
-      {:ok, new_data} ->
-        {:keep_state, new_data, [{:reply, from, :ok}]}
-
-      {:error, reason} ->
-        {:keep_state_and_data, [{:reply, from, {:error, reason}}]}
-    end
-  end
-
-  def handle_event({:call, from}, {:download_sdo, _index, _subindex, _sdo_data}, _state, _data) do
-    {:keep_state_and_data, [{:reply, from, {:error, :mailbox_not_ready}}]}
-  end
-
-  def handle_event({:call, from}, {:upload_sdo, index, subindex}, state, data)
-      when state in [:preop, :safeop, :op] do
-    case Mailbox.upload_sdo(data, index, subindex) do
-      {:ok, value, new_data} ->
-        {:keep_state, new_data, [{:reply, from, {:ok, value}}]}
-
-      {:error, reason} ->
-        {:keep_state_and_data, [{:reply, from, {:error, reason}}]}
-    end
-  end
-
-  def handle_event({:call, from}, {:upload_sdo, _index, _subindex}, _state, _data) do
-    {:keep_state_and_data, [{:reply, from, {:error, :mailbox_not_ready}}]}
+  def handle_event({:call, from}, event, state, data) do
+    Calls.handle(
+      from,
+      event,
+      state,
+      data,
+      paths: @paths,
+      initialize_to_preop: &initialize_to_preop/1,
+      walk_path: &walk_path/2
+    )
   end
 
   # -- Domain input change notification (sent by Domain on cycle) ------------
@@ -647,176 +458,14 @@ defmodule EtherCAT.Slave do
     )
   end
 
-  # -- PREOP configuration (called from :preop enter) -----------------------
-
-  defp configure_preop_process_data(%{driver: nil} = data) do
-    ProcessData.configure_preop(data, run_mailbox_config: &Mailbox.run_preop_config/1)
-  end
-
-  defp configure_preop_process_data(data) do
-    invoke_driver(data, :on_preop)
-    ProcessData.configure_preop(data, run_mailbox_config: &Mailbox.run_preop_config/1)
-  end
-
-  defp maybe_reconfigure_preop(%{signal_registrations: registrations} = data, opts)
-       when map_size(registrations) > 0 do
-    requested_driver = Keyword.get(opts, :driver, data.driver)
-    requested_config = Keyword.get(opts, :config, data.config)
-    requested_process_data = Keyword.get(opts, :process_data, data.process_data_request)
-    requested_sync = Keyword.get(opts, :sync, data.sync_config)
-    requested_health_poll_ms = Keyword.get(opts, :health_poll_ms, data.health_poll_ms)
-
-    if requested_driver == data.driver and requested_config == data.config and
-         requested_process_data == data.process_data_request do
-      case apply_sync_only_reconfigure(data, requested_sync) do
-        {:ok, new_data} ->
-          {:ok, %{new_data | health_poll_ms: requested_health_poll_ms}}
-
-        {:error, reason} ->
-          {:error, reason, data}
-      end
-    else
-      {:error, :already_configured, data}
-    end
-  end
-
-  defp maybe_reconfigure_preop(data, opts) do
-    updated_data = %{
-      data
-      | driver: Keyword.get(opts, :driver, data.driver),
-        config: Keyword.get(opts, :config, data.config),
-        process_data_request: Keyword.get(opts, :process_data, data.process_data_request),
-        sync_config: Keyword.get(opts, :sync, data.sync_config),
-        health_poll_ms: Keyword.get(opts, :health_poll_ms, data.health_poll_ms)
-    }
-
-    configured = configure_preop_process_data(updated_data)
-
-    case configured.configuration_error do
-      nil -> {:ok, configured}
-      reason -> {:error, reason, configured}
-    end
-  end
-
-  defp apply_sync_only_reconfigure(data, requested_sync)
-       when requested_sync == data.sync_config do
-    {:ok, data}
-  end
-
-  defp apply_sync_only_reconfigure(data, requested_sync) do
-    updated_data = %{data | sync_config: requested_sync}
-
-    case Mailbox.run_sync_config(updated_data) do
-      {:ok, _mailbox_data} ->
-        {:ok, updated_data}
-
-      {:error, reason} ->
-        ProcessData.log_configuration_error(updated_data, reason)
-        {:error, reason}
-    end
-  end
-
   # -- Transition helpers ----------------------------------------------------
 
   defp walk_path(data, steps), do: Transition.walk_path(data, steps, transition_opts())
 
   defp transition_to(data, target), do: Transition.transition_to(data, target, transition_opts())
 
-  defp post_transition(:preop, data) do
-    new_data = configure_preop_process_data(data)
-
-    Logger.debug(
-      "[Slave #{data.name}] preop: ready (#{map_size(new_data.signal_registrations)} signal(s) registered)"
-    )
-
-    send(EtherCAT.Master, {:slave_ready, data.name, :preop})
-    {:ok, new_data}
-  end
-
-  defp post_transition(:safeop, data) do
-    invoke_driver(data, :on_safeop)
-    DCSignals.configure(data)
-  end
-
-  defp post_transition(:op, data) do
-    invoke_driver(data, :on_op)
-    {:ok, data}
-  end
-
-  defp post_transition(_target, data), do: {:ok, data}
-
   defp transition_opts do
-    [
-      al_codes: @al_codes,
-      poll_limit: @poll_limit,
-      poll_interval_ms: @poll_interval_ms,
-      post_transition: &post_transition/2
-    ]
-  end
-
-  # -- Driver invocation -----------------------------------------------------
-
-  defp invoke_driver(data, cb), do: invoke_driver(data, cb, [])
-
-  defp invoke_driver(%{driver: nil}, _cb, _args), do: :ok
-
-  defp invoke_driver(data, cb, args) do
-    arity = 2 + length(args)
-
-    if function_exported?(data.driver, cb, arity) do
-      apply(data.driver, cb, [data.name, data.config | args])
-    end
-
-    :ok
-  end
-
-  # -- Bit-level SM packing helpers ------------------------------------------
-
-  # Write `bit_size` bits from `encoded` into `sm_bytes` at `bit_offset`.
-  # `encoded` is the driver's output binary; its LSB-aligned value is packed in.
-  defp set_sm_bits(sm_bytes, _bit_offset, _bit_size, <<>>), do: sm_bytes
-
-  defp set_sm_bits(sm_bytes, bit_offset, bit_size, encoded) do
-    if rem(bit_offset, 8) == 0 and rem(bit_size, 8) == 0 do
-      # Byte-aligned fast path
-      byte_off = div(bit_offset, 8)
-      byte_sz = div(bit_size, 8)
-      total = byte_size(sm_bytes)
-      padded = encoded <> :binary.copy(<<0>>, max(0, byte_sz - byte_size(encoded)))
-
-      binary_part(sm_bytes, 0, byte_off) <>
-        binary_part(padded, 0, byte_sz) <>
-        binary_part(sm_bytes, byte_off + byte_sz, total - byte_off - byte_sz)
-    else
-      total_bits = byte_size(sm_bytes) * 8
-      <<sm_value::unsigned-little-size(total_bits)>> = sm_bytes
-
-      encoded_bits = byte_size(encoded) * 8
-      <<encoded_value::unsigned-little-size(encoded_bits)>> = encoded
-
-      field_value =
-        if encoded_bits >= bit_size do
-          <<_::size(encoded_bits - bit_size), field::size(bit_size)>> =
-            <<encoded_value::size(encoded_bits)>>
-
-          field
-        else
-          <<field::size(bit_size)>> =
-            <<0::size(bit_size - encoded_bits), encoded_value::size(encoded_bits)>>
-
-          field
-        end
-
-      high_bits = total_bits - bit_offset - bit_size
-
-      <<high::size(high_bits), _::size(bit_size), low::size(bit_offset)>> =
-        <<sm_value::size(total_bits)>>
-
-      <<patched_value::size(total_bits)>> =
-        <<high::size(high_bits), field_value::size(bit_size), low::size(bit_offset)>>
-
-      <<patched_value::unsigned-little-size(total_bits)>>
-    end
+    Configuration.transition_opts(@al_codes, @poll_limit, @poll_interval_ms)
   end
 
   # -- Registry helpers -------------------------------------------------------
