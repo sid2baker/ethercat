@@ -8,12 +8,12 @@ defmodule EtherCAT.Master.Activation do
   alias EtherCAT.Master.Status
 
   @spec activate_network(%EtherCAT.Master{}) ::
-          {:ok, {:running, :preop_ready} | {:running, :operational}, %EtherCAT.Master{}}
+          {:ok, :preop_ready | :operational, %EtherCAT.Master{}}
           | {:activation_blocked, %EtherCAT.Master{}}
           | {:error, term(), %EtherCAT.Master{}}
   def activate_network(%{activatable_slaves: []} = data) do
     Logger.info("[Master] dynamic startup: slaves held in :preop for runtime configuration")
-    {:ok, {:running, :preop_ready}, %{data | activation_failures: %{}}}
+    {:ok, :preop_ready, %{data | activation_failures: %{}}}
   end
 
   def activate_network(data) do
@@ -28,7 +28,7 @@ defmodule EtherCAT.Master.Activation do
           activated_data = %{dc_data | activation_failures: activation_failures}
 
           if map_size(activation_failures) == 0 do
-            {:ok, {:running, :operational}, activated_data}
+            {:ok, :operational, activated_data}
           else
             Logger.warning(
               "[Master] activation incomplete; blocked for #{inspect(Map.keys(activation_failures))}"

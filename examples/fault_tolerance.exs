@@ -23,7 +23,7 @@
 #      slave reinitialises via :down reconnect poll →
 #        - slave reaches :preop (post_transition sends {:slave_ready})
 #        - if C stopped the domain, master restarts it
-#        - master activates to :op → returns to :running
+#        - master activates to :op → returns to :operational
 #
 # Hardware:
 #   position 0  EK1100 coupler          (:coupler)
@@ -116,18 +116,18 @@ defmodule FT.Helpers do
     end)
   end
 
-  def poll_until_phase(target_phase, timeout_ms, poll_ms \\ 100) do
+  def poll_until_state(target_state, timeout_ms, poll_ms \\ 100) do
     deadline = System.monotonic_time(:millisecond) + timeout_ms
 
     Stream.repeatedly(fn -> :ok end)
     |> Enum.reduce_while(:polling, fn _, _ ->
-      phase = EtherCAT.phase()
+      state = EtherCAT.state()
 
-      if phase == target_phase do
+      if state == target_state do
         {:halt, :ok}
       else
         if System.monotonic_time(:millisecond) >= deadline do
-          {:halt, {:error, :timeout, phase}}
+          {:halt, {:error, :timeout, state}}
         else
           Process.sleep(poll_ms)
           {:cont, :polling}
@@ -608,19 +608,19 @@ results =
       end)
 
     # Verify master entered :recovering
-    phase_status =
-      case FT.Helpers.poll_until_phase(:recovering, 2_000) do
+    state_status =
+      case FT.Helpers.poll_until_state(:recovering, 2_000) do
         :ok ->
           FT.Helpers.print("master entered :recovering", :ok)
           :ok
 
-        {:error, :timeout, phase} ->
-          FT.Helpers.print("master phase", :error, "expected :recovering, got #{inspect(phase)}")
+        {:error, :timeout, state} ->
+          FT.Helpers.print("master state", :error, "expected :recovering, got #{inspect(state)}")
           :error
       end
 
     c_status =
-      if c_result == :ok and domain_status == :ok and phase_status == :ok, do: :ok, else: :error
+      if c_result == :ok and domain_status == :ok and state_status == :ok, do: :ok, else: :error
 
     {Map.put(results, :c, c_status), domain_modes}
   end
@@ -634,7 +634,7 @@ results =
     IO.puts("\n── D. Recovery after reconnect ── SKIPPED ──────────────────────────")
     Map.put(results, :d, :skipped)
   else
-    FT.Helpers.section("D. Recovery — reconnect and return to :running")
+    FT.Helpers.section("D. Recovery — reconnect and return to :operational")
     IO.puts("  Reconnect the cable. Slave will reconnect-poll, reinitialise,")
     IO.puts("  reach :preop, and master will activate it back to :op.")
 
@@ -647,13 +647,13 @@ results =
 
     t_reconnect = System.monotonic_time(:millisecond)
 
-    IO.puts("  Waiting for master to return to :running (max 15s)...")
+    IO.puts("  Waiting for master to return to :operational (max 15s)...")
 
     d_result =
-      case FT.Helpers.poll_until_phase(:operational, 15_000) do
+      case FT.Helpers.poll_until_state(:operational, 15_000) do
         :ok ->
           latency = System.monotonic_time(:millisecond) - t_reconnect
-          FT.Helpers.print("master returned to :running / :operational", :ok, "in #{latency} ms")
+          FT.Helpers.print("master returned to :operational", :ok, "in #{latency} ms")
 
           domain_result =
             case FT.Helpers.poll_until_domains_state(main_domain_ids, :cycling, 5_000) do
@@ -726,11 +726,11 @@ results =
 
           if domain_result == :ok and split_attachment_result == :ok, do: :ok, else: :error
 
-        {:error, :timeout, last_phase} ->
+        {:error, :timeout, last_state} ->
           FT.Helpers.print(
-            "master did NOT return to :running",
+            "master did NOT return to :operational",
             :error,
-            "last phase=#{inspect(last_phase)}"
+            "last state=#{inspect(last_state)}"
           )
 
           :error
@@ -751,7 +751,7 @@ Enum.each(
     {:a2, "A2 Slave crash detection"},
     {:b, "B  Domain stop on total bus failure"},
     {:c, "C  Slave disconnect → :down + recovery domain outcome"},
-    {:d, "D  Slave reconnect → :op + master :running"}
+    {:d, "D  Slave reconnect → :op + master :operational"}
   ],
   fn {key, label} ->
     case Map.get(results, key, :skipped) do

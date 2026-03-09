@@ -59,7 +59,7 @@ Master :discovering ──── BRD 0x0000, count stable ──── Master :a
               (separate DC frame carries FRMW + diagnostics) → optional DC lock wait → SafeOp
               → checked post-transition DC SYNC/latch setup → Op
               OR (dynamic startup) remain in PreOp for runtime configuration →
-              Master {:running, :preop_ready}
+              Master :preop_ready
 ```
 
 ### Cyclic I/O (Domain owns)

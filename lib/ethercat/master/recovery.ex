@@ -7,7 +7,7 @@ defmodule EtherCAT.Master.Recovery do
   alias EtherCAT.Master.Activation
 
   @spec retry_activation_blocked_state(%EtherCAT.Master{}) ::
-          {:ok, {:running, :operational}, %EtherCAT.Master{}}
+          {:ok, :operational, %EtherCAT.Master{}}
           | {:recovering, %EtherCAT.Master{}}
   def retry_activation_blocked_state(%{activation_failures: failures} = data)
       when map_size(failures) == 0 do
@@ -38,7 +38,7 @@ defmodule EtherCAT.Master.Recovery do
   end
 
   @spec retry_recovering_state(%EtherCAT.Master{}) ::
-          {:ok, {:running, :operational}, %EtherCAT.Master{}}
+          {:ok, :operational, %EtherCAT.Master{}}
           | {:recovering, %EtherCAT.Master{}}
   def retry_recovering_state(data) do
     data
@@ -67,12 +67,14 @@ defmodule EtherCAT.Master.Recovery do
   end
 
   @spec transition_runtime_fault(
-          atom() | {:running, :preop_ready | :operational},
+          atom(),
           %EtherCAT.Master{}
         ) ::
           {:next_state, :recovering, %EtherCAT.Master{}}
           | {:keep_state, %EtherCAT.Master{}}
-  def transition_runtime_fault({:running, _phase}, data), do: {:next_state, :recovering, data}
+  def transition_runtime_fault(state, data) when state in [:preop_ready, :operational],
+    do: {:next_state, :recovering, data}
+
   def transition_runtime_fault(:recovering, data), do: {:keep_state, data}
   def transition_runtime_fault(_state, data), do: {:keep_state, data}
 
@@ -88,12 +90,12 @@ defmodule EtherCAT.Master.Recovery do
   end
 
   @spec maybe_resume_running(%EtherCAT.Master{}) ::
-          {:ok, {:running, :operational}, %EtherCAT.Master{}}
+          {:ok, :operational, %EtherCAT.Master{}}
           | {:recovering, %EtherCAT.Master{}}
   def maybe_resume_running(data) do
     if map_size(data.activation_failures) == 0 and map_size(data.runtime_faults) == 0 do
       Logger.info("[Master] recovery succeeded; operational path is healthy again")
-      {:ok, {:running, :operational}, %{data | activation_failures: %{}, runtime_faults: %{}}}
+      {:ok, :operational, %{data | activation_failures: %{}, runtime_faults: %{}}}
     else
       {:recovering, data}
     end

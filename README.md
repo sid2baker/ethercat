@@ -14,7 +14,7 @@ Pure-Elixir EtherCAT master built on OTP.
 - Best for discrete I/O, Beckhoff terminal stacks, diagnostics, and 1 ms to 10 ms cyclic loops.
 - Not the right fit for sub-millisecond hard real-time control.
 
-The entry idea is simple: the **master owns the session lifecycle**, **domains own cyclic LRW exchange**, **slaves own ESM and slave-local configuration**, and **DC owns clock discipline**. When runtime faults happen, the public phase moves to `:recovering`, healthy parts keep running when possible, and the master decides how to recover.
+The entry idea is simple: the **master owns the session lifecycle**, **domains own cyclic LRW exchange**, **slaves own ESM and slave-local configuration**, and **DC owns clock discipline**. When runtime faults happen, the public state moves to `:recovering`, healthy parts keep running when possible, and the master decides how to recover.
 
 ## Installation
 
@@ -39,7 +39,7 @@ EtherCAT.start(interface: "eth0")
 
 :ok = EtherCAT.await_running()
 
-EtherCAT.phase()
+EtherCAT.state()
 #=> :preop_ready
 
 EtherCAT.slaves()
@@ -121,7 +121,7 @@ If you understand those five roles, the rest of the API is predictable.
 
 ## Lifecycle
 
-Public startup and runtime health are exposed through `EtherCAT.phase/0`:
+Public startup and runtime health are exposed through `EtherCAT.state/0`:
 
 - `:idle`
 - `:discovering`
@@ -133,37 +133,10 @@ Public startup and runtime health are exposed through `EtherCAT.phase/0`:
 
 `await_running/1` waits for a usable session. `await_operational/1` waits for cyclic OP.
 
-### 1. Master-owned lifecycle
+The master state chart below is also the public `state/0` lifecycle. There is
+no separate lifecycle abstraction on top of the master states anymore.
 
-This is the actual user-facing `phase/0` model. Activation problems surface as
-`:activation_blocked`; runtime path faults surface as `:recovering`.
-
-```mermaid
-stateDiagram-v2
-    [*] --> idle
-    idle --> discovering: start/1
-    discovering --> awaiting_preop: configured slaves are still pending
-    discovering --> preop_ready: startup completes without activation
-    discovering --> operational: startup completes and activation succeeds
-    discovering --> activation_blocked: startup completes but activation is incomplete
-    discovering --> idle: configuration fails or stop/0
-    awaiting_preop --> preop_ready: all slaves reached PREOP, no activation requested
-    awaiting_preop --> operational: all slaves reached PREOP and activation succeeds
-    awaiting_preop --> activation_blocked: all slaves reached PREOP but activation is incomplete
-    awaiting_preop --> idle: timeout, activation failure, or stop/0
-    preop_ready --> operational: activate/0 succeeds
-    preop_ready --> activation_blocked: activate/0 is incomplete
-    preop_ready --> idle: stop/0
-    activation_blocked --> operational: retry clears activation failures and no runtime faults remain
-    activation_blocked --> recovering: activation failures clear but runtime faults remain
-    activation_blocked --> idle: stop/0 or bus down
-    operational --> recovering: runtime fault in domain, slave, or DC
-    operational --> idle: stop/0 or fatal failure
-    recovering --> operational: runtime faults are cleared
-    recovering --> idle: stop/0 or recovery fails
-```
-
-### 2. Startup sequencing across subsystems
+### 1. Startup sequencing across subsystems
 
 ```mermaid
 sequenceDiagram
@@ -196,10 +169,10 @@ sequenceDiagram
         Master->>Slave: request SAFEOP
         Master->>Slave: request OP
     end
-    Master-->>App: phase becomes preop_ready or operational
+    Master-->>App: state becomes preop_ready or operational
 ```
 
-### 3. Runtime fault recovery
+### 2. Runtime fault recovery
 
 This library aims for BEAM-friendly fault tolerance: keep healthy work running when
 possible, surface faults explicitly, and let the master own recovery policy.
@@ -217,7 +190,7 @@ sequenceDiagram
     Domain-->>Master: cycle is invalid or domain stops
     Slave-->>Master: slave goes down or retreats
     DC-->>Master: runtime fails or lock is lost
-    Master-->>App: phase becomes recovering
+    Master-->>App: state becomes recovering
     opt unaffected domains remain valid
         Note over Domain,Master: healthy domains may keep cycling
     end
@@ -234,15 +207,15 @@ sequenceDiagram
     opt a DC fault is part of the runtime fault set
         DC-->>Master: runtime recovers or lock returns
     end
-    Master-->>App: phase becomes operational
+    Master-->>App: state becomes operational
 ```
 
-### 4. Runtime state charts by process
+### 3. Runtime state charts by process
 
 These charts reflect the current code paths and their protocol areas:
 
-If you only need the public contract, the master-owned lifecycle above is the
-one to read first. The charts below are implementation-facing.
+If you only need the public contract, the master chart below is the one to read
+first. The other charts are implementation-facing.
 
 - `Master` / `Domain`: startup, activation, cyclic runtime, and recovery
 - `Slave`: ESM transitions, AL control, and slave-local configuration
@@ -250,36 +223,31 @@ one to read first. The charts below are implementation-facing.
 
 #### Master (`lib/ethercat/master.ex`)
 
-`Master` uses real tuple-based running states, `{:running, :preop_ready}` and
-`{:running, :operational}`, plus a public `phase/0` projection. This chart now
-maps the implementation 1:1: every node is an actual `Master` state, and the
-running tuple states are shown directly instead of through helper nodes.
+`Master` now uses the same state vocabulary that `state/0` exposes. This chart
+maps the implementation 1:1: every node is an actual `Master` state.
 
 ```mermaid
 stateDiagram-v2
-    state "{:running, :preop_ready}" as running_preop
-    state "{:running, :operational}" as running_operational
-
     [*] --> idle
     idle --> discovering: start/1
     discovering --> awaiting_preop: configured slaves are still pending
-    discovering --> running_preop: startup completes without activation
-    discovering --> running_operational: startup completes and activation succeeds
+    discovering --> preop_ready: startup completes without activation
+    discovering --> operational: startup completes and activation succeeds
     discovering --> activation_blocked: startup completes but activation is incomplete
     discovering --> idle: configuration fails, stop, or bus down
-    awaiting_preop --> running_preop: all slaves reached PREOP, no activation requested
-    awaiting_preop --> running_operational: all slaves reached PREOP and activation succeeds
+    awaiting_preop --> preop_ready: all slaves reached PREOP, no activation requested
+    awaiting_preop --> operational: all slaves reached PREOP and activation succeeds
     awaiting_preop --> activation_blocked: all slaves reached PREOP but activation is incomplete
     awaiting_preop --> idle: timeout, activation failure, stop, or bus down
-    running_preop --> running_operational: activate/0 succeeds
-    running_preop --> activation_blocked: activate/0 is incomplete
-    running_preop --> idle: stop or bus down
-    running_operational --> recovering: runtime fault in domain, slave, or DC
-    running_operational --> idle: stop, bus down, or fatal DC policy
-    activation_blocked --> running_operational: activation failures clear and no runtime faults remain
+    preop_ready --> operational: activate/0 succeeds
+    preop_ready --> activation_blocked: activate/0 is incomplete
+    preop_ready --> idle: stop or bus down
+    operational --> recovering: runtime fault in domain, slave, or DC
+    operational --> idle: stop, bus down, or fatal DC policy
+    activation_blocked --> operational: activation failures clear and no runtime faults remain
     activation_blocked --> recovering: activation failures clear but runtime faults remain
     activation_blocked --> idle: stop or bus down
-    recovering --> running_operational: runtime faults are cleared
+    recovering --> operational: runtime faults are cleared
     recovering --> idle: stop, bus down, or recovery fails
 ```
 

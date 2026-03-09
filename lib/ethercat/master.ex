@@ -25,7 +25,7 @@ defmodule EtherCAT.Master do
   @awaiting_preop_timeout_ms 30_000
 
   @retry_ms 1_000
-  @running_operational {:running, :operational}
+  @operational :operational
 
   defstruct [
     :bus_ref,
@@ -51,7 +51,7 @@ defmodule EtherCAT.Master do
     runtime_faults: %{},
     # last terminal session failure retained after returning to :idle
     last_failure: nil,
-    # blocked await_running callers — replied when a running state is entered
+    # blocked await_running callers — replied when a usable session state is entered
     await_callers: [],
     # blocked await_operational callers — replied when cyclic operation is live
     await_operational_callers: [],
@@ -129,13 +129,9 @@ defmodule EtherCAT.Master do
   def last_failure, do: safe_call(:last_failure)
 
   @doc """
-  Return the current session phase.
-
-  This is the public lifecycle view and distinguishes between PREOP-ready
-  startup, activation-blocked startup, fully operational cyclic runtime, and
-  runtime recovery.
+  Return the current session state.
   """
-  @spec phase() ::
+  @spec state() ::
           :idle
           | :discovering
           | :awaiting_preop
@@ -144,7 +140,7 @@ defmodule EtherCAT.Master do
           | :activation_blocked
           | :recovering
           | {:error, :not_started}
-  def phase, do: safe_call(:phase)
+  def state, do: safe_call(:state)
 
   @doc """
   Configure a discovered slave while the session is still in PREOP.
@@ -182,10 +178,10 @@ defmodule EtherCAT.Master do
   end
 
   @doc """
-  Block until the master reaches a running state, then return `:ok`.
+  Block until the master reaches a usable session state, then return `:ok`.
 
-  Returns immediately if already in `{:running, phase}`. Returns
-  `{:error, :timeout}` if the master does not reach a running state within
+  Returns immediately if already in `:preop_ready` or `:operational`. Returns
+  `{:error, :timeout}` if the master does not reach a usable session state within
   `timeout_ms` milliseconds.
   Returns `{:error, :not_started}` if the master process is not running.
   Returns `{:error, {:activation_failed, failures}}` or
@@ -315,7 +311,7 @@ defmodule EtherCAT.Master do
     {:keep_state_and_data, [{:reply, from, data.last_failure}]}
   end
 
-  def handle_event({:call, from}, :phase, :idle, _data) do
+  def handle_event({:call, from}, :state, :idle, _data) do
     {:keep_state_and_data, [{:reply, from, :idle}]}
   end
 
@@ -509,43 +505,45 @@ defmodule EtherCAT.Master do
     {:keep_state, %{data | await_operational_callers: [from | data.await_operational_callers]}}
   end
 
-  # {:running, ...} ----------------------------------------------------------
+  # :preop_ready / :operational ----------------------------------------------
 
-  def handle_event(:enter, _old, {:running, :preop_ready}, data) do
+  def handle_event(:enter, _old, :preop_ready, data) do
     Logger.info("[Master] running — slaves ready in PREOP, waiting for explicit activate/0")
     reply_await_callers(data.await_callers, :ok)
     {:keep_state, %{data | await_callers: []}}
   end
 
-  def handle_event(:enter, _old, {:running, :operational}, data) do
+  def handle_event(:enter, _old, :operational, data) do
     Logger.info("[Master] running")
     reply_await_callers(data.await_callers, :ok)
     reply_await_callers(data.await_operational_callers, :ok)
     {:keep_state, %{data | await_callers: [], await_operational_callers: []}}
   end
 
-  def handle_event({:call, from}, :stop, {:running, _phase}, data) do
+  def handle_event({:call, from}, :stop, state, data)
+      when state in [:preop_ready, :operational] do
     stop_session(data)
     reply_await_callers(data.await_operational_callers, {:error, :stopped})
     {:next_state, :idle, reset_master(data.last_failure), [{:reply, from, :ok}]}
   end
 
-  def handle_event({:call, from}, :await_running, {:running, _phase}, _data) do
+  def handle_event({:call, from}, :await_running, state, _data)
+      when state in [:preop_ready, :operational] do
     {:keep_state_and_data, [{:reply, from, :ok}]}
   end
 
-  def handle_event({:call, from}, :await_operational, {:running, :operational}, _data) do
+  def handle_event({:call, from}, :await_operational, :operational, _data) do
     {:keep_state_and_data, [{:reply, from, :ok}]}
   end
 
-  def handle_event({:call, from}, :await_operational, {:running, :preop_ready}, data) do
+  def handle_event({:call, from}, :await_operational, :preop_ready, data) do
     {:keep_state, %{data | await_operational_callers: [from | data.await_operational_callers]}}
   end
 
   def handle_event(
         {:call, from},
         {:configure_slave, _slave_name, _spec},
-        {:running, :operational},
+        :operational,
         _data
       ) do
     {:keep_state_and_data, [{:reply, from, {:error, :activation_already_started}}]}
@@ -554,7 +552,7 @@ defmodule EtherCAT.Master do
   def handle_event(
         {:call, from},
         {:configure_slave, slave_name, spec},
-        {:running, :preop_ready},
+        :preop_ready,
         data
       ) do
     case configure_discovered_slave(data, slave_name, spec) do
@@ -566,11 +564,11 @@ defmodule EtherCAT.Master do
     end
   end
 
-  def handle_event({:call, from}, :activate, {:running, :operational}, _data) do
+  def handle_event({:call, from}, :activate, :operational, _data) do
     {:keep_state_and_data, [{:reply, from, {:error, :already_activated}}]}
   end
 
-  def handle_event({:call, from}, :activate, {:running, :preop_ready}, data) do
+  def handle_event({:call, from}, :activate, :preop_ready, data) do
     case Activation.activate_network(data) do
       {:ok, next_state, active_data} ->
         reply_await_callers(active_data.await_operational_callers, :ok)
@@ -692,8 +690,8 @@ defmodule EtherCAT.Master do
   # -- Shared handlers (all non-idle states) ---------------------------------
 
   # Query handlers — work in all active states
-  def handle_event({:call, from}, :phase, state, data) do
-    {:keep_state_and_data, [{:reply, from, Status.phase(state, data)}]}
+  def handle_event({:call, from}, :state, state, _data) do
+    {:keep_state_and_data, [{:reply, from, state}]}
   end
 
   def handle_event({:call, from}, :last_failure, _state, data) do
@@ -818,7 +816,7 @@ defmodule EtherCAT.Master do
     Recovery.transition_runtime_fault(state, recovering_data)
   end
 
-  def handle_event(:info, {:domain_cycle_invalid, id, reason}, @running_operational, data) do
+  def handle_event(:info, {:domain_cycle_invalid, id, reason}, @operational, data) do
     Logger.warning("[Master] domain #{id} cycle invalid: #{inspect(reason)} — entering recovery")
 
     {:next_state, :recovering,
@@ -851,7 +849,7 @@ defmodule EtherCAT.Master do
   end
 
   # Slave retreated to a lower ESM state (AL fault detected by health poll)
-  def handle_event(:info, {:slave_retreated, name, target_state}, @running_operational, data) do
+  def handle_event(:info, {:slave_retreated, name, target_state}, @operational, data) do
     Logger.warning("[Master] slave #{name} retreated to #{target_state} — entering recovery")
 
     {:next_state, :recovering,
@@ -869,7 +867,7 @@ defmodule EtherCAT.Master do
   end
 
   # Slave physically disconnected (health poll wkc=0 or bus error)
-  def handle_event(:info, {:slave_down, name}, @running_operational, data) do
+  def handle_event(:info, {:slave_down, name}, @operational, data) do
     Logger.warning("[Master] slave #{name} disconnected — entering recovery")
 
     {:next_state, :recovering,
@@ -928,7 +926,7 @@ defmodule EtherCAT.Master do
     end
   end
 
-  def handle_event(:info, {:dc_runtime_failed, reason}, @running_operational, data) do
+  def handle_event(:info, {:dc_runtime_failed, reason}, @operational, data) do
     Logger.warning("[Master] DC runtime failed: #{inspect(reason)} — entering recovery")
 
     {:next_state, :recovering,
@@ -955,7 +953,7 @@ defmodule EtherCAT.Master do
   def handle_event(
         :info,
         {:dc_lock_lost, lock_state, max_sync_diff_ns},
-        @running_operational,
+        @operational,
         data
       )
       when not is_nil(data.dc_config) do
@@ -990,7 +988,7 @@ defmodule EtherCAT.Master do
   def handle_event(
         :info,
         {:dc_lock_lost, _lock_state, _max_sync_diff_ns},
-        @running_operational,
+        @operational,
         _data
       ) do
     :keep_state_and_data
@@ -1030,7 +1028,7 @@ defmodule EtherCAT.Master do
     :keep_state_and_data
   end
 
-  def handle_event(:info, {:dc_lock_regained, max_sync_diff_ns}, @running_operational, data)
+  def handle_event(:info, {:dc_lock_regained, max_sync_diff_ns}, @operational, data)
       when not is_nil(data.dc_config) do
     case Recovery.lock_policy(data) do
       :advisory ->
@@ -1045,7 +1043,7 @@ defmodule EtherCAT.Master do
     end
   end
 
-  def handle_event(:info, {:dc_lock_regained, _max_sync_diff_ns}, @running_operational, _data) do
+  def handle_event(:info, {:dc_lock_regained, _max_sync_diff_ns}, @operational, _data) do
     :keep_state_and_data
   end
 

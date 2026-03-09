@@ -10,7 +10,7 @@ defmodule EtherCAT do
   - `DC` owns distributed-clock initialization and runtime maintenance
   - `Bus` serializes all frame I/O
 
-  Public session health is exposed through `phase/0`:
+  Public session health is exposed through `state/0`:
 
   - `:idle`
   - `:discovering`
@@ -25,8 +25,8 @@ defmodule EtherCAT do
 
   ## Runtime Lifecycle
 
-  This is the public `phase/0` lifecycle. It covers startup, activation,
-  cyclic runtime, and recovery.
+  This is the public `state/0` lifecycle. It matches the actual `Master`
+  states directly.
 
   ```mermaid
   stateDiagram-v2
@@ -86,7 +86,7 @@ defmodule EtherCAT do
           Master->>Slave: request SAFEOP
           Master->>Slave: request OP
       end
-      Master-->>App: phase becomes preop_ready or operational
+      Master-->>App: state becomes preop_ready or operational
   ```
 
   ## Usage
@@ -189,7 +189,7 @@ defmodule EtherCAT do
   def stop, do: Master.stop()
 
   @doc """
-  Block until the master reaches a running state, then return `:ok`.
+  Block until the master reaches a usable session state, then return `:ok`.
 
   Returns `{:error, :timeout}` if startup does not complete within `timeout_ms` ms.
   Returns `{:error, :not_started}` if `start/1` has not been called.
@@ -208,7 +208,7 @@ defmodule EtherCAT do
   def await_operational(timeout_ms \\ 10_000), do: Master.await_operational(timeout_ms)
 
   @doc """
-  Return the current public session phase.
+  Return the current public session state.
 
   Values:
     - `:idle`
@@ -219,7 +219,7 @@ defmodule EtherCAT do
     - `:activation_blocked` — startup/activation is blocked before operational cyclic runtime
     - `:recovering` — runtime fault recovery in progress
   """
-  @spec phase() ::
+  @spec state() ::
           :idle
           | :discovering
           | :awaiting_preop
@@ -227,7 +227,7 @@ defmodule EtherCAT do
           | :operational
           | :activation_blocked
           | :recovering
-  def phase, do: Master.phase()
+  def state, do: Master.state()
 
   @doc """
   Return a Distributed Clocks status snapshot for the current session.
