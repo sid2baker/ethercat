@@ -20,7 +20,7 @@ The entry idea is simple: the **master owns the session lifecycle**, **domains o
 
 ```elixir
 def deps do
-  [{:ethercat, "~> 0.1.0"}]
+  [{:ethercat, "~> 0.2.0"}]
 end
 ```
 
@@ -148,9 +148,8 @@ For detailed state diagrams and sequencing, see the moduledocs:
 - Total bus loss can stop domains after the configured miss threshold; recovery can restart them.
 - Slave reconnect is PREOP-first: the slave rebuilds its local state, then the master decides when to return it to OP.
 
-The maintained end-to-end hardware walkthrough for this is:
-
-- [`examples/fault_tolerance.exs`](examples/fault_tolerance.exs)
+The maintained end-to-end hardware walkthrough is the `examples/fault_tolerance.exs`
+script in the repo.
 
 ## Where To Start
 
@@ -161,7 +160,7 @@ interactive UI for ring discovery, I/O control, and diagnostics.
 
 ### Maintained hardware examples
 
-See [`examples/README.md`](examples/README.md) for the maintained hardware scripts.
+The repo ships maintained hardware scripts under `examples/`.
 Recommended first stops:
 
 - `examples/scan.exs`

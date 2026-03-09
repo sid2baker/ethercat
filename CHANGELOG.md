@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-03-09
+
+### Added
+- Dynamic PREOP-first startup and configuration flow for discovered slaves
+- Master-owned logical window allocation for high-level domain configs
+- Split `{domain, SyncManager}` attachment support, including split-SM diagnostics
+- Explicit runtime fault recovery with `:recovering` state and targeted slave fault tracking
+- Input freshness timestamps via `read_input/2 -> {:ok, {value, updated_at_us}}`
+- Public telemetry event enumeration via `EtherCAT.Telemetry.events/0`
+- Richer runtime diagnostics for slaves, domains, and DC status
+
+### Changed
+- Public lifecycle is now exposed through `EtherCAT.state/0`
+- `EtherCAT.Domain.Config` no longer accepts `logical_base`; the master allocates it
+- Master, Slave, Domain, and DC runtime boundaries were decomposed into smaller internal modules
+- Slave internals are grouped under clearer runtime, process-data, mailbox, and ESC namespaces
+- Automatic bus frame-timeout tuning now uses a safer host-jitter floor on slower cycles
+
+### Fixed
+- Reconnect and recovery paths now preserve split attachment semantics and restart stopped domains
+- `examples/el3202.exs` and `examples/sdo_debug.exs` now work against the current driver/runtime contract
+- Hardware fault-tolerance examples now match the current recovery model
+- Polling callers regain access to cached PDO freshness metadata
+
+### Docs
+- README and moduledocs now reflect the actual runtime state machines and current API
+- Completed refactor and spec-alignment plans were closed and moved out of active execution
+
 ## [0.1.0] - 2026-03-07
 
 ### Added
