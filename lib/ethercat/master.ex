@@ -587,8 +587,9 @@ defmodule EtherCAT.Master do
       {:ok, healed_data} ->
         {:next_state, :running, healed_data}
 
-      {:recovering, still_degraded} ->
-        {:keep_state, still_degraded, [{{:timeout, :degraded_retry}, @degraded_retry_ms, nil}]}
+      {:recovering, still_recovering} ->
+        {:next_state, :recovering, still_recovering,
+         [{{:timeout, :degraded_retry}, @degraded_retry_ms, nil}]}
     end
   end
 

@@ -161,6 +161,27 @@ defmodule EtherCAT.MasterTest do
              )
   end
 
+  test "degraded retry enters recovering when activation failures clear but runtime faults remain" do
+    start_supervised!(%{
+      id: make_ref(),
+      start: {FakeSlave, :start_link, [:sensor, :ok]}
+    })
+
+    faults = %{{:domain, :main} => {:cycle_invalid, :timeout}}
+
+    data = %EtherCAT.Master{
+      activation_phase: :operational,
+      activation_failures: %{sensor: {:op, :no_response}},
+      runtime_faults: faults
+    }
+
+    assert {:next_state, :recovering, %EtherCAT.Master{} = updated, _actions} =
+             EtherCAT.Master.handle_event({:timeout, :degraded_retry}, nil, :degraded, data)
+
+    assert updated.activation_failures == %{}
+    assert updated.runtime_faults == faults
+  end
+
   test "domain cycle invalid enters recovering and recovery returns to running" do
     reason = {:wkc_mismatch, %{expected: 2, actual: 1}}
 

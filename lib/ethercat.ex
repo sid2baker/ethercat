@@ -44,7 +44,8 @@ defmodule EtherCAT do
       preop_ready --> operational: activate/0 succeeds
       preop_ready --> degraded: activate/0 is incomplete
       preop_ready --> idle: stop/0
-      degraded --> operational: retry clears activation failures
+      degraded --> operational: retry clears activation failures and no runtime faults remain
+      degraded --> recovering: activation failures clear but runtime faults remain
       degraded --> idle: stop/0 or bus down
       operational --> recovering: runtime fault in domain, slave, or DC
       operational --> idle: stop/0 or fatal failure
@@ -66,14 +67,18 @@ defmodule EtherCAT do
 
       App->>Master: start/1
       Master->>Bus: count slaves, assign stations, verify link
-      Master->>DC: initialize clocks
+      opt DC is configured
+          Master->>DC: initialize clocks
+      end
       Master->>Domain: start domains in open state
       Master->>Slave: start slave processes
       Slave->>Bus: reach PREOP through INIT, SII, and mailbox setup
       Slave->>Domain: register PDO layout
       Slave-->>Master: report ready at PREOP
       opt activation is requested and possible
-          Master->>DC: start runtime maintenance
+          opt DC runtime is available
+              Master->>DC: start runtime maintenance
+          end
           Master->>Domain: start cyclic exchange
           opt DC lock is required
               Master->>DC: wait for lock
