@@ -142,24 +142,24 @@ This is the actual user-facing `phase/0` model. Activation problems surface as
 stateDiagram-v2
     [*] --> idle
     idle --> scanning: start/1
-    scanning --> configuring: pending slave_ready(:preop)
-    scanning --> preop_ready: dynamic PREOP startup
-    scanning --> operational: activation succeeds immediately
-    scanning --> degraded: activation incomplete
-    scanning --> idle: configuration failure / stop
-    configuring --> preop_ready: all slaves ready / no activatable slaves
-    configuring --> operational: all slaves ready / activation succeeds
-    configuring --> degraded: activation incomplete
-    configuring --> idle: timeout / activation failure / stop
-    preop_ready --> operational: activate/0
-    preop_ready --> degraded: activate/0 incomplete
+    scanning --> configuring: configured slaves are still pending
+    scanning --> preop_ready: discovery-only workflow
+    scanning --> operational: immediate activation succeeds
+    scanning --> degraded: immediate activation is incomplete
+    scanning --> idle: configuration fails or stop/0
+    configuring --> preop_ready: all slaves are ready, no activation requested
+    configuring --> operational: all slaves are ready, activation succeeds
+    configuring --> degraded: activation is incomplete
+    configuring --> idle: timeout, activation failure, or stop/0
+    preop_ready --> operational: activate/0 succeeds
+    preop_ready --> degraded: activate/0 is incomplete
     preop_ready --> idle: stop/0
-    degraded --> operational: degraded retry clears activation failures
+    degraded --> operational: retry clears activation failures
     degraded --> idle: stop/0 or bus down
-    operational --> recovering: domain / slave / DC runtime fault
+    operational --> recovering: runtime fault in domain, slave, or DC
     operational --> idle: stop/0 or fatal failure
-    recovering --> operational: runtime faults cleared
-    recovering --> idle: stop/0 or unrecoverable recovery
+    recovering --> operational: runtime faults are cleared
+    recovering --> idle: stop/0 or recovery fails
 ```
 
 ### 2. Startup sequencing across subsystems
@@ -175,23 +175,23 @@ sequenceDiagram
     participant Slave
 
     App->>Master: start/1
-    Master->>Bus: BRD count, station assignment,\nlink verification
-    Master->>DC: initialize_clocks(bus, topology)
-    Master->>Domain: start_link(:open) for each domain
-    Master->>Slave: start_link(...) for each slave
-    Slave->>Bus: INIT -> SII -> mailbox SM setup -> PREOP
-    Slave->>Domain: register PDO layout while domain is :open
-    Slave-->>Master: slave_ready(:preop)
-    opt activatable session
+    Master->>Bus: count slaves, assign stations,\nverify link
+    Master->>DC: initialize clocks
+    Master->>Domain: start domains in open state
+    Master->>Slave: start slave processes
+    Slave->>Bus: reach PREOP through INIT,\nSII, and mailbox setup
+    Slave->>Domain: register PDO layout
+    Slave-->>Master: report ready at PREOP
+    opt activation is requested and possible
         Master->>DC: start runtime maintenance
-        Master->>Domain: start_cycling()
-        opt await_lock? == true
-            Master->>DC: await_locked()
+        Master->>Domain: start cyclic exchange
+        opt DC lock is required
+            Master->>DC: wait for lock
         end
-        Master->>Slave: request(:safeop)
-        Master->>Slave: request(:op)
+        Master->>Slave: request SAFEOP
+        Master->>Slave: request OP
     end
-    Master-->>App: phase = :preop_ready or :operational
+    Master-->>App: phase becomes preop_ready or operational
 ```
 
 ### 3. Runtime fault recovery
@@ -202,36 +202,40 @@ possible, surface faults explicitly, and let the master own recovery policy.
 ```mermaid
 sequenceDiagram
     autonumber
+    participant App
     participant Domain
     participant Slave
     participant DC
     participant Master
     participant Bus
 
-    Domain-->>Master: domain_cycle_invalid / domain_stopped
-    Slave-->>Master: slave_down / slave_retreated
-    DC-->>Master: dc_runtime_failed / dc_lock_lost
-    Master-->>App: phase = :recovering
-    opt cyclic path still valid
+    Domain-->>Master: cycle is invalid or domain stops
+    Slave-->>Master: slave goes down or retreats
+    DC-->>Master: runtime fails or lock is lost
+    Master-->>App: phase becomes recovering
+    opt unaffected domains remain valid
         Note over Domain,Master: healthy domains may keep cycling
     end
-    opt stopped domain
-        Master->>Domain: start_cycling(domain_id)
+    opt a domain stopped
+        Master->>Domain: restart the affected cycle
     end
-    opt reconnected slave
-        Slave-->>Master: slave_reconnected
-        Master->>Slave: authorize_reconnect()
-        Slave->>Bus: INIT -> SII -> mailbox SM setup -> PREOP
-        Slave-->>Master: slave_ready(:preop)
-        Master->>Slave: request(:op)
+    opt a slave reconnects
+        Slave-->>Master: slave reconnects
+        Master->>Slave: authorize reconnect
+        Slave->>Bus: rebuild to PREOP through INIT,\nSII, and mailbox setup
+        Slave-->>Master: report ready at PREOP
+        Master->>Slave: request OP
     end
-    DC-->>Master: dc_runtime_recovered / dc_lock_regained
-    Master-->>App: phase = :operational
+    DC-->>Master: runtime recovers or lock returns
+    Master-->>App: phase becomes operational
 ```
 
 ### 4. Runtime state charts by process
 
 These charts reflect the current code paths and their protocol areas:
+
+If you only need the public contract, the master-owned lifecycle above is the
+one to read first. The charts below are implementation-facing.
 
 - `Master` / `Domain`: startup, activation, cyclic runtime, and recovery
 - `Slave`: ESM transitions, AL control, and slave-local configuration
@@ -240,31 +244,32 @@ These charts reflect the current code paths and their protocol areas:
 #### Master (`lib/ethercat/master.ex`)
 
 `Master` has real `gen_statem` states plus a split public phase inside `:running`.
+This chart uses `running / <phase>` to make that split explicit.
 
 ```mermaid
 stateDiagram-v2
-    state ":running / activation_phase=:preop_ready" as running_preop
-    state ":running / activation_phase=:operational" as running_op
+    state "running / preop_ready" as running_preop
+    state "running / operational" as running_op
     [*] --> idle
     idle --> scanning: start/1
-    scanning --> configuring: configure_network / pending_preop > 0
-    scanning --> running_preop: activation_phase = :preop_ready
-    scanning --> running_op: activation_phase = :operational
-    scanning --> degraded: activation incomplete
-    scanning --> idle: configuration failure / stop / bus down
-    configuring --> running_preop: all slave_ready(:preop) / dynamic PREOP startup
-    configuring --> running_op: all slave_ready(:preop) / activation succeeds
-    configuring --> degraded: activation incomplete
-    configuring --> idle: timeout / activation failure / stop / bus down
-    running_preop --> running_op: activate/0
-    running_preop --> degraded: activate/0 incomplete
-    running_preop --> idle: stop / bus down
-    running_op --> recovering: domain / slave / DC runtime fault
-    running_op --> idle: stop / bus down / fatal DC policy
-    degraded --> running_op: degraded retry clears activation failures
-    degraded --> idle: stop / bus down
-    recovering --> running_op: runtime_faults cleared
-    recovering --> idle: stop / unrecoverable recovery / bus down
+    scanning --> configuring: configured slaves are still pending
+    scanning --> running_preop: dynamic PREOP workflow
+    scanning --> running_op: immediate activation succeeds
+    scanning --> degraded: activation is incomplete
+    scanning --> idle: configuration fails, stop, or bus down
+    configuring --> running_preop: all slaves are ready, no activation requested
+    configuring --> running_op: all slaves are ready, activation succeeds
+    configuring --> degraded: activation is incomplete
+    configuring --> idle: timeout, activation failure, stop, or bus down
+    running_preop --> running_op: activate/0 succeeds
+    running_preop --> degraded: activate/0 is incomplete
+    running_preop --> idle: stop or bus down
+    running_op --> recovering: runtime fault in domain, slave, or DC
+    running_op --> idle: stop, bus down, or fatal DC policy
+    degraded --> running_op: retry clears activation failures
+    degraded --> idle: stop or bus down
+    recovering --> running_op: runtime faults are cleared
+    recovering --> idle: stop, bus down, or recovery fails
 ```
 
 #### Slave (`lib/ethercat/slave.ex`)
@@ -274,25 +279,31 @@ steps on the wire before the shell lands in the final target state.
 
 ```mermaid
 stateDiagram-v2
+    state "INIT" as init
+    state "BOOTSTRAP" as bootstrap
+    state "PREOP" as preop
+    state "SAFEOP" as safeop
+    state "OP" as op
+    state "DOWN" as down
     [*] --> init
-    init --> preop: auto_advance / initialize_to_preop succeeds
-    init --> init: auto_advance retry
-    init --> bootstrap: request(:bootstrap)
-    init --> safeop: request(:safeop)
-    init --> op: request(:op)
-    bootstrap --> init: request(:init)
-    preop --> safeop: request(:safeop)
-    preop --> op: request(:op)
-    preop --> init: request(:init)
-    safeop --> op: request(:op)
-    safeop --> preop: request(:preop)
-    safeop --> init: request(:init)
-    op --> safeop: request(:safeop) or AL health retreat
-    op --> preop: request(:preop)
-    op --> init: request(:init)
-    op --> down: health poll bus loss / wkc = 0
-    down --> preop: authorize_reconnect / INIT→PREOP succeeds
-    down --> init: authorize_reconnect / retry path
+    init --> preop: auto-advance succeeds
+    init --> init: auto-advance retries
+    init --> bootstrap: bootstrap is requested
+    init --> safeop: SAFEOP is requested
+    init --> op: OP is requested
+    bootstrap --> init: INIT is requested
+    preop --> safeop: SAFEOP is requested
+    preop --> op: OP is requested
+    preop --> init: INIT is requested
+    safeop --> op: OP is requested
+    safeop --> preop: PREOP is requested
+    safeop --> init: INIT is requested
+    op --> safeop: SAFEOP is requested or AL health retreats
+    op --> preop: PREOP is requested
+    op --> init: INIT is requested
+    op --> down: health poll sees bus loss or zero WKC
+    down --> preop: reconnect is authorized and PREOP rebuild succeeds
+    down --> init: reconnect retries from INIT
 ```
 
 #### Domain (`lib/ethercat/domain.ex`)
@@ -303,14 +314,14 @@ whether the current continuous loop is healthy or invalid.
 ```mermaid
 stateDiagram-v2
     [*] --> open
-    open --> cycling: start_cycling / Layout.prepare succeeds
-    cycling --> stopped: stop_cycling / miss_threshold reached
+    open --> cycling: start_cycling and layout preparation succeed
+    cycling --> stopped: stop_cycling or miss threshold is reached
     stopped --> cycling: start_cycling
 
     state cycling {
         [*] --> healthy
         healthy --> invalid: WKC mismatch or transport miss
-        invalid --> healthy: next valid LRW cycle
+        invalid --> healthy: next LRW cycle is valid
     }
 ```
 
@@ -321,15 +332,15 @@ its internal `lock_state`.
 
 ```mermaid
 stateDiagram-v2
-    state ":running / lock_state=:unavailable" as running_unavailable
-    state ":running / lock_state=:locking" as running_locking
-    state ":running / lock_state=:locked" as running_locked
+    state "running / lock unavailable" as running_unavailable
+    state "running / locking" as running_locking
+    state "running / locked" as running_locked
     [*] --> running_unavailable: no monitored stations
-    [*] --> running_locking: monitored stations present
-    running_locking --> running_locked: sync diff <= threshold after warmup
-    running_locked --> running_locking: sync diff > threshold
-    running_locked --> running_locking: diagnostic failure
-    running_locking --> running_locking: FRMW tick / warmup / retry
+    [*] --> running_locking: monitored stations are present
+    running_locking --> running_locked: after warmup, sync diff stays within threshold
+    running_locked --> running_locking: sync diff rises above threshold
+    running_locked --> running_locking: diagnostics fail
+    running_locking --> running_locking: FRMW tick, warmup, or retry
     running_unavailable --> running_unavailable: FRMW maintenance only
 ```
 

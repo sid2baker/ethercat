@@ -180,14 +180,14 @@ Required model:
 
 ```mermaid
 flowchart LR
-    A[Slave in :down] --> B[Reconnect poll succeeds]
-    B --> C[initialize_to_preop/1]
-    C --> D[post_transition(:preop)]
-    D --> E[configure_preop_process_data/1]
-    E --> F[Domain.register_pdo/4]
-    F --> G{Domain state}
-    G -->|open| H[Registration succeeds]
-    G -->|cycling or stopped| I[domain_register_failed :not_open]
+    down[Slave is down] --> poll[Reconnect poll succeeds]
+    poll --> preop[Rebuild to PREOP via initialize_to_preop/1]
+    preop --> transition[Run PREOP post-transition hooks]
+    transition --> pdata[Rebuild PREOP process data]
+    pdata --> register[Call Domain.register_pdo/4]
+    register --> open{Domain open?}
+    open -->|yes| ok[PDO registration succeeds]
+    open -->|no| fail[Domain is cycling or stopped, registration fails with not_open]
 ```
 
 This is the core structural bug in the current resilience design. Slave-owned reconnect is trying to enter a startup-only registration phase without a master-owned domain reset.
@@ -200,12 +200,12 @@ This is the core structural bug in the current resilience design. Slave-owned re
 stateDiagram-v2
     [*] --> idle
     idle --> scanning: start
-    scanning --> configuring: count, name, topology, optional DC init
-    configuring --> preop_ready: domains open, slaves in PREOP
-    preop_ready --> operational: DC runtime on, domains cycling, slaves in OP
-    operational --> recovering: runtime fault, disconnect, WKC loss, domain stop, DC loss
-    recovering --> preop_ready: affected domains reopened, slaves rebuilt to PREOP
-    recovering --> operational: cyclic path valid again
+    scanning --> configuring: discovery completes and configuration begins
+    configuring --> preop_ready: domains are open and slaves reach PREOP
+    preop_ready --> operational: DC is running, domains cycle, and slaves reach OP
+    operational --> recovering: runtime fault, disconnect, WKC loss, domain stop, or DC loss
+    recovering --> preop_ready: affected domains reopen and slaves rebuild to PREOP
+    recovering --> operational: cyclic path is valid again
     recovering --> idle: stop or unrecoverable fault
     operational --> idle: stop
     preop_ready --> idle: stop
@@ -218,24 +218,27 @@ sequenceDiagram
     autonumber
     participant App
     participant Master
+    participant Bus
+    participant DC
     participant Domain
     participant Slave
-    participant DC
-    participant Bus
 
-    App->>Master: start / activate
-    Master->>Bus: BRD count, APWR station assignment, FPRD DL status
-    Master->>DC: initialize_clocks(bus, topology)
-    Master->>Domain: start_link(:open)
-    Master->>Slave: start_link(...)
-    Slave->>Bus: INIT -> read SII -> configure mailbox SMs -> PREOP
+    App->>Master: start or activate
+    Master->>Bus: count slaves, assign stations, read link status
+    Master->>DC: initialize clocks
+    Master->>Domain: start domains in open state
+    Master->>Slave: start slave processes
+    Slave->>Bus: reach PREOP through INIT, SII, and mailbox setup
     Slave->>Domain: register PDO layout while domain is open
-    Slave-->>Master: slave_ready(:preop)
+    Slave-->>Master: report ready at PREOP
     Master->>DC: start runtime maintenance
-    Master->>Domain: start_cycling()
-    Master->>Slave: request(:safeop)
-    Master->>Slave: request(:op)
-    Master-->>App: phase = :operational
+    Master->>Domain: start cyclic exchange
+    opt DC lock is required
+        Master->>DC: wait for lock
+    end
+    Master->>Slave: request SAFEOP
+    Master->>Slave: request OP
+    Master-->>App: phase becomes operational
 ```
 
 ### 3. Runtime fault recovery
@@ -243,23 +246,29 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     autonumber
+    participant App
     participant Domain
     participant Slave
     participant DC
     participant Master
     participant Bus
 
-    Domain-->>Master: cycle_invalid or domain_stopped
-    Slave-->>Master: slave_down or slave_retreated
-    DC-->>Master: dc_lock_lost or dc_runtime_failed
+    Domain-->>Master: cycle becomes invalid or domain stops
+    Slave-->>Master: slave goes down or retreats
+    DC-->>Master: DC lock is lost or runtime fails
+    Master-->>App: phase becomes recovering
     Master->>Domain: freeze outputs and stop affected cycles
     Master->>Domain: reopen or recreate affected domains
-    Master->>Slave: restart or authorize INIT -> PREOP recovery
-    Slave->>Bus: mailbox + SM/FMMU/PDO rebuild
+    Master->>Slave: restart or authorize INIT to PREOP recovery
+    Slave->>Bus: rebuild mailbox, SM, FMMU, and PDO state
     Slave->>Domain: re-register PDO layout against open domains
-    Master->>DC: await_locked if required
-    Master->>Domain: start_cycling()
-    Master->>Slave: request(:safeop) then request(:op)
+    opt DC lock is required
+        Master->>DC: wait for lock
+    end
+    Master->>Domain: start cyclic exchange
+    Master->>Slave: request SAFEOP
+    Master->>Slave: request OP
+    Master-->>App: phase becomes operational
 ```
 
 ## Design Rules To Keep

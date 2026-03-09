@@ -32,24 +32,24 @@ defmodule EtherCAT do
   stateDiagram-v2
       [*] --> idle
       idle --> scanning: start/1
-      scanning --> configuring: pending slave_ready(:preop)
-      scanning --> preop_ready: dynamic PREOP startup
-      scanning --> operational: activation succeeds immediately
-      scanning --> degraded: activation incomplete
-      scanning --> idle: configuration failure / stop
-      configuring --> preop_ready: all slaves ready / no activatable slaves
-      configuring --> operational: all slaves ready / activation succeeds
-      configuring --> degraded: activation incomplete
-      configuring --> idle: timeout / activation failure / stop
-      preop_ready --> operational: activate/0
-      preop_ready --> degraded: activate/0 incomplete
+      scanning --> configuring: configured slaves are still pending
+      scanning --> preop_ready: discovery-only workflow
+      scanning --> operational: immediate activation succeeds
+      scanning --> degraded: immediate activation is incomplete
+      scanning --> idle: configuration fails or stop/0
+      configuring --> preop_ready: all slaves are ready, no activation requested
+      configuring --> operational: all slaves are ready, activation succeeds
+      configuring --> degraded: activation is incomplete
+      configuring --> idle: timeout, activation failure, or stop/0
+      preop_ready --> operational: activate/0 succeeds
+      preop_ready --> degraded: activate/0 is incomplete
       preop_ready --> idle: stop/0
-      degraded --> operational: degraded retry clears activation failures
+      degraded --> operational: retry clears activation failures
       degraded --> idle: stop/0 or bus down
-      operational --> recovering: domain / slave / DC runtime fault
+      operational --> recovering: runtime fault in domain, slave, or DC
       operational --> idle: stop/0 or fatal failure
-      recovering --> operational: runtime faults cleared
-      recovering --> idle: stop/0 or unrecoverable recovery
+      recovering --> operational: runtime faults are cleared
+      recovering --> idle: stop/0 or recovery fails
   ```
 
   ## Startup Sequence
@@ -65,23 +65,23 @@ defmodule EtherCAT do
       participant Slave
 
       App->>Master: start/1
-      Master->>Bus: count, address, verify
-      Master->>DC: initialize_clocks(bus, topology)
-      Master->>Domain: start_link(:open)
-      Master->>Slave: start_link(...)
-      Slave->>Bus: INIT -> SII -> mailbox SM setup -> PREOP
+      Master->>Bus: count slaves, assign stations, verify link
+      Master->>DC: initialize clocks
+      Master->>Domain: start domains in open state
+      Master->>Slave: start slave processes
+      Slave->>Bus: reach PREOP through INIT, SII, and mailbox setup
       Slave->>Domain: register PDO layout
-      Slave-->>Master: slave_ready(:preop)
-      opt activatable session
+      Slave-->>Master: report ready at PREOP
+      opt activation is requested and possible
           Master->>DC: start runtime maintenance
-          Master->>Domain: start_cycling()
-          opt await_lock? == true
-              Master->>DC: await_locked()
+          Master->>Domain: start cyclic exchange
+          opt DC lock is required
+              Master->>DC: wait for lock
           end
-          Master->>Slave: request(:safeop)
-          Master->>Slave: request(:op)
+          Master->>Slave: request SAFEOP
+          Master->>Slave: request OP
       end
-      Master-->>App: phase = :preop_ready or :operational
+      Master-->>App: phase becomes preop_ready or operational
   ```
 
   ## Usage
