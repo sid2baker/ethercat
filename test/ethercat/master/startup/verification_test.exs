@@ -1,7 +1,7 @@
-defmodule EtherCAT.Master.InitVerificationTest do
+defmodule EtherCAT.Master.Startup.VerificationTest do
   use ExUnit.Case, async: true
 
-  alias EtherCAT.Master.InitVerification
+  alias EtherCAT.Master.Startup.Verification
 
   test "treats init state as ready even when the AL error latch remains set" do
     statuses = [
@@ -9,9 +9,9 @@ defmodule EtherCAT.Master.InitVerificationTest do
       %{station: 0x1001, state: 0x01, error: 0, error_code: nil}
     ]
 
-    assert InitVerification.blocking_statuses(statuses) == []
+    assert Verification.blocking_statuses(statuses) == []
 
-    assert InitVerification.lingering_error_statuses(statuses) == [
+    assert Verification.lingering_error_statuses(statuses) == [
              %{station: 0x1000, state: 0x01, error: 1, error_code: 0}
            ]
   end
@@ -23,7 +23,7 @@ defmodule EtherCAT.Master.InitVerificationTest do
       %{station: 0x1002, state: 0x01, error: 0, error_code: nil}
     ]
 
-    assert InitVerification.blocking_statuses(statuses) == [
+    assert Verification.blocking_statuses(statuses) == [
              %{station: 0x1000, state: 0x02, error: 1, error_code: 0x0011},
              %{station: 0x1001, state: nil, error: nil, error_code: nil}
            ]

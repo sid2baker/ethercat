@@ -1,4 +1,4 @@
-defmodule EtherCAT.Master.DomainPlan do
+defmodule EtherCAT.Master.Config.DomainPlan do
   @moduledoc false
 
   @type t :: %__MODULE__{

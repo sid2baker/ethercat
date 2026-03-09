@@ -4,7 +4,7 @@ defmodule EtherCAT.MasterTest do
   alias EtherCAT.DC.Config, as: DCConfig
   alias EtherCAT.DC.Status, as: DCStatus
   alias EtherCAT.Domain
-  alias EtherCAT.Master.DomainPlan
+  alias EtherCAT.Master.Config.DomainPlan
 
   defmodule FakeBus do
     use GenServer

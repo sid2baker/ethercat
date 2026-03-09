@@ -1,7 +1,7 @@
-defmodule EtherCAT.Master.InitRecoveryTest do
+defmodule EtherCAT.Master.Startup.InitRecoveryTest do
   use ExUnit.Case, async: true
 
-  alias EtherCAT.Master.InitRecovery
+  alias EtherCAT.Master.Startup.InitRecovery
 
   test "returns no actions for clean init slaves" do
     statuses = [

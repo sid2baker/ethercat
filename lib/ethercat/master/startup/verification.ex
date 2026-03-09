@@ -1,4 +1,4 @@
-defmodule EtherCAT.Master.InitVerification do
+defmodule EtherCAT.Master.Startup.Verification do
   @moduledoc false
 
   @type status :: %{

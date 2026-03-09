@@ -1,11 +1,11 @@
-defmodule EtherCAT.Master.InitResetTest do
+defmodule EtherCAT.Master.Startup.ResetTest do
   use ExUnit.Case, async: true
 
   alias EtherCAT.Bus.Transaction
-  alias EtherCAT.Master.InitReset
+  alias EtherCAT.Master.Startup.Reset
 
   test "builds the default-reset broadcast transaction in SOEM-style order" do
-    datagrams = InitReset.transaction() |> Transaction.datagrams()
+    datagrams = Reset.transaction() |> Transaction.datagrams()
 
     assert Enum.map(datagrams, & &1.cmd) == [8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8]
 
@@ -45,7 +45,7 @@ defmodule EtherCAT.Master.InitResetTest do
       %{wkc: 4}
     ]
 
-    assert :ok = InitReset.validate_results(replies, 4)
+    assert :ok = Reset.validate_results(replies, 4)
   end
 
   test "rejects required reset datagrams that do not hit all slaves" do
@@ -66,18 +66,18 @@ defmodule EtherCAT.Master.InitResetTest do
     ]
 
     assert {:error, [4, 4, 4, 3, 4, 1, 1, 1, 1, 4, 4, 4, 4], 4} =
-             InitReset.validate_results(replies, 4)
+             Reset.validate_results(replies, 4)
   end
 
   test "accepts partial init-ack broadcast replies for later per-station verification" do
-    assert {:partial, 3, 4} = InitReset.validate_init_ack_reply([%{wkc: 3}], 4)
+    assert {:partial, 3, 4} = Reset.validate_init_ack_reply([%{wkc: 3}], 4)
   end
 
   test "rejects invalid init-ack broadcast replies" do
     assert {:error, {:unexpected_wkc, 0, 4}} =
-             InitReset.validate_init_ack_reply([%{wkc: 0}], 4)
+             Reset.validate_init_ack_reply([%{wkc: 0}], 4)
 
     assert {:error, {:unexpected_wkc, 5, 4}} =
-             InitReset.validate_init_ack_reply([%{wkc: 5}], 4)
+             Reset.validate_init_ack_reply([%{wkc: 5}], 4)
   end
 end

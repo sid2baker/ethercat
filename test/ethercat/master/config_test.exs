@@ -3,7 +3,7 @@ defmodule EtherCAT.Master.ConfigTest do
 
   alias EtherCAT.DC.Config, as: DCConfig
   alias EtherCAT.Master.Config
-  alias EtherCAT.Master.DomainPlan
+  alias EtherCAT.Master.Config.DomainPlan
   alias EtherCAT.Slave.Config, as: SlaveConfig
   alias EtherCAT.Slave.Sync.Config, as: SyncConfig
 

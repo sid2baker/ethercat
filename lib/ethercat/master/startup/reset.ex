@@ -1,4 +1,4 @@
-defmodule EtherCAT.Master.InitReset do
+defmodule EtherCAT.Master.Startup.Reset do
   @moduledoc false
 
   alias EtherCAT.Bus.Transaction

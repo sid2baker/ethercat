@@ -1,4 +1,4 @@
-defmodule EtherCAT.Master.InitRecovery do
+defmodule EtherCAT.Master.Startup.InitRecovery do
   @moduledoc false
 
   @type status :: %{
