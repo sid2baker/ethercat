@@ -7,7 +7,8 @@ defmodule EtherCAT.Master.Recovery do
   alias EtherCAT.Master.Activation
 
   @spec retry_activation_blocked_state(%EtherCAT.Master{}) ::
-          {:ok, %EtherCAT.Master{}} | {:recovering, %EtherCAT.Master{}}
+          {:ok, {:running, :operational}, %EtherCAT.Master{}}
+          | {:recovering, %EtherCAT.Master{}}
   def retry_activation_blocked_state(%{activation_failures: failures} = data)
       when map_size(failures) == 0 do
     maybe_resume_running(data)
@@ -37,7 +38,8 @@ defmodule EtherCAT.Master.Recovery do
   end
 
   @spec retry_recovering_state(%EtherCAT.Master{}) ::
-          {:ok, %EtherCAT.Master{}} | {:recovering, %EtherCAT.Master{}}
+          {:ok, {:running, :operational}, %EtherCAT.Master{}}
+          | {:recovering, %EtherCAT.Master{}}
   def retry_recovering_state(data) do
     data
     |> retry_recovering_slaves()
@@ -64,10 +66,13 @@ defmodule EtherCAT.Master.Recovery do
     %{data | runtime_faults: Map.delete(data.runtime_faults, key)}
   end
 
-  @spec transition_runtime_fault(atom(), %EtherCAT.Master{}) ::
+  @spec transition_runtime_fault(
+          atom() | {:running, :preop_ready | :operational},
+          %EtherCAT.Master{}
+        ) ::
           {:next_state, :recovering, %EtherCAT.Master{}}
           | {:keep_state, %EtherCAT.Master{}}
-  def transition_runtime_fault(:running, data), do: {:next_state, :recovering, data}
+  def transition_runtime_fault({:running, _phase}, data), do: {:next_state, :recovering, data}
   def transition_runtime_fault(:recovering, data), do: {:keep_state, data}
   def transition_runtime_fault(_state, data), do: {:keep_state, data}
 
@@ -83,11 +88,12 @@ defmodule EtherCAT.Master.Recovery do
   end
 
   @spec maybe_resume_running(%EtherCAT.Master{}) ::
-          {:ok, %EtherCAT.Master{}} | {:recovering, %EtherCAT.Master{}}
+          {:ok, {:running, :operational}, %EtherCAT.Master{}}
+          | {:recovering, %EtherCAT.Master{}}
   def maybe_resume_running(data) do
     if map_size(data.activation_failures) == 0 and map_size(data.runtime_faults) == 0 do
       Logger.info("[Master] recovery succeeded; operational path is healthy again")
-      {:ok, %{data | activation_failures: %{}, runtime_faults: %{}}}
+      {:ok, {:running, :operational}, %{data | activation_failures: %{}, runtime_faults: %{}}}
     else
       {:recovering, data}
     end

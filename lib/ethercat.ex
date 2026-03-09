@@ -33,14 +33,14 @@ defmodule EtherCAT do
       [*] --> idle
       idle --> discovering: start/1
       discovering --> awaiting_preop: configured slaves are still pending
-      discovering --> preop_ready: discovery-only workflow
-      discovering --> operational: immediate activation succeeds
-      discovering --> activation_blocked: immediate activation is incomplete
+      discovering --> startup_outcome: startup path is ready
       discovering --> idle: configuration fails or stop/0
-      awaiting_preop --> preop_ready: all slaves are ready, no activation requested
-      awaiting_preop --> operational: all slaves are ready, activation succeeds
-      awaiting_preop --> activation_blocked: activation is incomplete
+      awaiting_preop --> startup_outcome: all slaves reached PREOP
       awaiting_preop --> idle: timeout, activation failure, or stop/0
+      state startup_outcome <<choice>>
+      startup_outcome --> preop_ready: no activation requested
+      startup_outcome --> operational: activation succeeds
+      startup_outcome --> activation_blocked: activation is incomplete
       preop_ready --> operational: activate/0 succeeds
       preop_ready --> activation_blocked: activate/0 is incomplete
       preop_ready --> idle: stop/0
@@ -189,7 +189,7 @@ defmodule EtherCAT do
   def stop, do: Master.stop()
 
   @doc """
-  Block until the master reaches `:running`, then return `:ok`.
+  Block until the master reaches a running state, then return `:ok`.
 
   Returns `{:error, :timeout}` if startup does not complete within `timeout_ms` ms.
   Returns `{:error, :not_started}` if `start/1` has not been called.

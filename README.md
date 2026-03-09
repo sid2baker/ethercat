@@ -143,14 +143,16 @@ stateDiagram-v2
     [*] --> idle
     idle --> discovering: start/1
     discovering --> awaiting_preop: configured slaves are still pending
-    discovering --> preop_ready: discovery-only workflow
-    discovering --> operational: immediate activation succeeds
-    discovering --> activation_blocked: immediate activation is incomplete
+    discovering --> startup_outcome: startup path is ready
     discovering --> idle: configuration fails or stop/0
-    awaiting_preop --> preop_ready: all slaves are ready, no activation requested
-    awaiting_preop --> operational: all slaves are ready, activation succeeds
-    awaiting_preop --> activation_blocked: activation is incomplete
+    awaiting_preop --> startup_outcome: all slaves reached PREOP
     awaiting_preop --> idle: timeout, activation failure, or stop/0
+
+    state startup_outcome <<choice>>
+    startup_outcome --> preop_ready: no activation requested
+    startup_outcome --> operational: activation succeeds
+    startup_outcome --> activation_blocked: activation is incomplete
+
     preop_ready --> operational: activate/0 succeeds
     preop_ready --> activation_blocked: activate/0 is incomplete
     preop_ready --> idle: stop/0
@@ -250,23 +252,24 @@ one to read first. The charts below are implementation-facing.
 
 #### Master (`lib/ethercat/master.ex`)
 
-`Master` has real `gen_statem` states plus a split public phase inside `:running`.
-This chart uses a hierarchical `running` state so the PREOP-ready vs operational
-split is visible without flattening everything.
+`Master` uses real tuple-based running states, `{:running, :preop_ready}` and
+`{:running, :operational}`, plus a public `phase/0` projection. This chart uses
+a hierarchical `running` state and a startup choice node so the PREOP-ready vs
+operational split stays visible without repeating the same startup edges twice.
 
 ```mermaid
 stateDiagram-v2
     [*] --> idle
     idle --> discovering: start/1
     discovering --> awaiting_preop: configured slaves are still pending
-    discovering --> preop_ready: discovery-only workflow
-    discovering --> operational: immediate activation succeeds
-    discovering --> activation_blocked: activation is incomplete
+    discovering --> startup_outcome: startup path is ready
     discovering --> idle: configuration fails, stop, or bus down
-    awaiting_preop --> preop_ready: all slaves are ready, no activation requested
-    awaiting_preop --> operational: all slaves are ready, activation succeeds
-    awaiting_preop --> activation_blocked: activation is incomplete
+    awaiting_preop --> startup_outcome: all slaves reached PREOP
     awaiting_preop --> idle: timeout, activation failure, stop, or bus down
+
+    state startup_outcome <<choice>>
+    startup_outcome --> running: startup enters running
+    startup_outcome --> activation_blocked: activation is incomplete
 
     state running {
         [*] --> preop_ready

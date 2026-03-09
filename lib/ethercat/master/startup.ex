@@ -67,7 +67,6 @@ defmodule EtherCAT.Master.Startup do
            pending_preop: MapSet.new(pending_preop),
            activatable_slaves: activatable_slaves,
            activation_failures: %{},
-           activation_phase: :preop_ready,
            domain_refs: domain_refs,
            slave_refs: slave_refs
        }}

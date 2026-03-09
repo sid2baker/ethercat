@@ -86,16 +86,16 @@ defmodule EtherCAT.MasterTest do
              EtherCAT.Master.handle_event(
                {:call, from},
                :phase,
-               :running,
-               %EtherCAT.Master{activation_phase: :preop_ready}
+               {:running, :preop_ready},
+               %EtherCAT.Master{}
              )
 
     assert {:keep_state_and_data, [{:reply, ^from, :operational}]} =
              EtherCAT.Master.handle_event(
                {:call, from},
                :phase,
-               :running,
-               %EtherCAT.Master{activation_phase: :operational}
+               {:running, :operational},
+               %EtherCAT.Master{}
              )
 
     assert {:keep_state_and_data, [{:reply, ^from, :activation_blocked}]} =
@@ -122,16 +122,16 @@ defmodule EtherCAT.MasterTest do
              EtherCAT.Master.handle_event(
                {:call, from},
                :await_operational,
-               :running,
-               %EtherCAT.Master{activation_phase: :preop_ready, await_operational_callers: []}
+               {:running, :preop_ready},
+               %EtherCAT.Master{await_operational_callers: []}
              )
 
     assert {:keep_state_and_data, [{:reply, ^from, :ok}]} =
              EtherCAT.Master.handle_event(
                {:call, from},
                :await_operational,
-               :running,
-               %EtherCAT.Master{activation_phase: :operational}
+               {:running, :operational},
+               %EtherCAT.Master{}
              )
   end
 
@@ -170,7 +170,6 @@ defmodule EtherCAT.MasterTest do
     faults = %{{:domain, :main} => {:cycle_invalid, :timeout}}
 
     data = %EtherCAT.Master{
-      activation_phase: :operational,
       activation_failures: %{sensor: {:op, :no_response}},
       runtime_faults: faults
     }
@@ -189,13 +188,13 @@ defmodule EtherCAT.MasterTest do
              EtherCAT.Master.handle_event(
                :info,
                {:domain_cycle_invalid, :main, reason},
-               :running,
-               %EtherCAT.Master{activation_phase: :operational}
+               {:running, :operational},
+               %EtherCAT.Master{}
              )
 
     assert recovering_data.runtime_faults == %{{:domain, :main} => {:cycle_invalid, reason}}
 
-    assert {:next_state, :running, %EtherCAT.Master{runtime_faults: %{}}} =
+    assert {:next_state, {:running, :operational}, %EtherCAT.Master{runtime_faults: %{}}} =
              EtherCAT.Master.handle_event(
                :info,
                {:domain_cycle_recovered, :main},
@@ -222,10 +221,7 @@ defmodule EtherCAT.MasterTest do
     assert :ok = Domain.stop_cycling(domain_id)
     assert {:ok, %{state: :stopped}} = Domain.info(domain_id)
 
-    data = %EtherCAT.Master{
-      activation_phase: :operational,
-      runtime_faults: %{{:domain, domain_id} => {:stopped, :down}}
-    }
+    data = %EtherCAT.Master{runtime_faults: %{{:domain, domain_id} => {:stopped, :down}}}
 
     assert {:keep_state, %EtherCAT.Master{} = recovering_data, _actions} =
              EtherCAT.Master.handle_event({:timeout, :retry}, nil, :recovering, data)
@@ -236,7 +232,6 @@ defmodule EtherCAT.MasterTest do
 
   test "recovering returns to idle for unrecoverable slave preop configuration failures" do
     data = %EtherCAT.Master{
-      activation_phase: :operational,
       runtime_faults: %{
         {:slave, :outputs} =>
           {:preop, {:preop_configuration_failed, {:domain_reregister_required, 2, :main}}}
@@ -277,19 +272,19 @@ defmodule EtherCAT.MasterTest do
   end
 
   test "dc runtime failure enters recovering and clears on recovery" do
-    data = %EtherCAT.Master{activation_phase: :operational}
+    data = %EtherCAT.Master{}
 
     assert {:next_state, :recovering, %EtherCAT.Master{} = recovering} =
              EtherCAT.Master.handle_event(
                :info,
                {:dc_runtime_failed, :timeout},
-               :running,
+               {:running, :operational},
                data
              )
 
     assert recovering.runtime_faults == %{{:dc, :runtime} => {:failed, :timeout}}
 
-    assert {:next_state, :running, %EtherCAT.Master{runtime_faults: %{}}} =
+    assert {:next_state, {:running, :operational}, %EtherCAT.Master{runtime_faults: %{}}} =
              EtherCAT.Master.handle_event(
                :info,
                {:dc_runtime_recovered},
@@ -299,23 +294,19 @@ defmodule EtherCAT.MasterTest do
   end
 
   test "dc lock loss is advisory by default" do
-    data = %EtherCAT.Master{
-      activation_phase: :operational,
-      dc_config: %DCConfig{cycle_ns: 1_000_000, lock_policy: :advisory}
-    }
+    data = %EtherCAT.Master{dc_config: %DCConfig{cycle_ns: 1_000_000, lock_policy: :advisory}}
 
     assert :keep_state_and_data =
              EtherCAT.Master.handle_event(
                :info,
                {:dc_lock_lost, :locking, 250},
-               :running,
+               {:running, :operational},
                data
              )
   end
 
   test "dc lock loss can enter recovering independently of await_lock?" do
     data = %EtherCAT.Master{
-      activation_phase: :operational,
       dc_config: %DCConfig{cycle_ns: 1_000_000, await_lock?: false, lock_policy: :recovering}
     }
 
@@ -323,13 +314,13 @@ defmodule EtherCAT.MasterTest do
              EtherCAT.Master.handle_event(
                :info,
                {:dc_lock_lost, :locking, 250},
-               :running,
+               {:running, :operational},
                data
              )
 
     assert recovering.runtime_faults == %{{:dc, :lock} => {:locking, 250}}
 
-    assert {:next_state, :running, %EtherCAT.Master{runtime_faults: %{}}} =
+    assert {:next_state, {:running, :operational}, %EtherCAT.Master{runtime_faults: %{}}} =
              EtherCAT.Master.handle_event(
                :info,
                {:dc_lock_regained, 42},
@@ -339,16 +330,13 @@ defmodule EtherCAT.MasterTest do
   end
 
   test "dc lock loss can be fatal" do
-    data = %EtherCAT.Master{
-      activation_phase: :operational,
-      dc_config: %DCConfig{cycle_ns: 1_000_000, lock_policy: :fatal}
-    }
+    data = %EtherCAT.Master{dc_config: %DCConfig{cycle_ns: 1_000_000, lock_policy: :fatal}}
 
     assert {:next_state, :idle, %EtherCAT.Master{last_failure: failure}} =
              EtherCAT.Master.handle_event(
                :info,
                {:dc_lock_lost, :locking, 250},
-               :running,
+               {:running, :operational},
                data
              )
 
@@ -375,7 +363,7 @@ defmodule EtherCAT.MasterTest do
              EtherCAT.Master.handle_event(
                {:call, from},
                {:update_domain_cycle_time, domain_id, 10_000},
-               :running,
+               {:running, :operational},
                data
              )
 
@@ -390,7 +378,7 @@ defmodule EtherCAT.MasterTest do
              EtherCAT.Master.handle_event(
                {:call, from},
                {:update_domain_cycle_time, :missing, 10_000},
-               :running,
+               {:running, :operational},
                %EtherCAT.Master{domain_configs: []}
              )
   end
@@ -410,7 +398,7 @@ defmodule EtherCAT.MasterTest do
              EtherCAT.Master.handle_event(
                {:call, from},
                :domains,
-               :running,
+               {:running, :operational},
                %EtherCAT.Master{
                  domain_configs: [
                    %DomainPlan{
@@ -484,7 +472,12 @@ defmodule EtherCAT.MasterTest do
                  lock_state: :inactive
                }}
             ]} =
-             EtherCAT.Master.handle_event({:call, from}, :dc_status, :running, data)
+             EtherCAT.Master.handle_event(
+               {:call, from},
+               :dc_status,
+               {:running, :operational},
+               data
+             )
   end
 
   test "reference_clock and dc_runtime use dc runtime semantics" do
@@ -497,10 +490,20 @@ defmodule EtherCAT.MasterTest do
     }
 
     assert {:keep_state_and_data, [{:reply, ^from, {:ok, %{name: :thermo, station: 0x1002}}}]} =
-             EtherCAT.Master.handle_event({:call, from}, :reference_clock, :running, data)
+             EtherCAT.Master.handle_event(
+               {:call, from},
+               :reference_clock,
+               {:running, :operational},
+               data
+             )
 
     assert {:keep_state_and_data, [{:reply, ^from, {:error, :dc_inactive}}]} =
-             EtherCAT.Master.handle_event({:call, from}, :dc_runtime, :running, data)
+             EtherCAT.Master.handle_event(
+               {:call, from},
+               :dc_runtime,
+               {:running, :operational},
+               data
+             )
   end
 
   test "dc_status prefers the live dc runtime snapshot once active" do
@@ -544,7 +547,12 @@ defmodule EtherCAT.MasterTest do
                  lock_state: :locked
                }}
             ]} =
-             EtherCAT.Master.handle_event({:call, from}, :dc_status, :running, data)
+             EtherCAT.Master.handle_event(
+               {:call, from},
+               :dc_status,
+               {:running, :operational},
+               data
+             )
   end
 
   test "slaves query resolves registry-backed server refs and current pids" do
@@ -573,7 +581,7 @@ defmodule EtherCAT.MasterTest do
              EtherCAT.Master.handle_event(
                {:call, from},
                :slaves,
-               :running,
+               {:running, :operational},
                %EtherCAT.Master{slaves: [{:sensor, 0x1001}]}
              )
   end
@@ -601,7 +609,7 @@ defmodule EtherCAT.MasterTest do
              EtherCAT.Master.handle_event(
                {:call, from},
                :slaves,
-               :running,
+               {:running, :operational},
                %EtherCAT.Master{slaves: [{slave_name, 0x1001}]}
              )
 
@@ -632,7 +640,7 @@ defmodule EtherCAT.MasterTest do
              EtherCAT.Master.handle_event(
                {:call, from},
                :slaves,
-               :running,
+               {:running, :operational},
                %EtherCAT.Master{slaves: [{slave_name, 0x1001}]}
              )
   end
@@ -644,7 +652,7 @@ defmodule EtherCAT.MasterTest do
              EtherCAT.Master.handle_event(
                {:call, from},
                :dc_runtime,
-               :running,
+               {:running, :preop_ready},
                %EtherCAT.Master{}
              )
 
@@ -657,7 +665,7 @@ defmodule EtherCAT.MasterTest do
              EtherCAT.Master.handle_event(
                {:call, from},
                :dc_runtime,
-               :running,
+               {:running, :preop_ready},
                %EtherCAT.Master{dc_config: %DCConfig{}}
              )
   end

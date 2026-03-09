@@ -4,7 +4,7 @@ defmodule EtherCAT.Master.Status do
   alias EtherCAT.{Bus, DC, Domain}
   alias EtherCAT.DC.Status, as: DCStatus
 
-  @spec phase(atom(), %EtherCAT.Master{}) ::
+  @spec phase(atom() | {:running, :preop_ready | :operational}, %EtherCAT.Master{}) ::
           :idle
           | :discovering
           | :awaiting_preop
@@ -17,8 +17,8 @@ defmodule EtherCAT.Master.Status do
   def phase(:awaiting_preop, _data), do: :awaiting_preop
   def phase(:activation_blocked, _data), do: :activation_blocked
   def phase(:recovering, _data), do: :recovering
-  def phase(:running, %{activation_phase: :operational}), do: :operational
-  def phase(:running, _data), do: :preop_ready
+  def phase({:running, :operational}, _data), do: :operational
+  def phase({:running, :preop_ready}, _data), do: :preop_ready
 
   @spec activation_blocked_reply(%EtherCAT.Master{}) :: {:error, term()}
   def activation_blocked_reply(data) do
