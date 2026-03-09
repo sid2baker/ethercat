@@ -2,17 +2,15 @@
 
 ## Navigation
 
-- `ARCHITECTURE.md` — subsystem boundaries and runtime data flow
-- `docs/references/` — bundled EtherCAT spec notes, reference-master material, and source references
-- `docs/references/ethercat-spec/01-llm-reference-index.md` — primary EtherCAT spec/reference entry point for implementation and review work
-- `docs/index.md` — documentation map
-- `docs/design-docs/index.md` — architecture decisions
-- `docs/exec-plans/index.md` — active work and debt tracker
-
-Subsystem briefings live in the module docs/source files:
+- Implementation truth lives in source, tests, and module docs:
 
 - `lib/ethercat.ex`, `lib/ethercat/master.ex`, `lib/ethercat/slave.ex`
 - `lib/ethercat/domain.ex`, `lib/ethercat/bus.ex`, `lib/ethercat/dc.ex`
+- `test/` — behavioral truth and regression coverage
+- `ARCHITECTURE.md` — subsystem boundaries and runtime data flow
+
+- `docs/references/` is reference material for LLM/spec alignment, not implementation truth.
+- `docs/references/ethercat-spec/01-llm-reference-index.md` is the primary EtherCAT spec/reference entry point when aligning implementation and review work to the protocol.
 
 ## Hard Rules
 

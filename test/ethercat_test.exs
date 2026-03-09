@@ -13,7 +13,7 @@ defmodule EtherCATTest do
                slaves: [%EtherCAT.Slave.Config{name: :coupler}, nil]
              )
 
-    assert EtherCAT.state() == :idle
+    assert EtherCAT.phase() == :idle
   end
 
   test "start rejects invalid process_data requests" do
@@ -28,7 +28,7 @@ defmodule EtherCATTest do
                ]
              )
 
-    assert EtherCAT.state() == :idle
+    assert EtherCAT.phase() == :idle
   end
 
   test "start rejects invalid slave target states" do
@@ -40,7 +40,7 @@ defmodule EtherCATTest do
                ]
              )
 
-    assert EtherCAT.state() == :idle
+    assert EtherCAT.phase() == :idle
   end
 
   test "slave config defaults to the built-in default driver" do

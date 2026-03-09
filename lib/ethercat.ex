@@ -25,19 +25,31 @@ defmodule EtherCAT do
 
   ## Runtime Lifecycle
 
+  This is the public `phase/0` lifecycle. It covers startup, activation,
+  cyclic runtime, and recovery.
+
   ```mermaid
   stateDiagram-v2
       [*] --> idle
       idle --> scanning: start/1
-      scanning --> configuring: ring counted and addressed
-      configuring --> preop_ready: domains open\\nslaves in PREOP
-      preop_ready --> operational: activate/0 or activatable config
-      operational --> recovering: slave_down / invalid cycle /\\ndomain stop / DC runtime loss
-      recovering --> operational: recovery succeeds
-      recovering --> preop_ready: rebuilt and ready,\\nnot yet cycling
-      recovering --> idle: stop or unrecoverable failure
+      scanning --> configuring: pending slave_ready(:preop)
+      scanning --> preop_ready: dynamic PREOP startup
+      scanning --> operational: activation succeeds immediately
+      scanning --> degraded: activation incomplete
+      scanning --> idle: configuration failure / stop
+      configuring --> preop_ready: all slaves ready / no activatable slaves
+      configuring --> operational: all slaves ready / activation succeeds
+      configuring --> degraded: activation incomplete
+      configuring --> idle: timeout / activation failure / stop
+      preop_ready --> operational: activate/0
+      preop_ready --> degraded: activate/0 incomplete
       preop_ready --> idle: stop/0
-      operational --> idle: stop/0
+      degraded --> operational: degraded retry clears activation failures
+      degraded --> idle: stop/0 or bus down
+      operational --> recovering: domain / slave / DC runtime fault
+      operational --> idle: stop/0 or fatal failure
+      recovering --> operational: runtime faults cleared
+      recovering --> idle: stop/0 or unrecoverable recovery
   ```
 
   ## Startup Sequence
@@ -57,12 +69,15 @@ defmodule EtherCAT do
       Master->>DC: initialize_clocks(bus, topology)
       Master->>Domain: start_link(:open)
       Master->>Slave: start_link(...)
-      Slave->>Bus: INIT -> SII -> mailbox setup -> PREOP
+      Slave->>Bus: INIT -> SII -> mailbox SM setup -> PREOP
       Slave->>Domain: register PDO layout
       Slave-->>Master: slave_ready(:preop)
       opt activatable session
           Master->>DC: start runtime maintenance
           Master->>Domain: start_cycling()
+          opt await_lock? == true
+              Master->>DC: await_locked()
+          end
           Master->>Slave: request(:safeop)
           Master->>Slave: request(:op)
       end
@@ -186,20 +201,6 @@ defmodule EtherCAT do
   """
   @spec await_operational(timeout_ms :: pos_integer()) :: :ok | {:error, term()}
   def await_operational(timeout_ms \\ 10_000), do: Master.await_operational(timeout_ms)
-
-  @doc """
-  Return the current master state.
-
-  Internal states:
-    - `:idle`
-    - `:scanning`
-    - `:configuring`
-    - `:running`
-    - `:degraded` — startup/activation degraded
-    - `:recovering` — runtime recovery in progress
-  """
-  @spec state() :: atom()
-  def state, do: Master.state()
 
   @doc """
   Return the current public session phase.

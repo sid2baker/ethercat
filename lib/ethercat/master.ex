@@ -121,10 +121,6 @@ defmodule EtherCAT.Master do
   @spec bus() :: Bus.server() | nil | {:error, :not_started}
   def bus, do: safe_call(:bus)
 
-  @doc "Return the current master state atom (`:idle | :scanning | :configuring | :running | :degraded | :recovering`)."
-  @spec state() :: atom() | {:error, :not_started}
-  def state, do: safe_call(:state)
-
   @doc """
   Return the last terminal startup/runtime failure retained after the master
   returned to `:idle`.
@@ -135,9 +131,9 @@ defmodule EtherCAT.Master do
   @doc """
   Return the current session phase.
 
-  Unlike `state/0`, this is the public lifecycle view and distinguishes between
-  PREOP-ready startup, degraded activation, and fully operational cyclic
-  runtime. Runtime recovery is reported through the public recovering phase.
+  This is the public lifecycle view and distinguishes between PREOP-ready
+  startup, degraded activation, fully operational cyclic runtime, and runtime
+  recovery.
   """
   @spec phase() ::
           :idle
@@ -313,10 +309,6 @@ defmodule EtherCAT.Master do
 
   def handle_event({:call, from}, {:start, _}, _state, _data) do
     {:keep_state_and_data, [{:reply, from, {:error, :already_started}}]}
-  end
-
-  def handle_event({:call, from}, :state, :idle, _data) do
-    {:keep_state_and_data, [{:reply, from, :idle}]}
   end
 
   def handle_event({:call, from}, :last_failure, :idle, data) do
@@ -680,10 +672,6 @@ defmodule EtherCAT.Master do
   # -- Shared handlers (all non-idle states) ---------------------------------
 
   # Query handlers — work in all active states
-  def handle_event({:call, from}, :state, state, _data) do
-    {:keep_state_and_data, [{:reply, from, state}]}
-  end
-
   def handle_event({:call, from}, :phase, state, data) do
     {:keep_state_and_data, [{:reply, from, Status.phase(state, data)}]}
   end
