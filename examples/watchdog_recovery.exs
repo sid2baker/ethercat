@@ -278,7 +278,7 @@ Process.sleep(period_ms * 5)
 on_count =
   Enum.count(1..16, fn i ->
     case EtherCAT.read_input(:inputs, :"ch#{i}") do
-      {:ok, 1} -> true
+      {:ok, {1, _updated_at_us}} -> true
       _ -> false
     end
   end)
@@ -334,7 +334,7 @@ end
 # ---------------------------------------------------------------------------
 
 IO.puts("\n── 4. Verify safe state on loopback ──────────────────────────────")
-IO.puts("  (Note: read_input returns ETS-backed values with the last update time.)")
+IO.puts("  (Note: read_input returns ETS-backed values with their last update time.)")
 IO.puts("  Restarting cycling briefly to refresh input image...")
 
 # Cycling stopped → ETS frozen at last values.  Restart for a few ticks
@@ -346,7 +346,7 @@ EtherCAT.Domain.stop_cycling(:main)
 off_count =
   Enum.count(1..16, fn i ->
     case EtherCAT.read_input(:inputs, :"ch#{i}") do
-      {:ok, 0} -> true
+      {:ok, {0, _updated_at_us}} -> true
       _ -> false
     end
   end)
@@ -398,7 +398,7 @@ Process.sleep(period_ms * 5)
 restored_count =
   Enum.count(1..16, fn i ->
     case EtherCAT.read_input(:inputs, :"ch#{i}") do
-      {:ok, 1} -> true
+      {:ok, {1, _updated_at_us}} -> true
       _ -> false
     end
   end)

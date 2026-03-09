@@ -149,7 +149,7 @@ read_all_inputs = fn ->
     ch = :"ch#{i}"
 
     case EtherCAT.read_input(:inputs, ch) do
-      {:ok, val} -> {ch, val}
+      {:ok, {val, _updated_at_us}} -> {ch, val}
       _ -> {ch, nil}
     end
   end)

@@ -233,12 +233,16 @@ defmodule EtherCAT.Slave do
   def info(slave_name), do: safe_call(slave_name, :info)
 
   @doc """
-  Read the decoded input value for an input signal. Equivalent to the value
-  delivered via `subscribe/3` for normal process-data signals.
+  Read the decoded input value for an input signal together with the last valid
+  master update time in microseconds.
+
+  This is the cached process-image value, not a direct hardware-edge timestamp.
+  Exact event timing requires device-specific timestamped PDOs or ESC LATCH
+  support.
 
   Returns `{:error, :not_ready}` until the first domain cycle completes.
   """
-  @spec read_input(atom(), atom()) :: {:ok, term()} | {:error, term()}
+  @spec read_input(atom(), atom()) :: {:ok, {term(), integer()}} | {:error, term()}
   def read_input(slave_name, signal_name) do
     safe_call(slave_name, {:read_input, signal_name})
   end
@@ -370,6 +374,7 @@ defmodule EtherCAT.Slave do
 
     :keep_state_and_data
   end
+
   def handle_event(:info, {:DOWN, ref, :process, pid, _reason}, _state, data) do
     case Map.get(data.subscriber_refs, pid) do
       ^ref ->

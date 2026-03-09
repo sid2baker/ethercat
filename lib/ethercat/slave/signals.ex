@@ -60,32 +60,34 @@ defmodule EtherCAT.Slave.Signals do
         subscriber_refs: Map.delete(data.subscriber_refs, pid)
     }
   end
-@spec read_input(%EtherCAT.Slave{}, atom()) :: {:ok, term()} | {:error, term()}
-def read_input(data, signal_name) do
-  case Map.get(data.signal_registrations, signal_name) do
-    nil ->
-      {:error, {:not_registered, signal_name}}
 
-    %{direction: :output} ->
-      {:error, {:not_input, signal_name}}
+  @spec read_input(%EtherCAT.Slave{}, atom()) :: {:ok, {term(), integer()}} | {:error, term()}
+  def read_input(data, signal_name) do
+    case Map.get(data.signal_registrations, signal_name) do
+      nil ->
+        {:error, {:not_registered, signal_name}}
 
-    %{
-      domain_id: domain_id,
-      sm_key: sm_key,
-      bit_offset: bit_offset,
-      bit_size: bit_size,
-      direction: :input
-    } ->
-      case Domain.sample(domain_id, {data.name, sm_key}) do
-        {:error, _} = err ->
-          err
+      %{direction: :output} ->
+        {:error, {:not_input, signal_name}}
 
-        {:ok, %{value: sm_bytes}} ->
-          raw = extract_sm_bits(sm_bytes, bit_offset, bit_size)
-          {:ok, data.driver.decode_signal(signal_name, data.config, raw)}
-      end
+      %{
+        domain_id: domain_id,
+        sm_key: sm_key,
+        bit_offset: bit_offset,
+        bit_size: bit_size,
+        direction: :input
+      } ->
+        case Domain.sample(domain_id, {data.name, sm_key}) do
+          {:error, _} = err ->
+            err
+
+          {:ok, %{value: sm_bytes, updated_at_us: updated_at_us}}
+          when is_integer(updated_at_us) ->
+            raw = extract_sm_bits(sm_bytes, bit_offset, bit_size)
+            {:ok, {data.driver.decode_signal(signal_name, data.config, raw), updated_at_us}}
+        end
+    end
   end
-end
 
   @spec dispatch_domain_input(
           %EtherCAT.Slave{},

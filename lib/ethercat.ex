@@ -409,9 +409,13 @@ defmodule EtherCAT do
   @doc """
   Read the latest decoded input sample for a slave input signal.
 
+  Returns `{value, updated_at_us}` where `updated_at_us` is the last valid
+  master refresh time for the cached process-image sample, not a hardware-edge
+  timestamp.
+
   Returns `{:error, :not_ready}` until the first domain cycle completes.
   """
-  @spec read_input(atom(), atom()) :: {:ok, term()} | {:error, term()}
+  @spec read_input(atom(), atom()) :: {:ok, {term(), integer()}} | {:error, term()}
   def read_input(slave_name, pdo_name),
     do: Slave.read_input(slave_name, pdo_name)
 

@@ -224,7 +224,7 @@ defmodule EtherCAT.SlaveTest do
     refute_receive {:ethercat, :signal, :sensor, :fast_ch1, _}
   end
 
-  test "read_input returns decoded value" do
+  test "read_input returns decoded value with update time" do
     domain_id = :"sample_domain_#{System.unique_integer([:positive, :monotonic])}"
     key = {:sensor, {:sm, 0}}
     :ets.new(domain_id, [:set, :public, :named_table])
@@ -247,7 +247,7 @@ defmodule EtherCAT.SlaveTest do
 
     from = {self(), make_ref()}
 
-    assert {:keep_state_and_data, [{:reply, ^from, {:ok, 1}}]} =
+    assert {:keep_state_and_data, [{:reply, ^from, {:ok, {1, 1234}}}]} =
              EtherCAT.Slave.handle_event(
                {:call, from},
                {:read_input, :ch1},
