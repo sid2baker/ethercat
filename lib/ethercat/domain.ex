@@ -11,6 +11,22 @@ defmodule EtherCAT.Domain do
   - `:cycling` — self-timed LRW tick active
   - `:stopped` — cycling halted (too many misses or manual stop)
 
+  ## State Transitions
+
+  ```mermaid
+  stateDiagram-v2
+      [*] --> open
+      open --> cycling: start_cycling and layout preparation succeed
+      cycling --> stopped: stop_cycling or miss threshold is reached
+      stopped --> cycling: start_cycling
+
+      state cycling {
+          [*] --> healthy
+          healthy --> invalid: WKC mismatch or transport miss
+          invalid --> healthy: next LRW cycle is valid
+      }
+  ```
+
   ## Hot Path (Direct ETS)
 
       # Write output

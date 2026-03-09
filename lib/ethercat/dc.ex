@@ -36,6 +36,22 @@ defmodule EtherCAT.DC do
 
   That keeps DC ownership out of `Domain`. Domains stay process-image/LRW loops;
   `DC` owns clock maintenance, lock classification, diagnostics, and waiters.
+
+  ## Lock State Transitions
+
+  ```mermaid
+  stateDiagram-v2
+      state "running / lock unavailable" as running_unavailable
+      state "running / locking" as running_locking
+      state "running / locked" as running_locked
+      [*] --> running_unavailable: no monitored stations
+      [*] --> running_locking: monitored stations are present
+      running_locking --> running_locked: after warmup, sync diff stays within threshold
+      running_locked --> running_locking: sync diff rises above threshold
+      running_locked --> running_locking: diagnostics fail
+      running_locking --> running_locking: FRMW tick, warmup, or retry
+      running_unavailable --> running_unavailable: FRMW maintenance only
+  ```
   """
 
   @behaviour :gen_statem

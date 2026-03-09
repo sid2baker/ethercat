@@ -9,6 +9,37 @@ defmodule EtherCAT.Slave do
   Typically driven by the master — use `EtherCAT.read_input/2`,
   `EtherCAT.write_output/3`, and `EtherCAT.subscribe/2` from the top-level API.
   Direct slave access via `request/2`, `info/1`, and `download_sdo/4` is also supported.
+
+  ## State Transitions
+
+  ```mermaid
+  stateDiagram-v2
+      state "INIT" as init
+      state "BOOTSTRAP" as bootstrap
+      state "PREOP" as preop
+      state "SAFEOP" as safeop
+      state "OP" as op
+      state "DOWN" as down
+      [*] --> init
+      init --> preop: auto-advance succeeds
+      init --> init: auto-advance retries
+      init --> bootstrap: bootstrap is requested
+      init --> safeop: SAFEOP is requested
+      init --> op: OP is requested
+      bootstrap --> init: INIT is requested
+      preop --> safeop: SAFEOP is requested
+      preop --> op: OP is requested
+      preop --> init: INIT is requested
+      safeop --> op: OP is requested
+      safeop --> preop: PREOP is requested
+      safeop --> init: INIT is requested
+      op --> safeop: SAFEOP is requested or AL health retreats
+      op --> preop: PREOP is requested
+      op --> init: INIT is requested
+      op --> down: health poll sees bus loss or zero WKC
+      down --> preop: reconnect is authorized and PREOP rebuild succeeds
+      down --> init: reconnect retries from INIT
+  ```
   """
 
   @behaviour :gen_statem
