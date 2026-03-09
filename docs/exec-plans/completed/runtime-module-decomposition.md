@@ -2,7 +2,7 @@
 
 ## Status
 
-ACTIVE
+COMPLETE
 
 ## Goal
 
@@ -17,6 +17,23 @@ without reducing protocol scope or reopening recently settled semantics.
 The protocol behavior is real and should stay. The current file shape is not.
 This plan aims to make the runtime easier to reason about, easier to test, and
 safer to evolve while staying spec-first.
+
+## Outcome
+
+This decomposition is complete for the current library line.
+
+Landed runtime shape:
+
+- `EtherCAT.Master` delegates to `Master.Startup`, `Master.Activation`,
+  `Master.Recovery`, `Master.Session`, and `Master.Status`
+- `EtherCAT.Slave` delegates to `Slave.Bootstrap`, `Slave.ProcessData`,
+  `Slave.Mailbox`, `Slave.DCSignals`, `Slave.Transition`, `Slave.Signals`,
+  `Slave.Outputs`, `Slave.Status`, `Slave.Calls`, and `Slave.Configuration`
+- `EtherCAT.Domain` delegates to `Domain.Cycle`, `Domain.Image`,
+  `Domain.Calls`, and `Domain.Status`
+
+The remaining work is no longer structural decomposition. Future changes should
+start from these boundaries instead of reopening the old large-module shape.
 
 ## Current Problem
 
@@ -67,10 +84,10 @@ define the protocol areas that should remain visible after extraction.
 | `Slave.Transition` | ESM and AL control/status: chapters 05, 06, 07 |
 | `Slave.Bootstrap` | ESC identity and SII reads: chapters 08, 09, 10 |
 | `Slave.ProcessData` | SyncManagers, FMMUs, PDO mapping: chapters 11, 12, 13 |
-| `Slave.DC` | DC principles, delay, and registers: chapters 14, 15, 16 |
+| `Slave.DCSignals` | DC principles, delay, and registers: chapters 14, 15, 16 |
 | `Slave.Mailbox` | remaining mailbox / application-layer work: chapter 21 |
 | `Domain.Cycle` | continuous cyclic LRW loop and WKC validity: chapters 04, 20 |
-| `Domain.Image` / `Domain.Diagnostics` | implementation-facing helpers; no direct protocol object, but they must preserve the semantics above |
+| `Domain.Image` / `Domain.Status` | implementation-facing helpers; no direct protocol object, but they must preserve the semantics above |
 
 The decomposition is considered aligned if:
 
@@ -135,7 +152,7 @@ Move workflow logic into collaborators such as:
   - mailbox setup
   - CoE SDO upload/download
   - mailbox driver-step execution
-- `EtherCAT.Slave.DC`
+- `EtherCAT.Slave.DCSignals`
   - sync/latch planning
   - DC register programming
   - latch event polling/reads
@@ -161,7 +178,7 @@ Still extract the dense hot-path helpers into collaborators such as:
   - ETS row shape
   - read/write/sample helpers
   - input slice updates
-- `EtherCAT.Domain.Diagnostics`
+- `EtherCAT.Domain.Status`
   - stats/info assembly
   - telemetry payload shaping
 
@@ -171,6 +188,10 @@ cycle implementation into one file.
 ## Execution Order
 
 ## Phase 1 - Lock current behavior before moving code
+
+### Status
+
+COMPLETE
 
 ### Goal
 
@@ -195,6 +216,10 @@ extracting implementation modules.
 
 Reduce `EtherCAT.Master` to a stateful coordinator shell.
 
+### Status
+
+COMPLETE
+
 ### Changes
 
 1. move startup/configuration helpers into `Master.Startup`
@@ -215,12 +240,16 @@ Reduce `EtherCAT.Master` to a stateful coordinator shell.
 
 Reduce `EtherCAT.Slave` to a stateful slave-runtime shell.
 
+### Status
+
+COMPLETE
+
 ### Changes
 
 1. move bootstrap and PREOP entry sequence into `Slave.Bootstrap`
 2. move process-data registration / SM / FMMU logic into `Slave.ProcessData`
 3. move mailbox/CoE logic into `Slave.Mailbox`
-4. move DC/latch planning and execution into `Slave.DC`
+4. move DC/latch planning and execution into `Slave.DCSignals`
 5. move ESM transition helpers into `Slave.Transition`
 6. move subscription/input-decode helpers into `Slave.Signals`
 
@@ -237,11 +266,15 @@ Reduce `EtherCAT.Slave` to a stateful slave-runtime shell.
 Keep `Domain` as a single runtime process but reduce the density of its cycle
 implementation.
 
+### Status
+
+COMPLETE
+
 ### Changes
 
 1. move image row read/write/sample helpers into `Domain.Image`
 2. move cycle-result classification and miss handling into `Domain.Cycle`
-3. move info/stats payload assembly into `Domain.Diagnostics`
+3. move info/stats payload assembly into `Domain.Status`
 
 ### Exit Criteria
 
@@ -255,6 +288,10 @@ implementation.
 
 Make the new runtime shape visible and keep the repo from drifting back toward
 god modules.
+
+### Status
+
+COMPLETE
 
 ### Changes
 

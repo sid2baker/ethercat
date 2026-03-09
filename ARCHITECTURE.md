@@ -162,14 +162,16 @@ even if the LRW frame arrives early or late.
 
 ---
 
-## Component Context Files
+## Component Entry Files
 
-Each subsystem has a co-located agent context file:
+Each subsystem has a co-located module doc / source entry file:
 
 | File | Component |
 |------|-----------|
-| `lib/ethercat/slave.md` | Slave gen_statem — ESM lifecycle, driver behaviour, PDO registration |
-| `lib/ethercat/master.md` | Master gen_statem — scanning, DC init, activation sequence |
-| `lib/ethercat/domain.md` | Domain gen_statem — cyclic LRW, ETS schema, frame assembly |
+| `lib/ethercat/slave.ex` | Slave gen_statem shell — ESM lifecycle, driver boundary, PREOP/SAFEOP/OP routing |
+| `lib/ethercat/master.ex` | Master gen_statem shell — scanning, activation, recovery, public status |
+| `lib/ethercat/domain.ex` | Domain gen_statem shell — cyclic LRW ownership, ETS image contract, hot-path coordination |
+| `lib/ethercat/bus.ex` | Bus scheduler — transaction classes, frame dispatch, transport boundary |
+| `lib/ethercat/dc.ex` | DC runtime — maintenance loop, lock/runtime status, master notifications |
 | `docs/references/ethercat-esc-technology.md` | ESC hardware: FMMU, SM, DC, ESM, SII, interrupts |
 | `docs/references/ethercat-esc-registers.md` | Full ESC register map (auto-extracted from datasheet) |

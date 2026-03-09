@@ -7,9 +7,6 @@ and decision logs for multi-step work.
 
 - [docs/exec-plans/active/refactor-roadmap.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/active/refactor-roadmap.md)
   Umbrella ordering document for the remaining architecture and spec-alignment refactors.
-- [docs/exec-plans/active/runtime-module-decomposition.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/active/runtime-module-decomposition.md)
-  Detailed plan for splitting the oversized `Master`, `Slave`, and `Domain`
-  runtime modules into clearer subsystem collaborators.
 
 ## Completed
 
@@ -23,6 +20,9 @@ and decision logs for multi-step work.
   Distributed Clocks runtime/API alignment plan for the current library line.
 - [docs/exec-plans/completed/link-transaction-api.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/completed/link-transaction-api.md)
   Bus transaction API cleanup and link-boundary refactor.
+- [docs/exec-plans/completed/runtime-module-decomposition.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/completed/runtime-module-decomposition.md)
+  Structural decomposition of the oversized `Master`, `Slave`, and `Domain`
+  runtime modules into clearer subsystem collaborators.
 - [docs/exec-plans/completed/syncmanager-domain-spec-alignment.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/completed/syncmanager-domain-spec-alignment.md)
   Process-data attachment-model refactor for split `{domain, SyncManager}` support.
 

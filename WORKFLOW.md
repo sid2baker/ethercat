@@ -148,16 +148,16 @@ All of the following must be true:
 
 **Register writes**: Always use `Registers.*` functions from `lib/ethercat/slave/registers.ex`. Never hardcode register addresses.
 
-**Orientation**: Read the relevant `.md` context file before editing any module:
-- `lib/ethercat/slave.md` before touching `slave.ex`
-- `lib/ethercat/master.md` before touching `master.ex`
-- `lib/ethercat/domain.md` before touching `domain.ex`
+**Orientation**: Read the relevant module docs/source file before editing any module:
+- `lib/ethercat/slave.ex` before touching `slave.ex`
+- `lib/ethercat/master.ex` before touching `master.ex`
+- `lib/ethercat/domain.ex` before touching `domain.ex`
 - `docs/exec-plans/tech-debt-tracker.md` to understand known gaps
 - `docs/exec-plans/active/` to find existing plans before creating duplicate work
 
 ## Workflow
 
-1. Read `AGENTS.md` and the relevant component `.md` context file.
+1. Read `AGENTS.md` and the relevant component module docs/source file.
 2. Update workpad with plan and acceptance criteria.
 3. Implement on a feature branch (`git checkout -b <issue-id>-<short-slug>`).
 4. Verify with `mix compile --warnings-as-errors && mix test` after every non-trivial change.

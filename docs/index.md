@@ -27,14 +27,20 @@ Use this file as the entry point. Keep it small, stable, and cross-linked.
 - [docs/references/README.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/references/README.md)
   External references: EtherCAT spec, IgH, SOEM, ESC register docs.
 
-## Subsystem Briefings
+## Subsystem Module Docs
 
-- [lib/ethercat/master.md](/home/n0gg1n/Development/Work/opencode/ethercat/lib/ethercat/master.md)
-  Master scan, configure, activate, and DC startup flow.
-- [lib/ethercat/slave.md](/home/n0gg1n/Development/Work/opencode/ethercat/lib/ethercat/slave.md)
-  Slave ESM lifecycle, driver contract, PREOP/SAFEOP behavior.
-- [lib/ethercat/domain.md](/home/n0gg1n/Development/Work/opencode/ethercat/lib/ethercat/domain.md)
-  Domain cycle loop, ETS image layout, and LRW hot path.
+- [lib/ethercat.ex](/home/n0gg1n/Development/Work/opencode/ethercat/lib/ethercat.ex)
+  Top-level API surface and session model.
+- [lib/ethercat/master.ex](/home/n0gg1n/Development/Work/opencode/ethercat/lib/ethercat/master.ex)
+  Master scan, configure, activate, recover, and public status flow.
+- [lib/ethercat/slave.ex](/home/n0gg1n/Development/Work/opencode/ethercat/lib/ethercat/slave.ex)
+  Slave ESM shell, driver contract, and transition ownership.
+- [lib/ethercat/domain.ex](/home/n0gg1n/Development/Work/opencode/ethercat/lib/ethercat/domain.ex)
+  Domain cycle loop ownership, ETS image contract, and LRW coordination.
+- [lib/ethercat/bus.ex](/home/n0gg1n/Development/Work/opencode/ethercat/lib/ethercat/bus.ex)
+  Bus scheduler, transaction classes, and transport boundary.
+- [lib/ethercat/dc.ex](/home/n0gg1n/Development/Work/opencode/ethercat/lib/ethercat/dc.ex)
+  Distributed Clocks maintenance runtime and lock/runtime reporting.
 
 ## Mechanical Checks
 

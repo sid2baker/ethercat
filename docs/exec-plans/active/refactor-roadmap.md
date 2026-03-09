@@ -35,12 +35,12 @@ The roadmap below focuses on what still needs cleanup or completion.
 
 ## Structural Note
 
-`Master` and `Slave` are still carrying too much behavior inline. The protocol
-complexity is real and expected. The current concentration of that complexity
-inside ~2000-line modules is not.
+The runtime-module decomposition has landed. The protocol complexity is still
+real and expected, but it now lives behind clearer subsystem collaborators
+instead of inside giant shell modules.
 
-The roadmap below now treats runtime-module decomposition as explicit work, not
-an incidental cleanup.
+The roadmap below assumes that extracted shape as the baseline for further
+cleanup and spec-alignment work.
 
 ## Design Rules
 
@@ -60,7 +60,7 @@ an incidental cleanup.
 1. Phase 1 — COMPLETE
 2. Phase 2 — COMPLETE
 3. Phase 3 — COMPLETE for the current library line; remaining richer DC work is tracked as debt/future work
-4. Phase 4 — ACTIVE
+4. Phase 4 — COMPLETE
 5. Phase 5 — PENDING
 6. Phase 6 — PENDING
 7. Phase 7 — PENDING
@@ -203,6 +203,10 @@ the roadmap:
 Reduce `Master`, `Slave`, and `Domain` to clearer runtime shells with extracted
 protocol collaborators.
 
+### Status
+
+COMPLETE
+
 ### Why fourth
 
 The architecture is now correct enough that structural decomposition will pay
@@ -220,13 +224,19 @@ large mixed-concern modules.
 
 Detailed execution plan:
 
-- [docs/exec-plans/active/runtime-module-decomposition.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/active/runtime-module-decomposition.md)
+- [docs/exec-plans/completed/runtime-module-decomposition.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/completed/runtime-module-decomposition.md)
 
 ### Exit Criteria
 
 1. `Master` and `Slave` are no longer giant mixed-concern runtime modules
 2. `Domain` remains one concern but with extracted hot-path helpers
 3. protocol behavior stays intact while module boundaries become clearer
+
+### Notes
+
+This phase is complete for the current library line. The runtime shells now
+delegate to subsystem collaborators, and the entry docs point at the real
+module-doc/source files instead of stale `lib/**/*.md` paths.
 
 ## Phase 5 - Harden the domain data plane
 

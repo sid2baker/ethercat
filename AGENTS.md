@@ -9,10 +9,10 @@
 - `docs/design-docs/index.md` — architecture decisions
 - `docs/exec-plans/index.md` — active work and debt tracker
 
-Subsystem briefings (also `@moduledoc` source):
+Subsystem briefings live in the module docs/source files:
 
-- `lib/ethercat.md`, `lib/ethercat/master.md`, `lib/ethercat/slave.md`
-- `lib/ethercat/domain.md`, `lib/ethercat/bus.md`
+- `lib/ethercat.ex`, `lib/ethercat/master.ex`, `lib/ethercat/slave.ex`
+- `lib/ethercat/domain.ex`, `lib/ethercat/bus.ex`, `lib/ethercat/dc.ex`
 
 ## Hard Rules
 
