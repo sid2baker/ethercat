@@ -84,8 +84,7 @@ defmodule EtherCAT.Domain.Image do
   end
 
   @spec initial_sample_meta(:input | :output) :: nil
-  def initial_sample_meta(:input), do: nil
-  def initial_sample_meta(:output), do: nil
+  def initial_sample_meta(_direction), do: nil
 
   defp build_iodata(frame, [], _table, cursor) do
     [binary_part(frame, cursor, byte_size(frame) - cursor)]

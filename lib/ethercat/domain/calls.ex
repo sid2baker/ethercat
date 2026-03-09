@@ -28,8 +28,7 @@ defmodule EtherCAT.Domain.Calls do
   end
 
   @spec stop_cycling(term(), atom(), %Domain{}) :: :gen_statem.event_handler_result(atom())
-  def stop_cycling(from, state, data) when state in [:open, :stopped] do
-    _ = data
+  def stop_cycling(from, state, _data) when state in [:open, :stopped] do
     {:keep_state_and_data, [{:reply, from, :ok}]}
   end
 

@@ -56,13 +56,18 @@ defmodule EtherCAT.Domain.Cycle do
 
       {:ok, [%{wkc: wkc}]} when wkc >= 0 ->
         reason = {:wkc_mismatch, %{expected: data.cycle_plan.expected_wkc, actual: wkc}}
-        handle_invalid_cycle(data, reason, t0, next_at, next_timeout)
+        handle_invalid_cycle_response(data, reason, t0, next_at, next_timeout)
 
       {:ok, results} ->
-        mark_cycle_missed(data, {:unexpected_reply, length(results)}, next_at, next_timeout)
+        handle_consecutive_cycle_miss(
+          data,
+          {:unexpected_reply, length(results)},
+          next_at,
+          next_timeout
+        )
 
       {:error, reason} ->
-        mark_cycle_missed(data, reason, next_at, next_timeout)
+        handle_consecutive_cycle_miss(data, reason, next_at, next_timeout)
     end
   end
 
@@ -90,29 +95,14 @@ defmodule EtherCAT.Domain.Cycle do
     {:keep_state, new_data, next_timeout}
   end
 
-  defp handle_invalid_cycle(data, reason, t0, next_at, next_timeout) do
-    invalid_at_us = System.monotonic_time(:microsecond)
-
-    Telemetry.domain_cycle_missed(
-      data.id,
-      data.miss_count + 1,
-      data.total_miss_count + 1,
-      reason,
-      invalid_at_us
-    )
-
-    maybe_notify_cycle_invalid(data, reason)
-
-    new_data = %{
-      data
-      | miss_count: 0,
-        cycle_health: {:invalid, reason},
-        last_cycle_started_at_us: t0,
-        last_invalid_cycle_at_us: invalid_at_us,
-        last_invalid_reason: reason,
-        total_miss_count: data.total_miss_count + 1,
-        next_cycle_at: next_at
-    }
+  # A wrong WKC means the cyclic path is still alive, so it does not count
+  # toward the consecutive transport miss threshold that stops the domain.
+  defp handle_invalid_cycle_response(data, reason, t0, next_at, next_timeout) do
+    new_data =
+      record_cycle_fault(data, reason, next_at,
+        consecutive_miss_count: 0,
+        last_cycle_started_at_us: t0
+      )
 
     {:keep_state, new_data, next_timeout}
   end
@@ -163,28 +153,11 @@ defmodule EtherCAT.Domain.Cycle do
     end
   end
 
-  defp mark_cycle_missed(data, reason, next_at, next_timeout) do
-    invalid_at_us = System.monotonic_time(:microsecond)
-
-    Telemetry.domain_cycle_missed(
-      data.id,
-      data.miss_count + 1,
-      data.total_miss_count + 1,
-      reason,
-      invalid_at_us
-    )
-
-    maybe_notify_cycle_invalid(data, reason)
-
-    new_data = %{
-      data
-      | miss_count: data.miss_count + 1,
-        cycle_health: {:invalid, reason},
-        last_invalid_cycle_at_us: invalid_at_us,
-        last_invalid_reason: reason,
-        total_miss_count: data.total_miss_count + 1,
-        next_cycle_at: next_at
-    }
+  # Bus errors and unusable replies count as consecutive transport misses and
+  # drive the miss threshold that stops the domain.
+  defp handle_consecutive_cycle_miss(data, reason, next_at, next_timeout) do
+    new_data =
+      record_cycle_fault(data, reason, next_at, consecutive_miss_count: data.miss_count + 1)
 
     if new_data.miss_count >= data.miss_threshold do
       Logger.error("[Domain #{data.id}] #{data.miss_threshold} consecutive misses — stopping")
@@ -193,6 +166,40 @@ defmodule EtherCAT.Domain.Cycle do
       {:next_state, :stopped, new_data}
     else
       {:keep_state, new_data, next_timeout}
+    end
+  end
+
+  defp record_cycle_fault(data, reason, next_at, opts) do
+    invalid_at_us = System.monotonic_time(:microsecond)
+    next_miss_count = Keyword.fetch!(opts, :consecutive_miss_count)
+    next_total_miss_count = data.total_miss_count + 1
+
+    # Historical telemetry name: this event covers invalid cycle responses as
+    # well as transport misses, not only stop-threshold misses.
+    Telemetry.domain_cycle_missed(
+      data.id,
+      next_miss_count,
+      next_total_miss_count,
+      reason,
+      invalid_at_us
+    )
+
+    maybe_notify_cycle_invalid(data, reason)
+
+    data
+    |> Map.put(:miss_count, next_miss_count)
+    |> Map.put(:cycle_health, {:invalid, reason})
+    |> Map.put(:last_invalid_cycle_at_us, invalid_at_us)
+    |> Map.put(:last_invalid_reason, reason)
+    |> Map.put(:total_miss_count, next_total_miss_count)
+    |> Map.put(:next_cycle_at, next_at)
+    |> maybe_put_last_cycle_started_at(opts)
+  end
+
+  defp maybe_put_last_cycle_started_at(data, opts) do
+    case Keyword.fetch(opts, :last_cycle_started_at_us) do
+      {:ok, t0} -> %{data | last_cycle_started_at_us: t0}
+      :error -> data
     end
   end
 

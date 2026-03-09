@@ -25,7 +25,7 @@ defmodule EtherCAT.Domain do
   ## Telemetry
 
   - `[:ethercat, :domain, :cycle, :done]` — `%{duration_us, cycle_count, completed_at_us}`
-  - `[:ethercat, :domain, :cycle, :missed]` — `%{miss_count, total_miss_count, invalid_at_us}`, metadata: `%{domain, reason}`
+  - `[:ethercat, :domain, :cycle, :missed]` — `%{miss_count, total_miss_count, invalid_at_us}`, metadata: `%{domain, reason}` for both invalid cycle responses and transport misses
   """
 
   @behaviour :gen_statem
