@@ -1,4 +1,4 @@
-defmodule EtherCAT.Slave.DCSignals do
+defmodule EtherCAT.Slave.Runtime.DCSignals do
   @moduledoc false
 
   require Logger
@@ -6,7 +6,7 @@ defmodule EtherCAT.Slave.DCSignals do
   alias EtherCAT.{Bus, DC}
   alias EtherCAT.Bus.Transaction
   alias EtherCAT.Slave
-  alias EtherCAT.Slave.Registers
+  alias EtherCAT.Slave.ESC.Registers
   alias EtherCAT.Slave.Sync.Plan
 
   @spec configure(%Slave{}) :: {:ok, %Slave{}} | {:error, term(), %Slave{}}

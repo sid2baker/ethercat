@@ -291,7 +291,7 @@ ref_time =
   Enum.find_value(slave_list, fn %{station: station} ->
     case EtherCAT.Bus.transaction(
            bus,
-           EtherCAT.Bus.Transaction.fprd(station, EtherCAT.Slave.Registers.dc_system_time())
+           EtherCAT.Bus.Transaction.fprd(station, EtherCAT.Slave.ESC.Registers.dc_system_time())
          ) do
       {:ok, [%{data: <<t::64-little>>, wkc: 1}]} -> t
       _ -> nil
@@ -314,7 +314,7 @@ else
     sys_time =
       case EtherCAT.Bus.transaction(
              bus,
-             EtherCAT.Bus.Transaction.fprd(station, EtherCAT.Slave.Registers.dc_system_time())
+             EtherCAT.Bus.Transaction.fprd(station, EtherCAT.Slave.ESC.Registers.dc_system_time())
            ) do
         {:ok, [%{data: <<t::64-little>>, wkc: 1}]} -> t
         _ -> nil
@@ -325,7 +325,7 @@ else
              bus,
              EtherCAT.Bus.Transaction.fprd(
                station,
-               EtherCAT.Slave.Registers.dc_system_time_diff()
+               EtherCAT.Slave.ESC.Registers.dc_system_time_diff()
              )
            ) do
         {:ok, [%{data: <<raw::32-little>>, wkc: 1}]} ->

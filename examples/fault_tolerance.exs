@@ -80,7 +80,7 @@ end
 # ---------------------------------------------------------------------------
 
 defmodule FT.Helpers do
-  alias EtherCAT.Slave.Registers
+  alias EtherCAT.Slave.ESC.Registers
 
   def read_al_status(bus, station) do
     case EtherCAT.Bus.transaction(

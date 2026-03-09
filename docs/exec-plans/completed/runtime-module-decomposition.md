@@ -26,9 +26,11 @@ Landed runtime shape:
 
 - `EtherCAT.Master` delegates to `Master.Startup`, `Master.Activation`,
   `Master.Recovery`, `Master.Session`, and `Master.Status`
-- `EtherCAT.Slave` delegates to `Slave.Bootstrap`, `Slave.ProcessData`,
-  `Slave.Mailbox`, `Slave.DCSignals`, `Slave.Transition`, `Slave.Signals`,
-  `Slave.Outputs`, `Slave.Status`, `Slave.Calls`, and `Slave.Configuration`
+- `EtherCAT.Slave` delegates to `Slave.Runtime.Bootstrap`,
+  `Slave.ProcessData`, `Slave.Mailbox`, `Slave.Runtime.DCSignals`,
+  `Slave.Runtime.Transition`, `Slave.Runtime.Signals`,
+  `Slave.Runtime.Outputs`, `Slave.Runtime.Status`,
+  `Slave.Runtime.Calls`, and `Slave.Runtime.Configuration`
 - `EtherCAT.Domain` delegates to `Domain.Cycle`, `Domain.Image`,
   `Domain.Calls`, and `Domain.Status`
 
@@ -140,10 +142,11 @@ Keep `EtherCAT.Slave` as the runtime owner of:
 
 Move workflow logic into collaborators such as:
 
-- `EtherCAT.Slave.Bootstrap`
+- `EtherCAT.Slave.Runtime.Bootstrap`
   - INIT to PREOP initialization
   - SII / ESC info reads
 - `EtherCAT.Slave.ProcessData`
+  with `EtherCAT.Slave.ProcessData.Plan` and `EtherCAT.Slave.ProcessData.Signal`
   - process-data plan application
   - domain registration
   - SyncManager / FMMU programming
@@ -152,14 +155,14 @@ Move workflow logic into collaborators such as:
   - mailbox setup
   - CoE SDO upload/download
   - mailbox driver-step execution
-- `EtherCAT.Slave.DCSignals`
+- `EtherCAT.Slave.Runtime.DCSignals`
   - sync/latch planning
   - DC register programming
   - latch event polling/reads
-- `EtherCAT.Slave.Transition`
+- `EtherCAT.Slave.Runtime.Transition`
   - ESM transition walks
   - AL polling / ack-error flow
-- `EtherCAT.Slave.Signals`
+- `EtherCAT.Slave.Runtime.Signals`
   - subscription bookkeeping
   - input decode / dispatch helpers
 

@@ -128,7 +128,7 @@ defmodule EtherCAT.Master do
   alias EtherCAT.Master.Session
   alias EtherCAT.Master.Startup
   alias EtherCAT.Master.Status
-  alias EtherCAT.Slave.Registers
+  alias EtherCAT.Slave.ESC.Registers
 
   @base_station 0x1000
 

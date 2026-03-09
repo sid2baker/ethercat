@@ -1,4 +1,4 @@
-defmodule EtherCAT.Slave.ALTransition do
+defmodule EtherCAT.Slave.Runtime.ALTransition do
   @moduledoc false
 
   @spec target_reached?(binary(), non_neg_integer()) :: boolean()

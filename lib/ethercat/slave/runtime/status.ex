@@ -1,8 +1,8 @@
-defmodule EtherCAT.Slave.Status do
+defmodule EtherCAT.Slave.Runtime.Status do
   @moduledoc false
 
   alias EtherCAT.Slave
-  alias EtherCAT.Slave.Signals
+  alias EtherCAT.Slave.Runtime.Signals
 
   @spec info_snapshot(atom(), %Slave{}) :: map()
   def info_snapshot(state, data) do

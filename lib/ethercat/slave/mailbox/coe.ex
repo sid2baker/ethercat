@@ -1,4 +1,4 @@
-defmodule EtherCAT.Slave.CoE.Download do
+defmodule EtherCAT.Slave.Mailbox.CoE.Download do
   @moduledoc false
 
   @type t :: %__MODULE__{
@@ -15,7 +15,7 @@ defmodule EtherCAT.Slave.CoE.Download do
   defstruct [:index, :subindex, :data, :remaining, :mailbox_counter, offset: 0, toggle: 0]
 end
 
-defmodule EtherCAT.Slave.CoE.Upload do
+defmodule EtherCAT.Slave.Mailbox.CoE.Upload do
   @moduledoc false
 
   @type t :: %__MODULE__{
@@ -31,7 +31,7 @@ defmodule EtherCAT.Slave.CoE.Upload do
   defstruct [:index, :subindex, :size, :mailbox_counter, data_rev: [], toggle: 0]
 end
 
-defmodule EtherCAT.Slave.CoE do
+defmodule EtherCAT.Slave.Mailbox.CoE do
   @moduledoc """
   CANopen over EtherCAT (CoE) mailbox protocol.
 
@@ -51,8 +51,8 @@ defmodule EtherCAT.Slave.CoE do
 
   alias EtherCAT.Bus
   alias EtherCAT.Bus.Transaction
-  alias EtherCAT.Slave.CoE.{Download, Upload}
-  alias EtherCAT.Slave.Registers
+  alias EtherCAT.Slave.ESC.Registers
+  alias EtherCAT.Slave.Mailbox.CoE.{Download, Upload}
 
   @mailbox_type_coe 0x03
   @mailbox_type_error 0x00

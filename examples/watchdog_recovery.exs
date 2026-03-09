@@ -106,10 +106,10 @@ poll_until_state = fn bus, station, target_state, poll_ms, timeout_ms, al_state_
     else
       case EtherCAT.Bus.transaction(
              bus,
-             EtherCAT.Bus.Transaction.fprd(station, EtherCAT.Slave.Registers.al_status())
+             EtherCAT.Bus.Transaction.fprd(station, EtherCAT.Slave.ESC.Registers.al_status())
            ) do
         {:ok, [%{data: bytes, wkc: 1}]} ->
-          {actual, _error_ind} = EtherCAT.Slave.Registers.decode_al_status(bytes)
+          {actual, _error_ind} = EtherCAT.Slave.ESC.Registers.decode_al_status(bytes)
           state_name = al_state_name.(actual)
 
           if state_name == target_state do
@@ -217,10 +217,10 @@ IO.puts("  :outputs slave at station #{hex.(outputs_station)}")
 # Confirm OP state
 case EtherCAT.Bus.transaction(
        bus,
-       EtherCAT.Bus.Transaction.fprd(outputs_station, EtherCAT.Slave.Registers.al_status())
+       EtherCAT.Bus.Transaction.fprd(outputs_station, EtherCAT.Slave.ESC.Registers.al_status())
      ) do
   {:ok, [%{data: bytes, wkc: 1}]} ->
-    {al_code, _} = EtherCAT.Slave.Registers.decode_al_status(bytes)
+    {al_code, _} = EtherCAT.Slave.ESC.Registers.decode_al_status(bytes)
     state = al_state_name.(al_code)
     IO.puts("  :outputs AL status: #{state}")
 
@@ -235,7 +235,7 @@ end
 wdt_divider =
   case EtherCAT.Bus.transaction(
          bus,
-         EtherCAT.Bus.Transaction.fprd(outputs_station, EtherCAT.Slave.Registers.wdt_divider())
+         EtherCAT.Bus.Transaction.fprd(outputs_station, EtherCAT.Slave.ESC.Registers.wdt_divider())
        ) do
     {:ok, [%{data: <<v::16-little>>, wkc: 1}]} -> v
     _ -> nil
@@ -243,7 +243,7 @@ wdt_divider =
 
 case EtherCAT.Bus.transaction(
        bus,
-       EtherCAT.Bus.Transaction.fprd(outputs_station, EtherCAT.Slave.Registers.wdt_sm())
+       EtherCAT.Bus.Transaction.fprd(outputs_station, EtherCAT.Slave.ESC.Registers.wdt_sm())
      ) do
   {:ok, [%{data: <<wdt_val::16-little>>, wkc: 1}]} ->
     timeout_ms =
@@ -315,14 +315,14 @@ end
 wdt_status_val =
   case EtherCAT.Bus.transaction(
          bus,
-         EtherCAT.Bus.Transaction.fprd(outputs_station, EtherCAT.Slave.Registers.wdt_status())
+         EtherCAT.Bus.Transaction.fprd(outputs_station, EtherCAT.Slave.ESC.Registers.wdt_status())
        ) do
     {:ok, [%{data: <<v::16-little>>, wkc: 1}]} -> v
     _ -> nil
   end
 
 if wdt_status_val != nil do
-  wdt_expired = EtherCAT.Slave.Registers.wdt_status_expired?(<<wdt_status_val::16-little>>)
+  wdt_expired = EtherCAT.Slave.ESC.Registers.wdt_status_expired?(<<wdt_status_val::16-little>>)
 
   IO.puts(
     "  WDT_status=0x#{Integer.to_string(wdt_status_val, 16)} → watchdog #{if wdt_expired, do: "EXPIRED (outputs went safe)", else: "still running (outputs NOT safe)"}"
@@ -415,7 +415,7 @@ IO.puts("  #{restored_count}/16 loopback inputs back HIGH after recovery")
 # slave in OP even while outputs are held at safe state.
 wdt_ok =
   wdt_status_val != nil and
-    EtherCAT.Slave.Registers.wdt_status_expired?(<<wdt_status_val::16-little>>)
+    EtherCAT.Slave.ESC.Registers.wdt_status_expired?(<<wdt_status_val::16-little>>)
 
 IO.puts("""
 

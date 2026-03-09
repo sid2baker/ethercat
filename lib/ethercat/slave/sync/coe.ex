@@ -13,7 +13,7 @@ defmodule EtherCAT.Slave.Sync.CoE do
   when a slave application also needs CoE object-dictionary sync-mode writes.
 
   This module does not talk to the mailbox itself. It only builds
-  `{:sdo_download, ...}` steps for `EtherCAT.Slave.CoE` to execute later.
+  `{:sdo_download, ...}` steps for `EtherCAT.Slave.Mailbox.CoE` to execute later.
 
   The generated steps intentionally cover only the common writable fields:
 

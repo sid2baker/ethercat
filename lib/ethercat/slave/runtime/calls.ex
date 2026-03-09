@@ -1,12 +1,12 @@
-defmodule EtherCAT.Slave.Calls do
+defmodule EtherCAT.Slave.Runtime.Calls do
   @moduledoc false
 
   alias EtherCAT.Slave
-  alias EtherCAT.Slave.Configuration
+  alias EtherCAT.Slave.Runtime.Configuration
   alias EtherCAT.Slave.Mailbox
-  alias EtherCAT.Slave.Outputs
-  alias EtherCAT.Slave.Signals
-  alias EtherCAT.Slave.Status
+  alias EtherCAT.Slave.Runtime.Outputs
+  alias EtherCAT.Slave.Runtime.Signals
+  alias EtherCAT.Slave.Runtime.Status
 
   @type handler_opts :: [
           paths: %{optional({atom(), atom()}) => [atom()]},

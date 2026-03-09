@@ -2,7 +2,7 @@ defmodule EtherCAT.Slave.Mailbox do
   @moduledoc false
 
   alias EtherCAT.Slave
-  alias EtherCAT.Slave.CoE
+  alias EtherCAT.Slave.Mailbox.CoE
 
   @spec run_preop_config(%Slave{}) :: {:ok, %Slave{}} | {:error, term()}
   def run_preop_config(%{driver: nil} = data), do: {:ok, data}

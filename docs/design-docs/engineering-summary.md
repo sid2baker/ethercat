@@ -380,9 +380,9 @@ Application
     │       │
     │       └── EtherCAT.Slave   per-slave gen_statem, ESM transitions
     │               │
-    │               └── EtherCAT.Slave.SII     EEPROM read/write/reload
+    │               └── EtherCAT.Slave.ESC.SII EEPROM read/write/reload
     │
-    ├── EtherCAT.Slave.Registers  compile-time ESC register map
+    ├── EtherCAT.Slave.ESC.Registers compile-time ESC register map
     └── EtherCAT.Bus             scheduler + frame coordinator
             │
             └── EtherCAT.Bus.Link

@@ -46,13 +46,13 @@ defmodule EtherCAT.Slave do
 
   require Logger
 
-  alias EtherCAT.Slave.Bootstrap
-  alias EtherCAT.Slave.Calls
-  alias EtherCAT.Slave.Configuration
-  alias EtherCAT.Slave.DCSignals
-  alias EtherCAT.Slave.Health
-  alias EtherCAT.Slave.Signals
-  alias EtherCAT.Slave.Transition
+  alias EtherCAT.Slave.Runtime.Bootstrap
+  alias EtherCAT.Slave.Runtime.Calls
+  alias EtherCAT.Slave.Runtime.Configuration
+  alias EtherCAT.Slave.Runtime.DCSignals
+  alias EtherCAT.Slave.Runtime.Health
+  alias EtherCAT.Slave.Runtime.Signals
+  alias EtherCAT.Slave.Runtime.Transition
 
   @al_codes %{init: 0x01, preop: 0x02, bootstrap: 0x03, safeop: 0x04, op: 0x08}
 

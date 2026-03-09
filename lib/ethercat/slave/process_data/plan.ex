@@ -1,4 +1,4 @@
-defmodule EtherCAT.Slave.ProcessDataPlan.DomainAttachment do
+defmodule EtherCAT.Slave.ProcessData.Plan.DomainAttachment do
   @moduledoc false
 
   @type signal_registration :: %{
@@ -16,10 +16,10 @@ defmodule EtherCAT.Slave.ProcessDataPlan.DomainAttachment do
   defstruct [:domain_id, :registrations]
 end
 
-defmodule EtherCAT.Slave.ProcessDataPlan.SmGroup do
+defmodule EtherCAT.Slave.ProcessData.Plan.SmGroup do
   @moduledoc false
 
-  alias EtherCAT.Slave.ProcessDataPlan.DomainAttachment
+  alias EtherCAT.Slave.ProcessData.Plan.DomainAttachment
 
   @type t :: %__MODULE__{
           sm_index: non_neg_integer(),
@@ -54,12 +54,12 @@ defmodule EtherCAT.Slave.ProcessDataPlan.SmGroup do
   ]
 end
 
-defmodule EtherCAT.Slave.ProcessDataPlan do
+defmodule EtherCAT.Slave.ProcessData.Plan do
   @moduledoc false
 
-  alias EtherCAT.Slave.ProcessDataPlan.DomainAttachment
-  alias EtherCAT.Slave.ProcessDataPlan.SmGroup
-  alias EtherCAT.Slave.ProcessDataSignal
+  alias EtherCAT.Slave.ProcessData.Plan.DomainAttachment
+  alias EtherCAT.Slave.ProcessData.Plan.SmGroup
+  alias EtherCAT.Slave.ProcessData.Signal
 
   @type signal_name :: atom()
   @type process_data_request :: :none | {:all, atom()} | [{signal_name(), atom()}]
@@ -75,9 +75,9 @@ defmodule EtherCAT.Slave.ProcessDataPlan do
           required(:bit_offset) => non_neg_integer()
         }
 
-  @type process_data_model :: [{signal_name(), non_neg_integer() | ProcessDataSignal.t()}]
+  @type process_data_model :: [{signal_name(), non_neg_integer() | Signal.t()}]
 
-  @type resolved_signal :: {signal_name(), atom(), ProcessDataSignal.t(), sii_pdo_config()}
+  @type resolved_signal :: {signal_name(), atom(), Signal.t(), sii_pdo_config()}
 
   @spec normalize_request(process_data_request(), module() | nil, map()) ::
           {:ok, [{signal_name(), atom()}]} | {:error, term()}
@@ -146,10 +146,10 @@ defmodule EtherCAT.Slave.ProcessDataPlan do
 
   defp normalize_signal_declaration(_signal_name, declaration)
        when is_integer(declaration) and declaration >= 0 do
-    {:ok, ProcessDataSignal.whole_pdo(declaration)}
+    {:ok, Signal.whole_pdo(declaration)}
   end
 
-  defp normalize_signal_declaration(signal_name, %ProcessDataSignal{} = declaration) do
+  defp normalize_signal_declaration(signal_name, %Signal{} = declaration) do
     validate_signal_declaration(signal_name, declaration)
   end
 
@@ -157,7 +157,7 @@ defmodule EtherCAT.Slave.ProcessDataPlan do
     {:error, {:invalid_signal_model, signal_name}}
   end
 
-  defp validate_signal_declaration(_signal_name, %ProcessDataSignal{
+  defp validate_signal_declaration(_signal_name, %Signal{
          pdo_index: pdo_index,
          bit_offset: bit_offset,
          bit_size: bit_size
@@ -165,15 +165,15 @@ defmodule EtherCAT.Slave.ProcessDataPlan do
        when is_integer(pdo_index) and pdo_index >= 0 and is_integer(bit_offset) and
               bit_offset >= 0 and
               is_integer(bit_size) and bit_size > 0 do
-    {:ok, %ProcessDataSignal{pdo_index: pdo_index, bit_offset: bit_offset, bit_size: bit_size}}
+    {:ok, %Signal{pdo_index: pdo_index, bit_offset: bit_offset, bit_size: bit_size}}
   end
 
   defp validate_signal_declaration(
          _signal_name,
-         %ProcessDataSignal{pdo_index: pdo_index, bit_offset: 0, bit_size: nil}
+         %Signal{pdo_index: pdo_index, bit_offset: 0, bit_size: nil}
        )
        when is_integer(pdo_index) and pdo_index >= 0 do
-    {:ok, ProcessDataSignal.whole_pdo(pdo_index)}
+    {:ok, Signal.whole_pdo(pdo_index)}
   end
 
   defp validate_signal_declaration(signal_name, _declaration) do
@@ -187,7 +187,7 @@ defmodule EtherCAT.Slave.ProcessDataPlan do
     end
   end
 
-  defp validate_signal_range(signal_name, %ProcessDataSignal{} = signal_spec, pdo_cfg) do
+  defp validate_signal_range(signal_name, %Signal{} = signal_spec, pdo_cfg) do
     bit_size = signal_spec.bit_size || pdo_cfg.bit_size
     end_bit = signal_spec.bit_offset + bit_size
 

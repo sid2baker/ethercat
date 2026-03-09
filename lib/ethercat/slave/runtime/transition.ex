@@ -1,12 +1,12 @@
-defmodule EtherCAT.Slave.Transition do
+defmodule EtherCAT.Slave.Runtime.Transition do
   @moduledoc false
 
   require Logger
 
   alias EtherCAT.Bus
   alias EtherCAT.Bus.Transaction
-  alias EtherCAT.Slave.ALTransition
-  alias EtherCAT.Slave.Registers
+  alias EtherCAT.Slave.Runtime.ALTransition
+  alias EtherCAT.Slave.ESC.Registers
 
   @type hook_opts :: [
           al_codes: %{required(atom()) => non_neg_integer()},

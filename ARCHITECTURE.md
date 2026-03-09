@@ -28,7 +28,7 @@ EtherCAT.Application
 │       ├── EtherCAT.SII         (EEPROM reader — stateless, called from Slave.init)
 │       ├── EtherCAT.Slave.Driver (behaviour contract for user drivers)
 │       ├── EtherCAT.Slave.Sync.Plan (pure sync/latch register planning)
-│       └── EtherCAT.Slave.Registers (ESC register address map — pure functions)
+│       └── EtherCAT.Slave.ESC.Registers (ESC register address map — pure functions)
 ```
 
 Registry: `EtherCAT.Registry` (local). Slaves register as `{:slave, name}`;

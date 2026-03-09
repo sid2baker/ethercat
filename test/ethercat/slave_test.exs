@@ -2,8 +2,8 @@ defmodule EtherCAT.SlaveTest do
   use ExUnit.Case, async: true
 
   alias EtherCAT.Slave.ProcessData
-  alias EtherCAT.Slave.ProcessDataPlan.DomainAttachment
-  alias EtherCAT.Slave.ProcessDataPlan.SmGroup
+  alias EtherCAT.Slave.ProcessData.Plan.DomainAttachment
+  alias EtherCAT.Slave.ProcessData.Plan.SmGroup
 
   defmodule TestDriver do
     @behaviour EtherCAT.Slave.Driver

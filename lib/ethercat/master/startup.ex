@@ -9,7 +9,7 @@ defmodule EtherCAT.Master.Startup do
   alias EtherCAT.Master.Startup.InitRecovery
   alias EtherCAT.Master.Startup.Reset, as: InitReset
   alias EtherCAT.Master.Startup.Verification, as: InitVerification
-  alias EtherCAT.Slave.Registers
+  alias EtherCAT.Slave.ESC.Registers
 
   @frame_timeout_base_us 200
   @frame_timeout_per_slave_us 40

@@ -1,8 +1,8 @@
-defmodule EtherCAT.Slave.CoETest do
+defmodule EtherCAT.Slave.Mailbox.CoETest do
   use ExUnit.Case, async: true
 
   alias EtherCAT.Bus.Transaction
-  alias EtherCAT.Slave.CoE
+  alias EtherCAT.Slave.Mailbox.CoE
 
   defmodule FakeBus do
     use GenServer

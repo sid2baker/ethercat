@@ -1,4 +1,4 @@
-defmodule EtherCAT.Slave.Health do
+defmodule EtherCAT.Slave.Runtime.Health do
   @moduledoc false
 
   require Logger
@@ -6,7 +6,7 @@ defmodule EtherCAT.Slave.Health do
   alias EtherCAT.Bus
   alias EtherCAT.Bus.Transaction
   alias EtherCAT.Slave
-  alias EtherCAT.Slave.Registers
+  alias EtherCAT.Slave.ESC.Registers
 
   @type opts :: [
           transition_to: (%Slave{}, atom() -> {:ok, %Slave{}} | {:error, term(), %Slave{}}),

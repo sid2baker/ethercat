@@ -1,10 +1,10 @@
-defmodule EtherCAT.Slave.Configuration do
+defmodule EtherCAT.Slave.Runtime.Configuration do
   @moduledoc false
 
   require Logger
 
   alias EtherCAT.Slave
-  alias EtherCAT.Slave.DCSignals
+  alias EtherCAT.Slave.Runtime.DCSignals
   alias EtherCAT.Slave.Mailbox
   alias EtherCAT.Slave.ProcessData
 

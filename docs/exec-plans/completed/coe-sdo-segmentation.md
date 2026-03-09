@@ -119,7 +119,7 @@ new `CoE.download_sdo/7`.
 
 ### 1. Separate mailbox transport from SDO protocol
 
-Split `EtherCAT.Slave.CoE` into two conceptual layers even if they stay in one
+Split `EtherCAT.Slave.Mailbox.CoE` into two conceptual layers even if they stay in one
 module at first:
 
 1. Mailbox transport helpers

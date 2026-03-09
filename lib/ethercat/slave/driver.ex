@@ -21,7 +21,7 @@ defmodule EtherCAT.Slave.Driver do
   Each value declares where that signal lives in the slave's PDO layout:
 
   - an integer means "this signal spans the whole PDO at that index"
-  - `%EtherCAT.Slave.ProcessDataSignal{}` may select a bit-range inside a PDO
+  - `%EtherCAT.Slave.ProcessData.Signal{}` may select a bit-range inside a PDO
 
   The master reads SII EEPROM categories 0x0032 (TxPDO) and 0x0033 (RxPDO) to
   derive SyncManager assignment, direction, total SM size, and each PDO's bit
@@ -122,7 +122,7 @@ defmodule EtherCAT.Slave.Driver do
       end
   """
 
-  alias EtherCAT.Slave.ProcessDataSignal
+  alias EtherCAT.Slave.ProcessData.Signal
   alias EtherCAT.Slave.Sync.Config, as: SyncConfig
 
   @type signal_name :: atom()
@@ -137,7 +137,7 @@ defmodule EtherCAT.Slave.Driver do
   @doc """
   Return the driver's logical signal model.
 
-  Each signal maps to either a whole PDO index or a `%ProcessDataSignal{}` slice.
+  Each signal maps to either a whole PDO index or a `%Signal{}` slice.
 
   An optional 2-arity version `process_data_model/2` receives the SII PDO configs
   as its second argument. When exported, the runtime calls it instead of `/1`, giving
@@ -145,7 +145,7 @@ defmodule EtherCAT.Slave.Driver do
   driver uses this to auto-discover all PDOs without any hand-written mapping.
   """
   @callback process_data_model(config()) ::
-              [{signal_name(), non_neg_integer() | ProcessDataSignal.t()}]
+              [{signal_name(), non_neg_integer() | Signal.t()}]
 
   @doc """
   Optional 2-arity variant of `process_data_model/1` that receives SII PDO configs.
@@ -160,7 +160,7 @@ defmodule EtherCAT.Slave.Driver do
   When this callback is exported, it takes precedence over `process_data_model/1`.
   """
   @callback process_data_model(config(), sii_pdo_configs :: [map()]) ::
-              [{signal_name(), non_neg_integer() | ProcessDataSignal.t()}]
+              [{signal_name(), non_neg_integer() | Signal.t()}]
 
   @doc "Encode one logical output signal into raw bytes for the process image."
   @callback encode_signal(signal_name(), config(), term()) :: binary()

@@ -1,7 +1,7 @@
-defmodule EtherCAT.Slave.RegistersTest do
+defmodule EtherCAT.Slave.ESC.RegistersTest do
   use ExUnit.Case, async: true
 
-  alias EtherCAT.Slave.Registers
+  alias EtherCAT.Slave.ESC.Registers
 
   test "dc activation values are encoded as one byte" do
     assert Registers.dc_activation() == {0x0981, 1}

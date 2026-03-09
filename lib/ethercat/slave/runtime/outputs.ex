@@ -1,4 +1,4 @@
-defmodule EtherCAT.Slave.Outputs do
+defmodule EtherCAT.Slave.Runtime.Outputs do
   @moduledoc false
 
   alias EtherCAT.Slave

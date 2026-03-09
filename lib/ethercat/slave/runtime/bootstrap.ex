@@ -1,12 +1,12 @@
-defmodule EtherCAT.Slave.Bootstrap do
+defmodule EtherCAT.Slave.Runtime.Bootstrap do
   @moduledoc false
 
   require Logger
 
   alias EtherCAT.Bus
   alias EtherCAT.Bus.Transaction
-  alias EtherCAT.Slave.Registers
-  alias EtherCAT.Slave.SII
+  alias EtherCAT.Slave.ESC.Registers
+  alias EtherCAT.Slave.ESC.SII
 
   # ETG.1000 §6.7 SyncManager control byte: mailbox/handshake + PDI IRQ.
   # `0x26` = ECAT writes (master->slave mailbox receive), `0x22` = ECAT reads

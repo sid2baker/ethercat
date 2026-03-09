@@ -1,4 +1,4 @@
-defmodule EtherCAT.Slave.Registers do
+defmodule EtherCAT.Slave.ESC.Registers do
   @moduledoc """
   EtherCAT Slave Controller (ESC) register map.
 

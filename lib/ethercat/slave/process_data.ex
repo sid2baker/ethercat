@@ -7,10 +7,10 @@ defmodule EtherCAT.Slave.ProcessData do
   alias EtherCAT.Bus.Transaction
   alias EtherCAT.Domain
   alias EtherCAT.Slave
-  alias EtherCAT.Slave.ProcessDataPlan
-  alias EtherCAT.Slave.ProcessDataPlan.DomainAttachment
-  alias EtherCAT.Slave.ProcessDataPlan.SmGroup
-  alias EtherCAT.Slave.Registers
+  alias EtherCAT.Slave.ProcessData.Plan
+  alias EtherCAT.Slave.ProcessData.Plan.DomainAttachment
+  alias EtherCAT.Slave.ProcessData.Plan.SmGroup
+  alias EtherCAT.Slave.ESC.Registers
 
   @type opts :: [
           run_mailbox_config: (%Slave{} -> {:ok, %Slave{}} | {:error, term()})
@@ -29,14 +29,14 @@ defmodule EtherCAT.Slave.ProcessData do
 
     with {:ok, mailbox_data} <- run_mailbox_config.(data),
          {:ok, requested_signals} <-
-           ProcessDataPlan.normalize_request(
+           Plan.normalize_request(
              mailbox_data.process_data_request,
              mailbox_data.driver,
              mailbox_data.config
            ),
          :ok <- validate_subscription_names(requested_signals, mailbox_data.sync_config),
          {:ok, sm_groups} <-
-           ProcessDataPlan.build(
+           Plan.build(
              requested_signals,
              call_process_data_model(mailbox_data),
              mailbox_data.sii_pdo_configs,

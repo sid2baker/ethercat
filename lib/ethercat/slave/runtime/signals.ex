@@ -1,4 +1,4 @@
-defmodule EtherCAT.Slave.Signals do
+defmodule EtherCAT.Slave.Runtime.Signals do
   @moduledoc false
 
   alias EtherCAT.Domain

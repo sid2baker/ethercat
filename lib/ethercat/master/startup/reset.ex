@@ -2,13 +2,13 @@ defmodule EtherCAT.Master.Startup.Reset do
   @moduledoc false
 
   alias EtherCAT.Bus.Transaction
-  alias EtherCAT.Slave.Registers
+  alias EtherCAT.Slave.ESC.Registers
 
   @reset_fmmu_count 3
   @reset_sm_count 4
 
   @type step_class :: :required | :optional
-  @type step :: {step_class(), EtherCAT.Slave.Registers.reg_write()}
+  @type step :: {step_class(), EtherCAT.Slave.ESC.Registers.reg_write()}
 
   @spec transaction() :: Transaction.t()
   def transaction do

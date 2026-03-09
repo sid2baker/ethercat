@@ -1,4 +1,4 @@
-defmodule EtherCAT.Slave.ProcessDataSignal do
+defmodule EtherCAT.Slave.ProcessData.Signal do
   @moduledoc """
   Declarative mapping of one logical process-data signal to a PDO or slice of a PDO.
 

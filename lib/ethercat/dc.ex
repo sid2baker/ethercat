@@ -64,7 +64,7 @@ defmodule EtherCAT.DC do
   alias EtherCAT.DC.InitStep
   alias EtherCAT.DC.Snapshot
   alias EtherCAT.DC.Status
-  alias EtherCAT.Slave.Registers
+  alias EtherCAT.Slave.ESC.Registers
   alias EtherCAT.Telemetry
 
   @type server :: :gen_statem.server_ref()

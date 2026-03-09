@@ -1,4 +1,4 @@
-defmodule EtherCAT.Slave.SII do
+defmodule EtherCAT.Slave.ESC.SII do
   @moduledoc """
   SII EEPROM interface for EtherCAT slaves.
 
@@ -10,7 +10,7 @@ defmodule EtherCAT.Slave.SII do
 
   ## Examples
 
-      alias EtherCAT.Slave.SII
+      alias EtherCAT.Slave.ESC.SII
 
       # Read vendor ID (words 0x08–0x09)
       {:ok, <<vendor_id::32-little>>} = SII.read(bus, 0x1000, 0x08, 2)
@@ -24,7 +24,7 @@ defmodule EtherCAT.Slave.SII do
 
   alias EtherCAT.Bus
   alias EtherCAT.Bus.Transaction
-  alias EtherCAT.Slave.Registers
+  alias EtherCAT.Slave.ESC.Registers
 
   # -- Command values (written to bits [10:8] of control register) ------------
 

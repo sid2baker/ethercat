@@ -1,6 +1,6 @@
 # Missing Registers Helpers
 ## What it does
-Tracks ESC register helpers needed by the reference-note translations that are not currently exposed by `EtherCAT.Slave.Registers`.
+Tracks ESC register helpers needed by the reference-note translations that are not currently exposed by `EtherCAT.Slave.ESC.Registers`.
 
 ## Key sequence (IgH + SOEM consensus)
 1. Keep call sites on `Registers.*` API, not hardcoded offsets.

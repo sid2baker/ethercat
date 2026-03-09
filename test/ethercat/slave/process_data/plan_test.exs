@@ -1,9 +1,9 @@
-defmodule EtherCAT.Slave.ProcessDataPlanTest do
+defmodule EtherCAT.Slave.ProcessData.PlanTest do
   use ExUnit.Case, async: true
 
-  alias EtherCAT.Slave.ProcessDataPlan
-  alias EtherCAT.Slave.ProcessDataPlan.DomainAttachment
-  alias EtherCAT.Slave.ProcessDataSignal
+  alias EtherCAT.Slave.ProcessData.Plan
+  alias EtherCAT.Slave.ProcessData.Plan.DomainAttachment
+  alias EtherCAT.Slave.ProcessData.Signal
 
   defmodule TestDriver do
     @behaviour EtherCAT.Slave.Driver
@@ -14,8 +14,8 @@ defmodule EtherCAT.Slave.ProcessDataPlanTest do
         out1: 0x1600,
         in1: 0x1A00,
         in2: 0x1A01,
-        status_word: ProcessDataSignal.slice(0x1A02, 0, 16),
-        actual_position: ProcessDataSignal.slice(0x1A02, 16, 32)
+        status_word: Signal.slice(0x1A02, 0, 16),
+        actual_position: Signal.slice(0x1A02, 16, 32)
       ]
     end
 
@@ -27,19 +27,19 @@ defmodule EtherCAT.Slave.ProcessDataPlanTest do
   end
 
   test "normalizes :none and {:all, domain} requests" do
-    assert {:ok, []} = ProcessDataPlan.normalize_request(:none, TestDriver, %{})
+    assert {:ok, []} = Plan.normalize_request(:none, TestDriver, %{})
 
     assert {:ok,
             [out1: :main, in1: :main, in2: :main, status_word: :main, actual_position: :main]} =
-             ProcessDataPlan.normalize_request({:all, :main}, TestDriver, %{})
+             Plan.normalize_request({:all, :main}, TestDriver, %{})
   end
 
   test "rejects invalid process_data requests" do
     assert {:error, :invalid_process_data_request} =
-             ProcessDataPlan.normalize_request([{:bad, "main"}], TestDriver, %{})
+             Plan.normalize_request([{:bad, "main"}], TestDriver, %{})
 
     assert {:error, :invalid_process_data_request} =
-             ProcessDataPlan.normalize_request(:bad, TestDriver, %{})
+             Plan.normalize_request(:bad, TestDriver, %{})
   end
 
   test "builds sync-manager groups from driver model and SII metadata" do
@@ -49,8 +49,8 @@ defmodule EtherCAT.Slave.ProcessDataPlanTest do
       out1: 0x1600,
       in1: 0x1A00,
       in2: 0x1A01,
-      status_word: ProcessDataSignal.slice(0x1A02, 0, 16),
-      actual_position: ProcessDataSignal.slice(0x1A02, 16, 32)
+      status_word: Signal.slice(0x1A02, 0, 16),
+      actual_position: Signal.slice(0x1A02, 16, 32)
     ]
 
     sii_pdo_configs = [
@@ -66,7 +66,7 @@ defmodule EtherCAT.Slave.ProcessDataPlanTest do
     ]
 
     assert {:ok, [output_group, input_group]} =
-             ProcessDataPlan.build(requested, model, sii_pdo_configs, sii_sm_configs)
+             Plan.build(requested, model, sii_pdo_configs, sii_sm_configs)
 
     assert output_group.sm_index == 2
     assert output_group.direction == :output
@@ -106,7 +106,7 @@ defmodule EtherCAT.Slave.ProcessDataPlanTest do
     sii_sm_configs = [{2, 0x1000, 1, 0x64}]
 
     assert {:error, {:signal_not_in_driver_model, :missing}} =
-             ProcessDataPlan.build(
+             Plan.build(
                [missing: :main],
                [out1: 0x1600],
                sii_pdo_configs,
@@ -114,10 +114,10 @@ defmodule EtherCAT.Slave.ProcessDataPlanTest do
              )
 
     assert {:error, {:pdo_not_in_sii, 0x1A00}} =
-             ProcessDataPlan.build([in1: :main], [in1: 0x1A00], sii_pdo_configs, sii_sm_configs)
+             Plan.build([in1: :main], [in1: 0x1A00], sii_pdo_configs, sii_sm_configs)
 
     assert {:error, {:sm_not_in_sii, 3}} =
-             ProcessDataPlan.build(
+             Plan.build(
                [in1: :main],
                [in1: 0x1A00],
                [%{index: 0x1A00, direction: :input, sm_index: 3, bit_size: 8, bit_offset: 0}],
@@ -134,15 +134,15 @@ defmodule EtherCAT.Slave.ProcessDataPlanTest do
     sii_sm_configs = [{3, 0x1100, 4, 0x20}]
 
     assert {:error, {:signal_range_out_of_bounds, :too_big, 0x1A00}} =
-             ProcessDataPlan.build(
+             Plan.build(
                [too_big: :main],
-               [too_big: ProcessDataSignal.slice(0x1A00, 8, 16)],
+               [too_big: Signal.slice(0x1A00, 8, 16)],
                sii_pdo_configs,
                sii_sm_configs
              )
 
     assert {:ok, [input_group]} =
-             ProcessDataPlan.build(
+             Plan.build(
                [first: :main, second: :aux],
                [first: 0x1A00, second: 0x1A01],
                sii_pdo_configs,
@@ -170,7 +170,7 @@ defmodule EtherCAT.Slave.ProcessDataPlanTest do
     output_sm_configs = [{2, 0x1000, 2, 0x64}]
 
     assert {:ok, [output_group]} =
-             ProcessDataPlan.build(
+             Plan.build(
                [first: :main, second: :aux],
                [first: 0x1600, second: 0x1601],
                output_pdo_configs,

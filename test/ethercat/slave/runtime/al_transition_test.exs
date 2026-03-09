@@ -1,7 +1,7 @@
-defmodule EtherCAT.Slave.ALTransitionTest do
+defmodule EtherCAT.Slave.Runtime.ALTransitionTest do
   use ExUnit.Case, async: true
 
-  alias EtherCAT.Slave.ALTransition
+  alias EtherCAT.Slave.Runtime.ALTransition
 
   test "only treats target state as reached when the error bit is clear" do
     assert ALTransition.target_reached?(<<0::3, 0::1, 0x02::4, 0::8>>, 0x02)
