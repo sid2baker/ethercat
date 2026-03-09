@@ -233,14 +233,12 @@ defmodule EtherCAT.Slave do
   def info(slave_name), do: safe_call(slave_name, :info)
 
   @doc """
-  Read the decoded input value for an input signal together with its last update
-  time. Equivalent to the value delivered via `subscribe/3` for normal
-  process-data signals, but with freshness metadata.
+  Read the decoded input value for an input signal. Equivalent to the value
+  delivered via `subscribe/3` for normal process-data signals.
 
   Returns `{:error, :not_ready}` until the first domain cycle completes.
   """
-  @spec read_input(atom(), atom()) ::
-          {:ok, %{value: term(), updated_at_us: integer() | nil}} | {:error, term()}
+  @spec read_input(atom(), atom()) :: {:ok, term()} | {:error, term()}
   def read_input(slave_name, signal_name) do
     safe_call(slave_name, {:read_input, signal_name})
   end
@@ -372,7 +370,6 @@ defmodule EtherCAT.Slave do
 
     :keep_state_and_data
   end
-
   def handle_event(:info, {:DOWN, ref, :process, pid, _reason}, _state, data) do
     case Map.get(data.subscriber_refs, pid) do
       ^ref ->

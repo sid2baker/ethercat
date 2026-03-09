@@ -278,7 +278,7 @@ Process.sleep(period_ms * 5)
 on_count =
   Enum.count(1..16, fn i ->
     case EtherCAT.read_input(:inputs, :"ch#{i}") do
-      {:ok, %{value: 1}} -> true
+      {:ok, 1} -> true
       _ -> false
     end
   end)
@@ -346,7 +346,7 @@ EtherCAT.Domain.stop_cycling(:main)
 off_count =
   Enum.count(1..16, fn i ->
     case EtherCAT.read_input(:inputs, :"ch#{i}") do
-      {:ok, %{value: 0}} -> true
+      {:ok, 0} -> true
       _ -> false
     end
   end)
@@ -398,7 +398,7 @@ Process.sleep(period_ms * 5)
 restored_count =
   Enum.count(1..16, fn i ->
     case EtherCAT.read_input(:inputs, :"ch#{i}") do
-      {:ok, %{value: 1}} -> true
+      {:ok, 1} -> true
       _ -> false
     end
   end)

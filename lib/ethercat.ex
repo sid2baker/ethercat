@@ -409,14 +409,9 @@ defmodule EtherCAT do
   @doc """
   Read the latest decoded input sample for a slave input signal.
 
-  This returns the last process-image value observed by the master, not a direct
-  wire read and not an exact hardware-edge timestamp. Exact event timing requires
-  device-specific timestamped PDOs or ESC LATCH support, not the generic PDO API.
-
   Returns `{:error, :not_ready}` until the first domain cycle completes.
   """
-  @spec read_input(atom(), atom()) ::
-          {:ok, %{value: term(), updated_at_us: integer() | nil}} | {:error, term()}
+  @spec read_input(atom(), atom()) :: {:ok, term()} | {:error, term()}
   def read_input(slave_name, pdo_name),
     do: Slave.read_input(slave_name, pdo_name)
 

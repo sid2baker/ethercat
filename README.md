@@ -84,7 +84,7 @@ EtherCAT.start(
 :ok = EtherCAT.await_operational()
 
 EtherCAT.subscribe(:inputs, :ch1)
-{:ok, %{value: bit, updated_at_us: updated_at_us}} = EtherCAT.read_input(:inputs, :ch1)
+{:ok, bit} = EtherCAT.read_input(:inputs, :ch1)
 ```
 
 For PREOP-first workflows, configure discovered slaves dynamically:
