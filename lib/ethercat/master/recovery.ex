@@ -42,6 +42,7 @@ defmodule EtherCAT.Master.Recovery do
           | {:recovering, %EtherCAT.Master{}}
   def retry_recovering_state(data) do
     data
+    |> retry_slave_faults()
     |> retry_recovering_slaves()
     |> maybe_restart_stopped_domains()
     |> maybe_restart_dc_runtime()
@@ -91,44 +92,28 @@ defmodule EtherCAT.Master.Recovery do
 
   @spec put_slave_fault(%EtherCAT.Master{}, atom(), term()) :: %EtherCAT.Master{}
   def put_slave_fault(data, name, reason) do
-    %{data | runtime_faults: Map.put(data.runtime_faults, {:slave, name}, reason)}
+    %{data | slave_faults: Map.put(data.slave_faults, name, reason)}
   end
 
   @spec clear_slave_fault(%EtherCAT.Master{}, atom()) :: %EtherCAT.Master{}
   def clear_slave_fault(data, name) do
-    %{data | runtime_faults: Map.delete(data.runtime_faults, {:slave, name})}
+    %{data | slave_faults: Map.delete(data.slave_faults, name)}
   end
 
   @spec maybe_resume_running(%EtherCAT.Master{}) ::
           {:ok, :operational, %EtherCAT.Master{}}
           | {:recovering, %EtherCAT.Master{}}
   def maybe_resume_running(data) do
-    critical_faults =
-      Enum.reject(data.runtime_faults, fn
-        {{:slave, _name}, _reason} -> true
-        _ -> false
-      end)
-
-    if map_size(data.activation_failures) == 0 and length(critical_faults) == 0 do
+    if map_size(data.activation_failures) == 0 and map_size(data.runtime_faults) == 0 do
       Logger.info("[Master] recovery succeeded; operational path is healthy again")
-      # Keep slave faults in runtime_faults, but clear others
-      slave_faults = Map.new(Enum.filter(data.runtime_faults, fn {{k, _}, _} -> k == :slave end))
-      {:ok, :operational, %{data | activation_failures: %{}, runtime_faults: slave_faults}}
+      {:ok, :operational, %{data | activation_failures: %{}, runtime_faults: %{}}}
     else
       {:recovering, data}
     end
   end
 
   @spec unrecoverable_recovery_reason(%EtherCAT.Master{}) :: term() | nil
-  def unrecoverable_recovery_reason(%{runtime_faults: runtime_faults}) do
-    Enum.find_value(runtime_faults, fn
-      {{:slave, name}, {:preop, {:preop_configuration_failed, reason}}} ->
-        {:slave_preop_configuration_failed, name, reason}
-
-      _other ->
-        nil
-    end)
-  end
+  def unrecoverable_recovery_reason(_data), do: nil
 
   @spec maybe_restart_dc_runtime(%EtherCAT.Master{}) :: %EtherCAT.Master{}
   def maybe_restart_dc_runtime(%{runtime_faults: runtime_faults} = data) do
@@ -168,6 +153,40 @@ defmodule EtherCAT.Master.Recovery do
     %{data | runtime_faults: next_faults}
   end
 
+  @spec retry_slave_faults(%EtherCAT.Master{}) :: %EtherCAT.Master{}
+  def retry_slave_faults(%{slave_faults: slave_faults} = data) do
+    next_faults =
+      Enum.reduce(slave_faults, slave_faults, fn
+        {name, {:retreated, _target_state}}, acc ->
+          retry_slave_op_request(acc, name)
+
+        {name, {:preop, reason}}, acc ->
+          if retryable_runtime_slave_fault?(reason) do
+            retry_slave_op_request(acc, name)
+          else
+            acc
+          end
+
+        {name, {:reconnect_failed, _reason}}, acc ->
+          retry_slave_reconnect_authorization(acc, name)
+
+        _other, acc ->
+          acc
+      end)
+
+    %{data | slave_faults: next_faults}
+  end
+
+  @spec retryable_slave_faults?(%EtherCAT.Master{}) :: boolean()
+  def retryable_slave_faults?(%{slave_faults: slave_faults}) do
+    Enum.any?(slave_faults, fn
+      {_name, {:retreated, _target_state}} -> true
+      {_name, {:preop, reason}} -> retryable_runtime_slave_fault?(reason)
+      {_name, {:reconnect_failed, _reason}} -> true
+      _other -> false
+    end)
+  end
+
   defp retry_runtime_slave_request(runtime_faults, name) do
     case Slave.request(name, :op) do
       :ok ->
@@ -179,6 +198,34 @@ defmodule EtherCAT.Master.Recovery do
         )
 
         Map.put(runtime_faults, {:slave, name}, {:preop, reason})
+    end
+  end
+
+  defp retry_slave_op_request(slave_faults, name) do
+    case Slave.request(name, :op) do
+      :ok ->
+        Map.delete(slave_faults, name)
+
+      {:error, reason} ->
+        Logger.warning(
+          "[Master] slave retry: #{inspect(name)} still not in :op: #{inspect(reason)}"
+        )
+
+        Map.put(slave_faults, name, {:preop, reason})
+    end
+  end
+
+  defp retry_slave_reconnect_authorization(slave_faults, name) do
+    case Slave.authorize_reconnect(name) do
+      :ok ->
+        Map.put(slave_faults, name, {:reconnecting, :authorized})
+
+      {:error, reason} ->
+        Logger.warning(
+          "[Master] slave reconnect authorization retry failed for #{inspect(name)}: #{inspect(reason)}"
+        )
+
+        Map.put(slave_faults, name, {:reconnect_failed, reason})
     end
   end
 

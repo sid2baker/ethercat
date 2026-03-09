@@ -10,7 +10,7 @@ defmodule EtherCAT do
   - `DC` owns distributed-clock initialization and runtime maintenance
   - `Bus` serializes all frame I/O
 
-  Public session health is exposed through `state/0`:
+  Public session lifecycle is exposed through `state/0`:
 
   - `:idle`
   - `:discovering`
@@ -21,7 +21,7 @@ defmodule EtherCAT do
   - `:recovering`
 
   `await_running/1` waits for a usable session. `await_operational/1` waits for
-  cyclic OP.
+  cyclic OP. Per-slave health is exposed through `slaves/0`.
 
   ## Runtime Lifecycle
 
@@ -47,7 +47,7 @@ defmodule EtherCAT do
       activation_blocked --> operational: retry clears activation failures and no runtime faults remain
       activation_blocked --> recovering: activation failures clear but runtime faults remain
       activation_blocked --> idle: stop/0 or bus down
-      operational --> recovering: runtime fault in domain, slave, or DC
+      operational --> recovering: runtime fault in domain or DC
       operational --> idle: stop/0 or fatal failure
       recovering --> operational: runtime faults are cleared
       recovering --> idle: stop/0 or recovery fails
@@ -180,6 +180,8 @@ defmodule EtherCAT do
       controls the runtime reaction to DC lock loss.
     - `:frame_timeout_ms` — optional fixed bus frame response timeout in ms
       (otherwise auto-tuned from slave count and cycle time)
+    - `:scan_poll_ms` — optional discovery poll interval in ms
+    - `:scan_stable_ms` — optional identical-count stability window in ms before startup begins
   """
   @spec start(keyword()) :: :ok | {:error, term()}
   def start(opts \\ []), do: Master.start(opts)
@@ -215,7 +217,7 @@ defmodule EtherCAT do
     - `:discovering`
     - `:awaiting_preop`
     - `:preop_ready`
-    - `:operational` — cyclic OP path is healthy
+    - `:operational` — cyclic OP path is healthy; inspect `slaves/0` for per-slave faults
     - `:activation_blocked` — startup/activation is blocked before operational cyclic runtime
     - `:recovering` — runtime fault recovery in progress
   """
@@ -275,14 +277,15 @@ defmodule EtherCAT do
   @spec activate() :: :ok | {:error, term()}
   def activate, do: Master.activate()
 
-  @doc "Return `[%{name:, station:, server:, pid:}]` for all running slaves."
+  @doc "Return `[%{name:, station:, server:, pid:, fault:}]` for all running slaves."
   @spec slaves() ::
           [
             %{
               name: atom(),
               station: non_neg_integer(),
               server: :gen_statem.server_ref(),
-              pid: pid() | nil
+              pid: pid() | nil,
+              fault: term() | nil
             }
           ]
           | {:error, :not_started}

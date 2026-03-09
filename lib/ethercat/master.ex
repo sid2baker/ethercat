@@ -11,7 +11,7 @@ defmodule EtherCAT.Master do
   - `:discovering` - Scanning bus and counting slaves
   - `:awaiting_preop` - Waiting for configured slaves to reach PREOP
   - `:preop_ready` - All slaves in PREOP, ready for activation or dynamic configuration
-  - `:operational` - Cyclic operation active
+  - `:operational` - Cyclic operation active; per-slave faults are tracked separately
   - `:activation_blocked` - Activation incomplete (DC lock, slave failures, etc.)
   - `:recovering` - Runtime fault detected, healthy parts may continue
 
@@ -64,9 +64,11 @@ defmodule EtherCAT.Master do
       participant Bus
 
       Domain-->>Master: cycle is invalid or domain stops
-      Slave-->>Master: slave goes down or retreats
+      Slave-->>Master: slave goes down, retreats, or reconnects
       DC-->>Master: runtime fails or lock is lost
-      Master-->>App: state becomes recovering
+      opt a domain or DC fault is critical
+          Master-->>App: state becomes recovering
+      end
       opt unaffected domains remain valid
           Note over Domain,Master: healthy domains may keep cycling
       end
@@ -104,7 +106,7 @@ defmodule EtherCAT.Master do
       preop_ready --> operational: activate/0 succeeds
       preop_ready --> activation_blocked: activate/0 is incomplete
       preop_ready --> idle: stop or bus down
-      operational --> recovering: runtime fault in domain, slave, or DC
+      operational --> recovering: runtime fault in domain or DC
       operational --> idle: stop, bus down, or fatal DC policy
       activation_blocked --> operational: activation failures clear and no runtime faults remain
       activation_blocked --> recovering: activation failures clear but runtime faults remain
@@ -159,8 +161,10 @@ defmodule EtherCAT.Master do
     pending_preop: MapSet.new(),
     # %{slave_name => {target_state, reason}} for startup activation failures
     activation_failures: %{},
-    # %{fault_key => reason} for runtime degradations that are not retried via Slave.request/2
+    # %{fault_key => reason} for critical runtime degradations that block healthy cyclic runtime
     runtime_faults: %{},
+    # %{slave_name => reason} for non-critical slave-local faults tracked independently of master state
+    slave_faults: %{},
     # last terminal session failure retained after returning to :idle
     last_failure: nil,
     # blocked await_running callers — replied when a usable session state is entered
@@ -197,6 +201,8 @@ defmodule EtherCAT.Master do
     - `:dc` — `%EtherCAT.DC.Config{}` for master-wide Distributed Clocks, or `nil` to disable DC
     - `:frame_timeout_ms` — optional fixed bus frame response timeout (ms); if omitted,
       master auto-tunes from slave count + cycle time
+    - `:scan_poll_ms` — optional bus discovery poll interval in ms, default `100`
+    - `:scan_stable_ms` — optional identical-count stability window in ms before startup begins, default `1000`
     - any other option is forwarded to `Bus.start_link/1` unchanged
   """
   @spec start(keyword()) :: :ok | {:error, term()}
@@ -212,14 +218,15 @@ defmodule EtherCAT.Master do
     end
   end
 
-  @doc "Return `[%{name:, station:, server:, pid:}]` for all named slaves."
+  @doc "Return `[%{name:, station:, server:, pid:, fault:}]` for all named slaves."
   @spec slaves() ::
           [
             %{
               name: atom(),
               station: non_neg_integer(),
               server: :gen_statem.server_ref(),
-              pid: pid() | nil
+              pid: pid() | nil,
+              fault: term() | nil
             }
           ]
           | {:error, :not_started}
@@ -405,6 +412,7 @@ defmodule EtherCAT.Master do
           pending_preop: MapSet.new(),
           activation_failures: %{},
           runtime_faults: %{},
+          slave_faults: %{},
           last_failure: nil,
           await_callers: [],
           await_operational_callers: []
@@ -472,7 +480,9 @@ defmodule EtherCAT.Master do
           # Prepend new reading; keep enough history to measure a full stable span
           window = [{now_ms, n} | data.scan_window]
 
-          Enum.filter(window, fn {t, _} -> now_ms - t <= data.scan_stable_ms + data.scan_poll_ms end)
+          Enum.filter(window, fn {t, _} ->
+            now_ms - t <= data.scan_stable_ms + data.scan_poll_ms
+          end)
 
         _ ->
           # Failed transaction resets the window
@@ -632,7 +642,8 @@ defmodule EtherCAT.Master do
     Logger.info("[Master] running")
     reply_await_callers(data.await_callers, :ok)
     reply_await_callers(data.await_operational_callers, :ok)
-    {:keep_state, %{data | await_callers: [], await_operational_callers: []}}
+    updated = %{data | await_callers: [], await_operational_callers: []}
+    {:keep_state, updated, slave_fault_retry_actions(updated)}
   end
 
   def handle_event({:call, from}, :stop, state, data)
@@ -649,6 +660,11 @@ defmodule EtherCAT.Master do
 
   def handle_event({:call, from}, :await_operational, :operational, _data) do
     {:keep_state_and_data, [{:reply, from, :ok}]}
+  end
+
+  def handle_event({:timeout, :slave_fault_retry}, nil, :operational, data) do
+    retried_data = Recovery.retry_slave_faults(data)
+    {:keep_state, retried_data, slave_fault_retry_actions(retried_data)}
   end
 
   def handle_event({:call, from}, :await_operational, :preop_ready, data) do
@@ -892,15 +908,15 @@ defmodule EtherCAT.Master do
   end
 
   # Slave process crashed unexpectedly
-  def handle_event(:info, {:DOWN, ref, :process, _pid, reason}, _state, data)
+  def handle_event(:info, {:DOWN, ref, :process, _pid, reason}, state, data)
       when is_map_key(data.slave_refs, ref) do
     {name, refs} = Map.pop(data.slave_refs, ref)
     Logger.error("[Master] slave #{name} crashed: #{inspect(reason)}")
     Telemetry.slave_crashed(name, reason)
 
-    # Slaves are non-critical to the domain cycle; we don't enter recovery for them
     data_with_refs = Map.put(data, :slave_refs, refs)
-    {:keep_state, Recovery.put_slave_fault(data_with_refs, name, {:crashed, reason})}
+    updated = Recovery.put_slave_fault(data_with_refs, name, {:crashed, reason})
+    maybe_keep_operational_with_slave_fault_retry(state, updated)
   end
 
   # DC runtime crashed unexpectedly
@@ -963,7 +979,8 @@ defmodule EtherCAT.Master do
   # Slave retreated to a lower ESM state (AL fault detected by health poll)
   def handle_event(:info, {:slave_retreated, name, target_state}, @operational, data) do
     Logger.warning("[Master] slave #{name} retreated to #{target_state}")
-    {:keep_state, Recovery.put_slave_fault(data, name, {:retreated, target_state})}
+    updated = Recovery.put_slave_fault(data, name, {:retreated, target_state})
+    {:keep_state, updated, slave_fault_retry_actions(updated)}
   end
 
   def handle_event(:info, {:slave_retreated, name, target_state}, :recovering, data) do
@@ -979,7 +996,8 @@ defmodule EtherCAT.Master do
   # Slave physically disconnected (health poll wkc=0 or bus error)
   def handle_event(:info, {:slave_down, name}, @operational, data) do
     Logger.warning("[Master] slave #{name} disconnected")
-    {:keep_state, Recovery.put_slave_fault(data, name, {:down, :disconnected})}
+    updated = Recovery.put_slave_fault(data, name, {:down, :disconnected})
+    {:keep_state, updated, slave_fault_retry_actions(updated)}
   end
 
   def handle_event(:info, {:slave_down, name}, :recovering, data) do
@@ -993,16 +1011,16 @@ defmodule EtherCAT.Master do
 
     case Slave.authorize_reconnect(name) do
       :ok ->
-        {:keep_state,
-         Recovery.put_slave_fault(data, name, {:reconnecting, :authorized})}
+        updated = Recovery.put_slave_fault(data, name, {:reconnecting, :authorized})
+        maybe_keep_operational_with_slave_fault_retry(state, updated)
 
       {:error, reason} ->
         Logger.warning(
           "[Master] slave #{name} reconnect authorization failed: #{inspect(reason)}"
         )
 
-        {:keep_state,
-         Recovery.put_slave_fault(data, name, {:reconnect_failed, reason})}
+        updated = Recovery.put_slave_fault(data, name, {:reconnect_failed, reason})
+        maybe_keep_operational_with_slave_fault_retry(state, updated)
     end
   end
 
@@ -1028,7 +1046,7 @@ defmodule EtherCAT.Master do
               {:keep_state, still_recovering}
           end
         else
-          {:keep_state, recovered_data}
+          {:keep_state, recovered_data, slave_fault_retry_actions(recovered_data)}
         end
 
       {:error, reason} ->
@@ -1284,6 +1302,22 @@ defmodule EtherCAT.Master do
   end
 
   defp reset_master(last_failure), do: %__MODULE__{last_failure: last_failure}
+
+  defp maybe_keep_operational_with_slave_fault_retry(:operational, data) do
+    {:keep_state, data, slave_fault_retry_actions(data)}
+  end
+
+  defp maybe_keep_operational_with_slave_fault_retry(_state, data) do
+    {:keep_state, data}
+  end
+
+  defp slave_fault_retry_actions(data) do
+    if Recovery.retryable_slave_faults?(data) do
+      [{{:timeout, :slave_fault_retry}, @retry_ms, nil}]
+    else
+      []
+    end
+  end
 
   defp failure_snapshot(kind, reason) do
     %{

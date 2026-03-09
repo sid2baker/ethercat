@@ -32,12 +32,14 @@ defmodule EtherCAT.Master.Status do
   def activation_blocked_summary(data) do
     activation_count = map_size(data.activation_failures)
     runtime_count = map_size(data.runtime_faults)
-    "activation_failures=#{activation_count} runtime_faults=#{runtime_count}"
+    slave_fault_count = map_size(data.slave_faults)
+
+    "activation_failures=#{activation_count} runtime_faults=#{runtime_count} slave_faults=#{slave_fault_count}"
   end
 
   @spec recovering_summary(%EtherCAT.Master{}) :: String.t()
   def recovering_summary(data) do
-    "runtime_faults=#{map_size(data.runtime_faults)} activation_failures=#{map_size(data.activation_failures)}"
+    "runtime_faults=#{map_size(data.runtime_faults)} activation_failures=#{map_size(data.activation_failures)} slave_faults=#{map_size(data.slave_faults)}"
   end
 
   @spec dc_status(%EtherCAT.Master{}) :: DCStatus.t()
@@ -87,12 +89,19 @@ defmodule EtherCAT.Master.Status do
               name: atom(),
               station: non_neg_integer(),
               server: :gen_statem.server_ref(),
-              pid: pid() | nil
+              pid: pid() | nil,
+              fault: term() | nil
             }
           ]
   def slaves(data) do
     Enum.map(data.slaves, fn {name, station} ->
-      %{name: name, station: station, server: slave_server(name), pid: lookup_slave_pid(name)}
+      %{
+        name: name,
+        station: station,
+        server: slave_server(name),
+        pid: lookup_slave_pid(name),
+        fault: Map.get(data.slave_faults, name)
+      }
     end)
   end
 

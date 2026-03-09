@@ -14,7 +14,7 @@ Pure-Elixir EtherCAT master built on OTP.
 - Best for discrete I/O, Beckhoff terminal stacks, diagnostics, and 1 ms to 10 ms cyclic loops.
 - Not the right fit for sub-millisecond hard real-time control.
 
-The entry idea is simple: the **master owns the session lifecycle**, **domains own cyclic LRW exchange**, **slaves own ESM and slave-local configuration**, and **DC owns clock discipline**. When runtime faults happen, the public state moves to `:recovering`, healthy parts keep running when possible, and the master decides how to recover.
+The entry idea is simple: the **master owns the session lifecycle**, **domains own cyclic LRW exchange**, **slaves own ESM and slave-local configuration**, and **DC owns clock discipline**. Critical domain/DC runtime faults move the public state to `:recovering`; slave-local faults are tracked separately so healthy cyclic parts can stay up.
 
 ## Installation
 
@@ -131,7 +131,7 @@ Public startup and runtime health are exposed through `EtherCAT.state/0`:
 - `:activation_blocked`
 - `:recovering`
 
-`await_running/1` waits for a usable session. `await_operational/1` waits for cyclic OP.
+`await_running/1` waits for a usable session. `await_operational/1` waits for cyclic OP. Inspect `EtherCAT.slaves/0` for per-slave fault state.
 
 For detailed state diagrams and sequencing, see the moduledocs:
 - `EtherCAT.Master` — startup, activation, and recovery orchestration
@@ -142,7 +142,8 @@ For detailed state diagrams and sequencing, see the moduledocs:
 ## Failure Model
 
 - A slave disconnect does not automatically mean full-session teardown.
-- Invalid WKC or slave health loss moves the master to `:recovering`.
+- Critical domain or DC faults move the master to `:recovering`.
+- Slave-local faults stay attached to the affected slave and are visible through `EtherCAT.slaves/0`.
 - Healthy domains can keep cycling if the fault is localized and the transport is still usable.
 - Total bus loss can stop domains after the configured miss threshold; recovery can restart them.
 - Slave reconnect is PREOP-first: the slave rebuilds its local state, then the master decides when to return it to OP.

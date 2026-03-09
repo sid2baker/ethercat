@@ -8,7 +8,16 @@ defmodule EtherCAT.Master.Config do
   alias EtherCAT.Slave.Config, as: SlaveConfig
 
   @default_base_station 0x1000
-  @master_option_keys [:slaves, :domains, :base_station, :dc, :dc_cycle_ns, :frame_timeout_ms]
+  @master_option_keys [
+    :slaves,
+    :domains,
+    :base_station,
+    :dc,
+    :dc_cycle_ns,
+    :frame_timeout_ms,
+    :scan_stable_ms,
+    :scan_poll_ms
+  ]
 
   @type t :: %__MODULE__{
           base_station: non_neg_integer(),

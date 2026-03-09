@@ -36,6 +36,8 @@ defmodule EtherCAT.Master.ConfigTest do
     assert config.bus_opts[:name] == EtherCAT.Bus
     refute Keyword.has_key?(config.bus_opts, :slaves)
     refute Keyword.has_key?(config.bus_opts, :domains)
+    refute Keyword.has_key?(config.bus_opts, :scan_poll_ms)
+    refute Keyword.has_key?(config.bus_opts, :scan_stable_ms)
   end
 
   test "normalize_runtime_slave_config merges updates into the current struct" do
@@ -134,6 +136,12 @@ defmodule EtherCAT.Master.ConfigTest do
 
     assert {:error, {:invalid_start_options, :invalid_frame_timeout_ms}} =
              Config.normalize_start_options(interface: "eth0", frame_timeout_ms: 0)
+
+    assert {:error, {:invalid_start_options, :invalid_scan_options}} =
+             Config.normalize_start_options(interface: "eth0", scan_poll_ms: 0)
+
+    assert {:error, {:invalid_start_options, :invalid_scan_options}} =
+             Config.normalize_start_options(interface: "eth0", scan_stable_ms: -1)
 
     assert {:error, {:invalid_domain_config, {:invalid_options, 0, :invalid_fields}}} =
              Config.normalize_start_options(
