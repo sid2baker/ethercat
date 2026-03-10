@@ -4,7 +4,8 @@
 alias EtherCAT.{Bus, Domain}
 alias EtherCAT.Domain.API, as: DomainAPI
 alias EtherCAT.Bus.Transaction
-alias EtherCAT.Slave.{Config, Registers, SII}
+alias EtherCAT.Slave.Config
+alias EtherCAT.Slave.ESC.{Registers, SII}
 alias EtherCAT.Domain.Config, as: DomainConfig
 
 defmodule DigitalOut do
@@ -41,7 +42,7 @@ case SII.read_pdo_configs(link, 0x1002) do
     IO.puts("error: #{inspect(e)}")
 end
 
-Process.exit(link, :kill)
+:gen_statem.stop(link)
 Process.sleep(300)
 
 # --- Step 2: start master and inspect domain frame ---
@@ -57,7 +58,7 @@ Process.sleep(300)
       %Config{name: :coupler},
       %Config{name: :bridge_1},
       %Config{name: :out, driver: DigitalOut, process_data: [ch1: :main]},
-      %Config{name: :bridge_3}
+      %Config{name: :bridge_3, target_state: :preop}
     ]
   )
 

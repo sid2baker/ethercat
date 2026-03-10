@@ -10,7 +10,8 @@
 
 alias EtherCAT.Bus
 alias EtherCAT.Bus.Transaction
-alias EtherCAT.Slave.{Config, Registers, SII}
+alias EtherCAT.Slave.Config
+alias EtherCAT.Slave.ESC.{Registers, SII}
 
 {opts, _, _} = OptionParser.parse(System.argv(), switches: [interface: :string])
 interface = opts[:interface] || raise "pass --interface"

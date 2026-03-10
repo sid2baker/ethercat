@@ -3,8 +3,9 @@
 # Usage:
 #   mix run examples/scan.exs --interface enp0s31f6
 
-alias EtherCAT.{Bus, Slave.SII, Slave.Registers}
+alias EtherCAT.Bus
 alias EtherCAT.Bus.Transaction
+alias EtherCAT.Slave.ESC.{Registers, SII}
 
 {opts, _, _} = OptionParser.parse(System.argv(), switches: [interface: :string])
 interface = opts[:interface] || raise "pass --interface, e.g. --interface enp0s31f6"
