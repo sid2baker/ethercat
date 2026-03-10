@@ -88,4 +88,12 @@ defmodule EtherCATTest do
 
     assert {:error, :timeout} = EtherCAT.await_operational(5)
   end
+
+  test "state returns timeout instead of exiting when the master call itself times out" do
+    _pid = ensure_master_running()
+    :sys.suspend(EtherCAT.Master)
+    on_exit(fn -> :sys.resume(EtherCAT.Master) end)
+
+    assert {:error, :timeout} = EtherCAT.state()
+  end
 end

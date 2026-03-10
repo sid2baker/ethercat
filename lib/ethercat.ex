@@ -163,8 +163,13 @@ defmodule EtherCAT do
   alias EtherCAT.Master.API, as: MasterAPI
   alias EtherCAT.Slave.API, as: SlaveAPI
 
-  @doc "Return the stable bus server reference for direct frame transactions."
-  @spec bus() :: EtherCAT.Bus.server() | nil | {:error, :not_started}
+  @doc """
+  Return the stable bus server reference for direct frame transactions.
+
+  Returns `{:error, :not_started}` if the master does not exist and
+  `{:error, :timeout}` if the local master call itself times out.
+  """
+  @spec bus() :: EtherCAT.Bus.server() | nil | {:error, :not_started | :timeout}
   def bus, do: MasterAPI.bus()
 
   @doc """
@@ -232,6 +237,9 @@ defmodule EtherCAT do
     - `:operational` — cyclic OP path is healthy; inspect `slaves/0` for non-critical per-slave faults
     - `:activation_blocked` — startup/activation is blocked before operational cyclic runtime
     - `:recovering` — runtime fault recovery in progress
+
+  Returns `{:error, :not_started}` if the master does not exist and
+  `{:error, :timeout}` if the local master call itself times out.
   """
   @spec state() ::
           :idle
@@ -241,14 +249,16 @@ defmodule EtherCAT do
           | :operational
           | :activation_blocked
           | :recovering
+          | {:error, :not_started | :timeout}
   def state, do: MasterAPI.state()
 
   @doc """
   Return a Distributed Clocks status snapshot for the current session.
 
   Returns `{:error, :not_started}` if the master process does not exist.
+  Returns `{:error, :timeout}` if the local master call itself times out.
   """
-  @spec dc_status() :: EtherCAT.DC.Status.t() | {:error, :not_started}
+  @spec dc_status() :: EtherCAT.DC.Status.t() | {:error, :not_started | :timeout}
   def dc_status, do: MasterAPI.dc_status()
 
   @doc "Return the current DC reference clock as `%{name, station}`."
@@ -267,8 +277,11 @@ defmodule EtherCAT do
   @doc """
   Return the last terminal startup/runtime failure retained after the master
   returned to `:idle`.
+
+  Returns `{:error, :not_started}` if the master does not exist and
+  `{:error, :timeout}` if the local master call itself times out.
   """
-  @spec last_failure() :: map() | nil
+  @spec last_failure() :: map() | nil | {:error, :not_started | :timeout}
   def last_failure, do: MasterAPI.last_failure()
 
   @doc """
@@ -289,7 +302,12 @@ defmodule EtherCAT do
   @spec activate() :: :ok | {:error, term()}
   def activate, do: MasterAPI.activate()
 
-  @doc "Return `[%{name:, station:, server:, pid:, fault:}]` for all running slaves."
+  @doc """
+  Return `[%{name:, station:, server:, pid:, fault:}]` for all running slaves.
+
+  Returns `{:error, :not_started}` if the master does not exist and
+  `{:error, :timeout}` if the local master call itself times out.
+  """
   @spec slaves() ::
           [
             %{
@@ -300,11 +318,16 @@ defmodule EtherCAT do
               fault: term() | nil
             }
           ]
-          | {:error, :not_started}
+          | {:error, :not_started | :timeout}
   def slaves, do: MasterAPI.slaves()
 
-  @doc "Return `[{id, cycle_time_us, pid}]` for all running domains."
-  @spec domains() :: list()
+  @doc """
+  Return `[{id, cycle_time_us, pid}]` for all running domains.
+
+  Returns `{:error, :not_started}` if the master does not exist and
+  `{:error, :timeout}` if the local master call itself times out.
+  """
+  @spec domains() :: list() | {:error, :not_started | :timeout}
   def domains, do: MasterAPI.domains()
 
   @doc """
@@ -403,7 +426,7 @@ defmodule EtherCAT do
     - a named latch configured through `sync.latches`, delivered as
       `{:ethercat, :latch, slave_name, name, timestamp_ns}`
   """
-  @spec subscribe(atom(), atom(), pid()) :: :ok | {:error, :not_found}
+  @spec subscribe(atom(), atom(), pid()) :: :ok | {:error, :not_found | :timeout}
   def subscribe(slave_name, name, pid \\ self()),
     do: SlaveAPI.subscribe(slave_name, name, pid)
 

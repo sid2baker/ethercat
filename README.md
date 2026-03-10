@@ -24,11 +24,16 @@ dependency.
 
 ## Installation
 
+Latest Hex release:
+
 ```elixir
 def deps do
   [{:ethercat, "~> 0.2.0"}]
 end
 ```
+
+The current `main` branch tracks `0.3.0-dev`; see [CHANGELOG.md](CHANGELOG.md)
+for the unreleased work heading toward `0.3.0`.
 
 Raw Ethernet socket access requires `CAP_NET_RAW` or root:
 

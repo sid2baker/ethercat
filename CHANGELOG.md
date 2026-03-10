@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+This branch currently tracks `0.3.0-dev`.
+
+### Changed
+- Bus link monitoring now uses the internal netlink/sysfs implementation instead of an external interface-management dependency
+- Master recovery now gates stopped-domain restart on live carrier state and logs explicit carrier loss/restore events
+- Runtime state-machine modules (`Master`, `Slave`, `Domain`, `DC`) were further reduced to state-machine boundaries with helper facades
+
+### Fixed
+- Public `Master` API calls now return `{:error, :timeout}` when the local master call itself times out instead of exiting the caller
+- Real carrier loss now stops domains immediately on confirmed `:down`, without domain restart churn while the cable is still unplugged
+- Maintained hardware examples were refreshed for the current runtime and bus/link-monitor implementation
+
 ## [0.2.0] - 2026-03-09
 
 ### Added

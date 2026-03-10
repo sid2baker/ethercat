@@ -10,6 +10,8 @@ defmodule EtherCAT.Master.API do
   alias EtherCAT.Bus
   alias EtherCAT.DC.API, as: DCAPI
 
+  @call_timeout_ms 5_000
+
   @spec start(keyword()) :: :ok | {:error, term()}
   def start(opts \\ []), do: safe_call({:start, opts})
 
@@ -22,19 +24,19 @@ defmodule EtherCAT.Master.API do
     end
   end
 
-  @spec slaves() :: list() | {:error, :not_started}
+  @spec slaves() :: list() | {:error, :not_started | :timeout}
   def slaves, do: safe_call(:slaves)
 
-  @spec domains() :: list() | {:error, :not_started}
+  @spec domains() :: list() | {:error, :not_started | :timeout}
   def domains, do: safe_call(:domains)
 
-  @spec bus() :: Bus.server() | nil | {:error, :not_started}
+  @spec bus() :: Bus.server() | nil | {:error, :not_started | :timeout}
   def bus, do: safe_call(:bus)
 
-  @spec last_failure() :: map() | nil | {:error, :not_started}
+  @spec last_failure() :: map() | nil | {:error, :not_started | :timeout}
   def last_failure, do: safe_call(:last_failure)
 
-  @spec state() :: atom() | {:error, :not_started}
+  @spec state() :: atom() | {:error, :not_started | :timeout}
   def state, do: safe_call(:state)
 
   @spec configure_slave(atom(), keyword() | EtherCAT.Slave.Config.t()) :: :ok | {:error, term()}
@@ -57,7 +59,7 @@ defmodule EtherCAT.Master.API do
   @spec await_operational(pos_integer()) :: :ok | {:error, term()}
   def await_operational(timeout_ms \\ 10_000), do: safe_call(:await_operational, timeout_ms)
 
-  @spec dc_status() :: EtherCAT.DC.Status.t() | {:error, :not_started}
+  @spec dc_status() :: EtherCAT.DC.Status.t() | {:error, :not_started | :timeout}
   def dc_status, do: safe_call(:dc_status)
 
   @spec reference_clock() ::
@@ -74,9 +76,10 @@ defmodule EtherCAT.Master.API do
 
   defp safe_call(msg) do
     try do
-      :gen_statem.call(EtherCAT.Master, msg)
+      :gen_statem.call(EtherCAT.Master, msg, @call_timeout_ms)
     catch
       :exit, {:noproc, _} -> {:error, :not_started}
+      :exit, {:timeout, _} -> {:error, :timeout}
     end
   end
 
