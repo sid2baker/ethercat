@@ -39,7 +39,15 @@ defmodule EtherCAT.Simulator do
           slaves: [map()],
           drop_responses?: boolean(),
           wkc_offset: integer(),
-          disconnected: MapSet.t(atom())
+          disconnected: MapSet.t(atom()),
+          subscriptions: [subscription()],
+          monitors: %{optional(pid()) => reference()}
+        }
+
+  @type subscription :: %{
+          slave: atom(),
+          signal: atom() | :all,
+          pid: pid()
         }
 
   @spec start_link(keyword()) :: GenServer.on_start()
@@ -50,6 +58,22 @@ defmodule EtherCAT.Simulator do
   @spec process_datagrams(pid(), [Datagram.t()]) :: {:ok, [Datagram.t()]}
   def process_datagrams(server, datagrams) do
     GenServer.call(server, {:process_datagrams, datagrams})
+  end
+
+  @spec info(pid()) :: {:ok, map()} | {:error, :not_found | :timeout}
+  def info(server) do
+    GenServer.call(server, :info, 5_000)
+  catch
+    :exit, {:noproc, _} -> {:error, :not_found}
+    :exit, {:timeout, _} -> {:error, :timeout}
+  end
+
+  @spec slave_info(pid(), atom()) :: {:ok, map()} | {:error, :not_found | :timeout}
+  def slave_info(server, slave_name) do
+    GenServer.call(server, {:slave_info, slave_name}, 5_000)
+  catch
+    :exit, {:noproc, _} -> {:error, :not_found}
+    :exit, {:timeout, _} -> {:error, :timeout}
   end
 
   @spec inject_fault(pid(), fault()) :: :ok | {:error, :not_found}
@@ -72,6 +96,12 @@ defmodule EtherCAT.Simulator do
     GenServer.call(server, {:signals, slave_name})
   end
 
+  @spec signal_definitions(pid(), atom()) ::
+          {:ok, %{optional(atom()) => map()}} | {:error, :not_found}
+  def signal_definitions(server, slave_name) do
+    GenServer.call(server, {:signal_definitions, slave_name})
+  end
+
   @spec get_value(pid(), atom(), atom()) ::
           {:ok, term()} | {:error, :not_found | :unknown_signal}
   def get_value(server, slave_name, signal_name) do
@@ -82,6 +112,16 @@ defmodule EtherCAT.Simulator do
           :ok | {:error, :not_found | :unknown_signal | :invalid_value}
   def set_value(server, slave_name, signal_name, value) do
     GenServer.call(server, {:set_value, slave_name, signal_name, value})
+  end
+
+  @spec subscribe(pid(), atom(), atom() | :all, pid()) :: :ok | {:error, :not_found}
+  def subscribe(server, slave_name, signal_name, subscriber) do
+    GenServer.call(server, {:subscribe, slave_name, signal_name, subscriber})
+  end
+
+  @spec unsubscribe(pid(), atom(), atom() | :all, pid()) :: :ok | {:error, :not_found}
+  def unsubscribe(server, slave_name, signal_name, subscriber) do
+    GenServer.call(server, {:unsubscribe, slave_name, signal_name, subscriber})
   end
 
   @spec output_image(pid(), atom()) :: {:ok, binary()} | {:error, :not_found}
@@ -98,7 +138,34 @@ defmodule EtherCAT.Simulator do
       |> Enum.with_index()
       |> Enum.map(fn {fixture, position} -> Device.new(fixture, position) end)
 
-    {:ok, %{slaves: slaves, drop_responses?: false, wkc_offset: 0, disconnected: MapSet.new()}}
+    {:ok,
+     %{
+       slaves: slaves,
+       drop_responses?: false,
+       wkc_offset: 0,
+       disconnected: MapSet.new(),
+       subscriptions: [],
+       monitors: %{}
+     }}
+  end
+
+  @impl true
+  def handle_call(:info, _from, state) do
+    disconnected = MapSet.to_list(state.disconnected)
+
+    reply =
+      %{
+        slaves: Enum.map(state.slaves, &Device.info/1),
+        disconnected: disconnected,
+        drop_responses?: state.drop_responses?,
+        wkc_offset: state.wkc_offset,
+        subscriptions:
+          Enum.map(state.subscriptions, fn subscription ->
+            %{slave: subscription.slave, signal: subscription.signal, pid: subscription.pid}
+          end)
+      }
+
+    {:reply, {:ok, reply}, state}
   end
 
   def handle_call({:process_datagrams, _datagrams}, _from, %{drop_responses?: true} = state) do
@@ -111,14 +178,18 @@ defmodule EtherCAT.Simulator do
         _from,
         %{slaves: slaves, wkc_offset: wkc_offset, disconnected: disconnected} = state
       ) do
+    before_signals = capture_signal_values(slaves)
+
     {responses, slaves} =
       Enum.map_reduce(datagrams, slaves, fn datagram, current_slaves ->
         process_datagram(datagram, current_slaves, disconnected)
       end)
 
     responses = maybe_adjust_wkc(responses, wkc_offset)
+    state = %{state | slaves: slaves}
+    notify_signal_changes(state, before_signals, slaves)
 
-    {:reply, {:ok, responses}, %{state | slaves: slaves}}
+    {:reply, {:ok, responses}, state}
   end
 
   def handle_call({:inject_fault, :drop_responses}, _from, state) do
@@ -188,6 +259,26 @@ defmodule EtherCAT.Simulator do
     {:reply, reply, state}
   end
 
+  def handle_call({:slave_info, slave_name}, _from, %{slaves: slaves} = state) do
+    reply =
+      case Enum.find(slaves, &(&1.name == slave_name)) do
+        nil -> {:error, :not_found}
+        slave -> {:ok, Device.info(slave)}
+      end
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:signal_definitions, slave_name}, _from, %{slaves: slaves} = state) do
+    reply =
+      case Enum.find(slaves, &(&1.name == slave_name)) do
+        nil -> {:error, :not_found}
+        slave -> {:ok, Device.signals(slave)}
+      end
+
+    {:reply, reply, state}
+  end
+
   def handle_call({:get_value, slave_name, signal_name}, _from, %{slaves: slaves} = state) do
     reply =
       case Enum.find(slaves, &(&1.name == slave_name)) do
@@ -199,12 +290,46 @@ defmodule EtherCAT.Simulator do
   end
 
   def handle_call({:set_value, slave_name, signal_name, value}, _from, %{slaves: slaves} = state) do
+    before_signals = capture_signal_values(slaves)
+
     case update_named_slave(slaves, slave_name, &Device.set_value(&1, signal_name, value)) do
       {:ok, updated_slaves} ->
-        {:reply, :ok, %{state | slaves: updated_slaves}}
+        state = %{state | slaves: updated_slaves}
+        notify_signal_changes(state, before_signals, updated_slaves)
+        {:reply, :ok, state}
 
       {:error, reason} ->
         {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call({:subscribe, slave_name, signal_name, subscriber}, _from, state) do
+    if Enum.any?(state.slaves, &(&1.name == slave_name)) do
+      subscriptions =
+        Enum.uniq_by(
+          [%{slave: slave_name, signal: signal_name, pid: subscriber} | state.subscriptions],
+          &{&1.slave, &1.signal, &1.pid}
+        )
+
+      monitors = ensure_monitor(state.monitors, subscriptions, subscriber)
+      {:reply, :ok, %{state | subscriptions: subscriptions, monitors: monitors}}
+    else
+      {:reply, {:error, :not_found}, state}
+    end
+  end
+
+  def handle_call({:unsubscribe, slave_name, signal_name, subscriber}, _from, state) do
+    if Enum.any?(state.slaves, &(&1.name == slave_name)) do
+      subscriptions =
+        Enum.reject(state.subscriptions, fn subscription ->
+          subscription.slave == slave_name and subscription.signal == signal_name and
+            subscription.pid == subscriber
+        end)
+
+      monitors = maybe_demonitor(state.monitors, subscriptions, subscriber)
+      {:reply, :ok, %{state | subscriptions: subscriptions, monitors: monitors}}
+    else
+      {:reply, {:error, :not_found}, state}
     end
   end
 
@@ -216,6 +341,19 @@ defmodule EtherCAT.Simulator do
       end
 
     {:reply, reply, state}
+  end
+
+  @impl true
+  def handle_info({:DOWN, ref, :process, pid, _reason}, state) do
+    case Map.fetch(state.monitors, pid) do
+      {:ok, ^ref} ->
+        subscriptions = Enum.reject(state.subscriptions, &(&1.pid == pid))
+        monitors = Map.delete(state.monitors, pid)
+        {:noreply, %{state | subscriptions: subscriptions, monitors: monitors}}
+
+      _ ->
+        {:noreply, state}
+    end
   end
 
   defp process_datagram(%Datagram{cmd: cmd} = datagram, slaves, disconnected)
@@ -374,9 +512,16 @@ defmodule EtherCAT.Simulator do
   end
 
   defp reply_with_slave_update(state, slave_name, fun) do
+    before_signals = capture_signal_values(state.slaves)
+
     case update_named_slave(state.slaves, slave_name, fun) do
-      {:ok, slaves} -> {:reply, :ok, %{state | slaves: slaves}}
-      {:error, reason} -> {:reply, {:error, reason}, state}
+      {:ok, slaves} ->
+        state = %{state | slaves: slaves}
+        notify_signal_changes(state, before_signals, slaves)
+        {:reply, :ok, state}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
     end
   end
 
@@ -406,6 +551,62 @@ defmodule EtherCAT.Simulator do
       end
     else
       {:error, :not_found}
+    end
+  end
+
+  defp capture_signal_values(slaves) do
+    Map.new(slaves, fn slave -> {slave.name, Device.signal_values(slave)} end)
+  end
+
+  defp notify_signal_changes(%{subscriptions: []}, _before, _after), do: :ok
+
+  defp notify_signal_changes(%{subscriptions: subscriptions}, before, slaves) do
+    Enum.each(slaves, fn slave ->
+      old_values = Map.get(before, slave.name, %{})
+      new_values = Device.signal_values(slave)
+
+      Enum.each(new_values, fn {signal_name, value} ->
+        if Map.get(old_values, signal_name) != value do
+          notify_subscribers(subscriptions, slave.name, signal_name, value)
+        end
+      end)
+    end)
+  end
+
+  defp notify_subscribers(subscriptions, slave_name, signal_name, value) do
+    Enum.each(subscriptions, fn subscription ->
+      if subscription.slave == slave_name and
+           (subscription.signal == :all or subscription.signal == signal_name) do
+        send(
+          subscription.pid,
+          {:ethercat_simulator, self(), :signal_changed, slave_name, signal_name, value}
+        )
+      end
+    end)
+
+    :ok
+  end
+
+  defp ensure_monitor(monitors, subscriptions, pid) do
+    if Map.has_key?(monitors, pid) or not Enum.any?(subscriptions, &(&1.pid == pid)) do
+      monitors
+    else
+      Map.put(monitors, pid, Process.monitor(pid))
+    end
+  end
+
+  defp maybe_demonitor(monitors, subscriptions, pid) do
+    if Enum.any?(subscriptions, &(&1.pid == pid)) do
+      monitors
+    else
+      case Map.pop(monitors, pid) do
+        {nil, monitors} ->
+          monitors
+
+        {ref, monitors} ->
+          Process.demonitor(ref, [:flush])
+          monitors
+      end
     end
   end
 end

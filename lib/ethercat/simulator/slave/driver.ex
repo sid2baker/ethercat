@@ -4,49 +4,73 @@ defmodule EtherCAT.Simulator.Slave.Driver do
   @behaviour EtherCAT.Slave.Driver
 
   alias EtherCAT.Slave.ProcessData.Signal
+  alias EtherCAT.Simulator.Slave.Profile
+  alias EtherCAT.Simulator.Slave.Value
 
   @impl true
-  def process_data_model(%{profile: :lan9252_demo}) do
-    [
-      led0: Signal.slice(0x1600, 0, 8),
-      led1: Signal.slice(0x1600, 8, 8),
-      button1: 0x1A00
-    ]
+  def process_data_model(config) do
+    profile = profile(config)
+
+    signal_specs = Profile.signal_specs(profile)
+
+    counts =
+      signal_specs
+      |> Enum.group_by(fn {_name, definition} -> definition.pdo_index end)
+      |> Map.new(fn {pdo_index, entries} -> {pdo_index, length(entries)} end)
+
+    signal_specs
+    |> Enum.reduce([], fn {signal_name, definition}, acc ->
+      single_signal_pdo? = Map.fetch!(counts, definition.pdo_index) == 1
+
+      signal =
+        case definition do
+          %{bit_offset: 0, bit_size: bit_size, pdo_index: pdo_index}
+          when rem(bit_size, 8) == 0 and single_signal_pdo? ->
+            {signal_name, pdo_index}
+
+          %{pdo_index: pdo_index, bit_offset: bit_offset, bit_size: bit_size} ->
+            {signal_name, Signal.slice(pdo_index, bit_offset, bit_size)}
+        end
+
+      [signal | acc]
+    end)
+    |> Enum.reverse()
   end
 
-  def process_data_model(_config) do
-    [out: 0x1600, in: 0x1A00]
+  @impl true
+  def encode_signal(signal_name, config, value) do
+    config
+    |> profile()
+    |> Profile.signal_specs()
+    |> Map.fetch(signal_name)
+    |> case do
+      {:ok, definition} ->
+        case Value.encode_binary(definition, value) do
+          {:ok, binary} -> binary
+          {:error, _} -> zero_bytes(definition)
+        end
+
+      :error ->
+        <<0>>
+    end
   end
 
   @impl true
-  def encode_signal(:led0, _config, value), do: encode_byte(value)
-  def encode_signal(:led1, _config, value), do: encode_byte(value)
+  def decode_signal(signal_name, config, raw) do
+    config
+    |> profile()
+    |> Profile.signal_specs()
+    |> Map.fetch(signal_name)
+    |> case do
+      {:ok, definition} -> Value.decode_binary(definition, raw)
+      :error -> nil
+    end
+  end
 
-  def encode_signal(:out, _config, value) when is_integer(value) and value >= 0 and value <= 0xFF,
-    do: <<value::8>>
+  defp zero_bytes(definition) do
+    :binary.copy(<<0>>, div(definition.bit_size, 8))
+  end
 
-  def encode_signal(:out, _config, true), do: <<1>>
-  def encode_signal(:out, _config, false), do: <<0>>
-
-  def encode_signal(:out, _config, value) when is_binary(value) and byte_size(value) == 1,
-    do: value
-
-  def encode_signal(_signal_name, _config, _value), do: <<0>>
-
-  @impl true
-  def decode_signal(:button1, _config, <<value::8>>), do: value
-  def decode_signal(:in, _config, <<value::8>>), do: value
-  def decode_signal(:in, _config, _raw), do: 0
-  def decode_signal(_signal_name, _config, _raw), do: nil
-
-  defp encode_byte(value) when is_integer(value) and value >= 0 and value <= 0xFF,
-    do: <<value::8>>
-
-  defp encode_byte(true), do: <<1>>
-  defp encode_byte(false), do: <<0>>
-
-  defp encode_byte(value) when is_binary(value) and byte_size(value) == 1,
-    do: value
-
-  defp encode_byte(_value), do: <<0>>
+  defp profile(%{profile: profile}), do: profile
+  defp profile(_config), do: :digital_io
 end

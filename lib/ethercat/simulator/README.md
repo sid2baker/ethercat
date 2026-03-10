@@ -100,13 +100,20 @@ Runtime implementation:
 lib/ethercat/
 ├── simulator.ex
 └── simulator/
+    ├── README.md
     ├── udp.ex
     └── slave/
+        ├── behaviour.ex
         ├── device.ex
         ├── driver.ex
         ├── fixture.ex
         ├── mailbox.ex
+        ├── object.ex
+        ├── profile.ex
+        ├── profile/
+        ├── reference/
         └── signals.ex
+        └── value.ex
 ```
 
 Reference/spec material remains under:
@@ -132,6 +139,14 @@ Main modules:
   - public fixture and simulator-facing signal API
 - `EtherCAT.Simulator.Slave.Fixture`
   - declarative identity, EEPROM, and process-image definition
+- `EtherCAT.Simulator.Slave.Behaviour`
+  - pluggable device behavior boundary
+- `EtherCAT.Simulator.Slave.Object`
+  - typed object-dictionary entries
+- `EtherCAT.Simulator.Slave.Value`
+  - typed signal and object value conversion
+- `EtherCAT.Simulator.Slave.Profile.*`
+  - reusable device-family behavior and declarations
 - `EtherCAT.Simulator.Slave.Signals`
   - signal metadata derived from the support driver model
 - `EtherCAT.Simulator.Slave.Device`
@@ -223,12 +238,18 @@ The current suite proves:
    - a coupler fixture in slot 0
    - a mailbox-capable LAN9252-style I/O fixture in slot 1
 4. expedited CoE upload/download works in PREOP through the public mailbox API
-5. runtime recovery works for:
+5. segmented CoE upload/download works through the real UDP path
+6. widget-facing subscriptions emit signal-change notifications
+7. typed profile behavior works for:
+   - analog I/O
+   - temperature input
+   - servo/drive with DC enabled
+8. runtime recovery works for:
    - wrong WKC
    - dropped UDP responses
    - disconnect / reconnect of one simulated slave
    - disconnect / reconnect of one slave in a shared domain
-6. simulator-driven value injection and output observation work through the
+9. simulator-driven value injection and output observation work through the
    signal-level API
 
 ## Widget-Facing Signal API
@@ -270,257 +291,76 @@ Current semantics:
 That keeps the API generic enough for a UI widget without tying it to a
 specific device profile or driver callback contract.
 
-What is still missing for a really good widget experience:
-
-- change notifications / subscriptions for simulator signal updates
-- richer typed values in the public signal metadata
-- fixture/profile discovery that is more explicit than today
-- profile-aware validation for writes (for example signed ranges or analog
-  engineering units)
-- easy composition of multiple fixtures into a named virtual ring
-
-## What Is Still Missing For A General Slave
-
-The current support slave is already good enough for:
-
-- couplers
-- simple digital input cards
-- simple digital output cards
-- heterogeneous startup rings
-- basic mailbox diagnostics
-- deterministic protocol fault injection
-
-It is **not** yet a general slave model for:
-
-- analog input and output cards
-- RTD/temperature cards with conversion behavior
-- smart devices with rich object dictionaries
-- servo drives and CiA 402-like profiles
-- DC-sensitive devices
-
-The missing pieces are mostly above the raw ESC/datagram layer.
-
-### 1. A real device-behavior layer
-
-Today most fixtures are static plus simple process-image behavior.
-
-A general slave needs profile/device logic that can:
-
-- evolve inputs over time
-- react to outputs
-- simulate internal state machines
-- enforce device-specific operating rules
-- inject realistic delays, saturation, and device faults
-
-### 2. A richer object-dictionary model
-
-Mailbox support is still limited to small expedited SDO roundtrips.
-
-A general slave needs:
-
-- typed object entries
-- access rights
-- state-dependent access control
-- segmented upload/download
-- richer abort behavior
-- optional SDO info support
-
-### 3. A richer PDO/process-data model
-
-The current fixtures are still card-oriented.
-
-A general slave needs:
-
-- arbitrary PDO entry definitions
-- signed/unsigned/float signal types
-- scaling and conversion hooks
-- grouped process images
-- multi-SM layouts
-- profile-specific signal bundles
-
-### 4. Profile layers on top of the generic slave core
-
-The generic support slave should stay protocol-focused.
-
-Device-family behavior should live in separate profile layers for:
-
-- digital I/O
-- analog I/O
-- RTD/temperature
-- servo/drive devices
-
-### 5. More realistic state/transition discipline
-
-The simulator already enforces basic AL transition rules, but a general slave
-needs more profile-aware discipline:
-
-- mailbox-required transitions
-- SAFEOP/OP prerequisites
-- watchdog/safe-state behavior
-- profile-specific error latching and recovery
-
-### 6. Optional DC behavior
-
-Not every deep test needs DC, but a general slave eventually needs:
-
-- DC register behavior
-- sync configuration
-- lock/loss behavior
-- latch/timestamp semantics where relevant
-
-## Missing Features Summary
-
-The simulator is already good at:
-
-- deterministic EtherCAT protocol behavior
-- digital-card-style fixtures
-- mailbox happy-path coverage
-- recovery and fault-injection tests
-
-The main missing pieces for “all kinds of slaves” are:
-
-- a real device behavior abstraction
-- a typed object dictionary
-- richer typed PDO/process-data modeling
-- reusable device profiles
-- servo / CiA 402 profile behavior
-- optional DC-aware slave behavior
-- widget-oriented signal subscriptions and live introspection
-
-## Generalization Direction
-
-The right way to grow this support stack is:
-
-1. keep the existing ESC/datagram core stable
-2. add a proper generic device model
-3. layer richer profiles on top of it
-4. only then add profile-specific deep tests
-
-The concrete execution plan for that work lives at:
-
-- [docs/exec-plans/active/simulator-generalization.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/active/simulator-generalization.md)
-
-### Phase 1. Stabilize The Generic Protocol Core
-
-Goal:
-- keep `EtherCAT.Simulator.Slave.Device` and `EtherCAT.Simulator`
-  responsible for protocol mechanics only
-
-Deliverables:
-- no profile-specific behavior in the core
-- clear boundaries between:
-  - registers/AL state
-  - SII/object model
-  - PDO layout
-  - runtime behavior hooks
-
-Exit criteria:
-- digital I/O and mailbox tests still pass unchanged
-
-### Phase 2. Introduce A Real Device Behavior Boundary
-
-Goal:
-- make slave behavior pluggable instead of hardcoded into fixture/device logic
-
-Add something like:
-- `EtherCAT.Simulator.Slave.Behaviour`
-- behavior callbacks for:
-  - init
-  - state transition hooks
-  - output write handling
-  - input refresh
-  - mailbox/object access hooks
-
-Exit criteria:
-- digital I/O fixtures are reimplemented using the behavior boundary
-- no special-case digital behavior remains embedded in the core
-
-### Phase 3. Generalize The Object Dictionary
-
-Goal:
-- move from a tiny mailbox test dictionary to a real typed object model
-
-Add:
-- object entry structs/types
-- access-right checks
-- state-aware access rules
-- segmented transfer support
-
-Exit criteria:
-- expedited and segmented CoE transfers both work
-- object entries can be declared as data, not mailbox callback branches
-
-### Phase 4. Generalize Process Data
-
-Goal:
-- support more than simple byte-oriented digital process images
-
-Add:
-- typed PDO entries
-- arbitrary bit/byte offsets
-- signed/unsigned/float conversion
-- scaling hooks
-- grouped output/input images
-
-Exit criteria:
-- one analog-style fixture can be modeled without bespoke device code
-- multi-byte/multi-type PDO layouts are deep-tested
-
-### Phase 5. Add First-Class Profiles
-
-Goal:
-- make common slave families reusable instead of fixture-specific
-
-Initial profiles:
-- `DigitalIO`
-- `AnalogIO`
-- `TemperatureInput`
-- `ServoDrive` (protocol/profile only, not full motion physics)
-
-Exit criteria:
-- fixtures become thin declarations over shared profile modules
-- heterogeneous deep tests use profile modules, not ad-hoc fixture logic
-
-### Phase 6. Add Servo/Drive-Oriented Support
-
-Goal:
-- support richer smart-slave regression tests, especially CiA 402-like flows
-
-Add:
-- controlword/statusword-oriented behavior
-- operation mode handling
-- drive-state progression hooks
-- profile-specific mailbox/object entries
-
-Exit criteria:
-- deep tests can boot a simulated drive, configure it in PREOP, and exercise a
-  basic enable/fault-reset/status roundtrip
-
-### Phase 7. Add Optional DC Support
-
-Goal:
-- support tests for DC-sensitive slaves without forcing DC on every fixture
-
-Add:
-- opt-in DC register behavior
-- sync-related mailbox/object state where needed
-- deterministic lock/loss simulation hooks
-
-Exit criteria:
-- at least one DC-aware simulated slave can participate in a deep test
-
-## Recommended Near-Term Order
-
-If the goal is "all kinds of slaves", the highest-value next steps are:
-
-1. introduce the behavior boundary
-2. generalize the object dictionary
-3. generalize PDO/process-data typing
-4. add a first analog-style profile
-5. only then tackle servo/drive profile support
-
-That order keeps the core reusable instead of baking servo or analog semantics
-directly into the current digital-card simulator.
+Widget-oriented features that are now implemented:
+
+- change notifications via `subscribe/4` and `unsubscribe/4`
+- richer signal metadata through `signal_definitions/1` and `signal_definitions/2`
+- explicit fixture/profile constructors:
+  - `digital_io/1`
+  - `mailbox_device/1`
+  - `analog_io/1`
+  - `temperature_input/1`
+  - `servo_drive/1`
+  - `coupler/1`
+- profile-aware value validation through typed signal definitions
+- easy composition of multiple fixtures into one virtual ring via
+  `EtherCAT.Simulator.start_link(slaves: fixtures)`
+
+## Current General-Slave Coverage
+
+The simulator now covers all major areas from the generalization plan:
+
+- protocol-faithful core:
+  - datagram routing
+  - AL state discipline
+  - SII
+  - SyncManagers/FMMUs
+  - WKC accounting
+- real device behavior boundary via `EtherCAT.Simulator.Slave.Behaviour`
+- typed object dictionary via `EtherCAT.Simulator.Slave.Object`
+- typed PDO/process-data conversion via `EtherCAT.Simulator.Slave.Value`
+- reusable profiles:
+  - `DigitalIO`
+  - `AnalogIO`
+  - `TemperatureInput`
+  - `MailboxDevice`
+  - `ServoDrive`
+  - `Coupler`
+- segmented CoE upload/download and abort handling
+- widget-facing signal subscriptions and ring introspection
+- servo/drive profile behavior with a basic CiA 402-style enable sequence
+- opt-in DC-aware behavior through the servo profile
+
+The simulator is already suitable for:
+
+- digital input/output cards
+- analog cards
+- RTD/temperature-style devices
+- mailbox-capable smart devices
+- servo/drive profile regression tests
+- heterogeneous rings mixing several fixture families
+
+## Remaining Intentional Limits
+
+The simulator still does **not** try to model everything.
+
+Current intentional limits:
+
+- no raw-socket simulator endpoint yet
+- no carrier/link-loss simulation below the protocol layer
+- no full motion physics for drives
+- no complete SDO Info service surface
+- no attempt to mirror SOES internal control flow one-to-one
+
+Those are deliberate scope limits. The simulator is meant to be a deterministic
+protocol and device-behavior test tool, not a full field-device firmware stack.
+
+## Completed Generalization Work
+
+The simulator generalization plan is now implemented end to end. The historical
+plan record lives at:
+
+- [docs/exec-plans/completed/simulator-generalization.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/completed/simulator-generalization.md)
 
 ## EEPROM / SII Strategy
 
@@ -625,65 +465,33 @@ The heterogeneous test proves:
 
 These tests should keep running under normal `mix test`.
 
-## Next Milestones
+## Completed Milestone Coverage
 
-These should stay aligned with `reference/slave_spec/elixir_target.md`.
+The original simulator milestones are now all covered:
 
-### Milestone 1
-
-- one static digital I/O slave
-- real UDP loopback transport
-- boot to `:operational`
-- cyclic I/O roundtrip
-
-### Milestone 2
-
-- multiple slaves in one simulator
-- realistic startup count and station assignment behavior
-- multi-slave logical image coverage
-
-### Milestone 3
-
-- mailbox / CoE basics
-- deterministic SDO values
-- PREOP driver mailbox integration tests
-
-Current status:
-
-- expedited CoE upload/download is implemented for mailbox-capable fixtures
-- the deep integration suite now exercises public `upload_sdo/3` and
-  `download_sdo/4` against a simulated slave in PREOP
-- segmented transfers are still future work
-- mailbox error replies are implemented through explicit abort injection
-
-### Milestone 4
-
-- explicit fault injection:
-  - no response
-  - wrong WKC
-  - slave disconnect / reconnect
-  - AL error latch
-  - retreat to `SAFEOP`
-  - mailbox error replies
-
-Current status:
-
-- persistent transport fault injection is implemented for:
-  - no response
-  - wrong WKC
-- simulator-level disconnect/reconnect is implemented by temporarily removing a
-  named slave from AP/FP/BR/logical routing until faults are cleared
-- slave-local fault injection is implemented for:
-  - AL error latch
-  - retreat to `SAFEOP`
-- mailbox abort injection is implemented for deterministic CoE error replies
-- the deep integration suite now exercises:
-  - `:recovering` entry and recovery for dropped UDP responses
-  - `:recovering` entry and recovery for wrong WKC
-  - `:recovering` entry and recovery for disconnecting and reconnecting a
-    PDO-participating slave
-  - `SAFEOP` retreat reporting through slave health polling
-  - SDO abort replies through the public mailbox API
+- Milestone 1
+  - one static digital I/O slave
+  - real UDP loopback transport
+  - boot to `:operational`
+  - cyclic I/O roundtrip
+- Milestone 2
+  - multiple slaves in one simulator
+  - realistic startup count and station assignment behavior
+  - multi-slave logical image coverage
+- Milestone 3
+  - expedited and segmented CoE upload/download
+  - deterministic SDO values
+  - PREOP mailbox integration tests
+  - mailbox abort replies
+- Milestone 4
+  - explicit fault injection for:
+    - no response
+    - wrong WKC
+    - slave disconnect / reconnect
+    - AL error latch
+    - retreat to `SAFEOP`
+    - mailbox abort replies
+  - deep recovery tests through the real UDP transport
 
 ## SOES Inputs
 

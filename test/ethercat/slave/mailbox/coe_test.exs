@@ -132,6 +132,34 @@ defmodule EtherCAT.Slave.Mailbox.CoETest do
     assert segment_two.body == <<0x15, 15, 16, 17, 18, 19, 0, 0>>
   end
 
+  test "download_sdo segments payloads smaller than the initial mailbox capacity" do
+    data = "segmented!!?"
+
+    bus =
+      start_supervised!({
+        FakeBus,
+        [
+          write_ok(),
+          mailbox_ready(),
+          mailbox_read(download_init_ack(1, 0x2001, 0x01), @mailbox_config.send_size),
+          write_ok(),
+          mailbox_ready(),
+          mailbox_read(download_segment_ack(2, 0), @mailbox_config.send_size)
+        ]
+      })
+
+    assert {:ok, 2} = CoE.download_sdo(bus, @station, @mailbox_config, 0, 0x2001, 0x01, data)
+
+    [init_request, segment_request] =
+      mailbox_write_requests(bus, @mailbox_config.recv_offset)
+
+    assert init_request.counter == 1
+    assert init_request.body == <<0x21, 0x01, 0x20, 0x01, 12::32-little, "segm">>
+
+    assert segment_request.counter == 2
+    assert segment_request.body == <<0x01, "ented!!?">>
+  end
+
   test "upload_sdo returns expedited payloads directly" do
     bus =
       start_supervised!({

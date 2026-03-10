@@ -2,8 +2,11 @@ defmodule EtherCAT.Simulator.Slave.Device do
   @moduledoc false
 
   alias EtherCAT.Slave.ESC.Registers
+  alias EtherCAT.Simulator.Slave.Behaviour
   alias EtherCAT.Simulator.Slave.Mailbox
+  alias EtherCAT.Simulator.Slave.Object
   alias EtherCAT.Simulator.Slave.Signals
+  alias EtherCAT.Simulator.Slave.Value
 
   @memory_size 0x1400
   @alerr_none 0x0000
@@ -26,14 +29,43 @@ defmodule EtherCAT.Simulator.Slave.Device do
           input_size: non_neg_integer(),
           mirror_output_to_input?: boolean(),
           signals: %{optional(atom()) => Signals.definition()},
-          input_overrides: %{optional(atom()) => non_neg_integer()},
+          input_overrides: %{optional(atom()) => term()},
           mailbox_config: Mailbox.mailbox_config(),
-          object_dictionary: %{optional({non_neg_integer(), non_neg_integer()}) => binary()},
+          objects: %{optional({non_neg_integer(), non_neg_integer()}) => Object.t()},
           mailbox_abort_codes: %{
             optional({non_neg_integer(), non_neg_integer()}) => non_neg_integer()
-          }
+          },
+          mailbox_upload: map() | nil,
+          mailbox_download: map() | nil,
+          behavior: module(),
+          behavior_state: term(),
+          dc_capable?: boolean()
         }
 
+  @enforce_keys [
+    :name,
+    :profile,
+    :position,
+    :station,
+    :state,
+    :al_error?,
+    :al_status_code,
+    :eeprom,
+    :memory,
+    :output_phys,
+    :output_size,
+    :input_phys,
+    :input_size,
+    :mirror_output_to_input?,
+    :signals,
+    :input_overrides,
+    :mailbox_config,
+    :objects,
+    :mailbox_abort_codes,
+    :behavior,
+    :behavior_state,
+    :dc_capable?
+  ]
   defstruct [
     :name,
     :profile,
@@ -52,12 +84,24 @@ defmodule EtherCAT.Simulator.Slave.Device do
     :signals,
     :input_overrides,
     :mailbox_config,
-    :object_dictionary,
-    :mailbox_abort_codes
+    :objects,
+    :mailbox_abort_codes,
+    :behavior,
+    :behavior_state,
+    :dc_capable?,
+    mailbox_upload: nil,
+    mailbox_download: nil
   ]
 
   @spec new(map(), non_neg_integer()) :: t()
   def new(fixture, position) do
+    behavior_state =
+      if function_exported?(fixture.behavior, :init, 1) do
+        fixture.behavior.init(fixture)
+      else
+        %{}
+      end
+
     %__MODULE__{
       name: fixture.name,
       profile: fixture.profile,
@@ -76,9 +120,49 @@ defmodule EtherCAT.Simulator.Slave.Device do
       signals: fixture.signals,
       input_overrides: %{},
       mailbox_config: fixture.mailbox_config,
-      object_dictionary: fixture.object_dictionary,
-      mailbox_abort_codes: %{}
+      objects: fixture.objects,
+      mailbox_abort_codes: %{},
+      behavior: fixture.behavior,
+      behavior_state: behavior_state,
+      dc_capable?: fixture.dc_capable?
     }
+    |> refresh_inputs()
+  end
+
+  @spec prepare(t()) :: t()
+  def prepare(%__MODULE__{} = slave) do
+    with {:ok, behavior_state} <- Behaviour.tick(slave.behavior, slave, slave.behavior_state) do
+      slave
+      |> Map.put(:behavior_state, behavior_state)
+      |> refresh_inputs()
+    else
+      _ -> slave
+    end
+  end
+
+  @spec info(t()) :: map()
+  def info(%__MODULE__{} = slave) do
+    %{
+      name: slave.name,
+      profile: slave.profile,
+      state: slave.state,
+      station: slave.station,
+      al_error?: slave.al_error?,
+      al_status_code: slave.al_status_code,
+      dc_capable?: slave.dc_capable?,
+      signals: slave.signals,
+      values: signal_values(slave)
+    }
+  end
+
+  @spec signal_values(t()) :: %{optional(atom()) => term()}
+  def signal_values(%__MODULE__{signals: signals} = slave) do
+    Enum.reduce(signals, %{}, fn {signal_name, _definition}, acc ->
+      case get_value(slave, signal_name) do
+        {:ok, value} -> Map.put(acc, signal_name, value)
+        {:error, _} -> acc
+      end
+    end)
   end
 
   @spec retreat_to_safeop(t()) :: t()
@@ -106,7 +190,10 @@ defmodule EtherCAT.Simulator.Slave.Device do
   def clear_faults(%__MODULE__{} = slave) do
     slave
     |> Map.put(:mailbox_abort_codes, %{})
+    |> Map.put(:mailbox_upload, nil)
+    |> Map.put(:mailbox_download, nil)
     |> commit_al_state(slave.state, false, @alerr_none)
+    |> refresh_inputs()
   end
 
   @spec output_image(t()) :: binary()
@@ -133,14 +220,30 @@ defmodule EtherCAT.Simulator.Slave.Device do
   def set_value(%__MODULE__{signals: signals} = slave, signal_name, value) do
     case Signals.fetch(signals, signal_name) do
       {:ok, definition} ->
-        with {:ok, encoded} <- encode_value(definition, value) do
-          {:ok, write_signal_value(slave, definition, encoded)}
+        case definition.direction do
+          :output ->
+            with {:ok, binary} <- Value.encode_binary(definition, value) do
+              {:ok, write_output_signal(slave, signal_name, definition, binary)}
+            else
+              {:error, _} -> {:error, :invalid_value}
+            end
+
+          :input ->
+            with {:ok, _binary} <- Value.encode_binary(definition, value) do
+              {:ok, slave |> put_input_override(signal_name, value) |> refresh_inputs()}
+            else
+              {:error, _} -> {:error, :invalid_value}
+            end
         end
 
       :error ->
         {:error, :unknown_signal}
     end
   end
+
+  @spec signal_definition(t(), atom()) :: {:ok, map()} | :error
+  def signal_definition(%__MODULE__{signals: signals}, signal_name),
+    do: Map.fetch(signals, signal_name)
 
   @spec read_register(t(), non_neg_integer(), non_neg_integer()) :: binary()
   def read_register(%__MODULE__{memory: memory}, offset, length) do
@@ -149,6 +252,7 @@ defmodule EtherCAT.Simulator.Slave.Device do
 
   @spec read_datagram(t(), non_neg_integer(), non_neg_integer()) :: {t(), binary()}
   def read_datagram(%__MODULE__{} = slave, offset, length) do
+    slave = prepare(slave)
     data = read_register(slave, offset, length)
 
     if mailbox_send_read?(slave, offset, length) do
@@ -180,24 +284,37 @@ defmodule EtherCAT.Simulator.Slave.Device do
       |> write_memory(0x0502, control)
       |> maybe_load_eeprom_data(high)
 
-    # Keep the size-bit set in the low byte for 8-byte reads.
     write_memory(slave, 0x0502, <<max(low, 1)::8, high::8>>)
   end
 
+  def write_register(%__MODULE__{dc_capable?: true} = slave, 0x0900, <<_::32>>) do
+    slave
+    |> write_memory(0x0900, <<110::32-little, 120::32-little, 130::32-little, 140::32-little>>)
+    |> write_memory(0x0918, <<1_001_000::64-little>>)
+  end
+
   def write_register(%__MODULE__{} = slave, offset, data) do
-    write_memory(slave, offset, data)
+    old_output = output_image(slave)
+
+    slave
+    |> write_memory(offset, data)
+    |> maybe_apply_output_side_effects(old_output)
   end
 
   @spec write_datagram(t(), non_neg_integer(), binary()) :: t()
   def write_datagram(%__MODULE__{} = slave, offset, data) do
-    slave
-    |> write_register(offset, data)
-    |> maybe_handle_mailbox_write(offset, data)
+    slave =
+      slave
+      |> prepare()
+      |> write_register(offset, data)
+
+    maybe_handle_mailbox_write(slave, offset, data)
   end
 
   @spec logical_read_write(t(), 10 | 11 | 12, non_neg_integer(), binary()) ::
           {t(), binary(), non_neg_integer()}
   def logical_read_write(%__MODULE__{} = slave, cmd, logical_start, request_data) do
+    slave = prepare(slave)
     logical_end = logical_start + byte_size(request_data)
 
     slave
@@ -228,6 +345,87 @@ defmodule EtherCAT.Simulator.Slave.Device do
     end)
   end
 
+  @spec read_object_entry(t(), non_neg_integer(), non_neg_integer()) ::
+          {:ok, binary(), t()} | {:error, non_neg_integer(), t()}
+  def read_object_entry(%__MODULE__{} = slave, index, subindex) do
+    case Map.fetch(slave.mailbox_abort_codes, {index, subindex}) do
+      {:ok, abort_code} ->
+        {:error, abort_code, slave}
+
+      :error ->
+        case Map.fetch(slave.objects, {index, subindex}) do
+          {:ok, entry} ->
+            case Behaviour.read_object(
+                   slave.behavior,
+                   index,
+                   subindex,
+                   entry,
+                   slave,
+                   slave.behavior_state
+                 ) do
+              {:ok, updated_entry, behavior_state} ->
+                updated_slave =
+                  slave
+                  |> put_object(updated_entry)
+                  |> Map.put(:behavior_state, behavior_state)
+
+                case Object.encode(updated_entry, updated_slave.state) do
+                  {:ok, binary} -> {:ok, binary, updated_slave}
+                  {:error, abort_code} -> {:error, abort_code, updated_slave}
+                end
+
+              {:error, abort_code, behavior_state} ->
+                {:error, abort_code, %{slave | behavior_state: behavior_state}}
+            end
+
+          :error ->
+            {:error, Object.object_not_found_abort(), slave}
+        end
+    end
+  end
+
+  @spec write_object_entry(t(), non_neg_integer(), non_neg_integer(), binary()) ::
+          {:ok, t()} | {:error, non_neg_integer(), t()}
+  def write_object_entry(%__MODULE__{} = slave, index, subindex, binary) do
+    case Map.fetch(slave.mailbox_abort_codes, {index, subindex}) do
+      {:ok, abort_code} ->
+        {:error, abort_code, slave}
+
+      :error ->
+        case Map.fetch(slave.objects, {index, subindex}) do
+          {:ok, entry} ->
+            with {:ok, entry} <- Object.decode(entry, slave.state, binary),
+                 {:ok, entry, behavior_state} <-
+                   Behaviour.write_object(
+                     slave.behavior,
+                     index,
+                     subindex,
+                     entry,
+                     binary,
+                     slave,
+                     slave.behavior_state
+                   ) do
+              updated =
+                slave
+                |> put_object(entry)
+                |> Map.put(:behavior_state, behavior_state)
+                |> refresh_inputs()
+
+              {:ok, updated}
+            else
+              {:error, abort_code} ->
+                {:error, abort_code, slave}
+
+              {:error, abort_code, behavior_state} ->
+                {:error, abort_code, %{slave | behavior_state: behavior_state}}
+            end
+
+          :error ->
+            {:error, Object.object_not_found_abort(), slave}
+        end
+    end
+  end
+
   defp apply_logical_overlap(
          slave,
          cmd,
@@ -241,11 +439,12 @@ defmodule EtherCAT.Simulator.Slave.Device do
        )
        when cmd in [11, 12] do
     bytes = binary_part(request_data, datagram_offset, size)
+    old_output = output_image(slave)
 
     updated_slave =
       slave
       |> write_memory(phys_start + fmmu_offset, bytes)
-      |> maybe_mirror_output(bytes)
+      |> maybe_apply_output_side_effects(old_output)
 
     write_wkc =
       case cmd do
@@ -334,16 +533,10 @@ defmodule EtherCAT.Simulator.Slave.Device do
          data
        )
        when recv_size > 0 and offset == recv_offset and byte_size(data) == recv_size do
-    case Mailbox.handle_frame(
-           data,
-           slave.mailbox_config,
-           slave.object_dictionary,
-           slave.mailbox_abort_codes
-         ) do
-      {:ok, response, object_dictionary} ->
-        slave
-        |> Map.put(:object_dictionary, object_dictionary)
-        |> write_memory(slave.mailbox_config.send_offset, response)
+    case Mailbox.handle_frame(data, slave) do
+      {:ok, response, updated_slave} ->
+        updated_slave
+        |> write_memory(updated_slave.mailbox_config.send_offset, response)
         |> write_memory(register_offset(Registers.sm_status(1)), <<0x08>>)
 
       :ignore ->
@@ -372,6 +565,96 @@ defmodule EtherCAT.Simulator.Slave.Device do
     |> write_memory(register_offset(Registers.sm_status(1)), <<0x00>>)
   end
 
+  defp maybe_apply_output_side_effects(%__MODULE__{} = slave, old_output) do
+    new_output = output_image(slave)
+
+    if old_output == new_output do
+      slave
+    else
+      slave
+      |> notify_output_changes(old_output, new_output)
+      |> maybe_mirror_output(new_output)
+      |> refresh_inputs()
+    end
+  end
+
+  defp notify_output_changes(%__MODULE__{signals: signals} = slave, old_output, new_output) do
+    Enum.reduce(signals, slave, fn {signal_name, definition}, current_slave ->
+      if definition.direction == :output do
+        old_value = extract_value(old_output, definition)
+        new_value = extract_value(new_output, definition)
+
+        if old_value != new_value do
+          case Behaviour.handle_output_change(
+                 current_slave.behavior,
+                 signal_name,
+                 new_value,
+                 current_slave,
+                 current_slave.behavior_state
+               ) do
+            {:ok, behavior_state} ->
+              %{current_slave | behavior_state: behavior_state}
+
+            {:error, _reason, behavior_state} ->
+              %{current_slave | behavior_state: behavior_state}
+          end
+        else
+          current_slave
+        end
+      else
+        current_slave
+      end
+    end)
+  end
+
+  defp write_output_signal(slave, _signal_name, definition, binary) do
+    image = signal_image(slave, :output)
+    updated = replace_value(image, definition, binary)
+
+    slave
+    |> write_memory(slave.output_phys, updated)
+    |> maybe_apply_output_side_effects(image)
+  end
+
+  defp put_input_override(slave, signal_name, value) do
+    %{slave | input_overrides: Map.put(slave.input_overrides, signal_name, value)}
+  end
+
+  defp refresh_inputs(%__MODULE__{} = slave) do
+    case Behaviour.refresh_inputs(slave.behavior, slave, slave.behavior_state) do
+      {:ok, values, behavior_state} ->
+        slave
+        |> Map.put(:behavior_state, behavior_state)
+        |> apply_behavior_inputs(values)
+        |> apply_input_overrides()
+
+      _ ->
+        apply_input_overrides(slave)
+    end
+  end
+
+  defp apply_behavior_inputs(%__MODULE__{} = slave, values) when map_size(values) == 0, do: slave
+
+  defp apply_behavior_inputs(%__MODULE__{} = slave, values) do
+    Enum.reduce(values, slave, fn {signal_name, value}, current_slave ->
+      case Signals.fetch(current_slave.signals, signal_name) do
+        {:ok, %{direction: :input} = definition} ->
+          case Value.encode_binary(definition, value) do
+            {:ok, binary} ->
+              image = signal_image(current_slave, :input)
+              updated = replace_value(image, definition, binary)
+              write_memory(current_slave, current_slave.input_phys, updated)
+
+            {:error, _} ->
+              current_slave
+          end
+
+        _ ->
+          current_slave
+      end
+    end)
+  end
+
   defp maybe_mirror_output(
          %__MODULE__{
            mirror_output_to_input?: true,
@@ -385,41 +668,10 @@ defmodule EtherCAT.Simulator.Slave.Device do
       |> binary_part(0, min(byte_size(bytes), input_size))
       |> Kernel.<>(:binary.copy(<<0>>, max(input_size - byte_size(bytes), 0)))
 
-    slave
-    |> write_memory(input_phys, mirrored)
-    |> apply_input_overrides()
+    write_memory(slave, input_phys, mirrored)
   end
 
   defp maybe_mirror_output(slave, _bytes), do: slave
-
-  defp write_signal_value(slave, %{direction: :output} = definition, encoded) do
-    image = signal_image(slave, :output)
-    updated = replace_value(image, definition, encoded)
-
-    slave
-    |> write_memory(slave.output_phys, updated)
-    |> maybe_mirror_output(updated)
-  end
-
-  defp write_signal_value(slave, %{direction: :input} = definition, encoded) do
-    image = signal_image(slave, :input)
-    updated = replace_value(image, definition, encoded)
-
-    slave
-    |> Map.update!(
-      :input_overrides,
-      &Map.put(&1, signal_name_for(slave.signals, definition), encoded)
-    )
-    |> write_memory(slave.input_phys, updated)
-  end
-
-  defp signal_image(%__MODULE__{} = slave, :output) do
-    output_image(slave)
-  end
-
-  defp signal_image(%__MODULE__{input_phys: input_phys, input_size: input_size} = slave, :input) do
-    read_register(slave, input_phys, input_size)
-  end
 
   defp apply_input_overrides(%__MODULE__{input_overrides: overrides} = slave)
        when map_size(overrides) == 0 do
@@ -429,10 +681,16 @@ defmodule EtherCAT.Simulator.Slave.Device do
   defp apply_input_overrides(%__MODULE__{} = slave) do
     Enum.reduce(slave.input_overrides, slave, fn {signal_name, value}, current_slave ->
       case Signals.fetch(current_slave.signals, signal_name) do
-        {:ok, definition} ->
-          image = signal_image(current_slave, :input)
-          updated = replace_value(image, definition, value)
-          write_memory(current_slave, current_slave.input_phys, updated)
+        {:ok, %{direction: :input} = definition} ->
+          case Value.encode_binary(definition, value) do
+            {:ok, binary} ->
+              image = signal_image(current_slave, :input)
+              updated = replace_value(image, definition, binary)
+              write_memory(current_slave, current_slave.input_phys, updated)
+
+            {:error, _} ->
+              current_slave
+          end
 
         :error ->
           current_slave
@@ -440,61 +698,63 @@ defmodule EtherCAT.Simulator.Slave.Device do
     end)
   end
 
-  defp signal_name_for(signals, definition) do
-    Enum.find_value(signals, fn {signal_name, current_definition} ->
-      if current_definition == definition, do: signal_name, else: nil
-    end)
+  defp signal_image(%__MODULE__{} = slave, :output), do: output_image(slave)
+
+  defp signal_image(%__MODULE__{input_phys: input_phys, input_size: input_size} = slave, :input) do
+    read_register(slave, input_phys, input_size)
   end
 
-  defp extract_value(image, %{bit_offset: bit_offset, bit_size: bit_size})
+  defp extract_value(image, %{bit_offset: bit_offset, bit_size: bit_size} = definition)
        when rem(bit_offset, 8) == 0 and rem(bit_size, 8) == 0 do
-    byte_offset = div(bit_offset, 8)
-    byte_size = div(bit_size, 8)
-
     image
-    |> binary_part(byte_offset, byte_size)
-    |> :binary.decode_unsigned(:little)
+    |> binary_part(div(bit_offset, 8), div(bit_size, 8))
+    |> then(&Value.decode_binary(definition, &1))
   end
 
-  defp extract_value(image, %{bit_offset: bit_offset, bit_size: bit_size}) do
+  defp extract_value(image, %{bit_offset: bit_offset, bit_size: bit_size} = definition) do
     <<_prefix::bitstring-size(bit_offset), value::unsigned-integer-size(bit_size),
-      _suffix::bitstring>> = image
+      _suffix::bitstring>> =
+      image
 
-    value
+    Value.decode_integer(definition, value)
   end
 
-  defp encode_value(%{bit_size: bit_size}, value) when is_integer(value) and value >= 0 do
-    if bit_size == 0 or value < max_signal_value(bit_size) do
-      {:ok, value}
-    else
-      {:error, :invalid_value}
-    end
+  defp replace_value(image, %{bit_offset: bit_offset, bit_size: bit_size}, binary)
+       when rem(bit_offset, 8) == 0 and rem(bit_size, 8) == 0 do
+    replace_binary(image, div(bit_offset, 8), binary)
   end
 
-  defp encode_value(_definition, true), do: {:ok, 1}
-  defp encode_value(_definition, false), do: {:ok, 0}
+  defp replace_value(image, %{bit_offset: bit_offset, bit_size: bit_size} = definition, binary) do
+    {:ok, value} = Value.encode_integer(definition, Value.decode_binary(definition, binary))
 
-  defp encode_value(%{bit_size: bit_size}, value)
-       when is_binary(value) and rem(bit_size, 8) == 0 and byte_size(value) <= div(bit_size, 8) do
-    {:ok, :binary.decode_unsigned(value, :little)}
-  end
-
-  defp encode_value(_definition, _value), do: {:error, :invalid_value}
-
-  defp replace_value(image, %{bit_offset: bit_offset, bit_size: bit_size}, value) do
     <<prefix::bitstring-size(bit_offset), _current::bitstring-size(bit_size), suffix::bitstring>> =
       image
 
     <<prefix::bitstring, value::unsigned-integer-size(bit_size), suffix::bitstring>>
   end
 
-  defp max_signal_value(bit_size), do: Integer.pow(2, bit_size)
-
   defp apply_al_control(slave, request) do
     case decode_al_request(request) do
       {:ok, target_state} ->
         if valid_transition?(slave.state, target_state) do
-          commit_al_state(slave, target_state, false, @alerr_none)
+          case Behaviour.transition(
+                 slave.behavior,
+                 slave.state,
+                 target_state,
+                 slave,
+                 slave.behavior_state
+               ) do
+            {:ok, behavior_state} ->
+              slave
+              |> Map.put(:behavior_state, behavior_state)
+              |> commit_al_state(target_state, false, @alerr_none)
+              |> refresh_inputs()
+
+            {:error, status_code, behavior_state} ->
+              slave
+              |> Map.put(:behavior_state, behavior_state)
+              |> commit_al_state(slave.state, true, status_code)
+          end
         else
           commit_al_state(slave, slave.state, true, @alerr_invalid_state_change)
         end
@@ -532,6 +792,10 @@ defmodule EtherCAT.Simulator.Slave.Device do
     |> Map.put(:al_status_code, status_code)
     |> write_memory(0x0130, encode_al_status(state, error?))
     |> write_memory(0x0134, <<status_code::16-little>>)
+  end
+
+  defp put_object(%__MODULE__{} = slave, %Object{} = entry) do
+    %{slave | objects: Map.put(slave.objects, {entry.index, entry.subindex}, entry)}
   end
 
   defp write_memory(%__MODULE__{memory: memory} = slave, offset, data) do

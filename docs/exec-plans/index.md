@@ -9,9 +9,6 @@ and decision logs for multi-step work.
   Clarify which slave faults stay local, which faults make the cyclic runtime
   unhealthy, and simplify the surrounding `Master` / `Domain` code while that
   model is tightened.
-- [docs/exec-plans/active/simulator-generalization.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/active/simulator-generalization.md)
-  Grow `EtherCAT.Simulator*` from a strong digital-card/test simulator into a
-  general simulated-slave platform for richer deep tests and UI tooling.
 
 ## Completed
 
@@ -31,6 +28,10 @@ and decision logs for multi-step work.
 - [docs/exec-plans/completed/runtime-module-decomposition.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/completed/runtime-module-decomposition.md)
   Structural decomposition of the oversized `Master`, `Slave`, and `Domain`
   runtime modules into clearer subsystem collaborators.
+- [docs/exec-plans/completed/simulator-generalization.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/completed/simulator-generalization.md)
+  Generalized `EtherCAT.Simulator*` into a reusable simulated-slave platform
+  with typed objects/process data, reusable profiles, segmented CoE, widget
+  APIs, and DC-aware deep coverage.
 - [docs/exec-plans/completed/syncmanager-domain-spec-alignment.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/completed/syncmanager-domain-spec-alignment.md)
   Process-data attachment-model refactor for split `{domain, SyncManager}` support.
 

@@ -678,7 +678,11 @@ defmodule EtherCAT.Slave.Mailbox.CoE do
   defp valid_segment_size(_size, true, unused), do: {:invalid_segment_padding, unused}
 
   defp take_binary(_data, _offset, 0), do: <<>>
-  defp take_binary(data, offset, length), do: binary_part(data, offset, length)
+
+  defp take_binary(data, offset, length) do
+    available = max(byte_size(data) - offset, 0)
+    binary_part(data, offset, min(length, available))
+  end
 
   defp flip_toggle(0), do: 1
   defp flip_toggle(1), do: 0

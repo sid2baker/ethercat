@@ -1,6 +1,7 @@
 defmodule EtherCAT.DeepIntegrationTest do
   use ExUnit.Case, async: false
 
+  alias EtherCAT.DC.Config, as: DCConfig
   alias EtherCAT.Domain.Config, as: DomainConfig
   alias EtherCAT.Slave.Config, as: SlaveConfig
   alias EtherCAT.Simulator
@@ -227,6 +228,233 @@ defmodule EtherCAT.DeepIntegrationTest do
       assert {:ok, 1} = Slave.get_value(simulator, :io, :led0)
       assert {:ok, 2} = Slave.get_value(simulator, :io, :led1)
     end)
+  end
+
+  @tag fixtures: [Slave.lan9252_demo(name: :mailbox)]
+  test "supports segmented CoE uploads and downloads over the real UDP transport",
+       %{port: port} do
+    assert :ok =
+             EtherCAT.start(
+               transport: :udp,
+               bind_ip: @master_ip,
+               host: @simulator_ip,
+               port: port,
+               dc: nil,
+               scan_stable_ms: 20,
+               scan_poll_ms: 10,
+               frame_timeout_ms: 2,
+               domains: [%DomainConfig{id: :main, cycle_time_us: 10_000}],
+               slaves: [
+                 %SlaveConfig{
+                   name: :mailbox,
+                   driver: Driver,
+                   config: %{profile: :lan9252_demo},
+                   process_data: :none,
+                   target_state: :preop
+                 }
+               ]
+             )
+
+    assert :ok = EtherCAT.await_running(2_000)
+    assert :preop_ready = EtherCAT.state()
+
+    initial_blob = "hello-sim\0\0\0"
+    updated_blob = "segmented!!?"
+
+    assert {:ok, ^initial_blob} = EtherCAT.upload_sdo(:mailbox, 0x2001, 0x01)
+    assert :ok = EtherCAT.download_sdo(:mailbox, 0x2001, 0x01, updated_blob)
+    assert {:ok, ^updated_blob} = EtherCAT.upload_sdo(:mailbox, 0x2001, 0x01)
+  end
+
+  @tag fixtures: [Slave.lan9252_demo(name: :io)]
+  test "signal subscriptions emit widget-friendly change notifications",
+       %{simulator: simulator, port: port} do
+    assert :ok =
+             EtherCAT.start(
+               transport: :udp,
+               bind_ip: @master_ip,
+               host: @simulator_ip,
+               port: port,
+               dc: nil,
+               scan_stable_ms: 20,
+               scan_poll_ms: 10,
+               frame_timeout_ms: 2,
+               domains: [%DomainConfig{id: :main, cycle_time_us: 10_000}],
+               slaves: [
+                 %SlaveConfig{
+                   name: :io,
+                   driver: Driver,
+                   config: %{profile: :lan9252_demo},
+                   process_data: {:all, :main},
+                   target_state: :op
+                 }
+               ]
+             )
+
+    assert :ok = EtherCAT.await_operational(2_000)
+    assert :ok = Slave.subscribe(simulator, :io)
+
+    assert :ok = Slave.set_value(simulator, :io, :button1, 9)
+
+    assert_receive {:ethercat_simulator, ^simulator, :signal_changed, :io, :button1, 9}, 500
+
+    assert :ok = EtherCAT.write_output(:io, :led0, 1)
+
+    assert_receive {:ethercat_simulator, ^simulator, :signal_changed, :io, :led0, 1}, 500
+
+    assert :ok = Slave.unsubscribe(simulator, :io)
+  end
+
+  @tag fixtures: [Slave.analog_io(name: :analog)]
+  test "typed analog profile exchanges scaled values over cyclic PDOs",
+       %{simulator: simulator, port: port} do
+    assert :ok =
+             EtherCAT.start(
+               transport: :udp,
+               bind_ip: @master_ip,
+               host: @simulator_ip,
+               port: port,
+               dc: nil,
+               scan_stable_ms: 20,
+               scan_poll_ms: 10,
+               frame_timeout_ms: 2,
+               domains: [%DomainConfig{id: :main, cycle_time_us: 10_000}],
+               slaves: [
+                 %SlaveConfig{
+                   name: :analog,
+                   driver: Driver,
+                   config: %{profile: :analog_io},
+                   process_data: {:all, :main},
+                   target_state: :op
+                 }
+               ]
+             )
+
+    assert :ok = EtherCAT.await_operational(2_000)
+
+    assert :ok = EtherCAT.write_output(:analog, :ao0, 12.3)
+
+    assert_eventually(fn ->
+      assert {:ok, {value, updated_at_us}} = EtherCAT.read_input(:analog, :ai0)
+      assert_in_delta value, 12.3, 0.05
+      assert is_integer(updated_at_us)
+    end)
+
+    assert {:ok, 12.3} = Slave.get_value(simulator, :analog, :ao0)
+    assert {:ok, 12.3} = Slave.get_value(simulator, :analog, :ai0)
+  end
+
+  @tag fixtures: [Slave.temperature_input(name: :temp)]
+  test "temperature profile exposes typed inputs and enforces read-only object access",
+       %{simulator: simulator, port: port} do
+    assert :ok =
+             EtherCAT.start(
+               transport: :udp,
+               bind_ip: @master_ip,
+               host: @simulator_ip,
+               port: port,
+               dc: nil,
+               scan_stable_ms: 20,
+               scan_poll_ms: 10,
+               frame_timeout_ms: 2,
+               domains: [%DomainConfig{id: :main, cycle_time_us: 10_000}],
+               slaves: [
+                 %SlaveConfig{
+                   name: :temp,
+                   driver: Driver,
+                   config: %{profile: :temperature_input},
+                   process_data: {:all, :main},
+                   target_state: :op
+                 }
+               ]
+             )
+
+    assert :ok = EtherCAT.await_operational(2_000)
+    assert :ok = Slave.set_value(simulator, :temp, :temp0, 37.5)
+    assert :ok = Slave.set_value(simulator, :temp, :status, 3)
+
+    assert_eventually(fn ->
+      assert {:ok, {temperature, updated_at_us}} = EtherCAT.read_input(:temp, :temp0)
+      assert {:ok, {3, status_updated_at_us}} = EtherCAT.read_input(:temp, :status)
+      assert_in_delta temperature, 37.5, 0.05
+      assert is_integer(updated_at_us)
+      assert is_integer(status_updated_at_us)
+    end)
+
+    assert {:error, {:sdo_abort, 0x6000, 0x01, 0x0601_0002}} =
+             EtherCAT.download_sdo(:temp, 0x6000, 0x01, <<0x00, 0x00>>)
+  end
+
+  @tag fixtures: [Slave.servo_drive(name: :axis)]
+  test "servo drive profile supports CiA402-style enable sequence and DC runtime",
+       %{port: port} do
+    assert :ok =
+             EtherCAT.start(
+               transport: :udp,
+               bind_ip: @master_ip,
+               host: @simulator_ip,
+               port: port,
+               dc: %DCConfig{
+                 cycle_ns: 10_000_000,
+                 await_lock?: false,
+                 lock_threshold_ns: 100,
+                 lock_timeout_ms: 1_000,
+                 warmup_cycles: 0
+               },
+               scan_stable_ms: 20,
+               scan_poll_ms: 10,
+               frame_timeout_ms: 2,
+               domains: [%DomainConfig{id: :main, cycle_time_us: 10_000}],
+               slaves: [
+                 %SlaveConfig{
+                   name: :axis,
+                   driver: Driver,
+                   config: %{profile: :servo_drive},
+                   process_data: {:all, :main},
+                   target_state: :op
+                 }
+               ]
+             )
+
+    assert :ok = EtherCAT.await_operational(2_000)
+
+    assert %EtherCAT.DC.Status{
+             active?: true,
+             reference_station: 0x1000,
+             lock_state: lock_state
+           } = EtherCAT.dc_status()
+
+    assert lock_state in [:locking, :locked]
+    assert {:ok, %{name: :axis, station: 0x1000}} = EtherCAT.reference_clock()
+
+    assert_eventually(fn ->
+      assert {:ok, {0x0040, _}} = EtherCAT.read_input(:axis, :statusword)
+    end)
+
+    assert :ok = EtherCAT.write_output(:axis, :controlword, 0x0006)
+
+    assert_eventually(fn ->
+      assert {:ok, {0x0021, _}} = EtherCAT.read_input(:axis, :statusword)
+    end)
+
+    assert :ok = EtherCAT.write_output(:axis, :controlword, 0x0007)
+
+    assert_eventually(fn ->
+      assert {:ok, {0x0023, _}} = EtherCAT.read_input(:axis, :statusword)
+    end)
+
+    assert :ok = EtherCAT.write_output(:axis, :target_position, 12_345)
+    assert :ok = EtherCAT.write_output(:axis, :mode_of_operation, 1)
+    assert :ok = EtherCAT.write_output(:axis, :controlword, 0x000F)
+
+    assert_eventually(fn ->
+      assert {:ok, {0x0027, _}} = EtherCAT.read_input(:axis, :statusword)
+      assert {:ok, {12_345, _}} = EtherCAT.read_input(:axis, :position_actual)
+      assert {:ok, {1, _}} = EtherCAT.read_input(:axis, :mode_display)
+    end)
+
+    assert {:ok, <<0x27, 0x00>>} = EtherCAT.upload_sdo(:axis, 0x6041, 0x00)
+    assert {:ok, <<57, 48, 0, 0>>} = EtherCAT.upload_sdo(:axis, 0x6064, 0x00)
   end
 
   test "persistent wrong WKC drives the master into recovering and clears cleanly",

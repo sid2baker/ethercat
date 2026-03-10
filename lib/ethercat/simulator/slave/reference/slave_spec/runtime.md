@@ -108,10 +108,10 @@ That is now the implemented direction for Milestone 3:
 
 The current scope is deliberately small:
 
-- expedited SDO upload/download only
+- expedited and segmented SDO upload/download
 - deterministic object dictionary values
-- no segmented transfers yet
-- mailbox abort replies can now be injected explicitly
+- typed object entries with access and state rules
+- mailbox abort replies can be injected explicitly
 
 Milestone 4 also adds explicit fault injection around the runtime boundary:
 
@@ -121,6 +121,14 @@ Milestone 4 also adds explicit fault injection around the runtime boundary:
 - AL error latch
 - retreat to `SAFEOP`
 - mailbox abort replies
+
+Later simulator generalization work adds profile-aware runtime behavior above
+this protocol core:
+
+- dynamic input refresh through a behavior boundary
+- typed PDO/process-data conversion
+- reusable analog, temperature, mailbox, and servo profiles
+- optional DC-aware behavior for fixtures that need it
 
 ## Elixir Implication
 

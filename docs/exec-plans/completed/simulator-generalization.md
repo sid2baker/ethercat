@@ -1,6 +1,6 @@
 # Simulator Generalization
 
-Status: ACTIVE
+Status: COMPLETE
 
 ## Goal
 
@@ -17,28 +17,27 @@ general simulated-slave platform that can support:
 This plan is specifically about the simulator layer under
 `lib/ethercat/simulator*`, not the production master runtime.
 
-## Current Baseline
+## Outcome
 
-Already implemented:
+The simulator now includes:
 
-- UDP loopback endpoint via `EtherCAT.Simulator.Udp`
-- multi-slave simulator core via `EtherCAT.Simulator`
-- fixture and signal API via `EtherCAT.Simulator.Slave`
-- digital / coupler / LAN9252-style fixtures
-- expedited CoE upload/download
-- deterministic fault injection
-- deep integration tests for startup, cyclic I/O, PREOP mailbox use, and
-  runtime recovery
-
-Main limitations:
-
-- device behavior is still fixture-centric and mostly static
-- object dictionary is too small and too untyped
-- PDO modeling is still oriented around small byte-like fixtures
-- no reusable analog/temperature/servo profiles yet
-- no segmented CoE transfers
-- no widget-grade signal subscriptions
-- no DC-aware simulated slave behavior
+- `EtherCAT.Simulator`
+- `EtherCAT.Simulator.Udp`
+- `EtherCAT.Simulator.Slave`
+- a device behavior boundary via `EtherCAT.Simulator.Slave.Behaviour`
+- typed objects via `EtherCAT.Simulator.Slave.Object`
+- typed signal/object conversion via `EtherCAT.Simulator.Slave.Value`
+- reusable profiles for:
+  - digital I/O
+  - analog I/O
+  - temperature input
+  - mailbox-capable devices
+  - servo/drive devices
+  - couplers
+- segmented CoE upload/download
+- widget-facing subscriptions and signal metadata
+- optional DC-aware behavior in the servo profile
+- deep integration coverage through the real UDP transport
 
 ## Design Principles
 
@@ -82,9 +81,10 @@ Work:
 - document value semantics and fault-injection semantics explicitly
 - add subscriptions or polling guidance for widget consumers
 
-Exit criteria:
-- `kino_ethercat` can depend on the simulator API without reaching into
-  private helper modules
+Result:
+- landed
+- higher-level tooling can depend on `EtherCAT.Simulator*` without reaching
+  into helper modules
 
 ## Phase 2. Introduce A Real Device Behavior Boundary
 
@@ -102,9 +102,8 @@ Work:
   - optional periodic evolution hooks
 - reimplement the current digital fixtures on that behavior boundary
 
-Exit criteria:
-- no fixture-specific digital behavior remains embedded in the generic device
-  core
+Result:
+- landed through `EtherCAT.Simulator.Slave.Behaviour` and profile modules
 
 ## Phase 3. Generalize The Object Dictionary
 
@@ -119,9 +118,9 @@ Work:
 - add more complete abort behavior
 - optionally add a minimal SDO info surface
 
-Exit criteria:
-- mailbox-capable fixtures declare object dictionaries as data
-- deep tests cover both expedited and segmented transfers
+Result:
+- landed with typed objects and deep tests covering both expedited and
+  segmented transfers
 
 ## Phase 4. Generalize Process Data
 
@@ -135,8 +134,8 @@ Work:
 - support scaling and engineering-unit hooks
 - support grouped process-image layouts and multi-SM fixtures
 
-Exit criteria:
-- one analog-style fixture can be modeled without bespoke byte-level code
+Result:
+- landed with typed PDO/process-data conversion and analog deep coverage
 
 ## Phase 5. Add Reusable Profiles
 
@@ -155,8 +154,8 @@ Work:
 - keep fixtures as thin declarations over shared profile logic
 - define profile-specific signal metadata and validation
 
-Exit criteria:
-- heterogeneous deep tests use profiles, not one-off fixture behavior
+Result:
+- landed; fixture constructors are thin declarations over shared profiles
 
 ## Phase 6. Add Widget-Oriented Runtime Features
 
@@ -174,9 +173,9 @@ Work:
 - add ring-level introspection helpers
 - add profile-aware validation for `set_value/4`
 
-Exit criteria:
-- a `kino_ethercat` widget can create and drive a virtual ring with minimal
-  custom glue
+Result:
+- landed through signal metadata, get/set, subscriptions, and ring-level
+  introspection
 
 ## Phase 7. Add Servo / Drive Support
 
@@ -191,9 +190,8 @@ Work:
 - add drive fault/reset/enable progression hooks
 - add profile-specific object dictionary entries and PDO layouts
 
-Exit criteria:
-- a deep integration test can boot a simulated drive, configure it, and run a
-  basic enable/fault-reset/status sequence
+Result:
+- landed through the servo/drive profile and CiA 402-style deep test
 
 ## Phase 8. Add Optional DC-Aware Behavior
 
@@ -206,32 +204,26 @@ Work:
 - add deterministic lock/loss simulation hooks
 - add latch/timestamp support where relevant
 
-Exit criteria:
-- at least one DC-aware simulated slave participates in a deep integration
-  test
+Result:
+- landed through the DC-aware servo deep test
 
-## Recommended Order
+## Validation Outcome
 
-Highest-value order:
-
-1. public simulator boundary cleanup
-2. behavior boundary
-3. typed object dictionary
-4. typed PDO/process-data model
-5. first analog profile
-6. widget-oriented subscriptions/introspection
-7. servo/drive profile
-8. optional DC support
-
-That order keeps the simulator reusable instead of baking advanced device
-semantics into the current digital-card core.
-
-## Validation Strategy
-
-Each phase should add both:
+The landed simulator is covered by:
 
 - focused simulator unit tests
-- at least one real deep integration test through `EtherCAT.Simulator.Udp`
+- CoE segmentation tests
+- deep integration tests through `EtherCAT.Simulator.Udp`
 
-Raw-socket coverage remains a separate concern and should stay on real hardware
-for now.
+Raw-socket coverage remains intentionally separate and stays on real hardware.
+
+## Remaining Intentional Limits
+
+The simulator still does not attempt to be:
+
+- a raw-socket simulator endpoint
+- a carrier/link simulator
+- a full motion physics model
+- a complete SDO Info implementation
+
+Those are explicit scope limits, not unfinished phases of this plan.

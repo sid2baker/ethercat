@@ -14,17 +14,37 @@ defmodule EtherCAT.Simulator.Slave do
 
   @spec digital_io(keyword()) :: fixture()
   def digital_io(opts \\ []) do
-    Fixture.digital_io(opts)
+    Fixture.build(:digital_io, opts)
   end
 
   @spec lan9252_demo(keyword()) :: fixture()
   def lan9252_demo(opts \\ []) do
-    Fixture.lan9252_demo(opts)
+    mailbox_device(opts)
+  end
+
+  @spec mailbox_device(keyword()) :: fixture()
+  def mailbox_device(opts \\ []) do
+    Fixture.build(:mailbox_device, opts)
+  end
+
+  @spec analog_io(keyword()) :: fixture()
+  def analog_io(opts \\ []) do
+    Fixture.build(:analog_io, opts)
+  end
+
+  @spec temperature_input(keyword()) :: fixture()
+  def temperature_input(opts \\ []) do
+    Fixture.build(:temperature_input, opts)
+  end
+
+  @spec servo_drive(keyword()) :: fixture()
+  def servo_drive(opts \\ []) do
+    Fixture.build(:servo_drive, opts)
   end
 
   @spec coupler(keyword()) :: fixture()
   def coupler(opts \\ []) do
-    Fixture.coupler(opts)
+    Fixture.build(:coupler, opts)
   end
 
   @spec signals(fixture()) :: [atom()]
@@ -34,6 +54,13 @@ defmodule EtherCAT.Simulator.Slave do
 
   @spec signal_definitions(fixture()) :: %{optional(atom()) => map()}
   def signal_definitions(%{signals: signals}), do: signals
+
+  @spec signal_definitions(pid(), atom()) ::
+          {:ok, %{optional(atom()) => map()}} | {:error, :not_found}
+  def signal_definitions(simulator, slave_name)
+      when is_pid(simulator) and is_atom(slave_name) do
+    Simulator.signal_definitions(simulator, slave_name)
+  end
 
   @spec signals(pid(), atom()) :: {:ok, [atom()]} | {:error, :not_found}
   def signals(simulator, slave_name) when is_pid(simulator) and is_atom(slave_name) do
@@ -52,5 +79,19 @@ defmodule EtherCAT.Simulator.Slave do
   def set_value(simulator, slave_name, signal_name, value)
       when is_pid(simulator) and is_atom(slave_name) and is_atom(signal_name) do
     Simulator.set_value(simulator, slave_name, signal_name, value)
+  end
+
+  @spec subscribe(pid(), atom(), atom() | :all, pid()) :: :ok | {:error, :not_found}
+  def subscribe(simulator, slave_name, signal_name \\ :all, subscriber \\ self())
+      when is_pid(simulator) and is_atom(slave_name) and
+             (is_atom(signal_name) or signal_name == :all) and is_pid(subscriber) do
+    Simulator.subscribe(simulator, slave_name, signal_name, subscriber)
+  end
+
+  @spec unsubscribe(pid(), atom(), atom() | :all, pid()) :: :ok | {:error, :not_found}
+  def unsubscribe(simulator, slave_name, signal_name \\ :all, subscriber \\ self())
+      when is_pid(simulator) and is_atom(slave_name) and
+             (is_atom(signal_name) or signal_name == :all) and is_pid(subscriber) do
+    Simulator.unsubscribe(simulator, slave_name, signal_name, subscriber)
   end
 end

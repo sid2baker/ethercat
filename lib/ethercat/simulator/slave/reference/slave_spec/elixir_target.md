@@ -51,6 +51,9 @@ our tests.
 
 ## Milestone Guidance
 
+The staged milestones that were originally planned are now landed. The notes
+below are kept as historical guidance for how the simulator grew.
+
 ### Milestone 1
 
 Keep only:
@@ -89,7 +92,8 @@ Current status:
 - the deep integration suite covers PREOP public `upload_sdo/3` and
   `download_sdo/4`
 - mailbox abort replies are implemented through explicit fault injection
-- segmented transfers and driver-driven mailbox configuration are still pending
+- segmented upload/download is implemented
+- mailbox-capable profiles declare object dictionaries as data
 
 ### Milestone 4
 
@@ -112,6 +116,21 @@ Current status:
   - AL error latch
   - retreat to `SAFEOP`
 - mailbox abort replies are now supported for deterministic CoE error tests
+
+### Milestone 5 And Beyond
+
+Current status:
+
+- reusable profiles are implemented for:
+  - digital I/O
+  - analog I/O
+  - temperature input
+  - mailbox-capable devices
+  - servo/drive devices
+  - couplers
+- simulator subscriptions and signal metadata are exposed for UI tooling
+- servo/drive deep tests cover a basic CiA 402-style enable path
+- opt-in DC-aware behavior is exercised through the servo profile
 
 ## Deep Test Philosophy
 

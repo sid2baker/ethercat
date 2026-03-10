@@ -3,6 +3,7 @@ defmodule EtherCAT.SimulatorSlaveDeviceTest do
 
   alias EtherCAT.Simulator.Slave.Device
   alias EtherCAT.Simulator.Slave.Fixture
+  alias EtherCAT.Simulator.Slave.Object
 
   test "AL control enforces basic transition discipline" do
     slave = Device.new(Fixture.digital_io(), 0)
@@ -74,7 +75,8 @@ defmodule EtherCAT.SimulatorSlaveDeviceTest do
     assert <<10::16-little, _::16, _::8, 0x23::8, 0x3000::16-little, 0x60, 0x00, 0x20, 0x01,
              0::32-little, _::binary>> = ack
 
-    assert slave.object_dictionary[{0x2000, 0x01}] == <<0x78, 0x56>>
+    assert %Object{} = entry = slave.objects[{0x2000, 0x01}]
+    assert 0x5678 == Object.get_value(entry)
   end
 
   test "fault helpers can latch AL errors, retreat to SAFEOP, and inject mailbox aborts" do
