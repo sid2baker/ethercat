@@ -9,6 +9,7 @@ defmodule EtherCAT.MixProject do
       app: :ethercat,
       version: @version,
       elixir: "~> 1.19",
+      elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       description: description(),
       package: package(),
@@ -25,6 +26,9 @@ defmodule EtherCAT.MixProject do
       extra_applications: [:logger]
     ]
   end
+
+  defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(_env), do: ["lib"]
 
   defp deps do
     [

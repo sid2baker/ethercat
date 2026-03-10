@@ -111,6 +111,19 @@ defmodule EtherCAT.Master.ConfigTest do
     assert {:error, {:invalid_start_options, :invalid_base_station}} =
              Config.normalize_start_options(interface: "eth0", base_station: -1)
 
+    assert {:error, {:invalid_start_options, :missing_udp_host}} =
+             Config.normalize_start_options(transport: :udp)
+
+    assert {:ok, udp_config} =
+             Config.normalize_start_options(
+               transport: :udp,
+               host: {127, 0, 0, 2},
+               bind_ip: {127, 0, 0, 1}
+             )
+
+    assert udp_config.bus_opts[:host] == {127, 0, 0, 2}
+    assert udp_config.bus_opts[:bind_ip] == {127, 0, 0, 1}
+
     assert {:error, {:invalid_start_options, :legacy_dc_cycle_ns}} =
              Config.normalize_start_options(interface: "eth0", dc_cycle_ns: 1_000_000)
 

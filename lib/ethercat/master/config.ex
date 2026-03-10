@@ -49,7 +49,7 @@ defmodule EtherCAT.Master.Config do
     scan_stable_ms = Keyword.get(opts, :scan_stable_ms, 1_000)
     scan_poll_ms = Keyword.get(opts, :scan_poll_ms, 100)
 
-    with {:ok, _interface} <- Keyword.fetch(opts, :interface),
+    with :ok <- validate_bus_source(opts),
          :ok <- reject_legacy_start_options(opts),
          :ok <- validate_base_station(base_station),
          {:ok, dc_config} <- normalize_dc_config(dc),
@@ -70,7 +70,6 @@ defmodule EtherCAT.Master.Config do
          scan_poll_ms: scan_poll_ms
        }}
     else
-      :error -> {:error, :missing_interface}
       {:error, _} = err -> err
     end
   end
@@ -123,6 +122,19 @@ defmodule EtherCAT.Master.Config do
     |> Keyword.drop(@master_option_keys)
     |> Keyword.put_new(:name, EtherCAT.Bus)
     |> maybe_put_frame_timeout(frame_timeout_override_ms)
+  end
+
+  defp validate_bus_source(opts) do
+    cond do
+      udp_transport?(opts) ->
+        validate_udp_bus_source(opts)
+
+      true ->
+        case Keyword.fetch(opts, :interface) do
+          {:ok, _interface} -> :ok
+          :error -> {:error, :missing_interface}
+        end
+    end
   end
 
   defp validate_base_station(base_station) when is_integer(base_station) and base_station >= 0,
@@ -191,4 +203,30 @@ defmodule EtherCAT.Master.Config do
   end
 
   defp maybe_put_frame_timeout(opts, _timeout_ms), do: opts
+
+  defp validate_udp_bus_source(opts) do
+    cond do
+      Keyword.has_key?(opts, :interface) ->
+        :ok
+
+      Keyword.has_key?(opts, :host) ->
+        :ok
+
+      true ->
+        {:error, {:invalid_start_options, :missing_udp_host}}
+    end
+  end
+
+  defp udp_transport?(opts) do
+    case {Keyword.get(opts, :transport), Keyword.get(opts, :transport_mod)} do
+      {:udp, _} ->
+        true
+
+      {_, EtherCAT.Bus.Transport.UdpSocket} ->
+        true
+
+      _ ->
+        false
+    end
+  end
 end
