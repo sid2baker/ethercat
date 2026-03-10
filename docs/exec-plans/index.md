@@ -9,6 +9,9 @@ and decision logs for multi-step work.
   Clarify which slave faults stay local, which faults make the cyclic runtime
   unhealthy, and simplify the surrounding `Master` / `Domain` code while that
   model is tightened.
+- [docs/exec-plans/active/simulator-generalization.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/active/simulator-generalization.md)
+  Grow `EtherCAT.Simulator*` from a strong digital-card/test simulator into a
+  general simulated-slave platform for richer deep tests and UI tooling.
 
 ## Completed
 

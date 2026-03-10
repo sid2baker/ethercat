@@ -12,8 +12,8 @@ flow:
 
 Relevant sources:
 
-- [tutorial.txt](/home/n0gg1n/Development/Work/opencode/ethercat/test/support/slave/reference/soes/soes/doc/tutorial.txt)
-- [slave_objectlist.c](/home/n0gg1n/Development/Work/opencode/ethercat/test/support/slave/reference/soes/applications/linux_lan9252demo/slave_objectlist.c)
+- [tutorial.txt](/home/n0gg1n/Development/Work/opencode/ethercat/lib/ethercat/simulator/slave/reference/soes/soes/doc/tutorial.txt)
+- [slave_objectlist.c](/home/n0gg1n/Development/Work/opencode/ethercat/lib/ethercat/simulator/slave/reference/soes/applications/linux_lan9252demo/slave_objectlist.c)
 
 ## Simulator Responsibilities
 

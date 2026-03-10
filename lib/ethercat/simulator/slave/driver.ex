@@ -1,4 +1,4 @@
-defmodule EtherCAT.Support.Slave.Driver do
+defmodule EtherCAT.Simulator.Slave.Driver do
   @moduledoc false
 
   @behaviour EtherCAT.Slave.Driver

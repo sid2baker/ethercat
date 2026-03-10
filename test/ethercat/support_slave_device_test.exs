@@ -1,8 +1,8 @@
-defmodule EtherCAT.SupportSlaveDeviceTest do
+defmodule EtherCAT.SimulatorSlaveDeviceTest do
   use ExUnit.Case, async: true
 
-  alias EtherCAT.Support.Slave.Device
-  alias EtherCAT.Support.Slave.Fixture
+  alias EtherCAT.Simulator.Slave.Device
+  alias EtherCAT.Simulator.Slave.Fixture
 
   test "AL control enforces basic transition discipline" do
     slave = Device.new(Fixture.digital_io(), 0)
@@ -116,6 +116,24 @@ defmodule EtherCAT.SupportSlaveDeviceTest do
     refute cleared.al_error?
     assert cleared.al_status_code == 0
     assert cleared.mailbox_abort_codes == %{}
+  end
+
+  test "signal access can get and set named input and output values" do
+    slave = Device.new(Fixture.lan9252_demo(), 0)
+
+    assert {:ok, 0} = Device.get_value(slave, :led0)
+    assert {:ok, 0} = Device.get_value(slave, :button1)
+    assert {:error, :unknown_signal} = Device.get_value(slave, :missing)
+
+    assert {:ok, slave} = Device.set_value(slave, :button1, 7)
+    assert {:ok, 7} = Device.get_value(slave, :button1)
+
+    assert {:ok, slave} = Device.set_value(slave, :led0, true)
+    assert {:ok, slave} = Device.set_value(slave, :led1, 2)
+    assert {:ok, 1} = Device.get_value(slave, :led0)
+    assert {:ok, 2} = Device.get_value(slave, :led1)
+
+    assert Device.output_image(slave) == <<1, 2>>
   end
 
   defp pad_mailbox(frame, size) do

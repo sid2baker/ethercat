@@ -17,11 +17,11 @@ repo:
 
 | SOES concept | Elixir support module |
 | --- | --- |
-| one slave application instance | `EtherCAT.Support.Slave.Device` |
-| fixture identity + SII/process image | `EtherCAT.Support.Slave.Fixture` |
-| slave-facing driver for tests | `EtherCAT.Support.Slave.Driver` |
-| slave segment/ring execution | `EtherCAT.Support.Simulator` |
-| transport endpoint | `EtherCAT.Support.Simulator.Udp` |
+| one slave application instance | `EtherCAT.Simulator.Slave.Device` |
+| fixture identity + SII/process image | `EtherCAT.Simulator.Slave.Fixture` |
+| slave-facing driver for tests | `EtherCAT.Simulator.Slave.Driver` |
+| slave segment/ring execution | `EtherCAT.Simulator` |
+| transport endpoint | `EtherCAT.Simulator.Udp` |
 
 ## What Must Be Faithful
 
@@ -69,7 +69,7 @@ Add:
 
 Current status:
 
-- implemented with one-segment multi-slave routing in `EtherCAT.Support.Simulator`
+- implemented with one-segment multi-slave routing in `EtherCAT.Simulator`
 - covered by deep tests for:
   - two homogeneous digital I/O slaves
   - one coupler fixture plus one LAN9252-style I/O fixture

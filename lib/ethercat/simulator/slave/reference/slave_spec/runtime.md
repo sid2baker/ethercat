@@ -10,8 +10,8 @@ The SOES reference exposes a very small slave runtime surface:
 
 See:
 
-- [linux_lan9252demo/main.c](/home/n0gg1n/Development/Work/opencode/ethercat/test/support/slave/reference/soes/applications/linux_lan9252demo/main.c)
-- [tutorial.txt](/home/n0gg1n/Development/Work/opencode/ethercat/test/support/slave/reference/soes/soes/doc/tutorial.txt)
+- [linux_lan9252demo/main.c](/home/n0gg1n/Development/Work/opencode/ethercat/lib/ethercat/simulator/slave/reference/soes/applications/linux_lan9252demo/main.c)
+- [tutorial.txt](/home/n0gg1n/Development/Work/opencode/ethercat/lib/ethercat/simulator/slave/reference/soes/soes/doc/tutorial.txt)
 
 The `esc_cfg_t` in the demo makes the runtime responsibilities explicit:
 
@@ -126,11 +126,11 @@ Milestone 4 also adds explicit fault injection around the runtime boundary:
 
 The support runtime should be split into:
 
-- `EtherCAT.Support.Slave.Device`
+- `EtherCAT.Simulator.Slave.Device`
   One simulated slave state, including AL state and ESC register image.
-- `EtherCAT.Support.Simulator`
+- `EtherCAT.Simulator`
   The ring/segment executor that routes datagrams across ordered slaves.
-- `EtherCAT.Support.Simulator.Udp`
+- `EtherCAT.Simulator.Udp`
   A real socket endpoint that feeds decoded datagrams into the simulator.
 
 This preserves the SOES responsibilities without copying the embedded control

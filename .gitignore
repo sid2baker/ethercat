@@ -25,7 +25,7 @@ ethercat-*.tar
 docs/references/igh/
 docs/references/soem/
 symphony/
-test/support/slave/reference/soes/
+lib/ethercat/simulator/slave/reference/soes/
 
 # Local AI assistant settings
 .claude/settings.local.json

@@ -1,4 +1,4 @@
-defmodule EtherCAT.Support.Slave.Mailbox do
+defmodule EtherCAT.Simulator.Slave.Mailbox do
   @moduledoc false
 
   @mailbox_type_coe 0x03

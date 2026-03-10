@@ -1,9 +1,12 @@
-# EtherCAT Support Simulator
+# EtherCAT Simulator
 
 ## Purpose
 
-This directory contains the **test-only simulated slave runtime** used for deep
-integration tests.
+This directory contains the simulated slave runtime used for:
+
+- deep integration tests in this repo
+- local hardware simulation
+- higher-level tools such as a future `kino_ethercat` simulator widget
 
 The goal is to boot the real master against a deterministic peer without
 physical hardware while keeping the runtime path real:
@@ -12,10 +15,10 @@ physical hardware while keeping the runtime path real:
 - real `EtherCAT.Bus`
 - real `EtherCAT.Bus.Link.SinglePort`
 - real `EtherCAT.Bus.Transport.UdpSocket`
-- simulated slaves behind a real UDP endpoint
+- simulated slaves behind a real UDP endpoint on the EtherCAT UDP port
 
-This is not a production slave implementation. It is a protocol-faithful test
-fixture.
+This is not a production field-device implementation. It is a protocol-faithful
+simulator for tests and tooling.
 
 ## Read This In Order
 
@@ -36,6 +39,43 @@ Then use the focused notes:
 This README should stay aligned with those files. The `slave_spec` folder is
 the design source; this README is the implementation overview.
 
+## Current Status
+
+The simulator is now a real library feature under `lib/ethercat/simulator*`,
+not a `test/support` helper.
+
+What is already implemented and validated:
+
+- one or more simulated slaves behind one simulator instance
+- real UDP transport path through `EtherCAT.Bus.Transport.UdpSocket`
+- startup addressing modes:
+  - broadcast
+  - auto-increment
+  - fixed-address
+  - logical
+- basic AL transition discipline:
+  - `INIT -> PREOP -> SAFEOP -> OP`
+- SII/EEPROM reads through the normal master path
+- SyncManager/FMMU programming
+- cyclic LRW process-data exchange
+- heterogeneous startup rings (`coupler` + I/O fixtures)
+- expedited CoE upload/download for mailbox-capable fixtures
+- deterministic fault injection:
+  - dropped responses
+  - wrong WKC
+  - slave disconnect / reconnect
+  - `SAFEOP` retreat
+  - AL error latch
+  - mailbox abort replies
+- signal-level get/set API for external tooling
+
+The simulator is already strong enough to exercise the real master through:
+
+- startup to `:operational`
+- cyclic I/O roundtrips
+- PREOP mailbox diagnostics
+- recovery from realistic runtime faults
+
 ## Current Runtime Shape
 
 The simulator is intentionally event-driven.
@@ -54,19 +94,27 @@ observable protocol boundary, not the C control flow.
 
 ## Structure
 
-Compiled in `MIX_ENV=test`:
+Runtime implementation:
 
 ```text
-test/support/
+lib/ethercat/
 ├── simulator.ex
-├── simulator/
-│   └── udp.ex
-├── slave.ex
+└── simulator/
+    ├── udp.ex
+    └── slave/
+        ├── device.ex
+        ├── driver.ex
+        ├── fixture.ex
+        ├── mailbox.ex
+        └── signals.ex
+```
+
+Reference/spec material remains under:
+
+```text
+lib/ethercat/simulator/
+├── README.md
 └── slave/
-    ├── README.md
-    ├── device.ex
-    ├── driver.ex
-    ├── fixture.ex
     └── reference/
         ├── slave_spec.md
         ├── slave_spec/
@@ -75,28 +123,30 @@ test/support/
 
 Main modules:
 
-- `EtherCAT.Support.Slave`
-  - public fixture boundary
-- `EtherCAT.Support.Slave.Fixture`
-  - declarative identity, EEPROM, and process-image definition
-- `EtherCAT.Support.Slave.Device`
-  - one simulated slave instance with ESC memory and AL state
-- `EtherCAT.Support.Simulator`
+- `EtherCAT.Simulator`
+  - public simulator process
   - multi-slave datagram routing and WKC accumulation
-- `EtherCAT.Support.Simulator.Udp`
+- `EtherCAT.Simulator.Udp`
   - real UDP endpoint, defaulting to EtherCAT UDP port `0x88A4`
-
+- `EtherCAT.Simulator.Slave`
+  - public fixture and simulator-facing signal API
+- `EtherCAT.Simulator.Slave.Fixture`
+  - declarative identity, EEPROM, and process-image definition
+- `EtherCAT.Simulator.Slave.Signals`
+  - signal metadata derived from the support driver model
+- `EtherCAT.Simulator.Slave.Device`
+  - one simulated slave instance with ESC memory and AL state
 ## Current Concept Mapping
 
 This mirrors `reference/slave_spec/elixir_target.md`.
 
 | SOES concept | Elixir support module |
 | --- | --- |
-| one slave application instance | `EtherCAT.Support.Slave.Device` |
-| fixture identity + SII/process image | `EtherCAT.Support.Slave.Fixture` |
-| slave-facing driver for tests | `EtherCAT.Support.Slave.Driver` |
-| slave segment/ring execution | `EtherCAT.Support.Simulator` |
-| transport endpoint | `EtherCAT.Support.Simulator.Udp` |
+| one slave application instance | `EtherCAT.Simulator.Slave.Device` |
+| fixture identity + SII/process image | `EtherCAT.Simulator.Slave.Fixture` |
+| slave-facing driver for tests | `EtherCAT.Simulator.Slave.Driver` |
+| slave segment/ring execution | `EtherCAT.Simulator` |
+| transport endpoint | `EtherCAT.Simulator.Udp` |
 
 Translate SOES concepts, not C files or callback structure.
 
@@ -120,7 +170,7 @@ aligned with `reference/slave_spec/runtime.md` and
 
 ## What Is Intentionally Simplified
 
-These are explicitly out of scope for the first simulator slices.
+These are still intentionally out of scope today.
 
 - embedded polling-loop shape from SOES
 - HAL/device-driver structure
@@ -158,6 +208,76 @@ It is also the first mailbox-capable fixture:
 - expedited CoE upload/download is supported for small deterministic object
   values
 - the current object dictionary surface is intentionally tiny and test-oriented
+
+## Current Deep Integration Coverage
+
+The simulator is exercised through the normal deep integration suite in:
+
+- [`test/ethercat/deep_integration_test.exs`](/home/n0gg1n/Development/Work/opencode/ethercat/test/ethercat/deep_integration_test.exs)
+
+The current suite proves:
+
+1. one simulated digital I/O slave can boot to `:operational`
+2. two simulated digital I/O slaves can share one simulator instance
+3. a heterogeneous ring can boot with:
+   - a coupler fixture in slot 0
+   - a mailbox-capable LAN9252-style I/O fixture in slot 1
+4. expedited CoE upload/download works in PREOP through the public mailbox API
+5. runtime recovery works for:
+   - wrong WKC
+   - dropped UDP responses
+   - disconnect / reconnect of one simulated slave
+   - disconnect / reconnect of one slave in a shared domain
+6. simulator-driven value injection and output observation work through the
+   signal-level API
+
+## Widget-Facing Signal API
+
+The simulator now exposes a small signal-oriented API intended for higher-level
+tools like a `kino_ethercat` simulator widget.
+
+For fixture introspection:
+
+```elixir
+fixture = EtherCAT.Simulator.Slave.lan9252_demo(name: :io)
+
+EtherCAT.Simulator.Slave.signals(fixture)
+#=> [:led0, :led1, :button1]
+
+EtherCAT.Simulator.Slave.signal_definitions(fixture)
+#=> %{button1: %{direction: :input, ...}, led0: %{direction: :output, ...}, ...}
+```
+
+For runtime control of a running simulator:
+
+```elixir
+{:ok, simulator} =
+  EtherCAT.Simulator.start_link(slaves: [fixture])
+
+EtherCAT.Simulator.Slave.set_value(simulator, :io, :button1, 7)
+EtherCAT.Simulator.Slave.get_value(simulator, :io, :led0)
+EtherCAT.Simulator.Slave.signals(simulator, :io)
+```
+
+Current semantics:
+
+- values are read and written by named signal
+- `set_value/4` accepts integers, booleans, or exact-size binaries
+- `get_value/3` currently returns raw integer values
+- input values set through this API persist even on fixtures that also mirror
+  outputs into inputs by default
+
+That keeps the API generic enough for a UI widget without tying it to a
+specific device profile or driver callback contract.
+
+What is still missing for a really good widget experience:
+
+- change notifications / subscriptions for simulator signal updates
+- richer typed values in the public signal metadata
+- fixture/profile discovery that is more explicit than today
+- profile-aware validation for writes (for example signed ranges or analog
+  engineering units)
+- easy composition of multiple fixtures into a named virtual ring
 
 ## What Is Still Missing For A General Slave
 
@@ -248,7 +368,26 @@ Not every deep test needs DC, but a general slave eventually needs:
 - lock/loss behavior
 - latch/timestamp semantics where relevant
 
-## Generalization Plan
+## Missing Features Summary
+
+The simulator is already good at:
+
+- deterministic EtherCAT protocol behavior
+- digital-card-style fixtures
+- mailbox happy-path coverage
+- recovery and fault-injection tests
+
+The main missing pieces for “all kinds of slaves” are:
+
+- a real device behavior abstraction
+- a typed object dictionary
+- richer typed PDO/process-data modeling
+- reusable device profiles
+- servo / CiA 402 profile behavior
+- optional DC-aware slave behavior
+- widget-oriented signal subscriptions and live introspection
+
+## Generalization Direction
 
 The right way to grow this support stack is:
 
@@ -257,10 +396,14 @@ The right way to grow this support stack is:
 3. layer richer profiles on top of it
 4. only then add profile-specific deep tests
 
+The concrete execution plan for that work lives at:
+
+- [docs/exec-plans/active/simulator-generalization.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/active/simulator-generalization.md)
+
 ### Phase 1. Stabilize The Generic Protocol Core
 
 Goal:
-- keep `EtherCAT.Support.Slave.Device` and `EtherCAT.Support.Simulator`
+- keep `EtherCAT.Simulator.Slave.Device` and `EtherCAT.Simulator`
   responsible for protocol mechanics only
 
 Deliverables:
@@ -280,7 +423,7 @@ Goal:
 - make slave behavior pluggable instead of hardcoded into fixture/device logic
 
 Add something like:
-- `EtherCAT.Support.Slave.Behaviour`
+- `EtherCAT.Simulator.Slave.Behaviour`
 - behavior callbacks for:
   - init
   - state transition hooks

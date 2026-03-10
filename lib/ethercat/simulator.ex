@@ -1,10 +1,16 @@
-defmodule EtherCAT.Support.Simulator do
-  @moduledoc false
+defmodule EtherCAT.Simulator do
+  @moduledoc """
+  Simulated EtherCAT segment for deep integration tests and virtual hardware.
+
+  It hosts one or more simulated slaves and executes EtherCAT datagrams against
+  them with protocol-faithful register, AL-state, mailbox, and logical process
+  data behavior.
+  """
 
   use GenServer
 
   alias EtherCAT.Bus.Datagram
-  alias EtherCAT.Support.Slave.Device
+  alias EtherCAT.Simulator.Slave.Device
 
   @aprd 1
   @apwr 2
@@ -30,7 +36,7 @@ defmodule EtherCAT.Support.Simulator do
           | {:mailbox_abort, atom(), non_neg_integer(), non_neg_integer(), non_neg_integer()}
 
   @type state :: %{
-          slaves: [Device.t()],
+          slaves: [map()],
           drop_responses?: boolean(),
           wkc_offset: integer(),
           disconnected: MapSet.t(atom())
@@ -59,6 +65,23 @@ defmodule EtherCAT.Support.Simulator do
   @spec output_value(pid(), atom()) :: {:ok, non_neg_integer()} | {:error, :not_found}
   def output_value(server, slave_name) do
     GenServer.call(server, {:output_value, slave_name})
+  end
+
+  @spec signals(pid(), atom()) :: {:ok, [atom()]} | {:error, :not_found}
+  def signals(server, slave_name) do
+    GenServer.call(server, {:signals, slave_name})
+  end
+
+  @spec get_value(pid(), atom(), atom()) ::
+          {:ok, term()} | {:error, :not_found | :unknown_signal}
+  def get_value(server, slave_name, signal_name) do
+    GenServer.call(server, {:get_value, slave_name, signal_name})
+  end
+
+  @spec set_value(pid(), atom(), atom(), term()) ::
+          :ok | {:error, :not_found | :unknown_signal | :invalid_value}
+  def set_value(server, slave_name, signal_name, value) do
+    GenServer.call(server, {:set_value, slave_name, signal_name, value})
   end
 
   @spec output_image(pid(), atom()) :: {:ok, binary()} | {:error, :not_found}
@@ -153,6 +176,36 @@ defmodule EtherCAT.Support.Simulator do
       end
 
     {:reply, reply, state}
+  end
+
+  def handle_call({:signals, slave_name}, _from, %{slaves: slaves} = state) do
+    reply =
+      case Enum.find(slaves, &(&1.name == slave_name)) do
+        nil -> {:error, :not_found}
+        slave -> {:ok, slave |> Device.signals() |> Map.keys()}
+      end
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:get_value, slave_name, signal_name}, _from, %{slaves: slaves} = state) do
+    reply =
+      case Enum.find(slaves, &(&1.name == slave_name)) do
+        nil -> {:error, :not_found}
+        slave -> Device.get_value(slave, signal_name)
+      end
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:set_value, slave_name, signal_name, value}, _from, %{slaves: slaves} = state) do
+    case update_named_slave(slaves, slave_name, &Device.set_value(&1, signal_name, value)) do
+      {:ok, updated_slaves} ->
+        {:reply, :ok, %{state | slaves: updated_slaves}}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
   end
 
   def handle_call({:output_image, slave_name}, _from, %{slaves: slaves} = state) do
@@ -323,22 +376,36 @@ defmodule EtherCAT.Support.Simulator do
   defp reply_with_slave_update(state, slave_name, fun) do
     case update_named_slave(state.slaves, slave_name, fun) do
       {:ok, slaves} -> {:reply, :ok, %{state | slaves: slaves}}
-      :error -> {:reply, {:error, :not_found}, state}
+      {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
 
   defp update_named_slave(slaves, slave_name, fun) do
-    {slaves, matched?} =
+    {entries, matched?} =
       Enum.map_reduce(slaves, false, fn slave, matched? ->
         cond do
           slave.name == slave_name ->
-            {fun.(slave), true}
+            case fun.(slave) do
+              {:ok, updated_slave} -> {{:ok, updated_slave}, true}
+              {:error, reason} -> {{:error, reason}, true}
+              updated_slave -> {{:ok, updated_slave}, true}
+            end
 
           true ->
-            {slave, matched?}
+            {{:ok, slave}, matched?}
         end
       end)
 
-    if matched?, do: {:ok, slaves}, else: :error
+    if matched? do
+      case Enum.find(entries, &match?({:error, _}, &1)) do
+        {:error, reason} ->
+          {:error, reason}
+
+        nil ->
+          {:ok, Enum.map(entries, fn {:ok, slave} -> slave end)}
+      end
+    else
+      {:error, :not_found}
+    end
   end
 end

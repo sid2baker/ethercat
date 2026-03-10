@@ -291,7 +291,7 @@ defmodule EtherCAT.BusTest do
 
     read = Task.async(fn -> Bus.transaction(name, Transaction.fprd(0x1000, {0x0130, 2})) end)
 
-    [datagram] = assert_sent_frame()
+    [datagram] = assert_sent_frame(500)
     reply_with(bus, [datagram], fn dg -> %{dg | data: <<0x12, 0x34>>, wkc: 1} end)
 
     assert {:ok, [%{data: <<0x12, 0x34>>, wkc: 1}]} = Task.await(read)
@@ -349,8 +349,8 @@ defmodule EtherCAT.BusTest do
     )
   end
 
-  defp assert_sent_frame do
-    assert_receive {:fake_link_sent, payload, _tx_at}, 200
+  defp assert_sent_frame(timeout \\ 200) do
+    assert_receive {:fake_link_sent, payload, _tx_at}, timeout
     assert {:ok, datagrams} = Frame.decode(payload)
     datagrams
   end

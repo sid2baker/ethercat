@@ -5,8 +5,8 @@
 The most useful SOES example for the initial Elixir simulator is the small
 Linux LAN9252 demo:
 
-- [slave_objectlist.c](/home/n0gg1n/Development/Work/opencode/ethercat/test/support/slave/reference/soes/applications/linux_lan9252demo/slave_objectlist.c)
-- [utypes.h](/home/n0gg1n/Development/Work/opencode/ethercat/test/support/slave/reference/soes/applications/linux_lan9252demo/utypes.h)
+- [slave_objectlist.c](/home/n0gg1n/Development/Work/opencode/ethercat/lib/ethercat/simulator/slave/reference/soes/applications/linux_lan9252demo/slave_objectlist.c)
+- [utypes.h](/home/n0gg1n/Development/Work/opencode/ethercat/lib/ethercat/simulator/slave/reference/soes/applications/linux_lan9252demo/utypes.h)
 
 It is intentionally small and maps cleanly to the kind of first deep test this
 repo needs.
@@ -118,11 +118,11 @@ but the semantic device shape:
 
 That is why the current compiled test-support split is sensible:
 
-- `EtherCAT.Support.Slave.Fixture`
+- `EtherCAT.Simulator.Slave.Fixture`
   Declarative device identity and SII/process-image definition.
-- `EtherCAT.Support.Slave.Driver`
+- `EtherCAT.Simulator.Slave.Driver`
   Tiny driver that gives the master named signals for tests.
-- `EtherCAT.Support.Slave.Device`
+- `EtherCAT.Simulator.Slave.Device`
   Actual register/process-image state.
 
 For Milestone 3, `Device` also owns the current mailbox-backed object

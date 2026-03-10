@@ -1,8 +1,10 @@
-defmodule EtherCAT.Support.Slave.Fixture do
+defmodule EtherCAT.Simulator.Slave.Fixture do
   @moduledoc false
 
   @memory_size 0x1400
   @category_start 0x40
+
+  alias EtherCAT.Simulator.Slave.Signals
 
   @type t :: %{
           name: atom(),
@@ -19,6 +21,8 @@ defmodule EtherCAT.Support.Slave.Fixture do
           input_phys: non_neg_integer(),
           input_size: non_neg_integer(),
           mirror_output_to_input?: boolean(),
+          pdo_entries: [map()],
+          signals: %{optional(atom()) => map()},
           mailbox_config: %{
             recv_offset: non_neg_integer(),
             recv_size: non_neg_integer(),
@@ -143,6 +147,10 @@ defmodule EtherCAT.Support.Slave.Fixture do
 
     pdo_entries = Keyword.fetch!(defaults, :pdo_entries)
 
+    signal_definitions =
+      %{profile: profile, pdo_entries: pdo_entries}
+      |> Signals.definitions()
+
     sm_entries =
       (mailbox_sm_entries(mailbox_config) ++
          [
@@ -196,6 +204,8 @@ defmodule EtherCAT.Support.Slave.Fixture do
       input_phys: input_phys,
       input_size: input_size,
       mirror_output_to_input?: mirror_output_to_input?,
+      pdo_entries: pdo_entries,
+      signals: signal_definitions,
       mailbox_config: mailbox_config,
       object_dictionary: object_dictionary,
       memory: memory,

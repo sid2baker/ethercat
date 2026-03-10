@@ -1,12 +1,18 @@
-defmodule EtherCAT.Support.Simulator.Udp do
-  @moduledoc false
+defmodule EtherCAT.Simulator.Udp do
+  @moduledoc """
+  UDP endpoint for `EtherCAT.Simulator`.
+
+  This binds a real UDP socket and forwards EtherCAT UDP payloads to a running
+  simulator segment, so the normal `UdpSocket` transport can talk to simulated
+  slaves without any test-specific seam in the master runtime.
+  """
 
   use GenServer
 
   require Logger
 
   alias EtherCAT.Bus.Frame
-  alias EtherCAT.Support.Simulator
+  alias EtherCAT.Simulator
 
   @default_port 0x88A4
 
@@ -60,7 +66,7 @@ defmodule EtherCAT.Support.Simulator.Udp do
           state
 
         {:error, reason} ->
-          Logger.warning("[Support.Simulator.Udp] dropped invalid payload: #{inspect(reason)}")
+          Logger.warning("[EtherCAT.Simulator.Udp] dropped invalid payload: #{inspect(reason)}")
           state
       end
 

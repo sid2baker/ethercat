@@ -1,8 +1,9 @@
-defmodule EtherCAT.Support.Slave.Device do
+defmodule EtherCAT.Simulator.Slave.Device do
   @moduledoc false
 
   alias EtherCAT.Slave.ESC.Registers
-  alias EtherCAT.Support.Slave.Mailbox
+  alias EtherCAT.Simulator.Slave.Mailbox
+  alias EtherCAT.Simulator.Slave.Signals
 
   @memory_size 0x1400
   @alerr_none 0x0000
@@ -24,6 +25,8 @@ defmodule EtherCAT.Support.Slave.Device do
           input_phys: non_neg_integer(),
           input_size: non_neg_integer(),
           mirror_output_to_input?: boolean(),
+          signals: %{optional(atom()) => Signals.definition()},
+          input_overrides: %{optional(atom()) => non_neg_integer()},
           mailbox_config: Mailbox.mailbox_config(),
           object_dictionary: %{optional({non_neg_integer(), non_neg_integer()}) => binary()},
           mailbox_abort_codes: %{
@@ -46,6 +49,8 @@ defmodule EtherCAT.Support.Slave.Device do
     :input_phys,
     :input_size,
     :mirror_output_to_input?,
+    :signals,
+    :input_overrides,
     :mailbox_config,
     :object_dictionary,
     :mailbox_abort_codes
@@ -68,6 +73,8 @@ defmodule EtherCAT.Support.Slave.Device do
       input_phys: fixture.input_phys,
       input_size: fixture.input_size,
       mirror_output_to_input?: fixture.mirror_output_to_input?,
+      signals: fixture.signals,
+      input_overrides: %{},
       mailbox_config: fixture.mailbox_config,
       object_dictionary: fixture.object_dictionary,
       mailbox_abort_codes: %{}
@@ -105,6 +112,34 @@ defmodule EtherCAT.Support.Slave.Device do
   @spec output_image(t()) :: binary()
   def output_image(%__MODULE__{output_phys: output_phys, output_size: output_size} = slave) do
     read_register(slave, output_phys, output_size)
+  end
+
+  @spec signals(t()) :: %{optional(atom()) => Signals.definition()}
+  def signals(%__MODULE__{signals: signals}), do: signals
+
+  @spec get_value(t(), atom()) :: {:ok, term()} | {:error, :unknown_signal}
+  def get_value(%__MODULE__{signals: signals} = slave, signal_name) do
+    case Signals.fetch(signals, signal_name) do
+      {:ok, definition} ->
+        image = signal_image(slave, definition.direction)
+        {:ok, extract_value(image, definition)}
+
+      :error ->
+        {:error, :unknown_signal}
+    end
+  end
+
+  @spec set_value(t(), atom(), term()) :: {:ok, t()} | {:error, :unknown_signal | :invalid_value}
+  def set_value(%__MODULE__{signals: signals} = slave, signal_name, value) do
+    case Signals.fetch(signals, signal_name) do
+      {:ok, definition} ->
+        with {:ok, encoded} <- encode_value(definition, value) do
+          {:ok, write_signal_value(slave, definition, encoded)}
+        end
+
+      :error ->
+        {:error, :unknown_signal}
+    end
   end
 
   @spec read_register(t(), non_neg_integer(), non_neg_integer()) :: binary()
@@ -350,10 +385,110 @@ defmodule EtherCAT.Support.Slave.Device do
       |> binary_part(0, min(byte_size(bytes), input_size))
       |> Kernel.<>(:binary.copy(<<0>>, max(input_size - byte_size(bytes), 0)))
 
-    write_memory(slave, input_phys, mirrored)
+    slave
+    |> write_memory(input_phys, mirrored)
+    |> apply_input_overrides()
   end
 
   defp maybe_mirror_output(slave, _bytes), do: slave
+
+  defp write_signal_value(slave, %{direction: :output} = definition, encoded) do
+    image = signal_image(slave, :output)
+    updated = replace_value(image, definition, encoded)
+
+    slave
+    |> write_memory(slave.output_phys, updated)
+    |> maybe_mirror_output(updated)
+  end
+
+  defp write_signal_value(slave, %{direction: :input} = definition, encoded) do
+    image = signal_image(slave, :input)
+    updated = replace_value(image, definition, encoded)
+
+    slave
+    |> Map.update!(
+      :input_overrides,
+      &Map.put(&1, signal_name_for(slave.signals, definition), encoded)
+    )
+    |> write_memory(slave.input_phys, updated)
+  end
+
+  defp signal_image(%__MODULE__{} = slave, :output) do
+    output_image(slave)
+  end
+
+  defp signal_image(%__MODULE__{input_phys: input_phys, input_size: input_size} = slave, :input) do
+    read_register(slave, input_phys, input_size)
+  end
+
+  defp apply_input_overrides(%__MODULE__{input_overrides: overrides} = slave)
+       when map_size(overrides) == 0 do
+    slave
+  end
+
+  defp apply_input_overrides(%__MODULE__{} = slave) do
+    Enum.reduce(slave.input_overrides, slave, fn {signal_name, value}, current_slave ->
+      case Signals.fetch(current_slave.signals, signal_name) do
+        {:ok, definition} ->
+          image = signal_image(current_slave, :input)
+          updated = replace_value(image, definition, value)
+          write_memory(current_slave, current_slave.input_phys, updated)
+
+        :error ->
+          current_slave
+      end
+    end)
+  end
+
+  defp signal_name_for(signals, definition) do
+    Enum.find_value(signals, fn {signal_name, current_definition} ->
+      if current_definition == definition, do: signal_name, else: nil
+    end)
+  end
+
+  defp extract_value(image, %{bit_offset: bit_offset, bit_size: bit_size})
+       when rem(bit_offset, 8) == 0 and rem(bit_size, 8) == 0 do
+    byte_offset = div(bit_offset, 8)
+    byte_size = div(bit_size, 8)
+
+    image
+    |> binary_part(byte_offset, byte_size)
+    |> :binary.decode_unsigned(:little)
+  end
+
+  defp extract_value(image, %{bit_offset: bit_offset, bit_size: bit_size}) do
+    <<_prefix::bitstring-size(bit_offset), value::unsigned-integer-size(bit_size),
+      _suffix::bitstring>> = image
+
+    value
+  end
+
+  defp encode_value(%{bit_size: bit_size}, value) when is_integer(value) and value >= 0 do
+    if bit_size == 0 or value < max_signal_value(bit_size) do
+      {:ok, value}
+    else
+      {:error, :invalid_value}
+    end
+  end
+
+  defp encode_value(_definition, true), do: {:ok, 1}
+  defp encode_value(_definition, false), do: {:ok, 0}
+
+  defp encode_value(%{bit_size: bit_size}, value)
+       when is_binary(value) and rem(bit_size, 8) == 0 and byte_size(value) <= div(bit_size, 8) do
+    {:ok, :binary.decode_unsigned(value, :little)}
+  end
+
+  defp encode_value(_definition, _value), do: {:error, :invalid_value}
+
+  defp replace_value(image, %{bit_offset: bit_offset, bit_size: bit_size}, value) do
+    <<prefix::bitstring-size(bit_offset), _current::bitstring-size(bit_size), suffix::bitstring>> =
+      image
+
+    <<prefix::bitstring, value::unsigned-integer-size(bit_size), suffix::bitstring>>
+  end
+
+  defp max_signal_value(bit_size), do: Integer.pow(2, bit_size)
 
   defp apply_al_control(slave, request) do
     case decode_al_request(request) do
