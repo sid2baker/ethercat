@@ -15,7 +15,6 @@ defmodule EtherCAT.Master do
   alias EtherCAT.Master.Session
   alias EtherCAT.Master.Startup
   alias EtherCAT.Master.Status
-  alias EtherCAT.Slave.API, as: SlaveAPI
   alias EtherCAT.Slave.ESC.Registers
 
   @base_station 0x1000
@@ -475,60 +474,31 @@ defmodule EtherCAT.Master do
   end
 
   def handle_event(:info, {:slave_reconnected, name}, :activation_blocked, data) do
-    if Map.has_key?(data.activation_failures, name) do
-      Logger.info(
-        "[Master] slave #{name} link restored during activation — authorizing reconnect"
-      )
+    case Recovery.authorize_activation_reconnect(data, name) do
+      {:ok, updated} ->
+        {:keep_state, updated, [{{:timeout, :retry}, @retry_ms, nil}]}
 
-      case SlaveAPI.authorize_reconnect(name) do
-        :ok ->
-          updated = put_activation_failure(data, name, {:reconnecting, :authorized})
-          {:keep_state, updated, [{{:timeout, :retry}, @retry_ms, nil}]}
+      {:error, updated} ->
+        {:keep_state, updated, [{{:timeout, :retry}, @retry_ms, nil}]}
 
-        {:error, reason} ->
-          Logger.warning(
-            "[Master] slave #{name} reconnect authorization failed during activation: #{inspect(reason)}"
-          )
-
-          updated = put_activation_failure(data, name, {:reconnect_failed, reason})
-          {:keep_state, updated, [{{:timeout, :retry}, @retry_ms, nil}]}
-      end
-    else
-      :keep_state_and_data
+      :ignore ->
+        :keep_state_and_data
     end
   end
 
   def handle_event(:info, {:slave_ready, name, :preop}, :activation_blocked, data) do
-    if Map.has_key?(data.activation_failures, name) do
-      Logger.info(
-        "[Master] slave #{name} reached :preop during activation retry — requesting :op"
-      )
+    case Recovery.handle_activation_ready_preop(data, name) do
+      {:ok, next_state, healed_data} ->
+        {:next_state, next_state, healed_data}
 
-      case SlaveAPI.request(name, :op) do
-        :ok ->
-          next_data = %{data | activation_failures: Map.delete(data.activation_failures, name)}
+      {:activation_blocked, still_blocked} ->
+        {:keep_state, still_blocked, [{{:timeout, :retry}, @retry_ms, nil}]}
 
-          case Recovery.maybe_resume_from_activation_blocked(next_data) do
-            {:ok, next_state, healed_data} ->
-              {:next_state, next_state, healed_data}
+      {:recovering, still_recovering} ->
+        {:next_state, :recovering, still_recovering, [{{:timeout, :retry}, @retry_ms, nil}]}
 
-            {:activation_blocked, still_blocked} ->
-              {:keep_state, still_blocked, [{{:timeout, :retry}, @retry_ms, nil}]}
-
-            {:recovering, still_recovering} ->
-              {:next_state, :recovering, still_recovering, [{{:timeout, :retry}, @retry_ms, nil}]}
-          end
-
-        {:error, reason} ->
-          Logger.warning(
-            "[Master] slave #{name} still not in :op during activation retry: #{inspect(reason)}"
-          )
-
-          updated = put_activation_failure(data, name, {:op, reason})
-          {:keep_state, updated, [{{:timeout, :retry}, @retry_ms, nil}]}
-      end
-    else
-      :keep_state_and_data
+      :ignore ->
+        :keep_state_and_data
     end
   end
 
@@ -722,54 +692,19 @@ defmodule EtherCAT.Master do
 
   def handle_event(:info, {:slave_reconnected, name}, state, data)
       when state in [:operational, :recovering] do
-    Logger.info("[Master] slave #{name} link restored — authorizing reconnect")
-
-    case SlaveAPI.authorize_reconnect(name) do
-      :ok ->
-        updated = Recovery.put_slave_fault(data, name, {:reconnecting, :authorized})
-        keep_state_with_slave_fault_retry(state, updated)
-
-      {:error, reason} ->
-        Logger.warning(
-          "[Master] slave #{name} reconnect authorization failed: #{inspect(reason)}"
-        )
-
-        updated = Recovery.put_slave_fault(data, name, {:reconnect_failed, reason})
-        keep_state_with_slave_fault_retry(state, updated)
-    end
+    updated = Recovery.authorize_runtime_reconnect(data, name)
+    keep_state_with_slave_fault_retry(state, updated)
   end
 
   # Slave reconnected and reached :preop — attempt to bring it back to :op
   def handle_event(:info, {:slave_ready, name, :preop}, state, data)
       when state in [:operational, :recovering] do
-    Logger.info("[Master] slave #{name} reconnected and in :preop — requesting :op")
+    case Recovery.handle_runtime_ready_preop(state, data, name) do
+      {:ok, next_state, healed_data} ->
+        {:next_state, next_state, healed_data}
 
-    case SlaveAPI.request(name, :op) do
-      :ok ->
-        recovered_data =
-          data
-          |> clear_tracked_slave_fault(name)
-          |> Recovery.maybe_restart_stopped_domains()
-          |> Recovery.maybe_restart_dc_runtime()
-
-        if state == :recovering do
-          case Recovery.maybe_resume_running(recovered_data) do
-            {:ok, next_state, healed_data} ->
-              {:next_state, next_state, healed_data}
-
-            {:recovering, still_recovering} ->
-              {:keep_state, still_recovering}
-          end
-        else
-          keep_state_with_slave_fault_retry(state, recovered_data)
-        end
-
-      {:error, reason} ->
-        Logger.warning(
-          "[Master] slave #{name} :op request failed after reconnect: #{inspect(reason)}"
-        )
-
-        {:keep_state, Recovery.put_slave_fault(data, name, {:preop, reason})}
+      {:keep, updated} ->
+        keep_state_with_slave_fault_retry(state, updated)
     end
   end
 
@@ -973,12 +908,6 @@ defmodule EtherCAT.Master do
     end
   end
 
-  defp clear_tracked_slave_fault(data, name) do
-    data
-    |> Recovery.clear_slave_fault(name)
-    |> Recovery.clear_runtime_fault({:slave, name})
-  end
-
   defp keep_state_with_slave_fault_retry(:operational, data) do
     {:keep_state, data, slave_fault_retry_actions(data)}
   end
@@ -1017,10 +946,6 @@ defmodule EtherCAT.Master do
       reason: reason,
       at_ms: System.system_time(:millisecond)
     }
-  end
-
-  defp put_activation_failure(data, name, reason) do
-    %{data | activation_failures: Map.put(data.activation_failures, name, reason)}
   end
 
   # -- Session teardown ------------------------------------------------------
