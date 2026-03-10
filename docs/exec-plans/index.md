@@ -5,8 +5,10 @@ and decision logs for multi-step work.
 
 ## Active
 
-No active execution plans right now. Promote focused work from the debt tracker
-when it becomes concrete enough to execute.
+- [docs/exec-plans/active/master-domain-fault-classification.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/active/master-domain-fault-classification.md)
+  Clarify which slave faults stay local, which faults make the cyclic runtime
+  unhealthy, and simplify the surrounding `Master` / `Domain` code while that
+  model is tightened.
 
 ## Completed
 

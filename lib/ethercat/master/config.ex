@@ -102,6 +102,10 @@ defmodule EtherCAT.Master.Config do
   @spec activatable_slave_names([SlaveConfig.t()]) :: [atom()]
   def activatable_slave_names(slave_config), do: Slave.activatable_names(slave_config)
 
+  @spec requested_domain_ids(SlaveConfig.t()) :: [atom()]
+  def requested_domain_ids(%SlaveConfig{} = slave_config),
+    do: Slave.requested_domain_ids(slave_config)
+
   @spec fetch_slave_config([SlaveConfig.t()], atom()) ::
           {:ok, SlaveConfig.t(), non_neg_integer()} | {:error, term()}
   def fetch_slave_config(slave_config, slave_name),

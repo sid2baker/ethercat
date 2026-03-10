@@ -1,0 +1,27 @@
+#!/bin/sh
+set -eu
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+staged_files="$(git diff --cached --name-only --diff-filter=ACMR | grep -E '\.(ex|exs)$' || true)"
+
+if [ -z "$staged_files" ]; then
+  exit 0
+fi
+
+# Avoid silently staging unrelated hunks from partially staged files.
+if ! git diff --quiet -- $staged_files; then
+  echo "pre-commit: staged Elixir files have unstaged changes."
+  echo "pre-commit: format and stage them explicitly before committing."
+  exit 1
+fi
+
+echo "pre-commit: running mix format on staged Elixir files"
+mix format $staged_files
+
+if ! git diff --quiet -- $staged_files; then
+  echo "pre-commit: mix format changed staged files."
+  echo "pre-commit: review the formatting, git add the files, then commit again."
+  exit 1
+fi

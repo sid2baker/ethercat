@@ -164,6 +164,114 @@ defmodule EtherCAT.DomainTest do
     assert is_integer(recovered_data.last_cycle_completed_at_us)
   end
 
+  test "WKC mismatch notifies invalid once and recovered on the next valid cycle" do
+    registered_master? = Process.whereis(EtherCAT.Master) == nil
+
+    if registered_master? do
+      Process.register(self(), EtherCAT.Master)
+      on_exit(fn -> Process.unregister(EtherCAT.Master) end)
+    end
+
+    bus =
+      start_supervised!({
+        FakeBus,
+        [
+          {:ok, [%{data: <<0>>, wkc: 0, circular: false, irq: 0}]},
+          {:ok, [%{data: <<1>>, wkc: 1, circular: false, irq: 0}]}
+        ]
+      })
+
+    table = :ets.new(:"domain_table_#{System.unique_integer([:positive])}", [:set, :public])
+    key = {:sensor, {:sm, 0}}
+    :ets.insert(table, {key, :unset, self()})
+
+    {_, layout} = Layout.register(Layout.new(), key, 1, :input)
+    {:ok, cycle_plan} = Layout.prepare(layout)
+
+    data = %Domain{
+      id: :main,
+      bus: bus,
+      period_us: 1_000,
+      logical_base: 0,
+      next_cycle_at: System.monotonic_time(:microsecond) + 1_000,
+      layout: layout,
+      cycle_plan: cycle_plan,
+      cycle_health: :healthy,
+      table: table
+    }
+
+    assert {:keep_state, invalid_data, _actions} =
+             Domain.handle_event(:state_timeout, :tick, :cycling, data)
+
+    if registered_master? do
+      assert_receive {:domain_cycle_invalid, :main, {:wkc_mismatch, %{expected: 1, actual: 0}}}
+    end
+
+    assert {:keep_state, _recovered_data, _actions} =
+             Domain.handle_event(:state_timeout, :tick, :cycling, invalid_data)
+
+    if registered_master? do
+      assert_receive {:domain_cycle_recovered, :main}
+    end
+  end
+
+  test "transport misses increment consecutive miss count and stop the domain at threshold" do
+    registered_master? = Process.whereis(EtherCAT.Master) == nil
+
+    if registered_master? do
+      Process.register(self(), EtherCAT.Master)
+      on_exit(fn -> Process.unregister(EtherCAT.Master) end)
+    end
+
+    bus =
+      start_supervised!({
+        FakeBus,
+        [
+          {:error, :timeout},
+          {:error, :timeout}
+        ]
+      })
+
+    table = :ets.new(:"domain_table_#{System.unique_integer([:positive])}", [:set, :public])
+    key = {:sensor, {:sm, 0}}
+    :ets.insert(table, {key, :unset, self()})
+
+    {_, layout} = Layout.register(Layout.new(), key, 1, :input)
+    {:ok, cycle_plan} = Layout.prepare(layout)
+
+    data = %Domain{
+      id: :main,
+      bus: bus,
+      period_us: 1_000,
+      logical_base: 0,
+      next_cycle_at: System.monotonic_time(:microsecond) + 1_000,
+      layout: layout,
+      cycle_plan: cycle_plan,
+      cycle_health: :healthy,
+      miss_threshold: 2,
+      table: table
+    }
+
+    assert {:keep_state, once_missed, _actions} =
+             Domain.handle_event(:state_timeout, :tick, :cycling, data)
+
+    assert once_missed.miss_count == 1
+    assert once_missed.cycle_health == {:invalid, :timeout}
+
+    if registered_master? do
+      assert_receive {:domain_cycle_invalid, :main, :timeout}
+    end
+
+    assert {:next_state, :stopped, stopped_data} =
+             Domain.handle_event(:state_timeout, :tick, :cycling, once_missed)
+
+    assert stopped_data.miss_count == 2
+
+    if registered_master? do
+      assert_receive {:domain_stopped, :main, :timeout}
+    end
+  end
+
   test "input dispatch resolves the current slave pid from the registry on each change" do
     bus =
       start_supervised!({

@@ -15,7 +15,7 @@ Known gaps and deferred work. Add entries when identified; move to `completed/` 
 
 | Gap | Location | Impact | Notes |
 |-----|----------|--------|-------|
-| No per-slave health monitoring after Op | `master.ex` | Slave ESM errors (e.g., watchdog timeout) are not detected without external polling | Would need periodic FPRD `0x0130` per slave |
+| Slave fault classification is still too coarse | `master.ex`, `domain/cycle.ex` | `:operational` vs `:recovering` can be hard to reason about for PDO-participating slave faults | Promoted into the active plan `master-domain-fault-classification.md` |
 | Sequential slave activation | `master.ex:do_activate` | Large slave counts are slow to activate (synchronous `Slave.request/2` per slave) | Parallel activation with barrier would speed startup |
 | Topology limited to linear chain | `dc.ex` | DC delay calc fails for 3+ port branching topologies | Would require full §9.1.2.2 formula |
 | No public redundancy status surface | `master.ex`, `domain.ex`, `bus.ex` | Runtime code cannot report whether redundant traffic is currently carrying the cycle | Link-level redundancy exists, but status is not yet surfaced as a first-class API |

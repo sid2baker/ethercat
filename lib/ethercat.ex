@@ -217,7 +217,7 @@ defmodule EtherCAT do
     - `:discovering`
     - `:awaiting_preop`
     - `:preop_ready`
-    - `:operational` — cyclic OP path is healthy; inspect `slaves/0` for per-slave faults
+    - `:operational` — cyclic OP path is healthy; inspect `slaves/0` for non-critical per-slave faults
     - `:activation_blocked` — startup/activation is blocked before operational cyclic runtime
     - `:recovering` — runtime fault recovery in progress
   """

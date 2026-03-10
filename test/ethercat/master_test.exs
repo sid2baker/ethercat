@@ -5,6 +5,7 @@ defmodule EtherCAT.MasterTest do
   alias EtherCAT.DC.Status, as: DCStatus
   alias EtherCAT.Domain
   alias EtherCAT.Master.Config.DomainPlan
+  alias EtherCAT.Slave.Config, as: SlaveConfig
 
   defmodule FakeBus do
     use GenServer
@@ -294,6 +295,42 @@ defmodule EtherCAT.MasterTest do
              EtherCAT.Master.handle_event({:call, from}, :slaves, :operational, updated)
   end
 
+  test "slave down for a PDO-participating slave enters recovering and tracks the slave fault" do
+    data = %EtherCAT.Master{
+      slave_configs: [%SlaveConfig{name: :sensor, process_data: {:all, :main}}],
+      slaves: [{:sensor, 0x1001}]
+    }
+
+    assert {:next_state, :recovering, %EtherCAT.Master{} = updated} =
+             EtherCAT.Master.handle_event(
+               :info,
+               {:slave_down, :sensor},
+               :operational,
+               data
+             )
+
+    assert updated.slave_faults == %{sensor: {:down, :disconnected}}
+    assert updated.runtime_faults == %{{:slave, :sensor} => {:down, :disconnected}}
+  end
+
+  test "slave down for a non-participating slave stays local while operational" do
+    data = %EtherCAT.Master{
+      slave_configs: [%SlaveConfig{name: :diag, process_data: :none}],
+      slaves: [{:diag, 0x1004}]
+    }
+
+    assert {:keep_state, %EtherCAT.Master{} = updated, _actions} =
+             EtherCAT.Master.handle_event(
+               :info,
+               {:slave_down, :diag},
+               :operational,
+               data
+             )
+
+    assert updated.slave_faults == %{diag: {:down, :disconnected}}
+    assert updated.runtime_faults == %{}
+  end
+
   test "operational retries retryable slave faults without entering recovering" do
     start_supervised!(%{
       id: make_ref(),
@@ -306,6 +343,29 @@ defmodule EtherCAT.MasterTest do
              EtherCAT.Master.handle_event({:timeout, :slave_fault_retry}, nil, :operational, data)
 
     assert updated.slave_faults == %{}
+  end
+
+  test "slave ready after a critical slave-down fault returns recovering to operational" do
+    start_supervised!(%{
+      id: make_ref(),
+      start: {FakeSlave, :start_link, [:sensor, :ok]}
+    })
+
+    data = %EtherCAT.Master{
+      slave_faults: %{sensor: {:reconnecting, :authorized}},
+      runtime_faults: %{{:slave, :sensor} => {:down, :disconnected}}
+    }
+
+    assert {:next_state, :operational, %EtherCAT.Master{} = healed} =
+             EtherCAT.Master.handle_event(
+               :info,
+               {:slave_ready, :sensor, :preop},
+               :recovering,
+               data
+             )
+
+    assert healed.runtime_faults == %{}
+    assert healed.slave_faults == %{}
   end
 
   test "dc runtime failure enters recovering and clears on recovery" do

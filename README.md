@@ -131,7 +131,7 @@ Public startup and runtime health are exposed through `EtherCAT.state/0`:
 - `:activation_blocked`
 - `:recovering`
 
-`await_running/1` waits for a usable session. `await_operational/1` waits for cyclic OP. Inspect `EtherCAT.slaves/0` for per-slave fault state.
+`await_running/1` waits for a usable session. `await_operational/1` waits for cyclic OP. Inspect `EtherCAT.slaves/0` for non-critical per-slave fault state.
 
 For detailed state diagrams and sequencing, see the moduledocs:
 - `EtherCAT.Master` — startup, activation, and recovery orchestration
@@ -143,7 +143,7 @@ For detailed state diagrams and sequencing, see the moduledocs:
 
 - A slave disconnect does not automatically mean full-session teardown.
 - Critical domain or DC faults move the master to `:recovering`.
-- Slave-local faults stay attached to the affected slave and are visible through `EtherCAT.slaves/0`.
+- Non-critical slave-local faults stay attached to the affected slave and are visible through `EtherCAT.slaves/0`.
 - Healthy domains can keep cycling if the fault is localized and the transport is still usable.
 - Total bus loss can stop domains after the configured miss threshold; recovery can restart them.
 - Slave reconnect is PREOP-first: the slave rebuilds its local state, then the master decides when to return it to OP.

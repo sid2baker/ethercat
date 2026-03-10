@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+echo "pre-push: building docs"
+mix docs
+
+echo "pre-push: HexDocs publication stays explicit."
+echo "pre-push: use 'mix hex.publish docs' after pushing a released version."

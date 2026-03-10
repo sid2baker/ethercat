@@ -49,24 +49,14 @@ defmodule EtherCAT.Domain.Cycle do
     next_at = data.next_cycle_at + data.period_us
     next_timeout = next_timeout(next_at)
 
-    case result do
-      {:ok, [%{data: response, wkc: wkc}]}
-      when wkc == data.cycle_plan.expected_wkc and wkc > 0 ->
+    case classify_cycle_result(result, data.cycle_plan.expected_wkc) do
+      {:valid, response} ->
         handle_valid_cycle(data, response, t0, cycle_index, next_at, next_timeout)
 
-      {:ok, [%{wkc: wkc}]} when wkc >= 0 ->
-        reason = {:wkc_mismatch, %{expected: data.cycle_plan.expected_wkc, actual: wkc}}
+      {:invalid_response, reason} ->
         handle_invalid_cycle_response(data, reason, t0, next_at, next_timeout)
 
-      {:ok, results} ->
-        handle_consecutive_cycle_miss(
-          data,
-          {:unexpected_reply, length(results)},
-          next_at,
-          next_timeout
-        )
-
-      {:error, reason} ->
+      {:transport_miss, reason} ->
         handle_consecutive_cycle_miss(data, reason, next_at, next_timeout)
     end
   end
@@ -214,6 +204,23 @@ defmodule EtherCAT.Domain.Cycle do
 
   defp cycle_transaction_timeout_us(period_us) when is_integer(period_us) and period_us > 0 do
     max(div(period_us * 9, 10), 200)
+  end
+
+  defp classify_cycle_result({:ok, [%{data: response, wkc: wkc}]}, expected_wkc)
+       when wkc == expected_wkc and wkc > 0 do
+    {:valid, response}
+  end
+
+  defp classify_cycle_result({:ok, [%{wkc: wkc}]}, expected_wkc) when wkc >= 0 do
+    {:invalid_response, {:wkc_mismatch, %{expected: expected_wkc, actual: wkc}}}
+  end
+
+  defp classify_cycle_result({:ok, results}, _expected_wkc) do
+    {:transport_miss, {:unexpected_reply, length(results)}}
+  end
+
+  defp classify_cycle_result({:error, reason}, _expected_wkc) do
+    {:transport_miss, reason}
   end
 
   defp maybe_notify_cycle_invalid(%{cycle_health: :healthy, id: id}, reason) do
