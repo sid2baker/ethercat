@@ -67,6 +67,13 @@ Add:
 - realistic startup count/station assignment behavior
 - multi-slave logical image coverage
 
+Current status:
+
+- implemented with one-segment multi-slave routing in `EtherCAT.Support.Simulator`
+- covered by deep tests for:
+  - two homogeneous digital I/O slaves
+  - one coupler fixture plus one LAN9252-style I/O fixture
+
 ### Milestone 3
 
 Add mailbox/CoE only when the master/runtime tests actually need it:
@@ -74,6 +81,14 @@ Add mailbox/CoE only when the master/runtime tests actually need it:
 - upload/download basics
 - deterministic object values
 - PREOP driver mailbox configuration
+
+Current status:
+
+- expedited upload/download basics are implemented
+- mailbox-capable fixtures expose deterministic object values
+- the deep integration suite covers PREOP public `upload_sdo/3` and
+  `download_sdo/4`
+- segmented transfers and driver-driven mailbox configuration are still pending
 
 ### Milestone 4
 

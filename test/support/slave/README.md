@@ -125,7 +125,6 @@ These are explicitly out of scope for the first simulator slices.
 - embedded polling-loop shape from SOES
 - HAL/device-driver structure
 - hardware interrupt behavior
-- mailbox/CoE protocol loop
 - raw-socket simulation
 - link-carrier modeling
 - full DC behavior
@@ -135,28 +134,30 @@ behavior, not implementation detail.
 
 ## Current Fixture Scope
 
-The current `digital_io/1` fixture is smaller than the SOES LAN9252 demo
-described in `reference/slave_spec/object_model.md`.
+The simulator now ships with three compiled fixture shapes:
 
-Today it provides:
+- `digital_io/1`
+  - one output byte
+  - one input byte
+  - SM2 output mapping
+  - SM3 input mapping
+- `lan9252_demo/1`
+  - two output bytes
+  - one input byte
+  - explicit SOES-style small digital I/O shape
+- `coupler/1`
+  - no PDOs
+  - startup-only placeholder for heterogeneous rings
 
-- one output byte
-- one input byte
-- SM2 output mapping
-- SM3 input mapping
-- one output FMMU
-- one input FMMU
-- mirrored output-to-input behavior for the first deep I/O roundtrip test
+The `lan9252_demo/1` fixture is the current closest match to the SOES LAN9252
+demo described in `reference/slave_spec/object_model.md`.
 
-That is enough for the current milestone, even though the SOES reference device
-is slightly richer:
+It is also the first mailbox-capable fixture:
 
-- two output bytes
-- one input byte
-- small parameter object
-
-The next realistic step is to move the fixture closer to that reference shape
-without changing the simulator architecture.
+- PREOP mailbox SMs are described in SII
+- expedited CoE upload/download is supported for small deterministic object
+  values
+- the current object dictionary surface is intentionally tiny and test-oriented
 
 ## EEPROM / SII Strategy
 
@@ -235,28 +236,31 @@ The support code owns only:
 - process-image behavior
 - WKC calculation
 
-## Deep Integration Test
+## Deep Integration Tests
 
-The first deep integration test is:
+The current deep integration coverage lives in:
 
 - `test/ethercat/deep_integration_test.exs`
 
-Flow:
+It now covers three end-to-end flows through the real UDP transport:
 
-1. start `EtherCAT.Support.Simulator` with one fixture
-2. start `EtherCAT.Support.Simulator.Udp` on `127.0.0.2`
-3. read the actual bound UDP port from the endpoint
-4. start the real master with:
-   - `transport: :udp`
-   - `bind_ip: {127, 0, 0, 1}`
-   - `host: {127, 0, 0, 2}`
-   - `port: endpoint_port`
-5. boot to `:operational`
-6. write output through the public API
-7. verify the simulated output image changed
-8. verify the mirrored input is visible through the normal cyclic LRW path
+1. one simulated digital I/O slave boots to `:operational`
+2. two simulated digital I/O slaves boot on one segment and exchange
+   independent cyclic I/O
+3. a heterogeneous ring boots with:
+   - one `coupler/1` fixture
+   - one `lan9252_demo/1` fixture
+4. one mailbox-capable `lan9252_demo/1` slave boots to `:preop_ready` and
+   serves expedited CoE upload/download requests through the public API
 
-This test should keep running under normal `mix test`.
+The heterogeneous test proves:
+
+- normal slave counting and station assignment
+- startup through a no-PDO placeholder in slot 0
+- cyclic I/O against a richer PDO-mapped slave in slot 1
+- multi-byte output image handling through the public API
+
+These tests should keep running under normal `mix test`.
 
 ## Next Milestones
 
@@ -280,6 +284,13 @@ These should stay aligned with `reference/slave_spec/elixir_target.md`.
 - mailbox / CoE basics
 - deterministic SDO values
 - PREOP driver mailbox integration tests
+
+Current status:
+
+- expedited CoE upload/download is implemented for mailbox-capable fixtures
+- the deep integration suite now exercises public `upload_sdo/3` and
+  `download_sdo/4` against a simulated slave in PREOP
+- segmented transfers and mailbox fault injection are still future work
 
 ### Milestone 4
 

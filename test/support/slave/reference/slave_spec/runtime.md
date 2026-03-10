@@ -40,7 +40,7 @@ It only needs to preserve the observable protocol behavior:
 - EEPROM/SII access
 - SyncManager/FMMU register writes
 - process-data read/write via logical addressing
-- later mailbox request/response behavior
+- mailbox request/response behavior
 
 So the Elixir runtime can be event-driven by incoming datagrams instead of
 poll-driven by an embedded loop.
@@ -98,6 +98,20 @@ Instead:
 - mailbox datagrams should be handled when they arrive
 - CoE behavior should be a mailbox-layer feature
 - protocol state should live in simulator/slave state, not in a fake thread
+
+That is now the implemented direction for Milestone 3:
+
+- a mailbox-capable fixture advertises PREOP mailbox offsets/sizes through SII
+- mailbox writes to the receive area are handled synchronously by the simulator
+- the simulator raises SM1 mailbox-full when a response is ready
+- reading the send mailbox clears the mailbox-full indication again
+
+The current scope is deliberately small:
+
+- expedited SDO upload/download only
+- deterministic object dictionary values
+- no segmented transfers yet
+- no mailbox error-injection yet
 
 ## Elixir Implication
 

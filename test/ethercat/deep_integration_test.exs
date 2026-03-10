@@ -105,6 +105,82 @@ defmodule EtherCAT.DeepIntegrationTest do
     assert {:ok, 2} = Simulator.output_value(simulator, :sim_b)
   end
 
+  @tag fixtures: [Slave.coupler(name: :coupler), Slave.lan9252_demo(name: :io)]
+  test "boots a heterogeneous ring with a coupler fixture and a LAN9252-style IO slave",
+       %{simulator: simulator, port: port} do
+    assert :ok =
+             EtherCAT.start(
+               transport: :udp,
+               bind_ip: @master_ip,
+               host: @simulator_ip,
+               port: port,
+               dc: nil,
+               scan_stable_ms: 20,
+               scan_poll_ms: 10,
+               frame_timeout_ms: 2,
+               domains: [%DomainConfig{id: :main, cycle_time_us: 10_000}],
+               slaves: [
+                 %SlaveConfig{name: :coupler, process_data: :none, target_state: :op},
+                 %SlaveConfig{
+                   name: :io,
+                   driver: Driver,
+                   config: %{profile: :lan9252_demo},
+                   process_data: {:all, :main},
+                   target_state: :op
+                 }
+               ]
+             )
+
+    assert :ok = EtherCAT.await_operational(2_000)
+    assert :operational = EtherCAT.state()
+
+    assert {:ok, %{station: 0x1000}} = EtherCAT.slave_info(:coupler)
+    assert {:ok, %{station: 0x1001}} = EtherCAT.slave_info(:io)
+
+    assert :ok = EtherCAT.write_output(:io, :led0, 1)
+    assert :ok = EtherCAT.write_output(:io, :led1, 2)
+
+    assert_eventually(fn ->
+      assert {:ok, {1, updated_at_us}} = EtherCAT.read_input(:io, :button1)
+      assert is_integer(updated_at_us)
+    end)
+
+    assert {:ok, <<1, 2>>} = Simulator.output_image(simulator, :io)
+  end
+
+  @tag fixtures: [Slave.lan9252_demo(name: :mailbox)]
+  test "supports expedited CoE uploads and downloads in PREOP over the real UDP transport",
+       %{port: port} do
+    assert :ok =
+             EtherCAT.start(
+               transport: :udp,
+               bind_ip: @master_ip,
+               host: @simulator_ip,
+               port: port,
+               dc: nil,
+               scan_stable_ms: 20,
+               scan_poll_ms: 10,
+               frame_timeout_ms: 2,
+               domains: [%DomainConfig{id: :main, cycle_time_us: 10_000}],
+               slaves: [
+                 %SlaveConfig{
+                   name: :mailbox,
+                   driver: Driver,
+                   config: %{profile: :lan9252_demo},
+                   process_data: :none,
+                   target_state: :preop
+                 }
+               ]
+             )
+
+    assert :ok = EtherCAT.await_running(2_000)
+    assert :preop_ready = EtherCAT.state()
+
+    assert {:ok, <<0x34, 0x12>>} = EtherCAT.upload_sdo(:mailbox, 0x2000, 0x01)
+    assert :ok = EtherCAT.download_sdo(:mailbox, 0x2000, 0x01, <<0x78, 0x56>>)
+    assert {:ok, <<0x78, 0x56>>} = EtherCAT.upload_sdo(:mailbox, 0x2000, 0x01)
+  end
+
   defp assert_eventually(fun, attempts \\ 20)
 
   defp assert_eventually(fun, 0) do

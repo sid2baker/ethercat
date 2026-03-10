@@ -6,6 +6,7 @@ defmodule EtherCAT.Support.Slave.Fixture do
 
   @type t :: %{
           name: atom(),
+          profile: atom(),
           vendor_id: non_neg_integer(),
           product_code: non_neg_integer(),
           revision: non_neg_integer(),
@@ -14,39 +15,141 @@ defmodule EtherCAT.Support.Slave.Fixture do
           fmmu_count: pos_integer(),
           sm_count: pos_integer(),
           output_phys: non_neg_integer(),
+          output_size: non_neg_integer(),
           input_phys: non_neg_integer(),
+          input_size: non_neg_integer(),
           mirror_output_to_input?: boolean(),
+          mailbox_config: %{
+            recv_offset: non_neg_integer(),
+            recv_size: non_neg_integer(),
+            send_offset: non_neg_integer(),
+            send_size: non_neg_integer()
+          },
+          object_dictionary: %{optional({non_neg_integer(), non_neg_integer()}) => binary()},
           memory: binary(),
           eeprom: binary()
         }
 
   @spec digital_io(keyword()) :: t()
   def digital_io(opts \\ []) do
+    build_fixture(
+      opts,
+      profile: :digital_io,
+      vendor_id: 0x0000_0ACE,
+      product_code: 0x0000_1601,
+      revision: 0x0000_0001,
+      serial_number: 0x0000_0001,
+      esc_type: 0x11,
+      fmmu_count: 4,
+      sm_count: 4,
+      output_phys: 0x1100,
+      output_size: 1,
+      input_phys: 0x1180,
+      input_size: 1,
+      mirror_output_to_input?: true,
+      pdo_entries: [
+        %{index: 0x1600, direction: :output, sm_index: 2, bit_size: 8},
+        %{index: 0x1A00, direction: :input, sm_index: 3, bit_size: 8}
+      ]
+    )
+  end
+
+  @spec lan9252_demo(keyword()) :: t()
+  def lan9252_demo(opts \\ []) do
+    build_fixture(
+      opts,
+      profile: :lan9252_demo,
+      vendor_id: 0x0000_0ACE,
+      product_code: 0x0000_1602,
+      revision: 0x0000_0001,
+      serial_number: 0x0000_0002,
+      esc_type: 0x11,
+      fmmu_count: 4,
+      sm_count: 4,
+      output_phys: 0x1100,
+      output_size: 2,
+      input_phys: 0x1180,
+      input_size: 1,
+      mirror_output_to_input?: true,
+      mailbox_config: %{recv_offset: 0x1000, recv_size: 32, send_offset: 0x1020, send_size: 32},
+      object_dictionary: %{
+        {0x2000, 0x01} => <<0x34, 0x12>>,
+        {0x2000, 0x02} => <<0x00>>
+      },
+      pdo_entries: [
+        %{index: 0x1600, direction: :output, sm_index: 2, bit_size: 16},
+        %{index: 0x1A00, direction: :input, sm_index: 3, bit_size: 8}
+      ]
+    )
+  end
+
+  @spec coupler(keyword()) :: t()
+  def coupler(opts \\ []) do
+    build_fixture(
+      opts,
+      profile: :coupler,
+      vendor_id: 0x0000_0ACE,
+      product_code: 0x0000_1100,
+      revision: 0x0000_0001,
+      serial_number: 0x0000_0010,
+      esc_type: 0x11,
+      fmmu_count: 4,
+      sm_count: 4,
+      output_phys: 0x1100,
+      output_size: 0,
+      input_phys: 0x1180,
+      input_size: 0,
+      mirror_output_to_input?: false,
+      pdo_entries: []
+    )
+  end
+
+  defp build_fixture(opts, defaults) do
     name = Keyword.get(opts, :name, :sim)
-    vendor_id = Keyword.get(opts, :vendor_id, 0x0000_0ACE)
-    product_code = Keyword.get(opts, :product_code, 0x0000_1601)
-    revision = Keyword.get(opts, :revision, 0x0000_0001)
-    serial_number = Keyword.get(opts, :serial_number, 0x0000_0001)
-    esc_type = Keyword.get(opts, :esc_type, 0x11)
-    fmmu_count = Keyword.get(opts, :fmmu_count, 4)
-    sm_count = Keyword.get(opts, :sm_count, 4)
-    output_phys = Keyword.get(opts, :output_phys, 0x1100)
-    input_phys = Keyword.get(opts, :input_phys, 0x1180)
-    mirror_output_to_input? = Keyword.get(opts, :mirror_output_to_input?, true)
+    profile = Keyword.fetch!(defaults, :profile)
+    vendor_id = Keyword.get(opts, :vendor_id, Keyword.fetch!(defaults, :vendor_id))
+    product_code = Keyword.get(opts, :product_code, Keyword.fetch!(defaults, :product_code))
+    revision = Keyword.get(opts, :revision, Keyword.fetch!(defaults, :revision))
+    serial_number = Keyword.get(opts, :serial_number, Keyword.fetch!(defaults, :serial_number))
+    esc_type = Keyword.get(opts, :esc_type, Keyword.fetch!(defaults, :esc_type))
+    fmmu_count = Keyword.get(opts, :fmmu_count, Keyword.fetch!(defaults, :fmmu_count))
+    sm_count = Keyword.get(opts, :sm_count, Keyword.fetch!(defaults, :sm_count))
+    output_phys = Keyword.get(opts, :output_phys, Keyword.fetch!(defaults, :output_phys))
+    output_size = Keyword.get(opts, :output_size, Keyword.fetch!(defaults, :output_size))
+    input_phys = Keyword.get(opts, :input_phys, Keyword.fetch!(defaults, :input_phys))
+    input_size = Keyword.get(opts, :input_size, Keyword.fetch!(defaults, :input_size))
 
-    mailbox_config = %{recv_offset: 0, recv_size: 0, send_offset: 0, send_size: 0}
+    mirror_output_to_input? =
+      Keyword.get(
+        opts,
+        :mirror_output_to_input?,
+        Keyword.fetch!(defaults, :mirror_output_to_input?)
+      )
 
-    sm_entries = [
-      {0, 0x0000, 0, 0x00},
-      {1, 0x0000, 0, 0x00},
-      {2, output_phys, 1, 0x24},
-      {3, input_phys, 1, 0x20}
-    ]
+    mailbox_config =
+      Keyword.get(
+        opts,
+        :mailbox_config,
+        Keyword.get(defaults, :mailbox_config, %{
+          recv_offset: 0,
+          recv_size: 0,
+          send_offset: 0,
+          send_size: 0
+        })
+      )
 
-    pdo_entries = [
-      %{index: 0x1600, direction: :output, sm_index: 2, bit_size: 8},
-      %{index: 0x1A00, direction: :input, sm_index: 3, bit_size: 8}
-    ]
+    object_dictionary =
+      Keyword.get(opts, :object_dictionary, Keyword.get(defaults, :object_dictionary, %{}))
+
+    pdo_entries = Keyword.fetch!(defaults, :pdo_entries)
+
+    sm_entries =
+      (mailbox_sm_entries(mailbox_config) ++
+         [
+           {2, output_phys, output_size, sm_ctrl(:output, output_size)},
+           {3, input_phys, input_size, sm_ctrl(:input, input_size)}
+         ])
+      |> Enum.filter(fn {_index, _phys_start, length, ctrl} -> length > 0 or ctrl == 0x00 end)
 
     eeprom =
       build_eeprom(
@@ -80,6 +183,7 @@ defmodule EtherCAT.Support.Slave.Fixture do
 
     %{
       name: name,
+      profile: profile,
       vendor_id: vendor_id,
       product_code: product_code,
       revision: revision,
@@ -88,12 +192,36 @@ defmodule EtherCAT.Support.Slave.Fixture do
       fmmu_count: fmmu_count,
       sm_count: sm_count,
       output_phys: output_phys,
+      output_size: output_size,
       input_phys: input_phys,
+      input_size: input_size,
       mirror_output_to_input?: mirror_output_to_input?,
+      mailbox_config: mailbox_config,
+      object_dictionary: object_dictionary,
       memory: memory,
       eeprom: eeprom
     }
   end
+
+  defp mailbox_sm_entries(%{recv_offset: 0, recv_size: 0, send_offset: 0, send_size: 0}) do
+    [{0, 0x0000, 0, 0x00}, {1, 0x0000, 0, 0x00}]
+  end
+
+  defp mailbox_sm_entries(%{
+         recv_offset: recv_offset,
+         recv_size: recv_size,
+         send_offset: send_offset,
+         send_size: send_size
+       }) do
+    [
+      {0, recv_offset, recv_size, 0x26},
+      {1, send_offset, send_size, 0x22}
+    ]
+  end
+
+  defp sm_ctrl(_direction, 0), do: 0x00
+  defp sm_ctrl(:output, _size), do: 0x24
+  defp sm_ctrl(:input, _size), do: 0x20
 
   defp build_eeprom(
          vendor_id,
@@ -116,8 +244,7 @@ defmodule EtherCAT.Support.Slave.Fixture do
 
     header <>
       sm_category(sm_entries) <>
-      pdo_category(Enum.find(pdo_entries, &(&1.direction == :output))) <>
-      pdo_category(Enum.find(pdo_entries, &(&1.direction == :input))) <>
+      pdo_categories(pdo_entries) <>
       <<0xFFFF::16-little, 0::16-little>>
   end
 
@@ -132,7 +259,17 @@ defmodule EtherCAT.Support.Slave.Fixture do
     <<0x0029::16-little, div(byte_size(data), 2)::16-little, data::binary>>
   end
 
-  defp pdo_category(nil), do: <<>>
+  defp pdo_categories(pdo_entries) do
+    pdo_entries
+    |> Enum.sort_by(fn %{direction: direction, index: index} ->
+      {pdo_direction_rank(direction), index}
+    end)
+    |> Enum.map(&pdo_category/1)
+    |> IO.iodata_to_binary()
+  end
+
+  defp pdo_direction_rank(:output), do: 0
+  defp pdo_direction_rank(:input), do: 1
 
   defp pdo_category(%{
          index: pdo_index,

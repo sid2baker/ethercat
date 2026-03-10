@@ -29,6 +29,14 @@ So the device shape is:
 - a small input bank
 - at least one non-PDO parameter value in the object dictionary
 
+The simulator now carries that object-dictionary idea explicitly for
+mailbox-capable fixtures:
+
+- `lan9252_demo/1` exposes a small deterministic object dictionary
+- current deep tests use `0x2000:01`
+- values are stored as raw binaries because the public CoE API also works with
+  raw binary payloads
+
 ## Object Dictionary
 
 The demo object dictionary includes:
@@ -70,9 +78,18 @@ So the reference SOES example is:
 - 16 bits of output PDO data
 - 8 bits of input PDO data
 
-Our current Elixir `digital_io` fixture is even smaller than that, which is
-acceptable for Milestone 1. But this SOES example is the right next target if
-we want the simulator to mirror a realistic small slave profile more closely.
+The simulator now carries that shape as `lan9252_demo/1`:
+
+- 16 bits of output PDO data
+- 8 bits of input PDO data
+- signal naming exposed through:
+  - `led0`
+  - `led1`
+  - `button1`
+
+The smaller `digital_io/1` fixture still exists as the minimal Milestone 1
+device, but `lan9252_demo/1` is the better default when a deep integration
+test wants a richer small-slave profile.
 
 ## SyncManager Assignment
 
@@ -107,3 +124,6 @@ That is why the current compiled test-support split is sensible:
   Tiny driver that gives the master named signals for tests.
 - `EtherCAT.Support.Slave.Device`
   Actual register/process-image state.
+
+For Milestone 3, `Device` also owns the current mailbox-backed object
+dictionary state so SDO downloads can mutate later uploads deterministically.

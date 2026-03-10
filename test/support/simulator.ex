@@ -38,6 +38,11 @@ defmodule EtherCAT.Support.Simulator do
     GenServer.call(server, {:output_value, slave_name})
   end
 
+  @spec output_image(pid(), atom()) :: {:ok, binary()} | {:error, :not_found}
+  def output_image(server, slave_name) do
+    GenServer.call(server, {:output_image, slave_name})
+  end
+
   @impl true
   def init(opts) do
     fixtures = Keyword.get(opts, :slaves, [])
@@ -67,8 +72,18 @@ defmodule EtherCAT.Support.Simulator do
           {:error, :not_found}
 
         slave ->
-          <<value::8>> = Device.read_register(slave, slave.output_phys, 1)
+          <<value::8, _rest::binary>> = Device.output_image(slave) <> <<0>>
           {:ok, value}
+      end
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:output_image, slave_name}, _from, %{slaves: slaves} = state) do
+    reply =
+      case Enum.find(slaves, &(&1.name == slave_name)) do
+        nil -> {:error, :not_found}
+        slave -> {:ok, Device.output_image(slave)}
       end
 
     {:reply, reply, state}
@@ -138,18 +153,19 @@ defmodule EtherCAT.Support.Simulator do
 
   defp process_register_command(slave, %Datagram{cmd: cmd, data: data}, offset)
        when cmd in [@aprd, @fprd, @brd] do
-    {slave, Device.read_register(slave, offset, byte_size(data)), 1}
+    {updated_slave, response_data} = Device.read_datagram(slave, offset, byte_size(data))
+    {updated_slave, response_data, 1}
   end
 
   defp process_register_command(slave, %Datagram{cmd: cmd, data: data}, offset)
        when cmd in [@apwr, @fpwr, @bwr] do
-    {Device.write_register(slave, offset, data), data, 1}
+    {Device.write_datagram(slave, offset, data), data, 1}
   end
 
   defp process_register_command(slave, %Datagram{cmd: cmd, data: data}, offset)
        when cmd in [@aprw, @fprw, @brw, @armw, @frmw] do
-    response_data = Device.read_register(slave, offset, byte_size(data))
-    updated_slave = Device.write_register(slave, offset, data)
+    {read_slave, response_data} = Device.read_datagram(slave, offset, byte_size(data))
+    updated_slave = Device.write_datagram(read_slave, offset, data)
     {updated_slave, response_data, 1}
   end
 

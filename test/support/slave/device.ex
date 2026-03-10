@@ -1,6 +1,9 @@
 defmodule EtherCAT.Support.Slave.Device do
   @moduledoc false
 
+  alias EtherCAT.Slave.ESC.Registers
+  alias EtherCAT.Support.Slave.Mailbox
+
   @memory_size 0x1400
   @alerr_none 0x0000
   @alerr_invalid_state_change 0x0011
@@ -8,6 +11,7 @@ defmodule EtherCAT.Support.Slave.Device do
 
   @type t :: %__MODULE__{
           name: atom(),
+          profile: atom(),
           position: non_neg_integer(),
           station: non_neg_integer(),
           state: :init | :preop | :safeop | :op | :bootstrap,
@@ -16,12 +20,17 @@ defmodule EtherCAT.Support.Slave.Device do
           eeprom: binary(),
           memory: binary(),
           output_phys: non_neg_integer(),
+          output_size: non_neg_integer(),
           input_phys: non_neg_integer(),
-          mirror_output_to_input?: boolean()
+          input_size: non_neg_integer(),
+          mirror_output_to_input?: boolean(),
+          mailbox_config: Mailbox.mailbox_config(),
+          object_dictionary: %{optional({non_neg_integer(), non_neg_integer()}) => binary()}
         }
 
   defstruct [
     :name,
+    :profile,
     :position,
     :station,
     :state,
@@ -30,14 +39,19 @@ defmodule EtherCAT.Support.Slave.Device do
     :eeprom,
     :memory,
     :output_phys,
+    :output_size,
     :input_phys,
-    :mirror_output_to_input?
+    :input_size,
+    :mirror_output_to_input?,
+    :mailbox_config,
+    :object_dictionary
   ]
 
   @spec new(map(), non_neg_integer()) :: t()
   def new(fixture, position) do
     %__MODULE__{
       name: fixture.name,
+      profile: fixture.profile,
       position: position,
       station: 0,
       state: :init,
@@ -46,14 +60,34 @@ defmodule EtherCAT.Support.Slave.Device do
       eeprom: fixture.eeprom,
       memory: fixture.memory,
       output_phys: fixture.output_phys,
+      output_size: fixture.output_size,
       input_phys: fixture.input_phys,
-      mirror_output_to_input?: fixture.mirror_output_to_input?
+      input_size: fixture.input_size,
+      mirror_output_to_input?: fixture.mirror_output_to_input?,
+      mailbox_config: fixture.mailbox_config,
+      object_dictionary: fixture.object_dictionary
     }
   end
 
-  @spec read_register(t(), non_neg_integer(), pos_integer()) :: binary()
+  @spec output_image(t()) :: binary()
+  def output_image(%__MODULE__{output_phys: output_phys, output_size: output_size} = slave) do
+    read_register(slave, output_phys, output_size)
+  end
+
+  @spec read_register(t(), non_neg_integer(), non_neg_integer()) :: binary()
   def read_register(%__MODULE__{memory: memory}, offset, length) do
     binary_part(memory, offset, length)
+  end
+
+  @spec read_datagram(t(), non_neg_integer(), non_neg_integer()) :: {t(), binary()}
+  def read_datagram(%__MODULE__{} = slave, offset, length) do
+    data = read_register(slave, offset, length)
+
+    if mailbox_send_read?(slave, offset, length) do
+      {clear_mailbox_response(slave), data}
+    else
+      {slave, data}
+    end
   end
 
   @spec write_register(t(), non_neg_integer(), binary()) :: t()
@@ -84,6 +118,13 @@ defmodule EtherCAT.Support.Slave.Device do
 
   def write_register(%__MODULE__{} = slave, offset, data) do
     write_memory(slave, offset, data)
+  end
+
+  @spec write_datagram(t(), non_neg_integer(), binary()) :: t()
+  def write_datagram(%__MODULE__{} = slave, offset, data) do
+    slave
+    |> write_register(offset, data)
+    |> maybe_handle_mailbox_write(offset, data)
   end
 
   @spec logical_read_write(t(), 10 | 11 | 12, non_neg_integer(), binary()) ::
@@ -219,11 +260,59 @@ defmodule EtherCAT.Support.Slave.Device do
 
   defp maybe_load_eeprom_data(slave, _cmd), do: slave
 
+  defp maybe_handle_mailbox_write(
+         %__MODULE__{mailbox_config: %{recv_offset: recv_offset, recv_size: recv_size}} = slave,
+         offset,
+         data
+       )
+       when recv_size > 0 and offset == recv_offset and byte_size(data) == recv_size do
+    case Mailbox.handle_frame(data, slave.mailbox_config, slave.object_dictionary) do
+      {:ok, response, object_dictionary} ->
+        slave
+        |> Map.put(:object_dictionary, object_dictionary)
+        |> write_memory(slave.mailbox_config.send_offset, response)
+        |> write_memory(register_offset(Registers.sm_status(1)), <<0x08>>)
+
+      :ignore ->
+        slave
+    end
+  end
+
+  defp maybe_handle_mailbox_write(slave, _offset, _data), do: slave
+
+  defp mailbox_send_read?(
+         %__MODULE__{mailbox_config: %{send_offset: send_offset, send_size: send_size}},
+         offset,
+         length
+       )
+       when send_size > 0 do
+    offset == send_offset and length == send_size
+  end
+
+  defp mailbox_send_read?(_slave, _offset, _length), do: false
+
+  defp clear_mailbox_response(
+         %__MODULE__{mailbox_config: %{send_offset: send_offset, send_size: send_size}} = slave
+       ) do
+    slave
+    |> write_memory(send_offset, :binary.copy(<<0>>, send_size))
+    |> write_memory(register_offset(Registers.sm_status(1)), <<0x00>>)
+  end
+
   defp maybe_mirror_output(
-         %__MODULE__{mirror_output_to_input?: true, input_phys: input_phys} = slave,
+         %__MODULE__{
+           mirror_output_to_input?: true,
+           input_phys: input_phys,
+           input_size: input_size
+         } = slave,
          bytes
        ) do
-    write_memory(slave, input_phys, bytes)
+    mirrored =
+      bytes
+      |> binary_part(0, min(byte_size(bytes), input_size))
+      |> Kernel.<>(:binary.copy(<<0>>, max(input_size - byte_size(bytes), 0)))
+
+    write_memory(slave, input_phys, mirrored)
   end
 
   defp maybe_mirror_output(slave, _bytes), do: slave
@@ -315,4 +404,6 @@ defmodule EtherCAT.Support.Slave.Device do
     error_bit = if error?, do: 1, else: 0
     <<0::3, error_bit::1, state_code::4, 0::8>>
   end
+
+  defp register_offset({offset, _length}), do: offset
 end
