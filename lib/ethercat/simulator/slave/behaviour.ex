@@ -1,7 +1,7 @@
 defmodule EtherCAT.Simulator.Slave.Behaviour do
   @moduledoc false
 
-  alias EtherCAT.Simulator.Slave.Device
+  alias EtherCAT.Simulator.Slave.Runtime.Device
   alias EtherCAT.Simulator.Slave.Object
 
   @callback init(map()) :: term()

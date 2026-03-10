@@ -52,7 +52,9 @@ Main entry points:
 - `start_link/1` — start a simulator with one or more devices
 - `process_datagrams/2` — execute EtherCAT datagrams directly
 - `inject_fault/2` / `clear_faults/1` — deterministic fault injection
-- `slave_info/2` / `info/1` — runtime diagnostics
+- `info/1`, `device_snapshot/2`, `signal_snapshot/3`, `connection_snapshot/1`
+  — stable runtime snapshots for tooling
+- `slave_info/2` — compatibility-oriented per-device diagnostic lookup
 - `signals/2`, `signal_definitions/2`, `get_value/3`, `set_value/4`
 - `connect/3`, `disconnect/3`, `connections/1` — cross-slave signal wiring
 - `subscribe/4` / `unsubscribe/4` — widget-friendly signal observation

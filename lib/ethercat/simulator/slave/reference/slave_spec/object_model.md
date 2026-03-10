@@ -122,7 +122,7 @@ That is why the current compiled test-support split is sensible:
   Declarative device identity and SII/process-image definition.
 - `EtherCAT.Simulator.Slave.Driver`
   Tiny driver that gives the master named signals for tests.
-- `EtherCAT.Simulator.Slave.Device`
+- `EtherCAT.Simulator.Slave.Runtime.Device`
   Actual register/process-image state.
 
 For Milestone 3, `Device` also owns the current mailbox-backed object

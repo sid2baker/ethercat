@@ -134,7 +134,7 @@ this protocol core:
 
 The support runtime should be split into:
 
-- `EtherCAT.Simulator.Slave.Device`
+- `EtherCAT.Simulator.Slave.Runtime.Device`
   One simulated slave state, including AL state and ESC register image.
 - `EtherCAT.Simulator`
   The ring/segment executor that routes datagrams across ordered slaves.

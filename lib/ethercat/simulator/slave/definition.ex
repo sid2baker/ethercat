@@ -116,25 +116,4 @@ defmodule EtherCAT.Simulator.Slave.Definition do
       dc_capable?: dc_capable?
     }
   end
-
-  @spec digital_io(keyword()) :: t()
-  def digital_io(opts \\ []), do: build(:digital_io, opts)
-
-  @spec lan9252_demo(keyword()) :: t()
-  def lan9252_demo(opts \\ []), do: build(:lan9252_demo, opts)
-
-  @spec mailbox_device(keyword()) :: t()
-  def mailbox_device(opts \\ []), do: build(:mailbox_device, opts)
-
-  @spec analog_io(keyword()) :: t()
-  def analog_io(opts \\ []), do: build(:analog_io, opts)
-
-  @spec temperature_input(keyword()) :: t()
-  def temperature_input(opts \\ []), do: build(:temperature_input, opts)
-
-  @spec servo_drive(keyword()) :: t()
-  def servo_drive(opts \\ []), do: build(:servo_drive, opts)
-
-  @spec coupler(keyword()) :: t()
-  def coupler(opts \\ []), do: build(:coupler, opts)
 end

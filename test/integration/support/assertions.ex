@@ -17,4 +17,14 @@ defmodule EtherCAT.Integration.Assertions do
     result ->
       result
   end
+
+  def assert_stays(fun, attempts \\ 5)
+
+  def assert_stays(_fun, 0), do: :ok
+
+  def assert_stays(fun, attempts) do
+    fun.()
+    Process.sleep(20)
+    assert_stays(fun, attempts - 1)
+  end
 end

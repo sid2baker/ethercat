@@ -1,7 +1,8 @@
-defmodule EtherCAT.Simulator.Slave.Mailbox do
+defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
   @moduledoc false
 
-  alias EtherCAT.Simulator.Slave.Device
+  alias EtherCAT.Simulator.Slave.Runtime.Device
+  alias EtherCAT.Simulator.Slave.Runtime.Dictionary
 
   @mailbox_type_coe 0x03
   @service_sdo_request 0x02
@@ -65,7 +66,7 @@ defmodule EtherCAT.Simulator.Slave.Mailbox do
          mailbox_counter,
          slave
        ) do
-    case Device.read_object_entry(slave, index, subindex) do
+    case Dictionary.read_entry(slave, index, subindex) do
       {:ok, data, updated_slave} when byte_size(data) <= 4 ->
         {:ok, expedited_upload_response(index, subindex, data), updated_slave}
 
@@ -97,7 +98,7 @@ defmodule EtherCAT.Simulator.Slave.Mailbox do
     size = expedited_download_size(command)
     <<data::binary-size(size), _::binary>> = payload
 
-    case Device.write_object_entry(slave, index, subindex, data) do
+    case Dictionary.write_entry(slave, index, subindex, data) do
       {:ok, updated_slave} ->
         {:ok, download_ack(index, subindex), updated_slave}
 
@@ -117,7 +118,7 @@ defmodule EtherCAT.Simulator.Slave.Mailbox do
     if byte_size(current) >= total_size do
       data = binary_part(current, 0, total_size)
 
-      case Device.write_object_entry(slave, index, subindex, data) do
+      case Dictionary.write_entry(slave, index, subindex, data) do
         {:ok, updated_slave} ->
           {:ok, download_ack(index, subindex), updated_slave}
 
@@ -181,7 +182,7 @@ defmodule EtherCAT.Simulator.Slave.Mailbox do
       if last_segment? do
         final = binary_part(data, 0, min(byte_size(data), transfer.size))
 
-        case Device.write_object_entry(slave, transfer.index, transfer.subindex, final) do
+        case Dictionary.write_entry(slave, transfer.index, transfer.subindex, final) do
           {:ok, updated_slave} ->
             {:ok, segment_download_ack(toggle), %{updated_slave | mailbox_download: nil}}
 

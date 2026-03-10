@@ -76,6 +76,22 @@ The simulator is already strong enough to exercise the real master through:
 - PREOP mailbox diagnostics
 - recovery from realistic runtime faults
 
+## Runtime Refactor
+
+The simulator runtime refactor is now complete:
+
+- [docs/exec-plans/completed/simulator-runtime-refactor.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/completed/simulator-runtime-refactor.md)
+
+The main results are:
+
+- `EtherCAT.Simulator` is now mostly a process boundary and public API
+- routing, faults, wiring, subscriptions, and snapshots are explicit
+  collaborators
+- `EtherCAT.Simulator.Slave.Runtime.Device` is now mainly a device coordinator over
+  AL, ESC image, process image, logical routing, objects, and CoE
+- `EtherCAT.Slave.ESC.Registers` is reused for named register layout where it
+  improves clarity without owning simulator policy
+
 ## Current Runtime Shape
 
 The simulator is intentionally event-driven.
@@ -101,17 +117,30 @@ lib/ethercat/
 ├── simulator.ex
 └── simulator/
     ├── README.md
+    ├── runtime/
+    │   ├── faults.ex
+    │   ├── router.ex
+    │   ├── snapshot.ex
+    │   ├── subscriptions.ex
+    │   └── wiring.ex
     ├── udp.ex
     └── slave/
         ├── behaviour.ex
         ├── definition.ex
-        ├── device.ex
         ├── driver.ex
-        ├── mailbox.ex
         ├── object.ex
         ├── profile.ex
         ├── profile/
         ├── reference/
+        ├── runtime/
+        │   ├── al.ex
+        │   ├── coe.ex
+        │   ├── device.ex
+        │   ├── dictionary.ex
+        │   ├── esc_image.ex
+        │   ├── logical.ex
+        │   ├── mailbox.ex
+        │   └── process_image.ex
         ├── signals.ex
         └── value.ex
 ```
@@ -133,6 +162,8 @@ Main modules:
 - `EtherCAT.Simulator`
   - public simulator process
   - multi-slave datagram routing and WKC accumulation
+- `EtherCAT.Simulator.Runtime.Snapshot`
+  - stable read-model assembly for widgets and tooling
 - `EtherCAT.Simulator.Udp`
   - real UDP endpoint, defaulting to EtherCAT UDP port `0x88A4`
 - `EtherCAT.Simulator.Slave`
@@ -150,7 +181,7 @@ Main modules:
   - reusable device-family behavior and declarations
 - `EtherCAT.Simulator.Slave.Signals`
   - signal metadata derived from the support driver model
-- `EtherCAT.Simulator.Slave.Device`
+- `EtherCAT.Simulator.Slave.Runtime.Device`
   - one simulated slave instance with ESC memory and AL state
 
 Drivers can also opt in directly. A real `EtherCAT.Slave.Driver` may expose:
@@ -170,7 +201,7 @@ This mirrors `reference/slave_spec/elixir_target.md`.
 
 | SOES concept | Elixir support module |
 | --- | --- |
-| one slave application instance | `EtherCAT.Simulator.Slave.Device` |
+| one slave application instance | `EtherCAT.Simulator.Slave.Runtime.Device` |
 | device identity + SII/process image | `EtherCAT.Simulator.Slave.Definition` |
 | slave-facing driver for tests | `EtherCAT.Simulator.Slave.Driver` |
 | slave segment/ring execution | `EtherCAT.Simulator` |
@@ -319,6 +350,11 @@ Widget-oriented features that are now implemented:
 
 - change notifications via `subscribe/4` and `unsubscribe/4`
 - richer signal metadata through `signal_definitions/1` and `signal_definitions/2`
+- stable tooling snapshots through:
+  - `info/1`
+  - `device_snapshot/2`
+  - `signal_snapshot/3`
+  - `connection_snapshot/1`
 - explicit device/profile constructors:
   - `digital_io/1`
   - `mailbox_device/1`
@@ -333,6 +369,8 @@ Widget-oriented features that are now implemented:
   `EtherCAT.Simulator.start_link(devices: devices)`
 - explicit cross-slave wiring via
   `EtherCAT.Simulator.Slave.connect/3`
+- real-device hydration through:
+  - `EtherCAT.Simulator.Slave.from_driver/2`
 
 ## Current General-Slave Coverage
 

@@ -15,7 +15,7 @@ defmodule EtherCAT.Slave.DriverTest do
 
     @impl true
     def simulator_definition(_config) do
-      EtherCAT.Simulator.Slave.Definition.digital_io(name: :driver_default)
+      EtherCAT.Simulator.Slave.digital_io(name: :driver_default)
     end
 
     @impl true

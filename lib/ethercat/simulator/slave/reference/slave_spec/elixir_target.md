@@ -17,7 +17,7 @@ repo:
 
 | SOES concept | Elixir support module |
 | --- | --- |
-| one slave application instance | `EtherCAT.Simulator.Slave.Device` |
+| one slave application instance | `EtherCAT.Simulator.Slave.Runtime.Device` |
 | device identity + SII/process image | `EtherCAT.Simulator.Slave.Definition` |
 | slave-facing driver for tests | `EtherCAT.Simulator.Slave.Driver` |
 | slave segment/ring execution | `EtherCAT.Simulator` |

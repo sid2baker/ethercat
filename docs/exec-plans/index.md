@@ -32,6 +32,9 @@ and decision logs for multi-step work.
   Generalized `EtherCAT.Simulator*` into a reusable simulated-slave platform
   with typed objects/process data, reusable profiles, segmented CoE, widget
   APIs, and DC-aware deep coverage.
+- [docs/exec-plans/completed/simulator-runtime-refactor.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/completed/simulator-runtime-refactor.md)
+  Decomposed `EtherCAT.Simulator` and `EtherCAT.Simulator.Slave.Runtime.Device` into
+  explicit collaborators while preserving the public simulator API.
 - [docs/exec-plans/completed/syncmanager-domain-spec-alignment.md](/home/n0gg1n/Development/Work/opencode/ethercat/docs/exec-plans/completed/syncmanager-domain-spec-alignment.md)
   Process-data attachment-model refactor for split `{domain, SyncManager}` support.
 

@@ -23,7 +23,10 @@ defmodule EtherCAT.Integration.SimulatorTest do
     {:ok, %{port: port}} = Udp.info(endpoint)
 
     on_exit(fn ->
-      :ok = EtherCAT.stop()
+      case EtherCAT.stop() do
+        :ok -> :ok
+        :already_stopped -> :ok
+      end
 
       if Process.alive?(endpoint) do
         GenServer.stop(endpoint)
@@ -69,6 +72,11 @@ defmodule EtherCAT.Integration.SimulatorTest do
       assert {:ok, {1, updated_at_us}} = EtherCAT.read_input(:sim, :in)
       assert is_integer(updated_at_us)
     end)
+
+    assert {:ok, %{name: :sim, profile: :digital_io}} = Simulator.device_snapshot(simulator, :sim)
+
+    assert {:ok, %{slave: :sim, signal: :out, value: 1}} =
+             Simulator.signal_snapshot(simulator, :sim, :out)
 
     assert {:ok, 1} = Simulator.output_value(simulator, :sim)
   end
@@ -237,6 +245,20 @@ defmodule EtherCAT.Integration.SimulatorTest do
       assert {:ok, 1} = Slave.get_value(simulator, :io, :led0)
       assert {:ok, 2} = Slave.get_value(simulator, :io, :led1)
     end)
+  end
+
+  @tag devices: [Slave.digital_io(name: :io), Slave.digital_io(name: :io_shadow)]
+  test "snapshot helpers expose stable simulator read models", %{simulator: simulator} do
+    assert :ok = Slave.connect(simulator, {:io, :out}, {:io_shadow, :in})
+
+    assert {:ok, %{name: :io, profile: :digital_io, values: %{out: 0, in: 0}}} =
+             Simulator.device_snapshot(simulator, :io)
+
+    assert {:ok, %{slave: :io, signal: :out, value: 0, definition: %{direction: :output}}} =
+             Simulator.signal_snapshot(simulator, :io, :out)
+
+    assert {:ok, [%{source: {:io, :out}, target: {:io_shadow, :in}}]} =
+             Simulator.connection_snapshot(simulator)
   end
 
   @tag devices: [Slave.lan9252_demo(name: :mailbox)]
@@ -677,8 +699,10 @@ defmodule EtherCAT.Integration.SimulatorTest do
       150
     )
 
-    Process.sleep(100)
-    assert :operational = EtherCAT.state()
+    assert_stays(fn ->
+      assert :operational = EtherCAT.state()
+      assert [%{name: :sim, fault: nil}] = EtherCAT.slaves()
+    end)
   end
 
   @tag devices: [Slave.digital_io(name: :sim_a), Slave.digital_io(name: :sim_b)]
@@ -744,8 +768,14 @@ defmodule EtherCAT.Integration.SimulatorTest do
       150
     )
 
-    Process.sleep(100)
-    assert :operational = EtherCAT.state()
+    assert_stays(fn ->
+      assert :operational = EtherCAT.state()
+
+      assert [
+               %{name: :sim_a, fault: nil},
+               %{name: :sim_b, fault: nil}
+             ] = EtherCAT.slaves()
+    end)
   end
 
   @tag devices: [Slave.digital_io(name: :out_card), Slave.digital_io(name: :in_card)]
