@@ -145,11 +145,12 @@ defmodule EtherCAT do
 
   ## Sub-modules
 
-  `EtherCAT.Slave.API`, `EtherCAT.Domain`, `EtherCAT.Bus` — low-level slave
-  control, domain stats, and direct frame transactions.
+  `EtherCAT.Slave.API`, `EtherCAT.Domain.API`, `EtherCAT.DC.API`, `EtherCAT.Bus`
+  — low-level slave control, domain/runtime helpers, and direct frame
+  transactions.
   """
 
-  alias EtherCAT.Domain
+  alias EtherCAT.Domain.API, as: DomainAPI
   alias EtherCAT.Master.API, as: MasterAPI
   alias EtherCAT.Slave.API, as: SlaveAPI
 
@@ -381,7 +382,7 @@ defmodule EtherCAT do
       }}
   """
   @spec domain_info(atom()) :: {:ok, map()} | {:error, term()}
-  def domain_info(domain_id), do: Domain.info(domain_id)
+  def domain_info(domain_id), do: DomainAPI.info(domain_id)
 
   @doc """
   Subscribe to named slave events.

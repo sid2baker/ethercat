@@ -3,8 +3,9 @@ defmodule EtherCAT.Slave.Runtime.DCSignals do
 
   require Logger
 
-  alias EtherCAT.{Bus, DC}
+  alias EtherCAT.Bus
   alias EtherCAT.Bus.Transaction
+  alias EtherCAT.DC.Runtime, as: DCRuntime
   alias EtherCAT.Slave
   alias EtherCAT.Slave.ESC.Registers
   alias EtherCAT.Slave.Sync.Plan
@@ -139,7 +140,7 @@ defmodule EtherCAT.Slave.Runtime.DCSignals do
     case Bus.transaction(data.bus, snapshot_tx) do
       {:ok,
        [%{data: <<local_time_ns::64-little>>, wkc: 1}, %{data: <<raw_diff::32-little>>, wkc: 1}]} ->
-        {:ok, local_time_ns, DC.decode_abs_sync_diff(raw_diff)}
+        {:ok, local_time_ns, DCRuntime.decode_abs_sync_diff(raw_diff)}
 
       {:ok, [%{wkc: wkc}, _]} ->
         {:error,

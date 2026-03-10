@@ -4,26 +4,28 @@ defmodule EtherCAT.DC.RuntimeTest do
   alias EtherCAT.Bus.Datagram
   alias EtherCAT.Bus.Transaction
   alias EtherCAT.DC
+  alias EtherCAT.DC.API, as: DCAPI
   alias EtherCAT.DC.Config, as: DCConfig
+  alias EtherCAT.DC.Runtime, as: DCRuntime
 
   test "maintenance_transaction uses configured-address FRMW for dc system time" do
     station = 0x1002
 
     assert [%Datagram{cmd: 14, address: <<0x02, 0x10, 0x10, 0x09>>, data: <<0::64>>}] =
              station
-             |> DC.maintenance_transaction()
+             |> DCRuntime.maintenance_transaction()
              |> Transaction.datagrams()
   end
 
   test "decode_abs_sync_diff strips the sign bit from 0x092C" do
-    assert 42 == DC.decode_abs_sync_diff(42)
-    assert 42 == DC.decode_abs_sync_diff(0x8000_002A)
+    assert 42 == DCRuntime.decode_abs_sync_diff(42)
+    assert 42 == DCRuntime.decode_abs_sync_diff(0x8000_002A)
   end
 
   test "classify_lock uses the max observed sync diff against the threshold" do
-    assert {:locked, 90} = DC.classify_lock([10, 90, 30], 100)
-    assert {:locking, 101} = DC.classify_lock([10, 101, 30], 100)
-    assert {:unavailable, nil} = DC.classify_lock([], 100)
+    assert {:locked, 90} = DCRuntime.classify_lock([10, 90, 30], 100)
+    assert {:locking, 101} = DCRuntime.classify_lock([10, 101, 30], 100)
+    assert {:unavailable, nil} = DCRuntime.classify_lock([], 100)
   end
 
   test "init returns an explicit DC runtime struct" do
@@ -64,7 +66,7 @@ defmodule EtherCAT.DC.RuntimeTest do
          config: %DCConfig{}}
       )
 
-    assert {:error, :timeout} = DC.await_locked(pid, 10)
+    assert {:error, :timeout} = DCAPI.await_locked(pid, 10)
   end
 
   test "await_locked fails immediately when no monitorable stations exist" do
@@ -78,7 +80,7 @@ defmodule EtherCAT.DC.RuntimeTest do
          config: %DCConfig{}}
       )
 
-    assert {:error, :dc_lock_unavailable} = DC.await_locked(pid, 10)
+    assert {:error, :dc_lock_unavailable} = DCAPI.await_locked(pid, 10)
   end
 
   test "status exposes the configured activation and runtime lock contract" do
@@ -104,6 +106,6 @@ defmodule EtherCAT.DC.RuntimeTest do
              lock_policy: :recovering,
              reference_station: 0x1000,
              lock_state: :locking
-           } = DC.status(pid)
+           } = DCAPI.status(pid)
   end
 end

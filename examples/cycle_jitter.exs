@@ -100,7 +100,8 @@ defmodule CycleJitter.Collector do
     # guarantees a real transition and a notification.
     {intervals, _} =
       Enum.map_reduce(0..(n - 1), System.monotonic_time(:microsecond), fn i, prev_t ->
-        target = rem(i, 2)                           # 0, 1, 0, 1 ...
+        # 0, 1, 0, 1 ...
+        target = rem(i, 2)
         EtherCAT.write_output(:outputs, :ch1, target)
         wait_for(:ch1, target)
         now = System.monotonic_time(:microsecond)
@@ -140,7 +141,7 @@ end
 
 interface = opts[:interface] || raise "pass --interface, e.g. --interface enp0s31f6"
 period_ms = Keyword.get(opts, :period_ms, 10)
-samples   = Keyword.get(opts, :samples, 2_000)
+samples = Keyword.get(opts, :samples, 2_000)
 bucket_us = Keyword.get(opts, :bucket_us, 100)
 period_us = period_ms * 1_000
 
@@ -168,9 +169,17 @@ Process.sleep(300)
     ],
     slaves: [
       %EtherCAT.Slave.Config{name: :coupler},
-      %EtherCAT.Slave.Config{name: :inputs,  driver: CycleJitter.EL1809, process_data: {:all, :main}},
-      %EtherCAT.Slave.Config{name: :outputs, driver: CycleJitter.EL2809, process_data: {:all, :main}},
-      %EtherCAT.Slave.Config{name: :rtd,     driver: CycleJitter.EL3202, process_data: {:all, :main}}
+      %EtherCAT.Slave.Config{
+        name: :inputs,
+        driver: CycleJitter.EL1809,
+        process_data: {:all, :main}
+      },
+      %EtherCAT.Slave.Config{
+        name: :outputs,
+        driver: CycleJitter.EL2809,
+        process_data: {:all, :main}
+      },
+      %EtherCAT.Slave.Config{name: :rtd, driver: CycleJitter.EL3202, process_data: {:all, :main}}
     ]
   )
 
@@ -212,11 +221,11 @@ end)
 # ---------------------------------------------------------------------------
 
 IO.puts("Collecting #{samples} samples...")
-{:ok, stats_before} = EtherCAT.Domain.stats(:main)
+{:ok, stats_before} = EtherCAT.Domain.API.stats(:main)
 
 intervals = CycleJitter.Collector.collect(samples, period_ms)
 
-{:ok, stats_after} = EtherCAT.Domain.stats(:main)
+{:ok, stats_after} = EtherCAT.Domain.API.stats(:main)
 miss_delta = stats_after.total_miss_count - stats_before.total_miss_count
 
 # ---------------------------------------------------------------------------
@@ -229,7 +238,7 @@ miss_delta = stats_after.total_miss_count - stats_before.total_miss_count
 
 round_trip_us = period_us * 2
 jitter = Enum.map(intervals, fn iv -> abs(iv - round_trip_us) end)
-sorted  = Enum.sort(jitter)
+sorted = Enum.sort(jitter)
 sorted_intervals = Enum.sort(intervals)
 n = length(sorted)
 
@@ -239,7 +248,7 @@ percentile = fn list, pct ->
 end
 
 mean_iv = Enum.sum(intervals) / n
-mean_j  = Enum.sum(jitter) / n
+mean_j = Enum.sum(jitter) / n
 
 var_j = Enum.reduce(jitter, 0.0, fn x, acc -> acc + (x - mean_j) * (x - mean_j) end) / n
 stddev_j = :math.sqrt(var_j)
@@ -290,9 +299,9 @@ Enum.each(0..(num_buckets - 1), fn b ->
   count = Map.get(hist, b, 0)
 
   if count > 0 do
-    bar   = String.duplicate("█", max(div(count, bar_scale), 1))
+    bar = String.duplicate("█", max(div(count, bar_scale), 1))
     label = "#{b * bucket_us}–#{(b + 1) * bucket_us - 1} µs" |> String.pad_leading(14)
-    pct   = Float.round(count / n * 100, 1)
+    pct = Float.round(count / n * 100, 1)
     IO.puts("  #{label} │#{bar} #{count} (#{pct}%)")
   end
 end)
@@ -301,12 +310,13 @@ IO.puts(String.duplicate("-", 72))
 
 # Verdict
 p99_j = percentile.(sorted, 99)
+
 verdict =
   cond do
     p99_j <= round_trip_us * 0.05 -> "EXCELLENT — p99 ≤ 5% of round-trip"
     p99_j <= round_trip_us * 0.15 -> "GOOD — p99 ≤ 15% of round-trip"
     p99_j <= round_trip_us * 0.30 -> "FAIR — p99 ≤ 30% of round-trip"
-    true                          -> "POOR — consider RT kernel, CPU isolation, or process priority"
+    true -> "POOR — consider RT kernel, CPU isolation, or process priority"
   end
 
 miss_note = if miss_delta > 0, do: "  ⚠ #{miss_delta} frame miss(es) during test\n", else: ""

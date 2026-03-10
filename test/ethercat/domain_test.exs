@@ -2,6 +2,7 @@ defmodule EtherCAT.DomainTest do
   use ExUnit.Case, async: false
 
   alias EtherCAT.Domain
+  alias EtherCAT.Domain.API, as: DomainAPI
   alias EtherCAT.Domain.Layout
 
   defmodule FakeBus do
@@ -56,21 +57,21 @@ defmodule EtherCAT.DomainTest do
   end
 
   test "expected WKC counts each slave once per direction for LRW", %{domain_id: domain_id} do
-    assert {:ok, 0} = Domain.register_pdo(domain_id, {:sensor, {:sm, 0}}, 2, :input)
-    assert {:ok, 2} = Domain.register_pdo(domain_id, {:valve, {:sm, 0}}, 1, :output)
-    assert {:ok, 3} = Domain.register_pdo(domain_id, {:valve, {:sm, 1}}, 1, :output)
-    assert {:ok, 4} = Domain.register_pdo(domain_id, {:thermo, {:sm, 3}}, 8, :input)
+    assert {:ok, 0} = DomainAPI.register_pdo(domain_id, {:sensor, {:sm, 0}}, 2, :input)
+    assert {:ok, 2} = DomainAPI.register_pdo(domain_id, {:valve, {:sm, 0}}, 1, :output)
+    assert {:ok, 3} = DomainAPI.register_pdo(domain_id, {:valve, {:sm, 1}}, 1, :output)
+    assert {:ok, 4} = DomainAPI.register_pdo(domain_id, {:thermo, {:sm, 3}}, 8, :input)
 
-    assert :ok = Domain.start_cycling(domain_id)
-    assert {:ok, %{expected_wkc: 4}} = Domain.stats(domain_id)
+    assert :ok = DomainAPI.start_cycling(domain_id)
+    assert {:ok, %{expected_wkc: 4}} = DomainAPI.stats(domain_id)
   end
 
   test "start_cycling fails when nothing is registered", %{domain_id: domain_id} do
-    assert {:error, :nothing_registered} = Domain.start_cycling(domain_id)
+    assert {:error, :nothing_registered} = DomainAPI.start_cycling(domain_id)
   end
 
   test "stop_cycling is idempotent while open", %{domain_id: domain_id} do
-    assert :ok = Domain.stop_cycling(domain_id)
+    assert :ok = DomainAPI.stop_cycling(domain_id)
   end
 
   test "info reports the domain logical base", _context do
@@ -88,32 +89,32 @@ defmodule EtherCAT.DomainTest do
          ]}
       )
 
-    assert {:ok, %{logical_base: 32, state: :open}} = Domain.info(logical_domain_id)
+    assert {:ok, %{logical_base: 32, state: :open}} = DomainAPI.info(logical_domain_id)
   end
 
   test "update_cycle_time changes the reported domain period", %{domain_id: domain_id} do
-    assert :ok = Domain.update_cycle_time(domain_id, 10_000)
-    assert {:ok, %{cycle_time_us: 10_000}} = Domain.info(domain_id)
+    assert :ok = DomainAPI.update_cycle_time(domain_id, 10_000)
+    assert {:ok, %{cycle_time_us: 10_000}} = DomainAPI.info(domain_id)
   end
 
   test "sample reports staged output freshness metadata", %{domain_id: domain_id} do
-    assert {:ok, 0} = Domain.register_pdo(domain_id, {:valve, {:sm, 0}}, 1, :output)
+    assert {:ok, 0} = DomainAPI.register_pdo(domain_id, {:valve, {:sm, 0}}, 1, :output)
 
     assert {:ok, %{value: <<0>>, updated_at_us: nil}} =
-             Domain.sample(domain_id, {:valve, {:sm, 0}})
+             DomainAPI.sample(domain_id, {:valve, {:sm, 0}})
 
-    assert :ok = Domain.write(domain_id, {:valve, {:sm, 0}}, <<1>>)
+    assert :ok = DomainAPI.write(domain_id, {:valve, {:sm, 0}}, <<1>>)
 
     assert {:ok, %{value: <<1>>, updated_at_us: updated_at_us}} =
-             Domain.sample(domain_id, {:valve, {:sm, 0}})
+             DomainAPI.sample(domain_id, {:valve, {:sm, 0}})
 
     assert is_integer(updated_at_us)
   end
 
   test "start_cycling fails fast for oversized LRW images", %{domain_id: domain_id} do
-    assert {:ok, 0} = Domain.register_pdo(domain_id, {:big, :pdo}, 2036, :output)
+    assert {:ok, 0} = DomainAPI.register_pdo(domain_id, {:big, :pdo}, 2036, :output)
 
-    assert {:error, {:image_too_large, 2036, 2035}} = Domain.start_cycling(domain_id)
+    assert {:error, {:image_too_large, 2036, 2035}} = DomainAPI.start_cycling(domain_id)
   end
 
   test "WKC mismatch marks the cycle invalid but keeps the domain running until recovery" do

@@ -167,7 +167,7 @@ defmodule FT.Helpers do
 
   def domain_snapshot(domain_ids) do
     Enum.into(domain_ids, %{}, fn domain_id ->
-      {:ok, stats} = EtherCAT.Domain.stats(domain_id)
+      {:ok, stats} = EtherCAT.Domain.API.stats(domain_id)
       {:ok, info} = EtherCAT.domain_info(domain_id)
 
       {domain_id, %{cycle_count: stats.cycle_count, state: info.state}}

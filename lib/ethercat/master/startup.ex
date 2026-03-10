@@ -3,8 +3,9 @@ defmodule EtherCAT.Master.Startup do
 
   require Logger
 
-  alias EtherCAT.{Bus, DC, Domain, Slave}
+  alias EtherCAT.{Bus, Domain, Slave}
   alias EtherCAT.Bus.Transaction
+  alias EtherCAT.DC.API, as: DCAPI
   alias EtherCAT.Master.Config
   alias EtherCAT.Master.Config.DomainPlan
   alias EtherCAT.Master.Startup.InitRecovery
@@ -327,7 +328,7 @@ defmodule EtherCAT.Master.Startup do
   end
 
   defp initialize_distributed_clocks(_data, slave_topology) do
-    case DC.initialize_clocks(Bus, slave_topology) do
+    case DCAPI.initialize_clocks(Bus, slave_topology) do
       {:ok, ref_station, dc_stations} ->
         Logger.info("[Master] DC initialized, ref=0x#{Integer.to_string(ref_station, 16)}")
         {:ok, ref_station, dc_stations}

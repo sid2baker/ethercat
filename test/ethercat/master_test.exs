@@ -4,6 +4,7 @@ defmodule EtherCAT.MasterTest do
   alias EtherCAT.DC.Config, as: DCConfig
   alias EtherCAT.DC.Status, as: DCStatus
   alias EtherCAT.Domain
+  alias EtherCAT.Domain.API, as: DomainAPI
   alias EtherCAT.Master.Config.DomainPlan
   alias EtherCAT.Slave.Config, as: SlaveConfig
 
@@ -217,10 +218,10 @@ defmodule EtherCAT.MasterTest do
         {Domain, [id: domain_id, bus: bus, cycle_time_us: 1_000, miss_threshold: 500]}
       )
 
-    assert {:ok, 0} = Domain.register_pdo(domain_id, {:sensor, {:sm, 0}}, 1, :input)
-    assert :ok = Domain.start_cycling(domain_id)
-    assert :ok = Domain.stop_cycling(domain_id)
-    assert {:ok, %{state: :stopped}} = Domain.info(domain_id)
+    assert {:ok, 0} = DomainAPI.register_pdo(domain_id, {:sensor, {:sm, 0}}, 1, :input)
+    assert :ok = DomainAPI.start_cycling(domain_id)
+    assert :ok = DomainAPI.stop_cycling(domain_id)
+    assert {:ok, %{state: :stopped}} = DomainAPI.info(domain_id)
 
     data = %EtherCAT.Master{runtime_faults: %{{:domain, domain_id} => {:stopped, :down}}}
 
@@ -228,7 +229,7 @@ defmodule EtherCAT.MasterTest do
              EtherCAT.Master.handle_event({:timeout, :retry}, nil, :recovering, data)
 
     assert recovering_data.runtime_faults == %{{:domain, domain_id} => {:stopped, :down}}
-    assert {:ok, %{state: :cycling}} = Domain.info(domain_id)
+    assert {:ok, %{state: :cycling}} = DomainAPI.info(domain_id)
   end
 
   test "recovering returns to operational for unrecoverable slave preop configuration failures" do
@@ -465,7 +466,7 @@ defmodule EtherCAT.MasterTest do
              )
 
     assert hd(data.domain_configs).cycle_time_us == 1_000
-    assert {:ok, %{cycle_time_us: 10_000}} = Domain.info(domain_id)
+    assert {:ok, %{cycle_time_us: 10_000}} = DomainAPI.info(domain_id)
   end
 
   test "update_domain_cycle_time rejects domains outside the master plan" do
@@ -489,7 +490,7 @@ defmodule EtherCAT.MasterTest do
         {Domain, [id: domain_id, bus: self(), cycle_time_us: 1_000, miss_threshold: 500]}
       )
 
-    :ok = Domain.update_cycle_time(domain_id, 10_000)
+    :ok = DomainAPI.update_cycle_time(domain_id, 10_000)
 
     assert {:keep_state_and_data, [{:reply, ^from, [{^domain_id, 10_000, _pid}]}]} =
              EtherCAT.Master.handle_event(

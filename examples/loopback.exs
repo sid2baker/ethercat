@@ -1,7 +1,8 @@
 #!/usr/bin/env elixir
 # Inspect the actual SII PDO configs and LRW frame data for EL2809.
 
-alias EtherCAT.{Domain, Bus}
+alias EtherCAT.{Bus, Domain}
+alias EtherCAT.Domain.API, as: DomainAPI
 alias EtherCAT.Bus.Transaction
 alias EtherCAT.Slave.{Config, Registers, SII}
 alias EtherCAT.Domain.Config, as: DomainConfig
@@ -65,7 +66,7 @@ Process.sleep(300)
 bus = EtherCAT.bus()
 
 # Read domain stats to know image size
-{:ok, stats} = Domain.stats(:main)
+{:ok, stats} = DomainAPI.stats(:main)
 IO.puts("image_size=#{stats.image_size}")
 
 # Read current output ETS value and SM0 before any write_output
@@ -81,7 +82,7 @@ EtherCAT.write_output(:out, :ch1, 1)
 Process.sleep(20)
 
 # ETS holds the raw encoded value the domain will splice into the frame
-ets_val = Domain.read(:main, {:out, :ch1})
+ets_val = DomainAPI.read(:main, {:out, :ch1})
 IO.puts("ETS {:out,:ch1} = #{inspect(ets_val)}")
 
 sm0_after =

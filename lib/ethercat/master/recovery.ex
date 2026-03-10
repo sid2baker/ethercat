@@ -3,7 +3,7 @@ defmodule EtherCAT.Master.Recovery do
 
   require Logger
 
-  alias EtherCAT.Domain
+  alias EtherCAT.Domain.API, as: DomainAPI
   alias EtherCAT.Master.Activation
   alias EtherCAT.Slave.API, as: SlaveAPI
 
@@ -240,7 +240,7 @@ defmodule EtherCAT.Master.Recovery do
   defp retryable_runtime_slave_fault?(_reason), do: true
 
   defp restart_stopped_domain(data, domain_id, reason) do
-    case Domain.start_cycling(domain_id) do
+    case DomainAPI.start_cycling(domain_id) do
       :ok ->
         Logger.info(
           "[Master] restarted domain #{domain_id} after stop caused by #{inspect(reason)}"

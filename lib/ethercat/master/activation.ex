@@ -3,7 +3,9 @@ defmodule EtherCAT.Master.Activation do
 
   require Logger
 
-  alias EtherCAT.{Bus, DC, Domain}
+  alias EtherCAT.{Bus, DC}
+  alias EtherCAT.DC.API, as: DCAPI
+  alias EtherCAT.Domain.API, as: DomainAPI
   alias EtherCAT.Master.Config
   alias EtherCAT.Master.Status
   alias EtherCAT.Slave.API, as: SlaveAPI
@@ -72,7 +74,7 @@ defmodule EtherCAT.Master.Activation do
 
   defp start_domain_cycles(data) do
     Enum.reduce_while(Config.domain_ids(data.domain_configs || []), :ok, fn id, :ok ->
-      case Domain.start_cycling(id) do
+      case DomainAPI.start_cycling(id) do
         :ok ->
           {:cont, :ok}
 
@@ -90,7 +92,7 @@ defmodule EtherCAT.Master.Activation do
     timeout_ms = data.dc_config.lock_timeout_ms
 
     if dc_running?() do
-      case DC.await_locked(DC, timeout_ms) do
+      case DCAPI.await_locked(DC, timeout_ms) do
         :ok ->
           :ok
 

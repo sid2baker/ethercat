@@ -7,7 +7,8 @@ defmodule EtherCAT.Master.API do
   and transitions.
   """
 
-  alias EtherCAT.{Bus, DC}
+  alias EtherCAT.Bus
+  alias EtherCAT.DC.API, as: DCAPI
 
   @spec start(keyword()) :: :ok | {:error, term()}
   def start(opts \\ []), do: safe_call({:start, opts})
@@ -66,7 +67,7 @@ defmodule EtherCAT.Master.API do
   @spec await_dc_locked(pos_integer()) :: :ok | {:error, term()}
   def await_dc_locked(timeout_ms \\ 5_000) do
     case safe_call(:dc_runtime) do
-      {:ok, dc_server} -> DC.await_locked(dc_server, timeout_ms)
+      {:ok, dc_server} -> DCAPI.await_locked(dc_server, timeout_ms)
       {:error, _} = err -> err
     end
   end
