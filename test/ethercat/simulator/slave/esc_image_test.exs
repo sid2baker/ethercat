@@ -2,11 +2,11 @@ defmodule EtherCAT.Simulator.Slave.ESCImageTest do
   use ExUnit.Case, async: true
 
   alias EtherCAT.Slave.ESC.Registers
-  alias EtherCAT.Simulator.Slave
+  alias EtherCAT.Simulator.Slave.Definition
   alias EtherCAT.Simulator.Slave.Runtime.ESCImage
 
   test "hydrate builds initial ESC memory and EEPROM from a definition" do
-    definition = Slave.lan9252_demo(name: :sim, dc_capable?: true)
+    definition = Definition.build(:mailbox_device, name: :sim, dc_capable?: true)
     %{memory: memory, eeprom: eeprom} = ESCImage.hydrate(definition)
 
     assert byte_size(memory) == 0x1400
@@ -27,7 +27,7 @@ defmodule EtherCAT.Simulator.Slave.ESCImageTest do
   end
 
   test "maybe_load_eeprom_data refreshes the EEPROM data window" do
-    definition = Slave.lan9252_demo(name: :sim)
+    definition = Definition.build(:mailbox_device, name: :sim)
     %{memory: memory, eeprom: eeprom} = ESCImage.hydrate(definition)
     {eeprom_address, _} = Registers.eeprom_address()
 

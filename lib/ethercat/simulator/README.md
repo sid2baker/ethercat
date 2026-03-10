@@ -243,58 +243,53 @@ behavior, not implementation detail.
 
 ## Current Device Scope
 
-The simulator now ships with three compiled device shapes:
+The public simulator API now prefers real-device hydration through drivers:
 
-- `digital_io/1`
-  - one output byte
-  - one input byte
-  - SM2 output mapping
-  - SM3 input mapping
-- `lan9252_demo/1`
-  - two output bytes
-  - one input byte
-  - explicit SOES-style small digital I/O shape
-- `coupler/1`
-  - no PDOs
-  - startup-only placeholder for heterogeneous rings
+- `EtherCAT.Simulator.Slave.from_driver(MyApp.EK1100, name: :coupler)`
+- `EtherCAT.Simulator.Slave.from_driver(MyApp.EL1809, name: :inputs)`
+- `EtherCAT.Simulator.Slave.from_driver(MyApp.EL2809, name: :outputs)`
 
-The `lan9252_demo/1` device is the current closest match to the SOES LAN9252
-demo described in `reference/slave_spec/object_model.md`.
+Internal profile modules still exist, but they are implementation detail. They
+provide reusable authored defaults that real drivers can turn into concrete
+simulator definitions through `simulator_definition/1`.
 
-It is also the first mailbox-capable device:
+The first-class public story is:
 
-- PREOP mailbox SMs are described in SII
-- expedited CoE upload/download is supported for small deterministic object
-  values
-- the current object dictionary surface is intentionally tiny and test-oriented
+- simulate real devices through real drivers
+- keep identity, PDO naming, and simulator hydration aligned
+- reserve profile atoms for internal defaults and targeted unit tests
 
-## Current Deep Integration Coverage
+## Current Integration Coverage
 
-The simulator is exercised through the normal deep integration suite in:
+Repository integration coverage now has two variants built around the same real
+drivers:
 
-- [`test/integration/simulator/simulator_test.exs`](/home/n0gg1n/Development/Work/opencode/ethercat/test/integration/simulator/simulator_test.exs)
+- [`test/integration/simulator/ring_test.exs`](/home/n0gg1n/Development/Work/opencode/ethercat/test/integration/simulator/ring_test.exs)
+- [`test/integration/hardware/ring_test.exs`](/home/n0gg1n/Development/Work/opencode/ethercat/test/integration/hardware/ring_test.exs)
 
-The current suite proves:
+Both variants use the same ring model:
 
-1. one simulated digital I/O slave can boot to `:operational`
-2. two simulated digital I/O slaves can share one simulator instance
-3. a heterogeneous ring can boot with:
-   - a coupler device in slot 0
-   - a mailbox-capable LAN9252-style I/O device in slot 1
-4. expedited CoE upload/download works in PREOP through the public mailbox API
-5. segmented CoE upload/download works through the real UDP path
-6. widget-facing subscriptions emit signal-change notifications
-7. typed profile behavior works for:
-   - analog I/O
-   - temperature input
-   - servo/drive with DC enabled
-8. runtime recovery works for:
-   - wrong WKC
-   - dropped UDP responses
-   - disconnect / reconnect of one simulated slave
-   - disconnect / reconnect of one slave in a shared domain
-9. simulator-driven value injection and output observation work through the
-   signal-level API
+- EK1100 coupler
+- EL1809 input terminal
+- EL2809 output terminal
+
+The simulator variant proves the real master can:
+
+1. boot the ring to `:operational`
+2. identify each device through the real drivers
+3. read EL1809 inputs through the public API
+4. stage EL2809 outputs through the public API
+5. interact with the ring through the real UDP transport path
+
+The hardware variant exercises the same ring shape on a real bus and is
+excluded by default. Enable it with:
+
+```bash
+ETHERCAT_INTERFACE=enp0s31f6 mix test --include hardware test/integration/hardware/ring_test.exs
+```
+
+The simulator itself is also covered by unit-level and subsystem-level tests
+under `test/ethercat/simulator/` and related simulator-focused test files.
 
 ## Widget-Facing Signal API
 
@@ -304,25 +299,36 @@ tools like a `kino_ethercat` simulator widget.
 For device introspection:
 
 ```elixir
-device = EtherCAT.Simulator.Slave.lan9252_demo(name: :io)
+device = EtherCAT.Simulator.Slave.from_driver(MyApp.EL2809, name: :outputs)
 
 EtherCAT.Simulator.Slave.signals(device)
-#=> [:led0, :led1, :button1]
+#=> [:ch1, :ch2, ...]
 
 EtherCAT.Simulator.Slave.signal_definitions(device)
-#=> %{button1: %{direction: :input, ...}, led0: %{direction: :output, ...}, ...}
+#=> %{ch1: %{direction: :output, ...}, ch2: %{direction: :output, ...}, ...}
 ```
 
 For runtime control of a running simulator:
 
 ```elixir
-{:ok, simulator} =
-  EtherCAT.Simulator.start_link(devices: [device])
+{:ok, runtime} =
+  EtherCAT.Simulator.start(
+    devices: [device],
+    ip: {127, 0, 0, 2},
+    port: 0
+  )
+
+%{simulator: simulator, port: port} = runtime
 
 EtherCAT.Simulator.Slave.set_value(simulator, :io, :button1, 7)
 EtherCAT.Simulator.Slave.get_value(simulator, :io, :led0)
 EtherCAT.Simulator.Slave.signals(simulator, :io)
 ```
+
+Use `start_link/1` directly when you only need the in-memory simulator core.
+Use `start/1` for the common case where a real `UdpSocket` transport should
+talk to the simulator end to end.
+Stop either kind of runtime with `stop/1`.
 
 To wire one simulated slave signal into another:
 
@@ -355,18 +361,11 @@ Widget-oriented features that are now implemented:
   - `device_snapshot/2`
   - `signal_snapshot/3`
   - `connection_snapshot/1`
-- explicit device/profile constructors:
-  - `digital_io/1`
-  - `mailbox_device/1`
-  - `analog_io/1`
-  - `temperature_input/1`
-  - `servo_drive/1`
-  - `coupler/1`
-- generic device builder:
-  - `device(profile, opts)`
 - profile-aware value validation through typed signal definitions
 - easy composition of multiple devices into one virtual ring via
   `EtherCAT.Simulator.start_link(devices: devices)`
+- one-call simulator + UDP endpoint setup via
+  `EtherCAT.Simulator.start/1`
 - explicit cross-slave wiring via
   `EtherCAT.Simulator.Slave.connect/3`
 - real-device hydration through:
@@ -505,31 +504,17 @@ The support code owns only:
 - process-image behavior
 - WKC calculation
 
-## Deep Integration Tests
+## Integration Test Philosophy
 
-The current deep integration coverage lives in:
+Integration tests now target the real runtime against a driver-backed simulated
+ring.
 
-- `test/integration/simulator/simulator_test.exs`
+The simulator remains a library feature for:
 
-It now covers three end-to-end flows through the real UDP transport:
-
-1. one simulated digital I/O slave boots to `:operational`
-2. two simulated digital I/O slaves boot on one segment and exchange
-   independent cyclic I/O
-3. a heterogeneous ring boots with:
-   - one `coupler/1` device
-   - one `lan9252_demo/1` device
-4. one mailbox-capable `lan9252_demo/1` slave boots to `:preop_ready` and
-   serves expedited CoE upload/download requests through the public API
-
-The heterogeneous test proves:
-
-- normal slave counting and station assignment
-- startup through a no-PDO placeholder in slot 0
-- cyclic I/O against a richer PDO-mapped slave in slot 1
-- multi-byte output image handling through the public API
-
-These tests should keep running under normal `mix test`.
+- unit and subsystem testing
+- local tooling and widgets
+- deterministic protocol experiments
+- ring-shaped deep integration coverage built from real drivers
 
 ## Completed Milestone Coverage
 

@@ -1,12 +1,12 @@
 defmodule EtherCAT.Simulator.Slave.ALTest do
   use ExUnit.Case, async: true
 
-  alias EtherCAT.Simulator.Slave
+  alias EtherCAT.Simulator.Slave.Definition
   alias EtherCAT.Simulator.Slave.Runtime.AL
   alias EtherCAT.Simulator.Slave.Runtime.Device
 
   test "apply_control enforces AL transition discipline and updates AL status" do
-    slave = Device.new(Slave.digital_io(), 0)
+    slave = Device.new(Definition.build(:digital_io), 0)
 
     assert {:error, invalid} = AL.apply_control(slave, 0x08)
     assert invalid.state == :init

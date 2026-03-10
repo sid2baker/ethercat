@@ -4,6 +4,7 @@ defmodule EtherCAT.Slave.DriverTest do
   alias EtherCAT.IntegrationSupport.Drivers.{EL1809, EL2809}
   alias EtherCAT.Slave.Driver
   alias EtherCAT.Simulator.Slave
+  alias EtherCAT.Simulator.Slave.Definition
 
   defmodule IdentityDriver do
     @behaviour EtherCAT.Slave.Driver
@@ -15,7 +16,7 @@ defmodule EtherCAT.Slave.DriverTest do
 
     @impl true
     def simulator_definition(_config) do
-      EtherCAT.Simulator.Slave.digital_io(name: :driver_default)
+      Definition.build(:digital_io, name: :driver_default)
     end
 
     @impl true

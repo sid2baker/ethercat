@@ -23,9 +23,9 @@ Preferred public path:
 
 - `EtherCAT.Simulator.Slave.from_driver/2`
 
-Profile-style builders such as `digital_io/1` and `analog_io/1` may remain as
-secondary convenience APIs, but they should not be treated as the primary
-authoring model in docs or examples.
+Profile-style builders were intentionally pushed behind the public API. The
+simulator now leads with driver-backed device creation instead of generic
+constructor helpers.
 
 This means:
 
@@ -343,7 +343,7 @@ Acceptance:
 Keep the current test pyramid intact throughout:
 
 - unit coverage for the new helper modules
-- integration coverage in `test/integration/simulator/simulator_test.exs`
+- repository integration coverage in `test/integration/hardware/`
 - existing mailbox, segmented CoE, recovery, and wiring tests must remain green
 
 Add focused unit tests for:

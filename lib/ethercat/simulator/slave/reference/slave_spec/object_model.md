@@ -32,7 +32,8 @@ So the device shape is:
 The simulator now carries that object-dictionary idea explicitly for
 mailbox-capable devices:
 
-- `lan9252_demo/1` exposes a small deterministic object dictionary
+- the internal mailbox-capable profile exposes a small deterministic object
+  dictionary
 - current deep tests use `0x2000:01`
 - values are stored as raw binaries because the public CoE API also works with
   raw binary payloads
@@ -78,7 +79,7 @@ So the reference SOES example is:
 - 16 bits of output PDO data
 - 8 bits of input PDO data
 
-The simulator now carries that shape as `lan9252_demo/1`:
+The simulator now carries that shape through its mailbox-capable profile:
 
 - 16 bits of output PDO data
 - 8 bits of input PDO data
@@ -87,9 +88,9 @@ The simulator now carries that shape as `lan9252_demo/1`:
   - `led1`
   - `button1`
 
-The smaller `digital_io/1` device still exists as the minimal Milestone 1
-device, but `lan9252_demo/1` is the better default when a deep integration
-test wants a richer small-slave profile.
+That profile is now an internal default provider. Public simulator use should
+prefer `EtherCAT.Simulator.Slave.from_driver/2`, so simulated devices stay
+aligned with the real driver modules they represent.
 
 ## SyncManager Assignment
 

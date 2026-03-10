@@ -2,13 +2,13 @@ defmodule EtherCAT.Simulator.Slave.LogicalTest do
   use ExUnit.Case, async: true
 
   alias EtherCAT.Slave.ESC.Registers
-  alias EtherCAT.Simulator.Slave
+  alias EtherCAT.Simulator.Slave.Definition
   alias EtherCAT.Simulator.Slave.Runtime.Device
   alias EtherCAT.Simulator.Slave.Runtime.Logical
 
   test "active_fmmus/1 parses configured FMMUs from ESC memory" do
     slave =
-      Slave.digital_io()
+      Definition.build(:digital_io)
       |> Device.new(0)
       |> configure_fmmu(0, 0x1000, 1, 0x1100, 0x02)
       |> configure_fmmu(1, 0x1001, 1, 0x1180, 0x01)
@@ -21,7 +21,7 @@ defmodule EtherCAT.Simulator.Slave.LogicalTest do
 
   test "LRW updates outputs, reads inputs, and accumulates correct WKC" do
     {:ok, slave} =
-      Slave.lan9252_demo()
+      Definition.build(:mailbox_device)
       |> Device.new(0)
       |> Device.set_value(:button1, 7)
 

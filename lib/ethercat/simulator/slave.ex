@@ -2,8 +2,8 @@ defmodule EtherCAT.Simulator.Slave do
   @moduledoc """
   Device and signal-level API for simulated EtherCAT slaves.
 
-  Use this module to build reusable simulated slave devices such as digital I/O
-  or mailbox-capable demo devices, and to inspect or override named signal
+  Use this module to hydrate simulated devices from real
+  `EtherCAT.Slave.Driver` modules and to inspect or override named signal
   values on a running simulator.
 
   For drivers that opt in, `from_driver/2` can hydrate a simulated device from
@@ -15,50 +15,9 @@ defmodule EtherCAT.Simulator.Slave do
   alias EtherCAT.Slave.Driver, as: SlaveDriver
   alias EtherCAT.Simulator.Slave.Definition
 
-  @type profile :: atom()
   @type driver :: module()
   @type device :: Definition.t()
   @type signal_ref :: {atom(), atom()}
-
-  @spec device(profile(), keyword()) :: device()
-  def device(profile, opts \\ []) do
-    Definition.build(profile, opts)
-  end
-
-  @spec digital_io(keyword()) :: device()
-  def digital_io(opts \\ []) do
-    device(:digital_io, opts)
-  end
-
-  @spec lan9252_demo(keyword()) :: device()
-  def lan9252_demo(opts \\ []) do
-    mailbox_device(opts)
-  end
-
-  @spec mailbox_device(keyword()) :: device()
-  def mailbox_device(opts \\ []) do
-    device(:mailbox_device, opts)
-  end
-
-  @spec analog_io(keyword()) :: device()
-  def analog_io(opts \\ []) do
-    device(:analog_io, opts)
-  end
-
-  @spec temperature_input(keyword()) :: device()
-  def temperature_input(opts \\ []) do
-    device(:temperature_input, opts)
-  end
-
-  @spec servo_drive(keyword()) :: device()
-  def servo_drive(opts \\ []) do
-    device(:servo_drive, opts)
-  end
-
-  @spec coupler(keyword()) :: device()
-  def coupler(opts \\ []) do
-    device(:coupler, opts)
-  end
 
   @spec from_driver(driver(), keyword()) :: device()
   def from_driver(driver, opts \\ []) when is_atom(driver) do

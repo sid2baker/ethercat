@@ -139,7 +139,7 @@ defmodule EtherCAT.Simulator.Slave.Profile.DigitalIO do
        %{
          direction: direction,
          pdo_index: pdo_base + index,
-         bit_offset: 0,
+         bit_offset: lsb_first_bit_offset(index),
          bit_size: 1,
          type: :bool,
          label: default_label(direction, index + 1),
@@ -160,6 +160,10 @@ defmodule EtherCAT.Simulator.Slave.Profile.DigitalIO do
 
   defp bit_bytes(bit_count) do
     div(bit_count + 7, 8)
+  end
+
+  defp lsb_first_bit_offset(index) do
+    div(index, 8) * 8 + (7 - rem(index, 8))
   end
 
   def init(_definition), do: %{}

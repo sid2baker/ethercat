@@ -9,8 +9,10 @@ defmodule EtherCAT.Simulator do
   alias EtherCAT.Simulator.Runtime.Snapshot
   alias EtherCAT.Simulator.Slave.Runtime.Device
   alias EtherCAT.Simulator.Runtime.Subscriptions
+  alias EtherCAT.Simulator.Udp
   alias EtherCAT.Simulator.Runtime.Wiring
 
+  @type server :: pid() | atom()
   @type fault ::
           :drop_responses
           | {:wkc_offset, integer()}
@@ -32,127 +34,213 @@ defmodule EtherCAT.Simulator do
           subscriptions: map()
         }
 
+  @type udp_link :: %{
+          link: pid(),
+          simulator: pid(),
+          endpoint: pid(),
+          ip: :inet.ip_address(),
+          port: :inet.port_number()
+        }
+
+  @spec start(keyword()) :: {:ok, server() | udp_link()} | {:error, term()}
+  def start(opts) do
+    case Keyword.has_key?(opts, :ip) do
+      true -> start_udp_runtime(opts)
+      false -> start_link(opts)
+    end
+  end
+
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
-    GenServer.start_link(__MODULE__, opts)
+    GenServer.start_link(__MODULE__, opts, Keyword.take(opts, [:name]))
   end
 
-  @spec process_datagrams(pid(), [Datagram.t()]) :: {:ok, [Datagram.t()]}
+  @spec stop(server() | pid() | udp_link()) :: :ok
+  def stop(%{link: link}), do: stop(link)
+
+  def stop(server) when is_pid(server) or is_atom(server) do
+    case server_pid(server) do
+      pid when is_pid(pid) ->
+        if Process.alive?(pid) do
+          GenServer.stop(server)
+        else
+          :ok
+        end
+
+      nil ->
+        :ok
+    end
+  end
+
+  defp start_udp_runtime(opts) do
+    ip = Keyword.fetch!(opts, :ip)
+    port = Keyword.get(opts, :port, 0)
+    simulator_opts = Keyword.drop(opts, [:ip, :port, :udp_name])
+    udp_name = Keyword.get(opts, :udp_name)
+
+    case DynamicSupervisor.start_link(strategy: :one_for_one) do
+      {:ok, link} ->
+        with {:ok, simulator} <-
+               DynamicSupervisor.start_child(link, {__MODULE__, simulator_opts}),
+             {:ok, endpoint} <-
+               DynamicSupervisor.start_child(
+                 link,
+                 {Udp,
+                  Keyword.merge([simulator: simulator, ip: ip, port: port], name_opts(udp_name))}
+               ),
+             {:ok, %{port: actual_port}} <- Udp.info(endpoint) do
+          {:ok,
+           %{
+             link: link,
+             simulator: simulator,
+             endpoint: endpoint,
+             ip: ip,
+             port: actual_port
+           }}
+        else
+          {:error, _reason} = error ->
+            Supervisor.stop(link)
+            error
+        end
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp name_opts(nil), do: []
+  defp name_opts(name), do: [name: name]
+
+  defp server_ref(%{simulator: simulator}), do: simulator
+  defp server_ref(server), do: server
+
+  defp server_pid(server) when is_pid(server), do: server
+  defp server_pid(server) when is_atom(server), do: Process.whereis(server)
+
+  @spec process_datagrams(server() | udp_link(), [Datagram.t()]) :: {:ok, [Datagram.t()]}
   def process_datagrams(server, datagrams) do
-    GenServer.call(server, {:process_datagrams, datagrams})
+    GenServer.call(server_ref(server), {:process_datagrams, datagrams})
   end
 
-  @spec info(pid()) :: {:ok, map()} | {:error, :not_found | :timeout}
+  @spec info(server() | udp_link()) :: {:ok, map()} | {:error, :not_found | :timeout}
   def info(server) do
-    GenServer.call(server, :info, 5_000)
+    GenServer.call(server_ref(server), :info, 5_000)
   catch
     :exit, {:noproc, _} -> {:error, :not_found}
     :exit, {:timeout, _} -> {:error, :timeout}
   end
 
-  @spec slave_info(pid(), atom()) :: {:ok, map()} | {:error, :not_found | :timeout}
+  @spec slave_info(server() | udp_link(), atom()) ::
+          {:ok, map()} | {:error, :not_found | :timeout}
   def slave_info(server, slave_name) do
-    GenServer.call(server, {:slave_info, slave_name}, 5_000)
+    GenServer.call(server_ref(server), {:slave_info, slave_name}, 5_000)
   catch
     :exit, {:noproc, _} -> {:error, :not_found}
     :exit, {:timeout, _} -> {:error, :timeout}
   end
 
-  @spec device_snapshot(pid(), atom()) :: {:ok, map()} | {:error, :not_found | :timeout}
+  @spec device_snapshot(server() | udp_link(), atom()) ::
+          {:ok, map()} | {:error, :not_found | :timeout}
   def device_snapshot(server, slave_name) do
-    GenServer.call(server, {:device_snapshot, slave_name}, 5_000)
+    GenServer.call(server_ref(server), {:device_snapshot, slave_name}, 5_000)
   catch
     :exit, {:noproc, _} -> {:error, :not_found}
     :exit, {:timeout, _} -> {:error, :timeout}
   end
 
-  @spec signal_snapshot(pid(), atom(), atom()) ::
+  @spec signal_snapshot(server() | udp_link(), atom(), atom()) ::
           {:ok, map()} | {:error, :not_found | :unknown_signal | :timeout}
   def signal_snapshot(server, slave_name, signal_name) do
-    GenServer.call(server, {:signal_snapshot, slave_name, signal_name}, 5_000)
+    GenServer.call(server_ref(server), {:signal_snapshot, slave_name, signal_name}, 5_000)
   catch
     :exit, {:noproc, _} -> {:error, :not_found}
     :exit, {:timeout, _} -> {:error, :timeout}
   end
 
-  @spec connection_snapshot(pid()) :: {:ok, [connection()]} | {:error, :not_found | :timeout}
+  @spec connection_snapshot(server() | udp_link()) ::
+          {:ok, [connection()]} | {:error, :not_found | :timeout}
   def connection_snapshot(server) do
-    GenServer.call(server, :connection_snapshot, 5_000)
+    GenServer.call(server_ref(server), :connection_snapshot, 5_000)
   catch
     :exit, {:noproc, _} -> {:error, :not_found}
     :exit, {:timeout, _} -> {:error, :timeout}
   end
 
-  @spec inject_fault(pid(), fault()) :: :ok | {:error, :not_found}
+  @spec inject_fault(server() | udp_link(), fault()) :: :ok | {:error, :not_found}
   def inject_fault(server, fault) do
-    GenServer.call(server, {:inject_fault, fault})
+    GenServer.call(server_ref(server), {:inject_fault, fault})
   end
 
-  @spec clear_faults(pid()) :: :ok
+  @spec clear_faults(server() | udp_link()) :: :ok
   def clear_faults(server) do
-    GenServer.call(server, :clear_faults)
+    GenServer.call(server_ref(server), :clear_faults)
   end
 
-  @spec output_value(pid(), atom()) :: {:ok, non_neg_integer()} | {:error, :not_found}
+  @spec output_value(server() | udp_link(), atom()) ::
+          {:ok, non_neg_integer()} | {:error, :not_found}
   def output_value(server, slave_name) do
-    GenServer.call(server, {:output_value, slave_name})
+    GenServer.call(server_ref(server), {:output_value, slave_name})
   end
 
-  @spec signals(pid(), atom()) :: {:ok, [atom()]} | {:error, :not_found}
+  @spec signals(server() | udp_link(), atom()) :: {:ok, [atom()]} | {:error, :not_found}
   def signals(server, slave_name) do
-    GenServer.call(server, {:signals, slave_name})
+    GenServer.call(server_ref(server), {:signals, slave_name})
   end
 
-  @spec signal_definitions(pid(), atom()) ::
+  @spec signal_definitions(server() | udp_link(), atom()) ::
           {:ok, %{optional(atom()) => map()}} | {:error, :not_found}
   def signal_definitions(server, slave_name) do
-    GenServer.call(server, {:signal_definitions, slave_name})
+    GenServer.call(server_ref(server), {:signal_definitions, slave_name})
   end
 
-  @spec get_value(pid(), atom(), atom()) ::
+  @spec get_value(server() | udp_link(), atom(), atom()) ::
           {:ok, term()} | {:error, :not_found | :unknown_signal}
   def get_value(server, slave_name, signal_name) do
-    GenServer.call(server, {:get_value, slave_name, signal_name})
+    GenServer.call(server_ref(server), {:get_value, slave_name, signal_name})
   end
 
-  @spec set_value(pid(), atom(), atom(), term()) ::
+  @spec set_value(server() | udp_link(), atom(), atom(), term()) ::
           :ok | {:error, :not_found | :unknown_signal | :invalid_value}
   def set_value(server, slave_name, signal_name, value) do
-    GenServer.call(server, {:set_value, slave_name, signal_name, value})
+    GenServer.call(server_ref(server), {:set_value, slave_name, signal_name, value})
   end
 
-  @spec connections(pid()) :: {:ok, [connection()]} | {:error, :not_found | :timeout}
+  @spec connections(server() | udp_link()) ::
+          {:ok, [connection()]} | {:error, :not_found | :timeout}
   def connections(server) do
-    GenServer.call(server, :connections, 5_000)
+    GenServer.call(server_ref(server), :connections, 5_000)
   catch
     :exit, {:noproc, _} -> {:error, :not_found}
     :exit, {:timeout, _} -> {:error, :timeout}
   end
 
-  @spec connect(pid(), signal_ref(), signal_ref()) ::
+  @spec connect(server() | udp_link(), signal_ref(), signal_ref()) ::
           :ok | {:error, :not_found | :unknown_signal | :invalid_value}
   def connect(server, source, target) do
-    GenServer.call(server, {:connect, source, target})
+    GenServer.call(server_ref(server), {:connect, source, target})
   end
 
-  @spec disconnect(pid(), signal_ref(), signal_ref()) :: :ok | {:error, :not_found}
+  @spec disconnect(server() | udp_link(), signal_ref(), signal_ref()) ::
+          :ok | {:error, :not_found}
   def disconnect(server, source, target) do
-    GenServer.call(server, {:disconnect, source, target})
+    GenServer.call(server_ref(server), {:disconnect, source, target})
   end
 
-  @spec subscribe(pid(), atom(), atom() | :all, pid()) :: :ok | {:error, :not_found}
+  @spec subscribe(server() | udp_link(), atom(), atom() | :all, pid()) ::
+          :ok | {:error, :not_found}
   def subscribe(server, slave_name, signal_name, subscriber) do
-    GenServer.call(server, {:subscribe, slave_name, signal_name, subscriber})
+    GenServer.call(server_ref(server), {:subscribe, slave_name, signal_name, subscriber})
   end
 
-  @spec unsubscribe(pid(), atom(), atom() | :all, pid()) :: :ok | {:error, :not_found}
+  @spec unsubscribe(server() | udp_link(), atom(), atom() | :all, pid()) ::
+          :ok | {:error, :not_found}
   def unsubscribe(server, slave_name, signal_name, subscriber) do
-    GenServer.call(server, {:unsubscribe, slave_name, signal_name, subscriber})
+    GenServer.call(server_ref(server), {:unsubscribe, slave_name, signal_name, subscriber})
   end
 
-  @spec output_image(pid(), atom()) :: {:ok, binary()} | {:error, :not_found}
+  @spec output_image(server() | udp_link(), atom()) :: {:ok, binary()} | {:error, :not_found}
   def output_image(server, slave_name) do
-    GenServer.call(server, {:output_image, slave_name})
+    GenServer.call(server_ref(server), {:output_image, slave_name})
   end
 
   @impl true

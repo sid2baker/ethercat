@@ -49,7 +49,9 @@ private slave runtime and profile modules under `lib/ethercat/simulator/slave/`.
 
 Main entry points:
 
-- `start_link/1` — start a simulator with one or more devices
+- `start_link/1` — start only the in-memory simulator core
+- `start/1` — start the common public simulator runtime
+- `stop/1` — stop either a simulator core or a combined simulator-plus-UDP runtime
 - `process_datagrams/2` — execute EtherCAT datagrams directly
 - `inject_fault/2` / `clear_faults/1` — deterministic fault injection
 - `info/1`, `device_snapshot/2`, `signal_snapshot/3`, `connection_snapshot/1`
@@ -90,6 +92,7 @@ physical hardware.
 
 `EtherCAT.Simulator` itself is transport-agnostic.
 
-- `EtherCAT.Simulator.Udp` exposes it over a real UDP socket and is the current
-  end-to-end path used by integration tests.
+- `EtherCAT.Simulator.Udp` exposes it over a real UDP socket.
+- `start/1` is the convenience entry point for the common simulator-plus-UDP
+  setup used by integration tests and tooling.
 - Raw-socket simulation is intentionally separate and not part of this module.
