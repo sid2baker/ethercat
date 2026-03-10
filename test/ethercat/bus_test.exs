@@ -260,7 +260,7 @@ defmodule EtherCAT.BusTest do
     assert_sent_transport("pri")
     secondary = assert_sent_transport("sec")
 
-    send(bus, {VintageNet, ["interface", "pri", "lower_up"], true, false, %{}})
+    send(bus, {:ethercat_link, "pri", true, false})
     reply_transport(bus, secondary, fn dg -> %{dg | data: <<0x33, 0x33>>, wkc: 1} end)
 
     assert {:ok, [%{data: <<0x33, 0x33>>, wkc: 1}]} = Task.await(read)

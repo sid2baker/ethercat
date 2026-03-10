@@ -14,16 +14,18 @@ defmodule Probe do
   @ethertype 0x88A4
   @broadcast_mac <<0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF>>
 
+  alias EtherCAT.Bus.InterfaceInfo
+
   def run(interface, opts \\ []) do
-    frames    = Keyword.get(opts, :frames, 20)
+    frames = Keyword.get(opts, :frames, 20)
     timeout_ms = Keyword.get(opts, :timeout_ms, 200)
 
     IO.puts("\nRaw socket probe — #{interface}, #{frames} frames, #{timeout_ms}ms timeout")
     IO.puts(String.duplicate("-", 60))
 
     # --- interface info -------------------------------------------------------
-    lower_up = VintageNet.get(["interface", interface, "lower_up"])
-    mac_str  = VintageNet.get(["interface", interface, "mac_address"])
+    lower_up = InterfaceInfo.carrier_up?(interface)
+    {:ok, mac_str} = InterfaceInfo.mac_address_string(interface)
     IO.puts("  lower_up : #{inspect(lower_up)}")
     IO.puts("  mac      : #{inspect(mac_str)}")
 
@@ -48,7 +50,7 @@ defmodule Probe do
     results =
       Enum.map(1..frames, fn i ->
         frame = build_brd_frame(src_mac, i)
-        dest  = sockaddr_ll(idx, @broadcast_mac)
+        dest = sockaddr_ll(idx, @broadcast_mac)
 
         t0 = System.monotonic_time(:microsecond)
         :ok = :socket.sendto(sock, frame, dest)
@@ -67,17 +69,19 @@ defmodule Probe do
 
     :socket.close(sock)
 
-    ok  = Enum.count(results, &match?({:ok, _}, &1))
+    ok = Enum.count(results, &match?({:ok, _}, &1))
     err = Enum.count(results, &(&1 == :timeout))
     rtts = for {:ok, r} <- results, do: r
 
     IO.puts("\n  ok/timeout : #{ok}/#{err}")
+
     if rtts != [] do
       sorted = Enum.sort(rtts)
       IO.puts("  min RTT    : #{List.first(sorted)} µs")
       IO.puts("  avg RTT    : #{div(Enum.sum(sorted), length(sorted))} µs")
       IO.puts("  max RTT    : #{List.last(sorted)} µs")
     end
+
     :ok
   end
 
@@ -90,6 +94,7 @@ defmodule Probe do
 
       {:select, select_info} ->
         {:select_info, _, ref} = select_info
+
         receive do
           {:"$socket", ^sock, :select, ^ref} ->
             case :socket.recvmsg(sock, 0, 0, :nowait) do
@@ -138,13 +143,17 @@ defmodule Probe do
   end
 
   defp decode_mac(nil), do: <<0, 0, 0, 0, 0, 0>>
+
   defp decode_mac(s) do
     s |> String.split(":") |> Enum.map(&String.to_integer(&1, 16)) |> :binary.list_to_bin()
   end
 
   defp sockaddr_ll(ifindex, mac \\ <<0::48>>) do
     mac_padded = if byte_size(mac) < 8, do: mac <> <<0::16>>, else: mac
-    addr = <<@ethertype::16-big, ifindex::32-native, 0::16, 0::8, 6::8, mac_padded::binary-size(8)>>
+
+    addr =
+      <<@ethertype::16-big, ifindex::32-native, 0::16, 0::8, 6::8, mac_padded::binary-size(8)>>
+
     %{family: @af_packet, addr: addr}
   end
 

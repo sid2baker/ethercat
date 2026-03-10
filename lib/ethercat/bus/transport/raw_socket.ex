@@ -5,7 +5,7 @@ defmodule EtherCAT.Bus.Transport.RawSocket do
   Sends and receives full Ethernet frames with EtherType 0x88A4.
   Implements the `EtherCAT.Bus.Transport` behaviour.
 
-  Uses VintageNet for MAC address lookup and `:net` for interface index.
+  Uses sysfs for MAC address lookup and `:net` for interface index.
   The EtherCAT payload (from `Bus.Frame.encode/1`) is wrapped in a standard
   Ethernet frame internally — callers only deal with EtherCAT payloads.
   """
@@ -14,6 +14,8 @@ defmodule EtherCAT.Bus.Transport.RawSocket do
 
   # Suppress conflict with Kernel.send/2 — this module defines its own send/2
   import Kernel, except: [send: 2]
+
+  alias EtherCAT.Bus.InterfaceInfo
 
   @af_packet 17
   @ethertype 0x88A4
@@ -143,12 +145,12 @@ defmodule EtherCAT.Bus.Transport.RawSocket do
   def open?(%__MODULE__{}), do: true
 
   @impl true
-  @doc "Returns the network interface name for telemetry and VintageNet subscriptions."
+  @doc "Returns the network interface name for telemetry and link monitoring."
   @spec name(t()) :: String.t()
   def name(%__MODULE__{interface: iface}), do: iface
 
   @impl true
-  @doc "Returns the interface name (used for VintageNet carrier subscriptions)."
+  @doc "Returns the interface name used by the bus link monitor."
   @spec interface(t()) :: String.t()
   def interface(%__MODULE__{interface: iface}), do: iface
 
@@ -229,19 +231,7 @@ defmodule EtherCAT.Bus.Transport.RawSocket do
   end
 
   defp mac_address(interface) do
-    case VintageNet.get(["interface", interface, "mac_address"]) do
-      mac_str when is_binary(mac_str) ->
-        mac =
-          mac_str
-          |> String.split(":")
-          |> Enum.map(&String.to_integer(&1, 16))
-          |> :binary.list_to_bin()
-
-        {:ok, mac}
-
-      nil ->
-        {:error, {:no_mac_address, interface}}
-    end
+    InterfaceInfo.mac_address(interface)
   end
 
   # -- sockaddr_ll ------------------------------------------------------------

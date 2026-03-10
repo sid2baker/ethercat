@@ -3,6 +3,7 @@ defmodule EtherCAT.Bus.Link.Redundant do
 
   @behaviour EtherCAT.Bus.Link
 
+  alias EtherCAT.Bus.InterfaceInfo
   alias EtherCAT.Bus.Frame
   alias EtherCAT.Telemetry
 
@@ -438,6 +439,6 @@ defmodule EtherCAT.Bus.Link.Redundant do
   end
 
   defp carrier_up?(interface) do
-    VintageNet.get(["interface", interface, "lower_up"]) == true
+    InterfaceInfo.carrier_up?(interface)
   end
 end

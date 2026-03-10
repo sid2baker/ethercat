@@ -79,8 +79,8 @@ defmodule EtherCAT.Bus.Transport do
   @doc """
   Returns the network interface name, or `nil` if not applicable.
 
-  Used to subscribe to VintageNet carrier events. Returns `nil` for transports
-  that don't rely on a named OS interface (e.g. `UdpSocket`).
+  Used by the internal bus link monitor. Returns `nil` for transports that
+  don't rely on a named OS interface (e.g. `UdpSocket`).
   """
   @callback interface(t()) :: String.t() | nil
 end

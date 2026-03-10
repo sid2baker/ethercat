@@ -18,6 +18,7 @@ defmodule EtherCAT.Bus do
   require Logger
 
   alias EtherCAT.Bus.{Datagram, Frame, InFlight, Result, Submission, Transaction}
+  alias EtherCAT.Bus.LinkMonitor
   alias EtherCAT.Bus.Link.{Redundant, SinglePort}
   alias EtherCAT.Telemetry
 
@@ -93,9 +94,8 @@ defmodule EtherCAT.Bus do
     frame_timeout_ms = Keyword.get(opts, :frame_timeout_ms, 25)
     link_opts = Keyword.drop(opts, [:name, :link_mod])
 
-    with {:ok, link} <- link_mod.open(link_opts) do
-      subscribe_interfaces(link_mod.interfaces(link))
-
+    with {:ok, link} <- link_mod.open(link_opts),
+         {:ok, _link_monitor} <- start_link_monitor(self(), link_mod.interfaces(link)) do
       {:ok, :idle,
        %__MODULE__{
          link: link,
@@ -164,7 +164,7 @@ defmodule EtherCAT.Bus do
 
   def handle_event(
         :info,
-        {VintageNet, ["interface", ifname, "lower_up"], _old, false, _meta},
+        {:ethercat_link, ifname, _old, false},
         state,
         data
       )
@@ -180,7 +180,7 @@ defmodule EtherCAT.Bus do
 
   def handle_event(
         :info,
-        {VintageNet, ["interface", ifname, "lower_up"], _old, true, _meta},
+        {:ethercat_link, ifname, _old, true},
         :down,
         data
       ) do
@@ -195,7 +195,7 @@ defmodule EtherCAT.Bus do
 
   def handle_event(
         :info,
-        {VintageNet, ["interface", ifname, "lower_up"], _old, true, _meta},
+        {:ethercat_link, ifname, _old, true},
         state,
         data
       )
@@ -206,7 +206,7 @@ defmodule EtherCAT.Bus do
     end
   end
 
-  def handle_event(:info, {VintageNet, _, _, _, _}, _state, _data) do
+  def handle_event(:info, {:ethercat_link, _, _, _}, _state, _data) do
     :keep_state_and_data
   end
 
@@ -646,10 +646,10 @@ defmodule EtherCAT.Bus do
   defp submission_age_us(%Submission{enqueued_at_us: enqueued_at_us}, now_us),
     do: now_us - enqueued_at_us
 
-  defp subscribe_interfaces(interfaces) do
-    interfaces
-    |> Enum.uniq()
-    |> Enum.each(&VintageNet.subscribe(["interface", &1, "lower_up"]))
+  defp start_link_monitor(_owner, []), do: {:ok, nil}
+
+  defp start_link_monitor(owner, interfaces) do
+    LinkMonitor.start_link(owner, interfaces)
   end
 
   defp link_name(%{link: link, link_mod: link_mod}), do: link_mod.name(link)

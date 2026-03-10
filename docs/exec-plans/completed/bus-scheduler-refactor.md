@@ -350,13 +350,13 @@ to each original caller with results in that transaction's original order.
 
 ## Carrier Monitoring and Reconnect Ownership
 
-`Bus` should own VintageNet subscriptions and reconnect coordination.
+`Bus` should own link monitoring and reconnect coordination.
 
 Today the `SinglePort` process subscribes directly. That should move to `Bus.init/1`.
 
 The active link adapter should expose enough interface metadata for `Bus` to decide whether:
 - carrier monitoring applies
-- which interface(s) to subscribe to
+- which interface(s) to monitor
 
 Do not add a generic `subscribe/1` callback. Subscription ownership belongs with the process
 that owns state transitions, which is `Bus`.

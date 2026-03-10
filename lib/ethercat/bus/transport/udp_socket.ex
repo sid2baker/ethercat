@@ -121,7 +121,7 @@ defmodule EtherCAT.Bus.Transport.UdpSocket do
   end
 
   @impl true
-  @doc "Returns `nil` — UDP sockets don't use VintageNet carrier detection."
+  @doc "Returns `nil` — UDP sockets don't use OS interface link monitoring."
   @spec interface(t()) :: nil
   def interface(%__MODULE__{}), do: nil
 

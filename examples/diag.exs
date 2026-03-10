@@ -18,6 +18,8 @@ defmodule EtherDiag do
   @ethertype_ecat 0x88A4
   @broadcast_mac <<0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF>>
 
+  alias EtherCAT.Bus.InterfaceInfo
+
   # ETH_P_ALL in network byte order (htons(0x0003) = 0x0300).
   # AF_PACKET socket() expects protocol in NBO; we pass it directly.
   @eth_p_all 0x0300
@@ -44,7 +46,7 @@ defmodule EtherDiag do
     kernel =
       case File.read("/proc/version") do
         {:ok, v} -> v |> String.split() |> Enum.at(2, "unknown")
-        _        -> "unknown"
+        _ -> "unknown"
       end
 
     IO.puts("""
@@ -54,8 +56,8 @@ defmodule EtherDiag do
       Elixir  : #{System.version()}
     """)
 
-    lower_up = VintageNet.get(["interface", interface, "lower_up"])
-    mac_str  = VintageNet.get(["interface", interface, "mac_address"])
+    lower_up = InterfaceInfo.carrier_up?(interface)
+    {:ok, mac_str} = InterfaceInfo.mac_address_string(interface)
     {:ok, idx} = :net.if_name2index(String.to_charlist(interface))
     mac = decode_mac(mac_str)
 
@@ -66,7 +68,8 @@ defmodule EtherDiag do
       ifindex  : #{idx}
     """)
 
-    if lower_up != true, do: IO.puts("  *** carrier DOWN — no frames can be sent or received ***\n")
+    if lower_up != true,
+      do: IO.puts("  *** carrier DOWN — no frames can be sent or received ***\n")
 
     {idx, mac}
   end
@@ -127,12 +130,12 @@ defmodule EtherDiag do
     IO.puts("[4] Two-socket echo test — #{timeout_ms} ms")
 
     with {:ok, tx} <- :socket.open(@af_packet, :raw, {:raw, @ethertype_ecat}),
-         :ok       <- :socket.bind(tx, sockaddr_ll(idx)),
+         :ok <- :socket.bind(tx, sockaddr_ll(idx)),
          {:ok, rx} <- :socket.open(@af_packet, :raw, {:raw, @ethertype_ecat}),
-         :ok       <- :socket.bind(rx, sockaddr_ll(idx)) do
+         :ok <- :socket.bind(rx, sockaddr_ll(idx)) do
       drain(rx)
       frame = build_brd_frame(mac, 0xEE)
-      dest  = sockaddr_ll(idx, @broadcast_mac)
+      dest = sockaddr_ll(idx, @broadcast_mac)
 
       result =
         case :socket.recvmsg(rx, 0, 0, :nowait) do
@@ -170,7 +173,7 @@ defmodule EtherDiag do
 
       case result do
         {:ok, data, rtt} ->
-          wkc  = parse_wkc(data)
+          wkc = parse_wkc(data)
           note = if rtt < 10, do: "  ← very fast, may be kernel self-loopback", else: ""
           IO.puts("  → echo in #{rtt} µs, wkc=#{inspect(wkc)}#{note}\n")
 
@@ -209,9 +212,9 @@ defmodule EtherDiag do
         results =
           Enum.map(1..n, fn i ->
             frame = build_brd_frame(mac, i)
-            dest  = sockaddr_ll(idx, @broadcast_mac)
-            :ok   = :socket.sendto(sock, frame, dest)
-            t0    = System.monotonic_time(:microsecond)
+            dest = sockaddr_ll(idx, @broadcast_mac)
+            :ok = :socket.sendto(sock, frame, dest)
+            t0 = System.monotonic_time(:microsecond)
 
             case poll_recv(sock, timeout_ms) do
               {:ok, data, t1} ->
@@ -247,13 +250,20 @@ defmodule EtherDiag do
     <<dg_len::big-16>> = <<0::1, 0::1, 0::3, 1::11>>
 
     datagram = <<
-      7::8,                # CMD = BRD
-      byte_idx::8,         # IDX
-      0::32,               # address (ADP=0, ADO=0)
-      dg_len::little-16,   # length + flags
-      0::16,               # IRQ
-      0::8,                # data (1 byte)
-      0::16                # WKC
+      # CMD = BRD
+      7::8,
+      # IDX
+      byte_idx::8,
+      # address (ADP=0, ADO=0)
+      0::32,
+      # length + flags
+      dg_len::little-16,
+      # IRQ
+      0::16,
+      # data (1 byte)
+      0::8,
+      # WKC
+      0::16
     >>
 
     # EtherCAT header: Type[15:12]=1 | R[11]=0 | Len[10:0]
@@ -294,7 +304,7 @@ defmodule EtherDiag do
           {:"$socket", ^sock, :select, ^ref} ->
             case :socket.recvmsg(sock, 0, 0, :nowait) do
               {:ok, msg} -> {:ok, iov_data(msg), System.monotonic_time(:microsecond)}
-              _          -> :timeout
+              _ -> :timeout
             end
         after
           timeout_ms ->
@@ -342,9 +352,9 @@ defmodule EtherDiag do
 
   defp drain(sock) do
     case :socket.recvmsg(sock, 0, 0, :nowait) do
-      {:ok, _}      -> drain(sock)
+      {:ok, _} -> drain(sock)
       {:select, si} -> :socket.cancel(sock, si)
-      _             -> :ok
+      _ -> :ok
     end
   end
 
@@ -360,7 +370,11 @@ defmodule EtherDiag do
   # sendto destination MAC
   defp sockaddr_ll(ifindex, mac) when is_binary(mac) do
     pad = max(0, 8 - byte_size(mac))
-    addr = <<@ethertype_ecat::16-big, ifindex::32-native, 0::16, 0::8, 6::8, mac::binary, 0::size(pad * 8)>>
+
+    addr =
+      <<@ethertype_ecat::16-big, ifindex::32-native, 0::16, 0::8, 6::8, mac::binary,
+        0::size(pad * 8)>>
+
     %{family: @af_packet, addr: addr}
   end
 
@@ -371,7 +385,9 @@ defmodule EtherDiag do
   end
 
   defp decode_mac(nil), do: <<0, 0, 0, 0, 0, 0>>
-  defp decode_mac(s), do: s |> String.split(":") |> Enum.map(&String.to_integer(&1, 16)) |> :binary.list_to_bin()
+
+  defp decode_mac(s),
+    do: s |> String.split(":") |> Enum.map(&String.to_integer(&1, 16)) |> :binary.list_to_bin()
 
   defp pad(i), do: String.pad_leading(to_string(i), 2)
   defp bar, do: String.duplicate("─", 60)

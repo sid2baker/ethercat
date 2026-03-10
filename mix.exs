@@ -29,7 +29,6 @@ defmodule EtherCAT.MixProject do
   defp deps do
     [
       {:telemetry, "~> 1.0"},
-      {:vintage_net, "~> 0.13"},
       {:ex_doc, "~> 0.36", only: :dev, runtime: false},
       {:usage_rules, "~> 1.1", only: [:dev]}
     ]
