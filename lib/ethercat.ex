@@ -10,6 +10,10 @@ defmodule EtherCAT do
   - `DC` owns distributed-clock initialization and runtime maintenance
   - `Bus` serializes all frame I/O
 
+  Runtime footprint is intentionally small: no NIFs, no kernel module, and a
+  minimal runtime dependency surface. The bus uses raw sockets, sysfs, and OTP
+  directly, with `:telemetry` as the only runtime Hex dependency.
+
   Public session lifecycle is exposed through `state/0`:
 
   - `:idle`

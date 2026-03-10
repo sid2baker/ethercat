@@ -11,10 +11,16 @@ Pure-Elixir EtherCAT master built on OTP.
 - No NIF.
 - No kernel module.
 - Nerves-first, runs on standard Linux too.
+- Minimal runtime dependency surface.
 - Best for discrete I/O, Beckhoff terminal stacks, diagnostics, and 1 ms to 10 ms cyclic loops.
 - Not the right fit for sub-millisecond hard real-time control.
 
 The entry idea is simple: the **master owns the session lifecycle**, **domains own cyclic LRW exchange**, **slaves own ESM and slave-local configuration**, and **DC owns clock discipline**. Critical domain/DC runtime faults move the public state to `:recovering`; slave-local faults are tracked separately so healthy cyclic parts can stay up.
+
+Runtime footprint is intentionally small: no NIFs, no kernel module, and only a
+minimal runtime dependency surface. The library talks to Linux directly through
+raw sockets, sysfs, and OTP, with `:telemetry` as the only runtime Hex
+dependency.
 
 ## Installation
 
@@ -29,6 +35,8 @@ Raw Ethernet socket access requires `CAP_NET_RAW` or root:
 ```bash
 sudo setcap cap_net_raw+ep _build/dev/lib/ethercat/priv/raw_socket
 ```
+
+Link monitoring is handled internally.
 
 ## Quick Start
 
