@@ -119,6 +119,11 @@ EtherCAT.start(
 
 If you understand those five roles, the rest of the API is predictable.
 
+The implementation follows the same split intentionally: `Master`, `Slave`,
+`Domain`, and `DC` are state-machine modules, while helper namespaces and the
+low-level `*.API` facades own the mechanics. When reading the code against the
+EtherCAT model, read the state-machine modules first and the helpers second.
+
 ## Lifecycle
 
 Public startup and runtime health are exposed through `EtherCAT.state/0`:

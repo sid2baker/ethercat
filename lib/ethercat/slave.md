@@ -1,6 +1,7 @@
 EtherCAT State Machine (ESM) lifecycle for one physical slave device.
 
-This module is intentionally the `gen_statem` shell for one physical slave.
+This module is intentionally the `gen_statem` state-machine module for one
+physical slave.
 Bootstrap, transition walking, mailbox setup, process-data registration, health
 polling, and signal delivery live in `EtherCAT.Slave.Runtime.*` helpers so the
 main state machine can be inspected directly against the EtherCAT slave-state
@@ -13,6 +14,17 @@ mailbox configuration, process-data SM/FMMU setup, and DC signal programming.
 Typically driven by the master — use `EtherCAT.read_input/2`,
 `EtherCAT.write_output/3`, and `EtherCAT.subscribe/3` from the top-level API.
 Low-level direct access is available through `EtherCAT.Slave.API`.
+
+## State-Machine Boundary
+
+`EtherCAT.Slave` owns the ESM-facing state-machine module and the decision
+about which slave state should be entered next. Mailbox handling, process-data planning, AL-path
+walking, output staging, health polling, and latch delivery live in
+`EtherCAT.Slave.Runtime.*` and the other slave helper namespaces.
+
+One consequence is that a request like `request(:op)` may walk the required
+intermediate AL path internally, while the state-machine module itself changes
+state only once that full path succeeds or fails.
 
 ## State Transitions
 
@@ -28,8 +40,8 @@ stateDiagram-v2
     init --> preop: auto-advance succeeds
     init --> init: auto-advance retries
     init --> bootstrap: bootstrap is requested
-    init --> safeop: SAFEOP is requested
-    init --> op: OP is requested
+    init --> safeop: SAFEOP request path succeeds
+    init --> op: OP request path succeeds
     bootstrap --> init: INIT is requested
     preop --> safeop: SAFEOP is requested
     preop --> op: OP is requested

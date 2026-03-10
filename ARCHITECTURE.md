@@ -25,7 +25,7 @@ EtherCAT.Application
 │
 ├── EtherCAT.SlaveSupervisor     (simple_one_for_one — :temporary slaves)
 │   └── EtherCAT.Slave           (gen_statem per named slave — ESM lifecycle, checked PREOP setup, checked SAFEOP sync/latch setup)
-│       ├── EtherCAT.SII         (EEPROM reader — stateless, called from Slave.init)
+│       ├── EtherCAT.Slave.ESC.SII (EEPROM reader — stateless, called from Slave.init)
 │       ├── EtherCAT.Slave.Driver (behaviour contract for user drivers)
 │       ├── EtherCAT.Slave.Sync.Plan (pure sync/latch register planning)
 │       └── EtherCAT.Slave.ESC.Registers (ESC register address map — pure functions)
@@ -33,6 +33,15 @@ EtherCAT.Application
 
 Registry: `EtherCAT.Registry` (local). Slaves register as `{:slave, name}`;
 Domains register as `{:domain, id}`.
+
+The state-machine modules `EtherCAT.Master`, `EtherCAT.Slave`,
+`EtherCAT.Domain`, and `EtherCAT.DC` are intentionally small `gen_statem`
+entry points. They own state
+transitions, subsystem event routing, and public lifecycle/status replies.
+Low-level mechanics live in helper namespaces (`EtherCAT.Master.*`,
+`EtherCAT.Slave.Runtime.*`, `EtherCAT.Domain.*`, `EtherCAT.DC.*`) so the
+state-machine files can be checked against the EtherCAT model without mixing in all
+operational detail inline.
 
 ---
 
@@ -168,9 +177,9 @@ Each subsystem has a co-located module doc / source entry file:
 
 | File | Component |
 |------|-----------|
-| `lib/ethercat/slave.ex` | Slave gen_statem shell — ESM lifecycle, driver boundary, PREOP/SAFEOP/OP routing |
-| `lib/ethercat/master.ex` | Master gen_statem shell — discovery, activation, recovery, public status |
-| `lib/ethercat/domain.ex` | Domain gen_statem shell — cyclic LRW ownership, ETS image contract, hot-path coordination |
+| `lib/ethercat/slave.ex` | Slave gen_statem state-machine module — ESM lifecycle, driver boundary, PREOP/SAFEOP/OP routing |
+| `lib/ethercat/master.ex` | Master gen_statem state-machine module — discovery, activation, recovery, public status |
+| `lib/ethercat/domain.ex` | Domain gen_statem state-machine module — cyclic LRW ownership, ETS image contract, hot-path coordination |
 | `lib/ethercat/bus.ex` | Bus scheduler — transaction classes, frame dispatch, transport boundary |
 | `lib/ethercat/dc.ex` | DC runtime — maintenance loop, lock/runtime status, master notifications |
 | `docs/references/ethercat-esc-technology.md` | ESC hardware: FMMU, SM, DC, ESM, SII, interrupts |

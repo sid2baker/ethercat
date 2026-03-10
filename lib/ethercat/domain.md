@@ -3,10 +3,20 @@ Cyclic process image for one logical EtherCAT domain.
 One Domain runs per configured domain ID. Slaves register their PDOs during
 PREOP, then the domain runs a self-timed LRW exchange each cycle.
 
-`EtherCAT.Domain` is intentionally the `gen_statem` shell for the domain
+`EtherCAT.Domain` is intentionally the `gen_statem` state-machine module for the domain
 lifecycle. Direct ETS access and low-level control calls live in
 `EtherCAT.Domain.API`, while cycle execution and image handling live in
 `EtherCAT.Domain.*` helpers.
+
+## State-Machine Boundary
+
+`EtherCAT.Domain` owns only the actual domain states and their transitions:
+open, cycling, and stopped. The state-machine module should not inline cycle execution,
+process-image reads/writes, or telemetry assembly.
+
+Those mechanics live in `EtherCAT.Domain.Cycle`, `EtherCAT.Domain.Image`,
+`EtherCAT.Domain.Calls`, and `EtherCAT.Domain.Status`. `EtherCAT.Domain.API`
+provides the direct ETS-backed low-level facade.
 
 ## States
 
@@ -22,13 +32,14 @@ stateDiagram-v2
     open --> cycling: start_cycling and layout preparation succeed
     cycling --> stopped: stop_cycling or miss threshold is reached
     stopped --> cycling: start_cycling
-
-    state cycling {
-        [*] --> healthy
-        healthy --> invalid: WKC mismatch or transport miss
-        invalid --> healthy: next LRW cycle is valid
-    }
 ```
+
+Within `:cycling`, domain health is tracked separately as `cycle_health`:
+
+- `:healthy` — the latest LRW cycle was valid
+- `:invalid` — the latest LRW cycle had a transport miss or invalid response
+
+That health classification is runtime data, not a separate `gen_statem` state.
 
 ## Hot Path (Direct ETS)
 

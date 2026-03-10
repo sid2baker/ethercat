@@ -1,12 +1,26 @@
 Master orchestrates startup, activation, and runtime recovery for the EtherCAT session.
 
-This module is intentionally the `gen_statem` shell for the master lifecycle.
+This module is intentionally the `gen_statem` state-machine module for the
+master lifecycle.
 Protocol-heavy work lives in `EtherCAT.Master.*` helpers so the state machine
 can be reviewed against the EtherCAT startup and continuous-loop model without
 also wading through all implementation details inline.
 
 The master owns the public lifecycle exposed via `EtherCAT.state/0`. Each state
 maps 1:1 to an actual `EtherCAT.Master` `gen_statem` state.
+
+## State-Machine Boundary
+
+`EtherCAT.Master` should mention domains, slaves, and DC as session concepts:
+their events, tracked refs, and the policy that decides the next master state.
+
+It should not perform low-level subsystem mechanics inline. Calls like
+requesting slave transitions, authorizing reconnects, starting/stopping
+domains, or querying DC runtime status belong in `EtherCAT.Master.*` helpers
+such as `Activation`, `Recovery`, `Status`, `Calls`, and `Startup`.
+
+That split is deliberate: the state-machine module stays readable as a session
+state machine, while the helpers own the operational detail.
 
 ## Lifecycle States
 

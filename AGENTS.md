@@ -6,6 +6,8 @@
 
 - `lib/ethercat.ex`, `lib/ethercat/master.ex`, `lib/ethercat/slave.ex`
 - `lib/ethercat/domain.ex`, `lib/ethercat/bus.ex`, `lib/ethercat/dc.ex`
+- source-adjacent briefings:
+  `lib/ethercat/master.md`, `lib/ethercat/slave.md`, `lib/ethercat/domain.md`, `lib/ethercat/dc.md`
 - `test/` — behavioral truth and regression coverage
 - `ARCHITECTURE.md` — subsystem boundaries and runtime data flow
 

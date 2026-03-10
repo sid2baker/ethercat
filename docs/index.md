@@ -1,9 +1,10 @@
 # Documentation Index
 
-This repository treats `docs/` as the system of record for agent-facing
-knowledge.
+Use this file as the entry point for repository documentation. Keep it small,
+stable, and cross-linked.
 
-Use this file as the entry point. Keep it small, stable, and cross-linked.
+Implementation truth lives first in source, tests, and module docs. `docs/`
+adds design history, execution plans, and external references around that code.
 
 ## Start Here
 
@@ -34,7 +35,7 @@ Use this file as the entry point. Keep it small, stable, and cross-linked.
 - [lib/ethercat/master.ex](/home/n0gg1n/Development/Work/opencode/ethercat/lib/ethercat/master.ex)
   Master scan, configure, activate, recover, and public status flow.
 - [lib/ethercat/slave.ex](/home/n0gg1n/Development/Work/opencode/ethercat/lib/ethercat/slave.ex)
-  Slave ESM shell, driver contract, and transition ownership.
+  Slave ESM state-machine module, driver contract, and transition ownership.
 - [lib/ethercat/domain.ex](/home/n0gg1n/Development/Work/opencode/ethercat/lib/ethercat/domain.ex)
   Domain cycle loop ownership, ETS image contract, and LRW coordination.
 - [lib/ethercat/bus.ex](/home/n0gg1n/Development/Work/opencode/ethercat/lib/ethercat/bus.ex)
