@@ -3,11 +3,24 @@ defmodule EtherCAT.IntegrationSupport.Drivers.EL1809 do
 
   @behaviour EtherCAT.Slave.Driver
 
-  @impl true
-  def identity, do: nil
+  alias EtherCAT.Simulator.Slave.Definition
 
   @impl true
-  def simulator_definition(_config), do: nil
+  def identity do
+    %{vendor_id: 0x0000_0002, product_code: 0x0711_3052}
+  end
+
+  @impl true
+  def simulator_definition(_config) do
+    Definition.build(:digital_io,
+      mode: :channels,
+      direction: :input,
+      channels: 16,
+      vendor_id: 0x0000_0002,
+      product_code: 0x0711_3052,
+      serial_number: 0
+    )
+  end
 
   @channels 1..16
             |> Enum.map(fn channel ->

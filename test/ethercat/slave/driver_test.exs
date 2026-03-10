@@ -1,6 +1,7 @@
 defmodule EtherCAT.Slave.DriverTest do
   use ExUnit.Case, async: true
 
+  alias EtherCAT.IntegrationSupport.Drivers.{EL1809, EL2809}
   alias EtherCAT.Slave.Driver
   alias EtherCAT.Simulator.Slave
 
@@ -74,5 +75,49 @@ defmodule EtherCAT.Slave.DriverTest do
     assert_raise ArgumentError, ~r/does not implement simulator_definition\/1/, fn ->
       Slave.from_driver(NoSimulationDriver)
     end
+  end
+
+  test "EL1809 example driver hydrates a 16-channel input simulator device" do
+    definition = Slave.from_driver(EL1809, name: :inputs)
+
+    assert definition.name == :inputs
+    assert definition.profile == :digital_io
+    assert definition.vendor_id == 0x0000_0002
+    assert definition.product_code == 0x0711_3052
+
+    assert Driver.identity(EL1809) == %{
+             vendor_id: 0x0000_0002,
+             product_code: 0x0711_3052,
+             revision: :any
+           }
+
+    assert Enum.count(Map.keys(definition.signals)) == 16
+
+    assert match?(
+             %{direction: :input, type: :bool, bit_size: 1},
+             Map.fetch!(definition.signals, :ch1)
+           )
+  end
+
+  test "EL2809 example driver hydrates a 16-channel output simulator device" do
+    definition = Slave.from_driver(EL2809, name: :outputs)
+
+    assert definition.name == :outputs
+    assert definition.profile == :digital_io
+    assert definition.vendor_id == 0x0000_0002
+    assert definition.product_code == 0x0AF9_3052
+
+    assert Driver.identity(EL2809) == %{
+             vendor_id: 0x0000_0002,
+             product_code: 0x0AF9_3052,
+             revision: :any
+           }
+
+    assert Enum.count(Map.keys(definition.signals)) == 16
+
+    assert match?(
+             %{direction: :output, type: :bool, bit_size: 1},
+             Map.fetch!(definition.signals, :ch16)
+           )
   end
 end
