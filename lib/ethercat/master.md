@@ -65,7 +65,7 @@ sequenceDiagram
         Master->>Slave: request SAFEOP
         Master->>Slave: request OP
     end
-    Master-->>App: state becomes preop_ready or operational
+    Master-->>App: state becomes preop_ready, activation_blocked, or operational
 ```
 
 ## Runtime Fault Recovery
@@ -83,7 +83,7 @@ sequenceDiagram
     Domain-->>Master: cycle is invalid or domain stops
     Slave-->>Master: slave goes down, retreats, or reconnects
     DC-->>Master: runtime fails or lock is lost
-    opt a domain or DC fault is critical
+    opt a critical runtime fault is present
         Master-->>App: state becomes recovering
     end
     opt unaffected domains remain valid
@@ -115,19 +115,24 @@ stateDiagram-v2
     discovering --> preop_ready: startup completes without activation
     discovering --> operational: startup completes and activation succeeds
     discovering --> activation_blocked: startup completes but activation is incomplete
-    discovering --> idle: configuration fails, stop, or bus down
+    discovering --> idle: startup fails or stop/0
     awaiting_preop --> preop_ready: all slaves reached PREOP, no activation requested
     awaiting_preop --> operational: all slaves reached PREOP and activation succeeds
     awaiting_preop --> activation_blocked: all slaves reached PREOP but activation is incomplete
-    awaiting_preop --> idle: timeout, activation failure, stop, or bus down
+    awaiting_preop --> idle: timeout, fatal activation failure, or stop/0
     preop_ready --> operational: activate/0 succeeds
     preop_ready --> activation_blocked: activate/0 is incomplete
-    preop_ready --> idle: stop or bus down
+    preop_ready --> recovering: critical runtime fault
+    preop_ready --> idle: stop/0 or fatal subsystem exit
     operational --> recovering: runtime fault in domain or DC
-    operational --> idle: stop, bus down, or fatal DC policy
+    operational --> idle: stop/0 or fatal subsystem exit
     activation_blocked --> operational: activation failures clear and no runtime faults remain
     activation_blocked --> recovering: activation failures clear but runtime faults remain
-    activation_blocked --> idle: stop or bus down
-    recovering --> operational: runtime faults are cleared
-    recovering --> idle: stop, bus down, or recovery fails
+    activation_blocked --> idle: stop/0 or fatal subsystem exit
+    recovering --> operational: critical runtime faults are cleared
+    recovering --> idle: stop/0 or recovery fails
 ```
+
+Physical link loss normally moves the master into `:recovering` through
+domain/DC runtime faults. A direct transition to `:idle` is reserved for
+explicit stop, startup failure, bus-process exit, or fatal policy.

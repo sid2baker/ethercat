@@ -176,7 +176,7 @@ Required model:
 - decide per configuration whether persistent DC unlock is advisory, degraded, or fatal
 - if OP depends on DC lock, runtime loss must feed the same recovery policy as other cyclic-path faults
 
-## Current Mismatch: Reconnect vs Domain Lifecycle
+## Historical Mismatch At Review Time: Reconnect vs Domain Lifecycle
 
 ```mermaid
 flowchart LR
@@ -190,9 +190,13 @@ flowchart LR
     open -->|no| fail[Domain is cycling or stopped, registration fails with not_open]
 ```
 
-This is the core structural bug in the current resilience design. Slave-owned reconnect is trying to enter a startup-only registration phase without a master-owned domain reset.
+At the time of this review, this was the core structural bug in the resilience
+design. It is kept here as historical context for the refactor that followed.
 
-## Target Lifecycle
+## Historical Target Lifecycle At Review Time
+
+The diagrams below capture the target model proposed in this review. They are
+historically useful, but they are not the live runtime contract anymore.
 
 ### 1. Master-owned lifecycle
 

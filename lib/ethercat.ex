@@ -40,22 +40,27 @@ defmodule EtherCAT do
       discovering --> preop_ready: startup completes without activation
       discovering --> operational: startup completes and activation succeeds
       discovering --> activation_blocked: startup completes but activation is incomplete
-      discovering --> idle: configuration fails or stop/0
+      discovering --> idle: startup fails or stop/0
       awaiting_preop --> preop_ready: all slaves reached PREOP, no activation requested
       awaiting_preop --> operational: all slaves reached PREOP and activation succeeds
       awaiting_preop --> activation_blocked: all slaves reached PREOP but activation is incomplete
-      awaiting_preop --> idle: timeout, activation failure, or stop/0
+      awaiting_preop --> idle: timeout, fatal activation failure, or stop/0
       preop_ready --> operational: activate/0 succeeds
       preop_ready --> activation_blocked: activate/0 is incomplete
-      preop_ready --> idle: stop/0
+      preop_ready --> recovering: critical runtime fault
+      preop_ready --> idle: stop/0 or fatal subsystem exit
       activation_blocked --> operational: retry clears activation failures and no runtime faults remain
       activation_blocked --> recovering: activation failures clear but runtime faults remain
-      activation_blocked --> idle: stop/0 or bus down
+      activation_blocked --> idle: stop/0 or fatal subsystem exit
       operational --> recovering: runtime fault in domain or DC
-      operational --> idle: stop/0 or fatal failure
-      recovering --> operational: runtime faults are cleared
+      operational --> idle: stop/0 or fatal subsystem exit
+      recovering --> operational: critical runtime faults are cleared
       recovering --> idle: stop/0 or recovery fails
   ```
+
+  Physical link loss normally appears here as a runtime `:recovering` transition,
+  not an immediate return to `:idle`. `:idle` is reserved for explicit stop,
+  startup failure, bus-process exit, or fatal policy.
 
   ## Startup Sequence
 
@@ -90,7 +95,7 @@ defmodule EtherCAT do
           Master->>Slave: request SAFEOP
           Master->>Slave: request OP
       end
-      Master-->>App: state becomes preop_ready or operational
+      Master-->>App: state becomes preop_ready, activation_blocked, or operational
   ```
 
   ## Usage

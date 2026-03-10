@@ -58,14 +58,25 @@ The chart below documents `EtherCAT.DC.Status.lock_state`, not a separate
 
 ```mermaid
 stateDiagram-v2
+    state "disabled" as disabled
+    state "inactive" as inactive
     state "running / lock unavailable" as running_unavailable
     state "running / locking" as running_locking
     state "running / locked" as running_locked
-    [*] --> running_unavailable: no monitored stations
-    [*] --> running_locking: monitored stations are present
+
+    [*] --> disabled: no DC config
+    [*] --> inactive: DC configured, runtime not started
+    inactive --> running_unavailable: runtime starts with no monitored stations
+    inactive --> running_locking: runtime starts with monitored stations
+    running_unavailable --> running_unavailable: FRMW maintenance only
+    running_unavailable --> running_locking: monitorable stations become available
     running_locking --> running_locked: after warmup, sync diff stays within threshold
+    running_locking --> running_unavailable: no monitorable stations remain
+    running_locking --> running_locking: FRMW tick, warmup, retry, or diagnostics fail
     running_locked --> running_locking: sync diff rises above threshold
     running_locked --> running_locking: diagnostics fail
-    running_locking --> running_locking: FRMW tick, warmup, or retry
-    running_unavailable --> running_unavailable: FRMW maintenance only
+    running_locked --> running_unavailable: no monitorable stations remain
+    running_unavailable --> inactive: runtime stops
+    running_locking --> inactive: runtime stops
+    running_locked --> inactive: runtime stops
 ```
