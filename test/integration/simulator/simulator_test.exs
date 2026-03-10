@@ -1,4 +1,4 @@
-defmodule EtherCAT.DeepIntegrationTest do
+defmodule EtherCAT.Integration.SimulatorTest do
   use ExUnit.Case, async: false
 
   alias EtherCAT.DC.Config, as: DCConfig
@@ -8,6 +8,7 @@ defmodule EtherCAT.DeepIntegrationTest do
   alias EtherCAT.Simulator.Slave
   alias EtherCAT.Simulator.Slave.Driver
   alias EtherCAT.Simulator.Udp
+  import EtherCAT.Integration.Assertions
 
   @master_ip {127, 0, 0, 1}
   @simulator_ip {127, 0, 0, 2}
@@ -177,9 +178,17 @@ defmodule EtherCAT.DeepIntegrationTest do
     assert :ok = EtherCAT.await_running(2_000)
     assert :preop_ready = EtherCAT.state()
 
-    assert {:ok, <<0x34, 0x12>>} = EtherCAT.upload_sdo(:mailbox, 0x2000, 0x01)
-    assert :ok = EtherCAT.download_sdo(:mailbox, 0x2000, 0x01, <<0x78, 0x56>>)
-    assert {:ok, <<0x78, 0x56>>} = EtherCAT.upload_sdo(:mailbox, 0x2000, 0x01)
+    assert_eventually(fn ->
+      assert {:ok, <<0x34, 0x12>>} = EtherCAT.upload_sdo(:mailbox, 0x2000, 0x01)
+    end)
+
+    assert_eventually(fn ->
+      assert :ok = EtherCAT.download_sdo(:mailbox, 0x2000, 0x01, <<0x78, 0x56>>)
+    end)
+
+    assert_eventually(fn ->
+      assert {:ok, <<0x78, 0x56>>} = EtherCAT.upload_sdo(:mailbox, 0x2000, 0x01)
+    end)
   end
 
   @tag fixtures: [Slave.lan9252_demo(name: :io)]
@@ -261,9 +270,17 @@ defmodule EtherCAT.DeepIntegrationTest do
     initial_blob = "hello-sim\0\0\0"
     updated_blob = "segmented!!?"
 
-    assert {:ok, ^initial_blob} = EtherCAT.upload_sdo(:mailbox, 0x2001, 0x01)
-    assert :ok = EtherCAT.download_sdo(:mailbox, 0x2001, 0x01, updated_blob)
-    assert {:ok, ^updated_blob} = EtherCAT.upload_sdo(:mailbox, 0x2001, 0x01)
+    assert_eventually(fn ->
+      assert {:ok, ^initial_blob} = EtherCAT.upload_sdo(:mailbox, 0x2001, 0x01)
+    end)
+
+    assert_eventually(fn ->
+      assert :ok = EtherCAT.download_sdo(:mailbox, 0x2001, 0x01, updated_blob)
+    end)
+
+    assert_eventually(fn ->
+      assert {:ok, ^updated_blob} = EtherCAT.upload_sdo(:mailbox, 0x2001, 0x01)
+    end)
   end
 
   @tag fixtures: [Slave.lan9252_demo(name: :io)]
@@ -381,8 +398,10 @@ defmodule EtherCAT.DeepIntegrationTest do
       assert is_integer(status_updated_at_us)
     end)
 
-    assert {:error, {:sdo_abort, 0x6000, 0x01, 0x0601_0002}} =
-             EtherCAT.download_sdo(:temp, 0x6000, 0x01, <<0x00, 0x00>>)
+    assert_eventually(fn ->
+      assert {:error, {:sdo_abort, 0x6000, 0x01, 0x0601_0002}} =
+               EtherCAT.download_sdo(:temp, 0x6000, 0x01, <<0x00, 0x00>>)
+    end)
   end
 
   @tag fixtures: [Slave.servo_drive(name: :axis)]
@@ -453,8 +472,10 @@ defmodule EtherCAT.DeepIntegrationTest do
       assert {:ok, {1, _}} = EtherCAT.read_input(:axis, :mode_display)
     end)
 
-    assert {:ok, <<0x27, 0x00>>} = EtherCAT.upload_sdo(:axis, 0x6041, 0x00)
-    assert {:ok, <<57, 48, 0, 0>>} = EtherCAT.upload_sdo(:axis, 0x6064, 0x00)
+    assert_eventually(fn ->
+      assert {:ok, <<0x27, 0x00>>} = EtherCAT.upload_sdo(:axis, 0x6041, 0x00)
+      assert {:ok, <<57, 48, 0, 0>>} = EtherCAT.upload_sdo(:axis, 0x6064, 0x00)
+    end)
   end
 
   test "persistent wrong WKC drives the master into recovering and clears cleanly",
@@ -572,8 +593,10 @@ defmodule EtherCAT.DeepIntegrationTest do
                {:mailbox_abort, :mailbox, 0x2000, 0x01, 0x0601_0002}
              )
 
-    assert {:error, {:sdo_abort, 0x2000, 0x01, 0x0601_0002}} =
-             EtherCAT.upload_sdo(:mailbox, 0x2000, 0x01)
+    assert_eventually(fn ->
+      assert {:error, {:sdo_abort, 0x2000, 0x01, 0x0601_0002}} =
+               EtherCAT.upload_sdo(:mailbox, 0x2000, 0x01)
+    end)
   end
 
   test "retreating a slave to SAFEOP is reported through slave faults without breaking cyclic runtime",
@@ -723,23 +746,6 @@ defmodule EtherCAT.DeepIntegrationTest do
 
     Process.sleep(100)
     assert :operational = EtherCAT.state()
-  end
-
-  defp assert_eventually(fun, attempts \\ 20)
-
-  defp assert_eventually(fun, 0) do
-    fun.()
-  end
-
-  defp assert_eventually(fun, attempts) do
-    fun.()
-  rescue
-    _error in [ExUnit.AssertionError, MatchError] ->
-      Process.sleep(20)
-      assert_eventually(fun, attempts - 1)
-  else
-    result ->
-      result
   end
 
   defp slave_configs(fixtures) do

@@ -1,11 +1,5 @@
 defmodule EtherCAT.Simulator do
-  @moduledoc """
-  Simulated EtherCAT segment for deep integration tests and virtual hardware.
-
-  It hosts one or more simulated slaves and executes EtherCAT datagrams against
-  them with protocol-faithful register, AL-state, mailbox, and logical process
-  data behavior.
-  """
+  @moduledoc File.read!(Path.join(__DIR__, "simulator.md"))
 
   use GenServer
 

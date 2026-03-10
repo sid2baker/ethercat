@@ -228,7 +228,7 @@ It is also the first mailbox-capable fixture:
 
 The simulator is exercised through the normal deep integration suite in:
 
-- [`test/ethercat/deep_integration_test.exs`](/home/n0gg1n/Development/Work/opencode/ethercat/test/ethercat/deep_integration_test.exs)
+- [`test/integration/simulator/simulator_test.exs`](/home/n0gg1n/Development/Work/opencode/ethercat/test/integration/simulator/simulator_test.exs)
 
 The current suite proves:
 
@@ -443,7 +443,7 @@ The support code owns only:
 
 The current deep integration coverage lives in:
 
-- `test/ethercat/deep_integration_test.exs`
+- `test/integration/simulator/simulator_test.exs`
 
 It now covers three end-to-end flows through the real UDP transport:
 

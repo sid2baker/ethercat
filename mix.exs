@@ -27,6 +27,7 @@ defmodule EtherCAT.MixProject do
     ]
   end
 
+  defp elixirc_paths(:test), do: ["lib", "test/integration/support"]
   defp elixirc_paths(_env), do: ["lib"]
 
   defp deps do
