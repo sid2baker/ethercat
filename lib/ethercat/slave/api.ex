@@ -6,7 +6,7 @@ defmodule EtherCAT.Slave.API do
   slave state-machine module can stay focused on ESM states and transitions.
   """
 
-  @spec subscribe(atom(), atom(), pid()) :: :ok | {:error, :not_found}
+  @spec subscribe(atom(), atom(), pid()) :: :ok | {:error, :not_found | :timeout}
   def subscribe(slave_name, signal_name, pid) do
     safe_call(slave_name, {:subscribe, signal_name, pid})
   end
@@ -29,16 +29,16 @@ defmodule EtherCAT.Slave.API do
     safe_call(slave_name, {:configure, opts})
   end
 
-  @spec state(atom()) :: atom() | {:error, :not_found}
+  @spec state(atom()) :: atom() | {:error, :not_found | :timeout}
   def state(slave_name), do: safe_call(slave_name, :state)
 
-  @spec identity(atom()) :: map() | nil | {:error, :not_found}
+  @spec identity(atom()) :: map() | nil | {:error, :not_found | :timeout}
   def identity(slave_name), do: safe_call(slave_name, :identity)
 
-  @spec error(atom()) :: non_neg_integer() | nil | {:error, :not_found}
+  @spec error(atom()) :: non_neg_integer() | nil | {:error, :not_found | :timeout}
   def error(slave_name), do: safe_call(slave_name, :error)
 
-  @spec info(atom()) :: {:ok, map()} | {:error, :not_found}
+  @spec info(atom()) :: {:ok, map()} | {:error, :not_found | :timeout}
   def info(slave_name), do: safe_call(slave_name, :info)
 
   @spec read_input(atom(), atom()) :: {:ok, {term(), integer()}} | {:error, term()}
@@ -64,6 +64,7 @@ defmodule EtherCAT.Slave.API do
       :gen_statem.call(via(slave_name), msg)
     catch
       :exit, {:noproc, _} -> {:error, :not_found}
+      :exit, {:timeout, _} -> {:error, :timeout}
     end
   end
 

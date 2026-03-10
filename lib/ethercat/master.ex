@@ -47,7 +47,7 @@ defmodule EtherCAT.Master do
     slave_count: nil,
     # MapSet of slave names still waiting to report :preop
     pending_preop: MapSet.new(),
-    # %{slave_name => {target_state, reason}} for startup activation failures
+    # %{slave_name => reason} for startup activation blockers
     activation_failures: %{},
     # %{fault_key => reason} for critical runtime degradations that block healthy cyclic runtime
     runtime_faults: %{},
@@ -257,6 +257,7 @@ defmodule EtherCAT.Master do
 
   def handle_event({:call, from}, :stop, :discovering, data) do
     stop_session(data)
+    reply_await_callers(data.await_callers, {:error, :stopped})
     reply_await_callers(data.await_operational_callers, {:error, :stopped})
     {:next_state, :idle, reset_master(data.last_failure), [{:reply, from, :ok}]}
   end
@@ -438,6 +439,9 @@ defmodule EtherCAT.Master do
       {:ok, next_state, healed_data} ->
         {:next_state, next_state, healed_data}
 
+      {:activation_blocked, still_blocked} ->
+        {:keep_state, still_blocked, [{{:timeout, :retry}, @retry_ms, nil}]}
+
       {:recovering, still_recovering} ->
         {:next_state, :recovering, still_recovering, [{{:timeout, :retry}, @retry_ms, nil}]}
     end
@@ -468,6 +472,64 @@ defmodule EtherCAT.Master do
 
   def handle_event({:call, from}, :activate, :activation_blocked, _data) do
     {:keep_state_and_data, [{:reply, from, {:error, :activation_in_progress}}]}
+  end
+
+  def handle_event(:info, {:slave_reconnected, name}, :activation_blocked, data) do
+    if Map.has_key?(data.activation_failures, name) do
+      Logger.info(
+        "[Master] slave #{name} link restored during activation — authorizing reconnect"
+      )
+
+      case SlaveAPI.authorize_reconnect(name) do
+        :ok ->
+          updated = put_activation_failure(data, name, {:reconnecting, :authorized})
+          {:keep_state, updated, [{{:timeout, :retry}, @retry_ms, nil}]}
+
+        {:error, reason} ->
+          Logger.warning(
+            "[Master] slave #{name} reconnect authorization failed during activation: #{inspect(reason)}"
+          )
+
+          updated = put_activation_failure(data, name, {:reconnect_failed, reason})
+          {:keep_state, updated, [{{:timeout, :retry}, @retry_ms, nil}]}
+      end
+    else
+      :keep_state_and_data
+    end
+  end
+
+  def handle_event(:info, {:slave_ready, name, :preop}, :activation_blocked, data) do
+    if Map.has_key?(data.activation_failures, name) do
+      Logger.info(
+        "[Master] slave #{name} reached :preop during activation retry — requesting :op"
+      )
+
+      case SlaveAPI.request(name, :op) do
+        :ok ->
+          next_data = %{data | activation_failures: Map.delete(data.activation_failures, name)}
+
+          case Recovery.maybe_resume_from_activation_blocked(next_data) do
+            {:ok, next_state, healed_data} ->
+              {:next_state, next_state, healed_data}
+
+            {:activation_blocked, still_blocked} ->
+              {:keep_state, still_blocked, [{{:timeout, :retry}, @retry_ms, nil}]}
+
+            {:recovering, still_recovering} ->
+              {:next_state, :recovering, still_recovering, [{{:timeout, :retry}, @retry_ms, nil}]}
+          end
+
+        {:error, reason} ->
+          Logger.warning(
+            "[Master] slave #{name} still not in :op during activation retry: #{inspect(reason)}"
+          )
+
+          updated = put_activation_failure(data, name, {:op, reason})
+          {:keep_state, updated, [{{:timeout, :retry}, @retry_ms, nil}]}
+      end
+    else
+      :keep_state_and_data
+    end
   end
 
   # Continuous loop recovery -------------------------------------------------
@@ -955,6 +1017,10 @@ defmodule EtherCAT.Master do
       reason: reason,
       at_ms: System.system_time(:millisecond)
     }
+  end
+
+  defp put_activation_failure(data, name, reason) do
+    %{data | activation_failures: Map.put(data.activation_failures, name, reason)}
   end
 
   # -- Session teardown ------------------------------------------------------

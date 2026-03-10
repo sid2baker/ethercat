@@ -349,7 +349,7 @@ defmodule EtherCAT do
         configuration_error: nil
       }}
   """
-  @spec slave_info(atom()) :: {:ok, map()} | {:error, :not_found}
+  @spec slave_info(atom()) :: {:ok, map()} | {:error, :not_found | :timeout}
   def slave_info(slave_name), do: SlaveAPI.info(slave_name)
 
   @doc """
@@ -381,7 +381,7 @@ defmodule EtherCAT do
         expected_wkc: 3
       }}
   """
-  @spec domain_info(atom()) :: {:ok, map()} | {:error, term()}
+  @spec domain_info(atom()) :: {:ok, map()} | {:error, :not_found | :timeout}
   def domain_info(domain_id), do: DomainAPI.info(domain_id)
 
   @doc """

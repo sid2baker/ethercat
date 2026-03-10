@@ -9,10 +9,11 @@ defmodule EtherCAT.Master.Recovery do
 
   @spec retry_activation_blocked_state(%EtherCAT.Master{}) ::
           {:ok, :operational, %EtherCAT.Master{}}
+          | {:activation_blocked, %EtherCAT.Master{}}
           | {:recovering, %EtherCAT.Master{}}
   def retry_activation_blocked_state(%{activation_failures: failures} = data)
       when map_size(failures) == 0 do
-    maybe_resume_running(data)
+    maybe_resume_from_activation_blocked(data)
   end
 
   def retry_activation_blocked_state(%{activation_failures: failures} = data) do
@@ -20,6 +21,12 @@ defmodule EtherCAT.Master.Recovery do
       Enum.reduce(failures, %{}, fn
         {name, {:down, _}}, acc ->
           Map.put(acc, name, {:down, :disconnected})
+
+        {name, {:reconnecting, _reason}}, acc ->
+          Map.put(acc, name, {:reconnecting, :authorized})
+
+        {name, {:reconnect_failed, _reason}}, acc ->
+          retry_activation_reconnect_authorization(acc, name)
 
         {name, _last_failure}, acc ->
           case SlaveAPI.request(name, :op) do
@@ -35,7 +42,7 @@ defmodule EtherCAT.Master.Recovery do
           end
       end)
 
-    maybe_resume_running(%{data | activation_failures: retried_failures})
+    maybe_resume_from_activation_blocked(%{data | activation_failures: retried_failures})
   end
 
   @spec retry_recovering_state(%EtherCAT.Master{}) ::
@@ -110,6 +117,24 @@ defmodule EtherCAT.Master.Recovery do
       {:ok, :operational, %{data | activation_failures: %{}, runtime_faults: %{}}}
     else
       {:recovering, data}
+    end
+  end
+
+  @spec maybe_resume_from_activation_blocked(%EtherCAT.Master{}) ::
+          {:ok, :operational, %EtherCAT.Master{}}
+          | {:activation_blocked, %EtherCAT.Master{}}
+          | {:recovering, %EtherCAT.Master{}}
+  def maybe_resume_from_activation_blocked(data) do
+    cond do
+      map_size(data.activation_failures) > 0 ->
+        {:activation_blocked, data}
+
+      map_size(data.runtime_faults) > 0 ->
+        {:recovering, data}
+
+      true ->
+        Logger.info("[Master] activation retries succeeded; operational path is healthy again")
+        {:ok, :operational, %{data | activation_failures: %{}, runtime_faults: %{}}}
     end
   end
 
@@ -227,6 +252,20 @@ defmodule EtherCAT.Master.Recovery do
         )
 
         Map.put(slave_faults, name, {:reconnect_failed, reason})
+    end
+  end
+
+  defp retry_activation_reconnect_authorization(activation_failures, name) do
+    case SlaveAPI.authorize_reconnect(name) do
+      :ok ->
+        Map.put(activation_failures, name, {:reconnecting, :authorized})
+
+      {:error, reason} ->
+        Logger.warning(
+          "[Master] activation-blocked reconnect authorization retry failed for #{inspect(name)}: #{inspect(reason)}"
+        )
+
+        Map.put(activation_failures, name, {:reconnect_failed, reason})
     end
   end
 

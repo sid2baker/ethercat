@@ -137,6 +137,25 @@ defmodule EtherCAT.MasterTest do
              )
   end
 
+  test "stop in discovering replies blocked await callers" do
+    stop_from = {self(), make_ref()}
+    await_running_from = {self(), make_ref()}
+    await_operational_from = {self(), make_ref()}
+    await_running_ref = elem(await_running_from, 1)
+    await_operational_ref = elem(await_operational_from, 1)
+
+    data = %EtherCAT.Master{
+      await_callers: [await_running_from],
+      await_operational_callers: [await_operational_from]
+    }
+
+    assert {:next_state, :idle, %EtherCAT.Master{}, [{:reply, ^stop_from, :ok}]} =
+             EtherCAT.Master.handle_event({:call, stop_from}, :stop, :discovering, data)
+
+    assert_receive {^await_running_ref, {:error, :stopped}}
+    assert_receive {^await_operational_ref, {:error, :stopped}}
+  end
+
   test "await_operational reports activation failures in activation_blocked mode" do
     from = {self(), make_ref()}
     failures = %{sensor: {:op, :no_response}}
@@ -181,6 +200,64 @@ defmodule EtherCAT.MasterTest do
 
     assert updated.activation_failures == %{}
     assert updated.runtime_faults == faults
+  end
+
+  test "activation_blocked retry stays blocked while activation failures remain" do
+    data = %EtherCAT.Master{
+      activation_failures: %{sensor: {:op, :no_response}}
+    }
+
+    assert {:keep_state, %EtherCAT.Master{} = updated, _actions} =
+             EtherCAT.Master.handle_event({:timeout, :retry}, nil, :activation_blocked, data)
+
+    assert updated.activation_failures == %{sensor: {:op, :not_found}}
+  end
+
+  test "activation_blocked authorizes reconnect and returns to operational once the slave reaches preop" do
+    start_supervised!(%{
+      id: make_ref(),
+      start: {FakeSlave, :start_link, [:sensor, :ok]}
+    })
+
+    data = %EtherCAT.Master{
+      activation_failures: %{sensor: {:down, :disconnected}},
+      slave_configs: [%SlaveConfig{name: :sensor, process_data: {:all, :main}}],
+      slaves: [{:sensor, 0x1001}]
+    }
+
+    assert {:keep_state, %EtherCAT.Master{} = authorized, _actions} =
+             EtherCAT.Master.handle_event(
+               :info,
+               {:slave_reconnected, :sensor},
+               :activation_blocked,
+               data
+             )
+
+    assert authorized.activation_failures == %{sensor: {:reconnecting, :authorized}}
+
+    assert {:next_state, :operational, %EtherCAT.Master{} = healed} =
+             EtherCAT.Master.handle_event(
+               :info,
+               {:slave_ready, :sensor, :preop},
+               :activation_blocked,
+               authorized
+             )
+
+    assert healed.activation_failures == %{}
+  end
+
+  test "activation_blocked ignores reconnect events for slaves that are not activation blockers" do
+    data = %EtherCAT.Master{
+      activation_failures: %{sensor: {:op, :no_response}}
+    }
+
+    assert :keep_state_and_data =
+             EtherCAT.Master.handle_event(
+               :info,
+               {:slave_reconnected, :other_slave},
+               :activation_blocked,
+               data
+             )
   end
 
   test "domain cycle invalid enters recovering and recovery returns to running" do

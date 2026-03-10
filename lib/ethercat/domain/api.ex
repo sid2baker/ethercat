@@ -21,7 +21,7 @@ defmodule EtherCAT.Domain.API do
   @spec start_cycling(domain_id()) :: :ok | {:error, term()}
   def start_cycling(domain_id), do: safe_call(domain_id, :start_cycling)
 
-  @spec stop_cycling(domain_id()) :: :ok | {:error, :not_found}
+  @spec stop_cycling(domain_id()) :: :ok | {:error, :not_found | :timeout}
   def stop_cycling(domain_id), do: safe_call(domain_id, :stop_cycling)
 
   @spec write(domain_id(), pdo_key(), binary()) :: :ok | {:error, :not_found}
@@ -59,10 +59,10 @@ defmodule EtherCAT.Domain.API do
     end
   end
 
-  @spec stats(domain_id()) :: {:ok, map()} | {:error, :not_found}
+  @spec stats(domain_id()) :: {:ok, map()} | {:error, :not_found | :timeout}
   def stats(domain_id), do: safe_call(domain_id, :stats)
 
-  @spec info(domain_id()) :: {:ok, map()} | {:error, :not_found}
+  @spec info(domain_id()) :: {:ok, map()} | {:error, :not_found | :timeout}
   def info(domain_id), do: safe_call(domain_id, :info)
 
   @spec update_cycle_time(domain_id(), pos_integer()) :: :ok | {:error, term()}
@@ -76,6 +76,7 @@ defmodule EtherCAT.Domain.API do
       :gen_statem.call(via(domain_id), msg)
     catch
       :exit, {:noproc, _} -> {:error, :not_found}
+      :exit, {:timeout, _} -> {:error, :timeout}
     end
   end
 
