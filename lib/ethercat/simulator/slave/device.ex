@@ -3,12 +3,14 @@ defmodule EtherCAT.Simulator.Slave.Device do
 
   alias EtherCAT.Slave.ESC.Registers
   alias EtherCAT.Simulator.Slave.Behaviour
+  alias EtherCAT.Simulator.Slave.Definition
   alias EtherCAT.Simulator.Slave.Mailbox
   alias EtherCAT.Simulator.Slave.Object
   alias EtherCAT.Simulator.Slave.Signals
   alias EtherCAT.Simulator.Slave.Value
 
   @memory_size 0x1400
+  @category_start 0x40
   @alerr_none 0x0000
   @alerr_invalid_state_change 0x0011
   @alerr_unknown_state 0x0012
@@ -93,8 +95,11 @@ defmodule EtherCAT.Simulator.Slave.Device do
     mailbox_download: nil
   ]
 
-  @spec new(map(), non_neg_integer()) :: t()
+  @spec new(Definition.t(), non_neg_integer()) :: t()
   def new(definition, position) do
+    eeprom = build_eeprom(definition)
+    memory = build_memory(definition, eeprom)
+
     behavior_state =
       if function_exported?(definition.behavior, :init, 1) do
         definition.behavior.init(definition)
@@ -110,8 +115,8 @@ defmodule EtherCAT.Simulator.Slave.Device do
       state: :init,
       al_error?: false,
       al_status_code: 0,
-      eeprom: definition.eeprom,
-      memory: definition.memory,
+      eeprom: eeprom,
+      memory: memory,
       output_phys: definition.output_phys,
       output_size: definition.output_size,
       input_phys: definition.input_phys,
@@ -802,22 +807,157 @@ defmodule EtherCAT.Simulator.Slave.Device do
     %{slave | memory: replace_binary(memory, offset, data)}
   end
 
-  defp replace_binary(binary, offset, value) do
-    prefix = binary_part(binary, 0, offset)
-    suffix_offset = offset + byte_size(value)
-    suffix = binary_part(binary, suffix_offset, byte_size(binary) - suffix_offset)
-    prefix <> value <> suffix
+  defp build_memory(definition, eeprom) do
+    :binary.copy(<<0>>, @memory_size)
+    |> put_binary(0x0000, <<definition.esc_type::8>>)
+    |> put_binary(0x0004, <<definition.fmmu_count::8>>)
+    |> put_binary(0x0005, <<definition.sm_count::8>>)
+    |> put_binary(0x0010, <<0::16-little>>)
+    |> put_binary(0x0110, <<0::16-little>>)
+    |> put_binary(0x0130, encode_al_status(:init, false))
+    |> put_binary(0x0134, <<0::16-little>>)
+    |> put_binary(0x0200, <<0::16-little>>)
+    |> put_binary(0x0300, <<0::64>>)
+    |> put_binary(0x0400, <<0::16-little>>)
+    |> put_binary(0x0420, <<0::16-little>>)
+    |> put_binary(0x0440, <<0::16-little>>)
+    |> put_binary(0x0500, <<0x00>>)
+    |> put_binary(0x0502, <<1, 0>>)
+    |> put_binary(0x0504, <<0::32-little>>)
+    |> put_binary(0x0508, chunk(eeprom, 0, 8))
+    |> maybe_put_dc_registers(definition.dc_capable?)
   end
 
-  defp overlap(start_a, end_a, start_b, end_b) do
-    overlap_start = max(start_a, start_b)
-    overlap_end = min(end_a, end_b)
+  defp build_eeprom(definition) do
+    sm_entries =
+      (mailbox_sm_entries(definition.mailbox_config) ++
+         [
+           {2, definition.output_phys, definition.output_size,
+            sm_ctrl(:output, definition.output_size)},
+           {3, definition.input_phys, definition.input_size,
+            sm_ctrl(:input, definition.input_size)}
+         ])
+      |> Enum.filter(fn {_index, _phys_start, length, ctrl} -> length > 0 or ctrl == 0x00 end)
 
-    if overlap_start < overlap_end do
-      {overlap_start - start_a, overlap_start - start_b, overlap_end - overlap_start}
-    else
-      nil
-    end
+    header =
+      :binary.copy(<<0>>, @category_start * 2)
+      |> put_binary(
+        0x08 * 2,
+        <<definition.vendor_id::32-little, definition.product_code::32-little>>
+      )
+      |> put_binary(
+        0x0C * 2,
+        <<definition.revision::32-little, definition.serial_number::32-little>>
+      )
+      |> put_binary(
+        0x18 * 2,
+        <<definition.mailbox_config.recv_offset::16-little,
+          definition.mailbox_config.recv_size::16-little,
+          definition.mailbox_config.send_offset::16-little,
+          definition.mailbox_config.send_size::16-little>>
+      )
+
+    header <>
+      sm_category(sm_entries) <>
+      pdo_categories(definition.pdo_entries) <>
+      <<0xFFFF::16-little, 0::16-little>>
+  end
+
+  defp maybe_put_dc_registers(memory, false), do: memory
+
+  defp maybe_put_dc_registers(memory, true) do
+    memory
+    |> put_binary(0x0900, <<10::32-little, 20::32-little, 30::32-little, 40::32-little>>)
+    |> put_binary(0x0910, <<1_000_000::64-little>>)
+    |> put_binary(0x0918, <<1_000_100::64-little>>)
+    |> put_binary(0x0920, <<0::64-little>>)
+    |> put_binary(0x0928, <<0::32-little>>)
+    |> put_binary(0x092C, <<0::32-little>>)
+    |> put_binary(0x0930, <<0::16-little>>)
+    |> put_binary(0x0934, <<0::16-little>>)
+    |> put_binary(0x0980, <<0::16-little>>)
+    |> put_binary(0x0981, <<0::8>>)
+    |> put_binary(0x0982, <<0::16-little>>)
+    |> put_binary(0x0990, <<0::64-little>>)
+    |> put_binary(0x09A0, <<0::32-little>>)
+    |> put_binary(0x09A4, <<0::32-little>>)
+    |> put_binary(0x09A8, <<0::8>>)
+    |> put_binary(0x09A9, <<0::8>>)
+    |> put_binary(0x09AE, <<0::16-little>>)
+    |> put_binary(0x09B0, <<0::64-little>>)
+    |> put_binary(0x09B8, <<0::64-little>>)
+    |> put_binary(0x09C0, <<0::64-little>>)
+    |> put_binary(0x09C8, <<0::64-little>>)
+  end
+
+  defp mailbox_sm_entries(%{recv_offset: 0, recv_size: 0, send_offset: 0, send_size: 0}) do
+    [{0, 0x0000, 0, 0x00}, {1, 0x0000, 0, 0x00}]
+  end
+
+  defp mailbox_sm_entries(%{
+         recv_offset: recv_offset,
+         recv_size: recv_size,
+         send_offset: send_offset,
+         send_size: send_size
+       }) do
+    [
+      {0, recv_offset, recv_size, 0x26},
+      {1, send_offset, send_size, 0x22}
+    ]
+  end
+
+  defp sm_ctrl(_direction, 0), do: 0x00
+  defp sm_ctrl(:output, _size), do: 0x24
+  defp sm_ctrl(:input, _size), do: 0x20
+
+  defp sm_category(sm_entries) do
+    data =
+      sm_entries
+      |> Enum.map(fn {_index, phys_start, length, ctrl} ->
+        <<phys_start::16-little, length::16-little, ctrl::8, 0::8, 0::8, 0::8>>
+      end)
+      |> IO.iodata_to_binary()
+
+    <<0x0029::16-little, div(byte_size(data), 2)::16-little, data::binary>>
+  end
+
+  defp pdo_categories(pdo_entries) do
+    pdo_entries
+    |> Enum.sort_by(fn %{direction: direction, index: index} ->
+      {pdo_direction_rank(direction), index}
+    end)
+    |> Enum.map(&pdo_category/1)
+    |> IO.iodata_to_binary()
+  end
+
+  defp pdo_direction_rank(:output), do: 0
+  defp pdo_direction_rank(:input), do: 1
+
+  defp pdo_category(%{
+         index: pdo_index,
+         direction: direction,
+         sm_index: sm_index,
+         bit_size: bit_size
+       }) do
+    category_type = if direction == :input, do: 0x0032, else: 0x0033
+
+    data =
+      <<
+        pdo_index::16-little,
+        1::8,
+        sm_index::8,
+        0::8,
+        0::8,
+        0::16-little,
+        pdo_index::16-little,
+        0::8,
+        0::8,
+        0::8,
+        bit_size::8,
+        0::16-little
+      >>
+
+    <<category_type::16-little, div(byte_size(data), 2)::16-little, data::binary>>
   end
 
   defp chunk(binary, word_address, bytes) do
@@ -840,6 +980,31 @@ defmodule EtherCAT.Simulator.Slave.Device do
 
     error_bit = if error?, do: 1, else: 0
     <<0::3, error_bit::1, state_code::4, 0::8>>
+  end
+
+  defp put_binary(binary, offset, value) do
+    prefix = binary_part(binary, 0, offset)
+    suffix_offset = offset + byte_size(value)
+    suffix = binary_part(binary, suffix_offset, byte_size(binary) - suffix_offset)
+    prefix <> value <> suffix
+  end
+
+  defp replace_binary(binary, offset, value) do
+    prefix = binary_part(binary, 0, offset)
+    suffix_offset = offset + byte_size(value)
+    suffix = binary_part(binary, suffix_offset, byte_size(binary) - suffix_offset)
+    prefix <> value <> suffix
+  end
+
+  defp overlap(start_a, end_a, start_b, end_b) do
+    overlap_start = max(start_a, start_b)
+    overlap_end = min(end_a, end_b)
+
+    if overlap_start < overlap_end do
+      {overlap_start - start_a, overlap_start - start_b, overlap_end - overlap_start}
+    else
+      nil
+    end
   end
 
   defp register_offset({offset, _length}), do: offset

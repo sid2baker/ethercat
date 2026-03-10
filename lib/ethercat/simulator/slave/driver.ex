@@ -3,7 +3,11 @@ defmodule EtherCAT.Simulator.Slave.Driver do
 
   @behaviour EtherCAT.Slave.Driver
 
+  @impl true
+  def identity, do: nil
+
   alias EtherCAT.Slave.ProcessData.Signal
+  alias EtherCAT.Simulator.Slave.Definition
   alias EtherCAT.Simulator.Slave.Profile
   alias EtherCAT.Simulator.Slave.Value
 
@@ -65,6 +69,11 @@ defmodule EtherCAT.Simulator.Slave.Driver do
       {:ok, definition} -> Value.decode_binary(definition, raw)
       :error -> nil
     end
+  end
+
+  @impl true
+  def simulator_definition(config) do
+    Definition.build(profile(config), [])
   end
 
   defp zero_bytes(definition) do

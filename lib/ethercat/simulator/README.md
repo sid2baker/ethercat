@@ -138,7 +138,8 @@ Main modules:
 - `EtherCAT.Simulator.Slave`
   - public device and simulator-facing signal API
 - `EtherCAT.Simulator.Slave.Definition`
-  - declarative identity, EEPROM, and process-image definition
+  - public opaque authored device definition
+  - identity, PDO layout, mailbox/object-dictionary configuration, behavior
 - `EtherCAT.Simulator.Slave.Behaviour`
   - pluggable device behavior boundary
 - `EtherCAT.Simulator.Slave.Object`
@@ -151,6 +152,18 @@ Main modules:
   - signal metadata derived from the support driver model
 - `EtherCAT.Simulator.Slave.Device`
   - one simulated slave instance with ESC memory and AL state
+
+Drivers can also opt in directly. A real `EtherCAT.Slave.Driver` may expose:
+
+- `identity/0`
+  - static vendor/product/revision metadata for discovery and tooling
+- `simulator_definition/1`
+  - a high-level simulator definition used by
+    `EtherCAT.Simulator.Slave.from_driver/2`
+
+That keeps simulator hydration close to the real driver without requiring
+drivers to hand-author raw ESC register maps or SII binaries.
+
 ## Current Concept Mapping
 
 This mirrors `reference/slave_spec/elixir_target.md`.

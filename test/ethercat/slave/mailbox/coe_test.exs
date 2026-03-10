@@ -42,6 +42,12 @@ defmodule EtherCAT.Slave.Mailbox.CoETest do
     @behaviour EtherCAT.Slave.Driver
 
     @impl true
+    def identity, do: nil
+
+    @impl true
+    def simulator_definition(_config), do: nil
+
+    @impl true
     def process_data_model(_config), do: %{}
 
     @impl true
@@ -58,6 +64,12 @@ defmodule EtherCAT.Slave.Mailbox.CoETest do
 
   defmodule SyncModeDriver do
     @behaviour EtherCAT.Slave.Driver
+
+    @impl true
+    def identity, do: nil
+
+    @impl true
+    def simulator_definition(_config), do: nil
 
     @impl true
     def process_data_model(_config), do: %{}

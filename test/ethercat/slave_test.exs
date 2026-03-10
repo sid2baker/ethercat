@@ -9,6 +9,12 @@ defmodule EtherCAT.SlaveTest do
     @behaviour EtherCAT.Slave.Driver
 
     @impl true
+    def identity, do: nil
+
+    @impl true
+    def simulator_definition(_config), do: nil
+
+    @impl true
     def process_data_model(_config), do: %{}
 
     @impl true
@@ -23,6 +29,12 @@ defmodule EtherCAT.SlaveTest do
 
   defmodule BitDriver do
     @behaviour EtherCAT.Slave.Driver
+
+    @impl true
+    def identity, do: nil
+
+    @impl true
+    def simulator_definition(_config), do: nil
 
     @impl true
     def process_data_model(_config), do: %{}
@@ -41,6 +53,12 @@ defmodule EtherCAT.SlaveTest do
     @behaviour EtherCAT.Slave.Driver
 
     @impl true
+    def identity, do: nil
+
+    @impl true
+    def simulator_definition(_config), do: nil
+
+    @impl true
     def process_data_model(_config), do: [ch1: 0, ch2: 1]
 
     @impl true
@@ -52,6 +70,12 @@ defmodule EtherCAT.SlaveTest do
 
   defmodule InvalidMailboxDriver do
     @behaviour EtherCAT.Slave.Driver
+
+    @impl true
+    def identity, do: nil
+
+    @impl true
+    def simulator_definition(_config), do: nil
 
     @impl true
     def process_data_model(_config), do: %{}
@@ -70,6 +94,12 @@ defmodule EtherCAT.SlaveTest do
     @behaviour EtherCAT.Slave.Driver
 
     @impl true
+    def identity, do: nil
+
+    @impl true
+    def simulator_definition(_config), do: nil
+
+    @impl true
     def process_data_model(_config), do: %{}
 
     @impl true
@@ -84,6 +114,12 @@ defmodule EtherCAT.SlaveTest do
 
   defmodule OpHookDriver do
     @behaviour EtherCAT.Slave.Driver
+
+    @impl true
+    def identity, do: nil
+
+    @impl true
+    def simulator_definition(_config), do: nil
 
     @impl true
     def process_data_model(_config), do: %{}

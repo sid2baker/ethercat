@@ -9,6 +9,12 @@ defmodule EtherCAT.Slave.ProcessData.PlanTest do
     @behaviour EtherCAT.Slave.Driver
 
     @impl true
+    def identity, do: nil
+
+    @impl true
+    def simulator_definition(_config), do: nil
+
+    @impl true
     def process_data_model(_config) do
       [
         out1: 0x1600,

@@ -15,6 +15,18 @@ defmodule EtherCAT.Slave.Driver do
   slave application needs additional mailbox objects beyond the generic ESC DC
   registers.
 
+  ## Optional identity and simulator support
+
+  Drivers may optionally declare static device identity through `identity/0`.
+  That metadata is useful for future driver discovery against scanned bus
+  identity and for tooling. Keep it high-level: vendor, product, and revision.
+
+  Drivers may also optionally expose `simulator_definition/1` so
+  `EtherCAT.Simulator.Slave.from_driver/2` can hydrate a simulated device from
+  the same driver module. This keeps simulator integration close to the real
+  driver without pushing raw ESC register maps or SII binaries into the driver
+  behavior.
+
   ## Process-data model
 
   `process_data_model/1` returns a keyword list of `{signal_name, declaration}` pairs.
@@ -36,52 +48,16 @@ defmodule EtherCAT.Slave.Driver do
   digital channels) receive/return 1 padded byte with the value in bit 0 (LSB).
   Larger signals receive exactly enough bytes to carry the declared `bit_size`.
 
-  ## Example — EL1809 (16-ch digital input, 16 × 1-bit TxPDOs)
+  ## Example — EL1809 / EL2809 digital cards
 
-      defmodule MyApp.EL1809 do
-        @behaviour EtherCAT.Slave.Driver
+  Full compiled example drivers live in the test integration support tree:
 
-        @impl true
-        def process_data_model(_config) do
-          [
-            ch1:  0x1A00, ch2:  0x1A01, ch3:  0x1A02, ch4:  0x1A03,
-            ch5:  0x1A04, ch6:  0x1A05, ch7:  0x1A06, ch8:  0x1A07,
-            ch9:  0x1A08, ch10: 0x1A09, ch11: 0x1A0A, ch12: 0x1A0B,
-            ch13: 0x1A0C, ch14: 0x1A0D, ch15: 0x1A0E, ch16: 0x1A0F
-          ]
-        end
+  - `test/integration/support/drivers/el1809.ex`
+  - `test/integration/support/drivers/el2809.ex`
 
-        @impl true
-        def encode_signal(_signal, _config, _value), do: <<>>
-
-        @impl true
-        # 1-bit signal: the runtime extracts one bit and pads it into bit 0.
-        def decode_signal(_ch, _config, <<_::7, bit::1>>), do: bit
-        def decode_signal(_signal, _config, _), do: 0
-      end
-
-  ## Example — EL2809 (16-ch digital output, 16 × 1-bit RxPDOs)
-
-      defmodule MyApp.EL2809 do
-        @behaviour EtherCAT.Slave.Driver
-
-        @impl true
-        def process_data_model(_config) do
-          [
-            ch1:  0x1600, ch2:  0x1601, ch3:  0x1602, ch4:  0x1603,
-            ch5:  0x1604, ch6:  0x1605, ch7:  0x1606, ch8:  0x1607,
-            ch9:  0x1608, ch10: 0x1609, ch11: 0x160A, ch12: 0x160B,
-            ch13: 0x160C, ch14: 0x160D, ch15: 0x160E, ch16: 0x160F
-          ]
-        end
-
-        @impl true
-        # 1-bit signal: return 1 byte; bit 0 is written into the correct SM bit.
-        def encode_signal(_ch, _config, v), do: <<v::8>>
-
-        @impl true
-        def decode_signal(_signal, _config, _), do: nil
-      end
+  They show the minimal `process_data_model/1` and bit-oriented
+  `encode_signal/3` / `decode_signal/3` callbacks for Beckhoff-style
+  16-channel digital I/O terminals.
 
   ## Example — EL3202 (2-ch PT100 input, 2 × 32-bit TxPDOs)
 
@@ -122,17 +98,35 @@ defmodule EtherCAT.Slave.Driver do
       end
   """
 
+  alias EtherCAT.Simulator.Slave.Definition, as: SimulatorDefinition
+
   alias EtherCAT.Slave.ProcessData.Signal
   alias EtherCAT.Slave.Sync.Config, as: SyncConfig
 
   @type signal_name :: atom()
   @type config :: map()
+  @type identity :: %{
+          required(:vendor_id) => non_neg_integer(),
+          required(:product_code) => non_neg_integer(),
+          optional(:revision) => non_neg_integer() | :any
+        }
 
   @type latch_edge :: :pos | :neg
 
   @type mailbox_step ::
           {:sdo_download, index :: non_neg_integer(), subindex :: non_neg_integer(),
            data :: binary()}
+  @type simulator_definition :: SimulatorDefinition.t()
+
+  @doc """
+  Static device identity for this driver, or `nil` if the driver does not
+  declare one.
+
+  This is useful for future driver discovery against scanned bus identity and
+  for simulator hydration. Keep it high-level: vendor/product/revision only.
+  Do not put raw ESC register images or SII binaries into the driver API.
+  """
+  @callback identity() :: identity() | nil
 
   @doc """
   Return the driver's logical signal model.
@@ -209,6 +203,17 @@ defmodule EtherCAT.Slave.Driver do
   """
   @callback on_latch(atom(), config(), 0 | 1, latch_edge(), non_neg_integer()) :: :ok
 
+  @doc """
+  Simulator definition used to hydrate a simulated device for this driver, or
+  `nil` if the driver does not expose simulator hydration.
+
+  The callback should return a high-level simulator definition map suitable for
+  `EtherCAT.Simulator.Slave.from_driver/2`. The simulator derives ESC memory
+  and EEPROM from that definition; drivers should not hand-author raw register
+  maps or SII binaries.
+  """
+  @callback simulator_definition(config()) :: simulator_definition() | nil
+
   @optional_callbacks [
     process_data_model: 2,
     on_preop: 2,
@@ -218,4 +223,25 @@ defmodule EtherCAT.Slave.Driver do
     sync_mode: 2,
     on_latch: 5
   ]
+
+  @spec identity(module()) :: identity() | nil
+  def identity(driver) when is_atom(driver) do
+    driver
+    |> apply(:identity, [])
+    |> normalize_identity()
+  end
+
+  @spec simulator_definition(module(), config()) ::
+          simulator_definition() | nil
+  def simulator_definition(driver, config) when is_atom(driver) and is_map(config) do
+    apply(driver, :simulator_definition, [config])
+  end
+
+  defp normalize_identity(nil), do: nil
+
+  defp normalize_identity(%{vendor_id: vendor_id, product_code: product_code} = identity)
+       when is_integer(vendor_id) and vendor_id >= 0 and is_integer(product_code) and
+              product_code >= 0 do
+    Map.put_new(identity, :revision, :any)
+  end
 end

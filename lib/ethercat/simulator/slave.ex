@@ -5,13 +5,19 @@ defmodule EtherCAT.Simulator.Slave do
   Use this module to build reusable simulated slave devices such as digital I/O
   or mailbox-capable demo devices, and to inspect or override named signal
   values on a running simulator.
+
+  For drivers that opt in, `from_driver/2` can hydrate a simulated device from
+  a real `EtherCAT.Slave.Driver` module via its optional
+  `simulator_definition/1` callback.
   """
 
   alias EtherCAT.Simulator
+  alias EtherCAT.Slave.Driver, as: SlaveDriver
   alias EtherCAT.Simulator.Slave.Definition
 
   @type profile :: atom()
-  @type device :: map()
+  @type driver :: module()
+  @type device :: Definition.t()
   @type signal_ref :: {atom(), atom()}
 
   @spec device(profile(), keyword()) :: device()
@@ -52,6 +58,21 @@ defmodule EtherCAT.Simulator.Slave do
   @spec coupler(keyword()) :: device()
   def coupler(opts \\ []) do
     device(:coupler, opts)
+  end
+
+  @spec from_driver(driver(), keyword()) :: device()
+  def from_driver(driver, opts \\ []) when is_atom(driver) do
+    config = Keyword.get(opts, :config, %{})
+    name = Keyword.get(opts, :name)
+
+    case SlaveDriver.simulator_definition(driver, config) do
+      %Definition{} = definition ->
+        maybe_override_name(definition, name)
+
+      nil ->
+        raise ArgumentError,
+              "driver #{inspect(driver)} does not implement simulator_definition/1"
+    end
   end
 
   @spec signals(device()) :: [atom()]
@@ -121,4 +142,7 @@ defmodule EtherCAT.Simulator.Slave do
              (is_atom(signal_name) or signal_name == :all) and is_pid(subscriber) do
     Simulator.unsubscribe(simulator, slave_name, signal_name, subscriber)
   end
+
+  defp maybe_override_name(definition, nil), do: definition
+  defp maybe_override_name(definition, name) when is_atom(name), do: %{definition | name: name}
 end
