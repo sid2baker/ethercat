@@ -1,4 +1,4 @@
-defmodule EtherCAT.Simulator.Slave.Fixture do
+defmodule EtherCAT.Simulator.Slave.Definition do
   @moduledoc false
 
   @memory_size 0x1400

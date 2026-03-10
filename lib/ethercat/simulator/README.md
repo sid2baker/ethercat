@@ -58,8 +58,8 @@ What is already implemented and validated:
 - SII/EEPROM reads through the normal master path
 - SyncManager/FMMU programming
 - cyclic LRW process-data exchange
-- heterogeneous startup rings (`coupler` + I/O fixtures)
-- expedited CoE upload/download for mailbox-capable fixtures
+- heterogeneous startup rings (`coupler` + I/O devices)
+- expedited CoE upload/download for mailbox-capable devices
 - deterministic fault injection:
   - dropped responses
   - wrong WKC
@@ -104,15 +104,15 @@ lib/ethercat/
     ├── udp.ex
     └── slave/
         ├── behaviour.ex
+        ├── definition.ex
         ├── device.ex
         ├── driver.ex
-        ├── fixture.ex
         ├── mailbox.ex
         ├── object.ex
         ├── profile.ex
         ├── profile/
         ├── reference/
-        └── signals.ex
+        ├── signals.ex
         └── value.ex
 ```
 
@@ -136,8 +136,8 @@ Main modules:
 - `EtherCAT.Simulator.Udp`
   - real UDP endpoint, defaulting to EtherCAT UDP port `0x88A4`
 - `EtherCAT.Simulator.Slave`
-  - public fixture and simulator-facing signal API
-- `EtherCAT.Simulator.Slave.Fixture`
+  - public device and simulator-facing signal API
+- `EtherCAT.Simulator.Slave.Definition`
   - declarative identity, EEPROM, and process-image definition
 - `EtherCAT.Simulator.Slave.Behaviour`
   - pluggable device behavior boundary
@@ -158,7 +158,7 @@ This mirrors `reference/slave_spec/elixir_target.md`.
 | SOES concept | Elixir support module |
 | --- | --- |
 | one slave application instance | `EtherCAT.Simulator.Slave.Device` |
-| fixture identity + SII/process image | `EtherCAT.Simulator.Slave.Fixture` |
+| device identity + SII/process image | `EtherCAT.Simulator.Slave.Definition` |
 | slave-facing driver for tests | `EtherCAT.Simulator.Slave.Driver` |
 | slave segment/ring execution | `EtherCAT.Simulator` |
 | transport endpoint | `EtherCAT.Simulator.Udp` |
@@ -197,9 +197,9 @@ These are still intentionally out of scope today.
 This matches `reference/slave_spec/elixir_target.md`: preserve protocol
 behavior, not implementation detail.
 
-## Current Fixture Scope
+## Current Device Scope
 
-The simulator now ships with three compiled fixture shapes:
+The simulator now ships with three compiled device shapes:
 
 - `digital_io/1`
   - one output byte
@@ -214,10 +214,10 @@ The simulator now ships with three compiled fixture shapes:
   - no PDOs
   - startup-only placeholder for heterogeneous rings
 
-The `lan9252_demo/1` fixture is the current closest match to the SOES LAN9252
+The `lan9252_demo/1` device is the current closest match to the SOES LAN9252
 demo described in `reference/slave_spec/object_model.md`.
 
-It is also the first mailbox-capable fixture:
+It is also the first mailbox-capable device:
 
 - PREOP mailbox SMs are described in SII
 - expedited CoE upload/download is supported for small deterministic object
@@ -235,8 +235,8 @@ The current suite proves:
 1. one simulated digital I/O slave can boot to `:operational`
 2. two simulated digital I/O slaves can share one simulator instance
 3. a heterogeneous ring can boot with:
-   - a coupler fixture in slot 0
-   - a mailbox-capable LAN9252-style I/O fixture in slot 1
+   - a coupler device in slot 0
+   - a mailbox-capable LAN9252-style I/O device in slot 1
 4. expedited CoE upload/download works in PREOP through the public mailbox API
 5. segmented CoE upload/download works through the real UDP path
 6. widget-facing subscriptions emit signal-change notifications
@@ -257,15 +257,15 @@ The current suite proves:
 The simulator now exposes a small signal-oriented API intended for higher-level
 tools like a `kino_ethercat` simulator widget.
 
-For fixture introspection:
+For device introspection:
 
 ```elixir
-fixture = EtherCAT.Simulator.Slave.lan9252_demo(name: :io)
+device = EtherCAT.Simulator.Slave.lan9252_demo(name: :io)
 
-EtherCAT.Simulator.Slave.signals(fixture)
+EtherCAT.Simulator.Slave.signals(device)
 #=> [:led0, :led1, :button1]
 
-EtherCAT.Simulator.Slave.signal_definitions(fixture)
+EtherCAT.Simulator.Slave.signal_definitions(device)
 #=> %{button1: %{direction: :input, ...}, led0: %{direction: :output, ...}, ...}
 ```
 
@@ -273,11 +273,22 @@ For runtime control of a running simulator:
 
 ```elixir
 {:ok, simulator} =
-  EtherCAT.Simulator.start_link(slaves: [fixture])
+  EtherCAT.Simulator.start_link(devices: [device])
 
 EtherCAT.Simulator.Slave.set_value(simulator, :io, :button1, 7)
 EtherCAT.Simulator.Slave.get_value(simulator, :io, :led0)
 EtherCAT.Simulator.Slave.signals(simulator, :io)
+```
+
+To wire one simulated slave signal into another:
+
+```elixir
+:ok =
+  EtherCAT.Simulator.Slave.connect(
+    simulator,
+    {:out_card, :out},
+    {:in_card, :in}
+  )
 ```
 
 Current semantics:
@@ -285,7 +296,7 @@ Current semantics:
 - values are read and written by named signal
 - `set_value/4` accepts integers, booleans, or exact-size binaries
 - `get_value/3` currently returns raw integer values
-- input values set through this API persist even on fixtures that also mirror
+- input values set through this API persist even on devices that also mirror
   outputs into inputs by default
 
 That keeps the API generic enough for a UI widget without tying it to a
@@ -295,16 +306,20 @@ Widget-oriented features that are now implemented:
 
 - change notifications via `subscribe/4` and `unsubscribe/4`
 - richer signal metadata through `signal_definitions/1` and `signal_definitions/2`
-- explicit fixture/profile constructors:
+- explicit device/profile constructors:
   - `digital_io/1`
   - `mailbox_device/1`
   - `analog_io/1`
   - `temperature_input/1`
   - `servo_drive/1`
   - `coupler/1`
+- generic device builder:
+  - `device(profile, opts)`
 - profile-aware value validation through typed signal definitions
-- easy composition of multiple fixtures into one virtual ring via
-  `EtherCAT.Simulator.start_link(slaves: fixtures)`
+- easy composition of multiple devices into one virtual ring via
+  `EtherCAT.Simulator.start_link(devices: devices)`
+- explicit cross-slave wiring via
+  `EtherCAT.Simulator.Slave.connect/3`
 
 ## Current General-Slave Coverage
 
@@ -338,7 +353,7 @@ The simulator is already suitable for:
 - RTD/temperature-style devices
 - mailbox-capable smart devices
 - servo/drive profile regression tests
-- heterogeneous rings mixing several fixture families
+- heterogeneous rings mixing several device families
 
 ## Remaining Intentional Limits
 
@@ -364,7 +379,7 @@ plan record lives at:
 
 ## EEPROM / SII Strategy
 
-The EEPROM image is fixture-owned.
+The EEPROM image is device-owned.
 
 It must provide enough data for the master’s existing SII parser to discover:
 
@@ -451,8 +466,8 @@ It now covers three end-to-end flows through the real UDP transport:
 2. two simulated digital I/O slaves boot on one segment and exchange
    independent cyclic I/O
 3. a heterogeneous ring boots with:
-   - one `coupler/1` fixture
-   - one `lan9252_demo/1` fixture
+   - one `coupler/1` device
+   - one `lan9252_demo/1` device
 4. one mailbox-capable `lan9252_demo/1` slave boots to `:preop_ready` and
    serves expedited CoE upload/download requests through the public API
 

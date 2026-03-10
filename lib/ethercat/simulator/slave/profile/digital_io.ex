@@ -51,5 +51,5 @@ defmodule EtherCAT.Simulator.Slave.Profile.DigitalIO do
     }
   end
 
-  def init(_fixture), do: %{}
+  def init(_definition), do: %{}
 end

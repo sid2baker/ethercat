@@ -93,5 +93,5 @@ defmodule EtherCAT.Simulator.Slave.Profile.MailboxDevice do
     }
   end
 
-  def init(_fixture), do: %{}
+  def init(_definition), do: %{}
 end

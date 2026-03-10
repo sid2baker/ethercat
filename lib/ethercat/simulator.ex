@@ -29,11 +29,18 @@ defmodule EtherCAT.Simulator do
           | {:latch_al_error, atom(), non_neg_integer()}
           | {:mailbox_abort, atom(), non_neg_integer(), non_neg_integer(), non_neg_integer()}
 
+  @type signal_ref :: {atom(), atom()}
+  @type connection :: %{
+          source: signal_ref(),
+          target: signal_ref()
+        }
+
   @type state :: %{
           slaves: [map()],
           drop_responses?: boolean(),
           wkc_offset: integer(),
           disconnected: MapSet.t(atom()),
+          connections: [connection()],
           subscriptions: [subscription()],
           monitors: %{optional(pid()) => reference()}
         }
@@ -108,6 +115,25 @@ defmodule EtherCAT.Simulator do
     GenServer.call(server, {:set_value, slave_name, signal_name, value})
   end
 
+  @spec connections(pid()) :: {:ok, [connection()]} | {:error, :not_found | :timeout}
+  def connections(server) do
+    GenServer.call(server, :connections, 5_000)
+  catch
+    :exit, {:noproc, _} -> {:error, :not_found}
+    :exit, {:timeout, _} -> {:error, :timeout}
+  end
+
+  @spec connect(pid(), signal_ref(), signal_ref()) ::
+          :ok | {:error, :not_found | :unknown_signal | :invalid_value}
+  def connect(server, source, target) do
+    GenServer.call(server, {:connect, source, target})
+  end
+
+  @spec disconnect(pid(), signal_ref(), signal_ref()) :: :ok | {:error, :not_found}
+  def disconnect(server, source, target) do
+    GenServer.call(server, {:disconnect, source, target})
+  end
+
   @spec subscribe(pid(), atom(), atom() | :all, pid()) :: :ok | {:error, :not_found}
   def subscribe(server, slave_name, signal_name, subscriber) do
     GenServer.call(server, {:subscribe, slave_name, signal_name, subscriber})
@@ -125,12 +151,12 @@ defmodule EtherCAT.Simulator do
 
   @impl true
   def init(opts) do
-    fixtures = Keyword.get(opts, :slaves, [])
+    devices = Keyword.get(opts, :devices, [])
 
     slaves =
-      fixtures
+      devices
       |> Enum.with_index()
-      |> Enum.map(fn {fixture, position} -> Device.new(fixture, position) end)
+      |> Enum.map(fn {definition, position} -> Device.new(definition, position) end)
 
     {:ok,
      %{
@@ -138,6 +164,7 @@ defmodule EtherCAT.Simulator do
        drop_responses?: false,
        wkc_offset: 0,
        disconnected: MapSet.new(),
+       connections: [],
        subscriptions: [],
        monitors: %{}
      }}
@@ -153,6 +180,7 @@ defmodule EtherCAT.Simulator do
         disconnected: disconnected,
         drop_responses?: state.drop_responses?,
         wkc_offset: state.wkc_offset,
+        connections: state.connections,
         subscriptions:
           Enum.map(state.subscriptions, fn subscription ->
             %{slave: subscription.slave, signal: subscription.signal, pid: subscription.pid}
@@ -180,8 +208,7 @@ defmodule EtherCAT.Simulator do
       end)
 
     responses = maybe_adjust_wkc(responses, wkc_offset)
-    state = %{state | slaves: slaves}
-    notify_signal_changes(state, before_signals, slaves)
+    state = state |> Map.put(:slaves, slaves) |> finalize_signal_changes(before_signals)
 
     {:reply, {:ok, responses}, state}
   end
@@ -223,10 +250,18 @@ defmodule EtherCAT.Simulator do
   end
 
   def handle_call(:clear_faults, _from, state) do
+    before_signals = capture_signal_values(state.slaves)
     slaves = Enum.map(state.slaves, &Device.clear_faults/1)
 
-    {:reply, :ok,
-     %{state | slaves: slaves, drop_responses?: false, wkc_offset: 0, disconnected: MapSet.new()}}
+    state =
+      state
+      |> Map.put(:slaves, slaves)
+      |> Map.put(:drop_responses?, false)
+      |> Map.put(:wkc_offset, 0)
+      |> Map.put(:disconnected, MapSet.new())
+      |> finalize_signal_changes(before_signals)
+
+    {:reply, :ok, state}
   end
 
   def handle_call({:output_value, slave_name}, _from, %{slaves: slaves} = state) do
@@ -288,12 +323,57 @@ defmodule EtherCAT.Simulator do
 
     case update_named_slave(slaves, slave_name, &Device.set_value(&1, signal_name, value)) do
       {:ok, updated_slaves} ->
-        state = %{state | slaves: updated_slaves}
-        notify_signal_changes(state, before_signals, updated_slaves)
+        state =
+          state |> Map.put(:slaves, updated_slaves) |> finalize_signal_changes(before_signals)
+
         {:reply, :ok, state}
 
       {:error, reason} ->
         {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call(:connections, _from, state) do
+    {:reply, {:ok, state.connections}, state}
+  end
+
+  def handle_call(
+        {:connect, {source_slave, source_signal}, {target_slave, target_signal}},
+        _from,
+        state
+      ) do
+    with :ok <- ensure_signal_exists(state.slaves, source_slave, source_signal),
+         :ok <- ensure_signal_exists(state.slaves, target_slave, target_signal) do
+      before_signals = capture_signal_values(state.slaves)
+
+      connections =
+        Enum.uniq_by(
+          [
+            %{source: {source_slave, source_signal}, target: {target_slave, target_signal}}
+            | state.connections
+          ],
+          &{&1.source, &1.target}
+        )
+
+      state =
+        state
+        |> Map.put(:connections, connections)
+        |> sync_connection({source_slave, source_signal}, {target_slave, target_signal})
+        |> finalize_signal_changes(before_signals)
+
+      {:reply, :ok, state}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call({:disconnect, source, target}, _from, state) do
+    connections = Enum.reject(state.connections, &(&1.source == source and &1.target == target))
+
+    if length(connections) == length(state.connections) do
+      {:reply, {:error, :not_found}, state}
+    else
+      {:reply, :ok, %{state | connections: connections}}
     end
   end
 
@@ -510,8 +590,7 @@ defmodule EtherCAT.Simulator do
 
     case update_named_slave(state.slaves, slave_name, fun) do
       {:ok, slaves} ->
-        state = %{state | slaves: slaves}
-        notify_signal_changes(state, before_signals, slaves)
+        state = state |> Map.put(:slaves, slaves) |> finalize_signal_changes(before_signals)
         {:reply, :ok, state}
 
       {:error, reason} ->
@@ -550,6 +629,115 @@ defmodule EtherCAT.Simulator do
 
   defp capture_signal_values(slaves) do
     Map.new(slaves, fn slave -> {slave.name, Device.signal_values(slave)} end)
+  end
+
+  defp ensure_signal_exists(slaves, slave_name, signal_name) do
+    case Enum.find(slaves, &(&1.name == slave_name)) do
+      nil ->
+        {:error, :not_found}
+
+      slave ->
+        case Device.signal_definition(slave, signal_name) do
+          {:ok, _definition} -> :ok
+          :error -> {:error, :unknown_signal}
+        end
+    end
+  end
+
+  defp sync_connection(state, {source_slave, source_signal}, {target_slave, target_signal}) do
+    case get_signal_value(state.slaves, source_slave, source_signal) do
+      {:ok, value} ->
+        case update_named_slave(
+               state.slaves,
+               target_slave,
+               &Device.set_value(&1, target_signal, value)
+             ) do
+          {:ok, slaves} -> %{state | slaves: slaves}
+          {:error, _reason} -> state
+        end
+
+      {:error, _reason} ->
+        state
+    end
+  end
+
+  defp finalize_signal_changes(state, before_signals) do
+    {slaves, _current_signals} =
+      settle_connections(state.slaves, before_signals, state.connections, 32)
+
+    notify_signal_changes(%{state | slaves: slaves}, before_signals, slaves)
+    %{state | slaves: slaves}
+  end
+
+  defp settle_connections(slaves, _previous_signals, _connections, 0) do
+    {slaves, capture_signal_values(slaves)}
+  end
+
+  defp settle_connections(slaves, previous_signals, [], _remaining) do
+    {slaves, previous_signals}
+  end
+
+  defp settle_connections(slaves, previous_signals, connections, remaining) do
+    current_signals = capture_signal_values(slaves)
+    changes = signal_changes(previous_signals, current_signals)
+
+    case propagate_connections(slaves, changes, connections) do
+      {updated_slaves, false} ->
+        {updated_slaves, current_signals}
+
+      {updated_slaves, true} ->
+        settle_connections(updated_slaves, current_signals, connections, remaining - 1)
+    end
+  end
+
+  defp signal_changes(previous_signals, current_signals) do
+    Enum.flat_map(current_signals, fn {slave_name, values} ->
+      previous_values = Map.get(previous_signals, slave_name, %{})
+
+      Enum.flat_map(values, fn {signal_name, value} ->
+        if Map.get(previous_values, signal_name) != value do
+          [{slave_name, signal_name, value}]
+        else
+          []
+        end
+      end)
+    end)
+  end
+
+  defp propagate_connections(slaves, changes, connections) do
+    Enum.reduce(changes, {slaves, false}, fn {source_slave, source_signal, value},
+                                             {current_slaves, changed?} ->
+      matching_connections =
+        Enum.filter(connections, fn connection ->
+          connection.source == {source_slave, source_signal}
+        end)
+
+      Enum.reduce(matching_connections, {current_slaves, changed?}, fn connection,
+                                                                       {slaves_acc, any_changed?} ->
+        {target_slave, target_signal} = connection.target
+        before_target = get_signal_value(slaves_acc, target_slave, target_signal)
+
+        case update_named_slave(
+               slaves_acc,
+               target_slave,
+               &Device.set_value(&1, target_signal, value)
+             ) do
+          {:ok, updated_slaves} ->
+            after_target = get_signal_value(updated_slaves, target_slave, target_signal)
+            {updated_slaves, any_changed? or before_target != after_target}
+
+          {:error, _reason} ->
+            {slaves_acc, any_changed?}
+        end
+      end)
+    end)
+  end
+
+  defp get_signal_value(slaves, slave_name, signal_name) do
+    case Enum.find(slaves, &(&1.name == slave_name)) do
+      nil -> {:error, :not_found}
+      slave -> Device.get_value(slave, signal_name)
+    end
   end
 
   defp notify_signal_changes(%{subscriptions: []}, _before, _after), do: :ok

@@ -101,7 +101,7 @@ Instead:
 
 That is now the implemented direction for Milestone 3:
 
-- a mailbox-capable fixture advertises PREOP mailbox offsets/sizes through SII
+- a mailbox-capable device advertises PREOP mailbox offsets/sizes through SII
 - mailbox writes to the receive area are handled synchronously by the simulator
 - the simulator raises SM1 mailbox-full when a response is ready
 - reading the send mailbox clears the mailbox-full indication again
@@ -128,7 +128,7 @@ this protocol core:
 - dynamic input refresh through a behavior boundary
 - typed PDO/process-data conversion
 - reusable analog, temperature, mailbox, and servo profiles
-- optional DC-aware behavior for fixtures that need it
+- optional DC-aware behavior for devices that need it
 
 ## Elixir Implication
 

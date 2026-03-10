@@ -16,9 +16,9 @@ defmodule EtherCAT.Integration.SimulatorTest do
   setup tags do
     _ = EtherCAT.stop()
 
-    fixtures = Map.get(tags, :fixtures, [Slave.digital_io(name: :sim)])
+    devices = Map.get(tags, :devices, [Slave.digital_io(name: :sim)])
 
-    {:ok, simulator} = Simulator.start_link(slaves: fixtures)
+    {:ok, simulator} = Simulator.start_link(devices: devices)
     {:ok, endpoint} = Udp.start_link(simulator: simulator, ip: @simulator_ip, port: 0)
     {:ok, %{port: port}} = Udp.info(endpoint)
 
@@ -34,7 +34,7 @@ defmodule EtherCAT.Integration.SimulatorTest do
       end
     end)
 
-    {:ok, endpoint: endpoint, simulator: simulator, port: port, fixtures: fixtures}
+    {:ok, endpoint: endpoint, simulator: simulator, port: port, devices: devices}
   end
 
   test "boots the real master against a loopback UDP simulated slave and exchanges cyclic I/O",
@@ -73,9 +73,9 @@ defmodule EtherCAT.Integration.SimulatorTest do
     assert {:ok, 1} = Simulator.output_value(simulator, :sim)
   end
 
-  @tag fixtures: [Slave.digital_io(name: :sim_a), Slave.digital_io(name: :sim_b)]
+  @tag devices: [Slave.digital_io(name: :sim_a), Slave.digital_io(name: :sim_b)]
   test "boots a multi-slave simulated ring and exchanges cyclic I/O with both slaves",
-       %{simulator: simulator, port: port, fixtures: fixtures} do
+       %{simulator: simulator, port: port, devices: devices} do
     assert :ok =
              EtherCAT.start(
                transport: :udp,
@@ -87,7 +87,7 @@ defmodule EtherCAT.Integration.SimulatorTest do
                scan_poll_ms: 10,
                frame_timeout_ms: 2,
                domains: [%DomainConfig{id: :main, cycle_time_us: 10_000}],
-               slaves: slave_configs(fixtures)
+               slaves: slave_configs(devices)
              )
 
     assert :ok = EtherCAT.await_operational(2_000)
@@ -107,8 +107,8 @@ defmodule EtherCAT.Integration.SimulatorTest do
     assert {:ok, 2} = Simulator.output_value(simulator, :sim_b)
   end
 
-  @tag fixtures: [Slave.coupler(name: :coupler), Slave.lan9252_demo(name: :io)]
-  test "boots a heterogeneous ring with a coupler fixture and a LAN9252-style IO slave",
+  @tag devices: [Slave.coupler(name: :coupler), Slave.lan9252_demo(name: :io)]
+  test "boots a heterogeneous ring with a coupler device and a LAN9252-style IO slave",
        %{simulator: simulator, port: port} do
     assert :ok =
              EtherCAT.start(
@@ -150,7 +150,7 @@ defmodule EtherCAT.Integration.SimulatorTest do
     assert {:ok, <<1, 2>>} = Simulator.output_image(simulator, :io)
   end
 
-  @tag fixtures: [Slave.lan9252_demo(name: :mailbox)]
+  @tag devices: [Slave.lan9252_demo(name: :mailbox)]
   test "supports expedited CoE uploads and downloads in PREOP over the real UDP transport",
        %{port: port} do
     assert :ok =
@@ -191,7 +191,7 @@ defmodule EtherCAT.Integration.SimulatorTest do
     end)
   end
 
-  @tag fixtures: [Slave.lan9252_demo(name: :io)]
+  @tag devices: [Slave.lan9252_demo(name: :io)]
   test "support slave value API drives simulator inputs and inspects outputs",
        %{simulator: simulator, port: port} do
     assert :ok =
@@ -239,7 +239,7 @@ defmodule EtherCAT.Integration.SimulatorTest do
     end)
   end
 
-  @tag fixtures: [Slave.lan9252_demo(name: :mailbox)]
+  @tag devices: [Slave.lan9252_demo(name: :mailbox)]
   test "supports segmented CoE uploads and downloads over the real UDP transport",
        %{port: port} do
     assert :ok =
@@ -283,7 +283,7 @@ defmodule EtherCAT.Integration.SimulatorTest do
     end)
   end
 
-  @tag fixtures: [Slave.lan9252_demo(name: :io)]
+  @tag devices: [Slave.lan9252_demo(name: :io)]
   test "signal subscriptions emit widget-friendly change notifications",
        %{simulator: simulator, port: port} do
     assert :ok =
@@ -322,7 +322,7 @@ defmodule EtherCAT.Integration.SimulatorTest do
     assert :ok = Slave.unsubscribe(simulator, :io)
   end
 
-  @tag fixtures: [Slave.analog_io(name: :analog)]
+  @tag devices: [Slave.analog_io(name: :analog)]
   test "typed analog profile exchanges scaled values over cyclic PDOs",
        %{simulator: simulator, port: port} do
     assert :ok =
@@ -361,7 +361,7 @@ defmodule EtherCAT.Integration.SimulatorTest do
     assert {:ok, 12.3} = Slave.get_value(simulator, :analog, :ai0)
   end
 
-  @tag fixtures: [Slave.temperature_input(name: :temp)]
+  @tag devices: [Slave.temperature_input(name: :temp)]
   test "temperature profile exposes typed inputs and enforces read-only object access",
        %{simulator: simulator, port: port} do
     assert :ok =
@@ -404,7 +404,7 @@ defmodule EtherCAT.Integration.SimulatorTest do
     end)
   end
 
-  @tag fixtures: [Slave.servo_drive(name: :axis)]
+  @tag devices: [Slave.servo_drive(name: :axis)]
   test "servo drive profile supports CiA402-style enable sequence and DC runtime",
        %{port: port} do
     assert :ok =
@@ -558,7 +558,7 @@ defmodule EtherCAT.Integration.SimulatorTest do
     )
   end
 
-  @tag fixtures: [Slave.lan9252_demo(name: :mailbox)]
+  @tag devices: [Slave.lan9252_demo(name: :mailbox)]
   test "mailbox abort injection is surfaced through the public SDO API",
        %{simulator: simulator, port: port} do
     assert :ok =
@@ -681,9 +681,9 @@ defmodule EtherCAT.Integration.SimulatorTest do
     assert :operational = EtherCAT.state()
   end
 
-  @tag fixtures: [Slave.digital_io(name: :sim_a), Slave.digital_io(name: :sim_b)]
+  @tag devices: [Slave.digital_io(name: :sim_a), Slave.digital_io(name: :sim_b)]
   test "disconnecting one slave in a shared domain recovers cleanly after reconnect",
-       %{simulator: simulator, port: port, fixtures: fixtures} do
+       %{simulator: simulator, port: port, devices: devices} do
     assert :ok =
              EtherCAT.start(
                transport: :udp,
@@ -696,9 +696,9 @@ defmodule EtherCAT.Integration.SimulatorTest do
                frame_timeout_ms: 2,
                domains: [%DomainConfig{id: :main, cycle_time_us: 10_000, miss_threshold: 1}],
                slaves:
-                 Enum.map(fixtures, fn fixture ->
+                 Enum.map(devices, fn device ->
                    %SlaveConfig{
-                     name: fixture.name,
+                     name: device.name,
                      driver: Driver,
                      process_data: [out: :main, in: :main],
                      target_state: :op,
@@ -748,10 +748,62 @@ defmodule EtherCAT.Integration.SimulatorTest do
     assert :operational = EtherCAT.state()
   end
 
-  defp slave_configs(fixtures) do
-    Enum.map(fixtures, fn fixture ->
+  @tag devices: [Slave.digital_io(name: :out_card), Slave.digital_io(name: :in_card)]
+  test "connects one slave output to another slave input through the simulator wiring API",
+       %{simulator: simulator, port: port} do
+    assert :ok =
+             EtherCAT.start(
+               transport: :udp,
+               bind_ip: @master_ip,
+               host: @simulator_ip,
+               port: port,
+               dc: nil,
+               scan_stable_ms: 20,
+               scan_poll_ms: 10,
+               frame_timeout_ms: 2,
+               domains: [%DomainConfig{id: :main, cycle_time_us: 10_000}],
+               slaves: [
+                 %SlaveConfig{
+                   name: :out_card,
+                   driver: Driver,
+                   process_data: [out: :main, in: :main],
+                   target_state: :op
+                 },
+                 %SlaveConfig{
+                   name: :in_card,
+                   driver: Driver,
+                   process_data: [out: :main, in: :main],
+                   target_state: :op
+                 }
+               ]
+             )
+
+    assert :ok = EtherCAT.await_operational(2_000)
+    assert :ok = Slave.connect(simulator, {:out_card, :out}, {:in_card, :in})
+
+    assert {:ok, [%{source: {:out_card, :out}, target: {:in_card, :in}}]} =
+             Slave.connections(simulator)
+
+    assert :ok = EtherCAT.write_output(:out_card, :out, 1)
+
+    assert_eventually(fn ->
+      assert {:ok, {1, _}} = EtherCAT.read_input(:in_card, :in)
+      assert {:ok, 1} = Slave.get_value(simulator, :in_card, :in)
+    end)
+
+    assert :ok = Slave.disconnect(simulator, {:out_card, :out}, {:in_card, :in})
+    assert {:ok, []} = Slave.connections(simulator)
+    assert :ok = EtherCAT.write_output(:out_card, :out, 0)
+
+    assert_eventually(fn ->
+      assert {:ok, 1} = Slave.get_value(simulator, :in_card, :in)
+    end)
+  end
+
+  defp slave_configs(devices) do
+    Enum.map(devices, fn device ->
       %SlaveConfig{
-        name: fixture.name,
+        name: device.name,
         driver: Driver,
         process_data: [out: :main, in: :main],
         target_state: :op

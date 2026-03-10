@@ -60,9 +60,9 @@ contribution is `3`.
 The simulator should derive this from actual FMMU overlap and command effect,
 not from a shortcut such as “one slave = WKC 3”.
 
-## Initial Fixture Scope
+## Initial Definition Scope
 
-The smallest practical first fixture is:
+The smallest practical first device is:
 
 - one output byte
 - one input byte
@@ -71,12 +71,12 @@ The smallest practical first fixture is:
 - one output FMMU
 - one input FMMU
 
-That is what the current `digital_io` support fixture provides. It is smaller
+That is what the current `digital_io` support device provides. It is smaller
 than the SOES LAN9252 demo, but the protocol shape is the same.
 
 ## Next Realistic Step
 
-To align even more closely with the SOES LAN9252 demo, the next fixture should
+To align even more closely with the SOES LAN9252 demo, the next device should
 move toward:
 
 - two output bytes

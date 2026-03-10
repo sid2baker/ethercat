@@ -77,7 +77,7 @@ defmodule EtherCAT.Simulator.Slave.Profile.TemperatureInput do
     }
   end
 
-  def init(_fixture), do: %{temperature: 25.0, status: 0}
+  def init(_definition), do: %{temperature: 25.0, status: 0}
 
   def refresh_inputs(_device, state) do
     {:ok, %{temp0: state.temperature, status: state.status}, state}

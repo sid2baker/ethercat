@@ -18,7 +18,7 @@ repo:
 | SOES concept | Elixir support module |
 | --- | --- |
 | one slave application instance | `EtherCAT.Simulator.Slave.Device` |
-| fixture identity + SII/process image | `EtherCAT.Simulator.Slave.Fixture` |
+| device identity + SII/process image | `EtherCAT.Simulator.Slave.Definition` |
 | slave-facing driver for tests | `EtherCAT.Simulator.Slave.Driver` |
 | slave segment/ring execution | `EtherCAT.Simulator` |
 | transport endpoint | `EtherCAT.Simulator.Udp` |
@@ -58,7 +58,7 @@ below are kept as historical guidance for how the simulator grew.
 
 Keep only:
 
-- one static digital I/O fixture
+- one static digital I/O device
 - normal startup to `:operational`
 - cyclic process-image roundtrip
 
@@ -75,7 +75,7 @@ Current status:
 - implemented with one-segment multi-slave routing in `EtherCAT.Simulator`
 - covered by deep tests for:
   - two homogeneous digital I/O slaves
-  - one coupler fixture plus one LAN9252-style I/O fixture
+  - one coupler device plus one LAN9252-style I/O device
 
 ### Milestone 3
 
@@ -88,7 +88,7 @@ Add mailbox/CoE only when the master/runtime tests actually need it:
 Current status:
 
 - expedited upload/download basics are implemented
-- mailbox-capable fixtures expose deterministic object values
+- mailbox-capable devices expose deterministic object values
 - the deep integration suite covers PREOP public `upload_sdo/3` and
   `download_sdo/4`
 - mailbox abort replies are implemented through explicit fault injection

@@ -82,7 +82,7 @@ defmodule EtherCAT.Simulator.Slave.Profile.AnalogIO do
     }
   end
 
-  def init(_fixture), do: %{analog_output: 0.0, analog_input: 0.0}
+  def init(_definition), do: %{analog_output: 0.0, analog_input: 0.0}
 
   def handle_output_change(:ao0, value, _device, state) do
     {:ok, %{state | analog_output: value, analog_input: value}}

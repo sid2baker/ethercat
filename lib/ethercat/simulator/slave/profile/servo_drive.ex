@@ -156,7 +156,7 @@ defmodule EtherCAT.Simulator.Slave.Profile.ServoDrive do
     }
   end
 
-  def init(_fixture) do
+  def init(_definition) do
     %{
       cia402_state: :switch_on_disabled,
       controlword: 0,

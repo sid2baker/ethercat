@@ -27,5 +27,5 @@ defmodule EtherCAT.Simulator.Slave.Profile.Coupler do
 
   def signal_specs, do: %{}
 
-  def init(_fixture), do: %{}
+  def init(_definition), do: %{}
 end

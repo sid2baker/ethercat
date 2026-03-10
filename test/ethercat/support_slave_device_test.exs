@@ -2,11 +2,11 @@ defmodule EtherCAT.SimulatorSlaveDeviceTest do
   use ExUnit.Case, async: true
 
   alias EtherCAT.Simulator.Slave.Device
-  alias EtherCAT.Simulator.Slave.Fixture
+  alias EtherCAT.Simulator.Slave.Definition
   alias EtherCAT.Simulator.Slave.Object
 
   test "AL control enforces basic transition discipline" do
-    slave = Device.new(Fixture.digital_io(), 0)
+    slave = Device.new(Definition.digital_io(), 0)
 
     invalid = Device.write_register(slave, 0x0120, <<0x08, 0x00>>)
 
@@ -36,7 +36,7 @@ defmodule EtherCAT.SimulatorSlaveDeviceTest do
   end
 
   test "mailbox expedited upload and download update the simulated object dictionary" do
-    slave = Device.new(Fixture.lan9252_demo(), 0)
+    slave = Device.new(Definition.lan9252_demo(), 0)
 
     upload_request =
       <<10::16-little, 0::16-little, 0::8, 0x13::8, 0x2000::16-little, 0x40, 0x00, 0x20, 0x01,
@@ -80,7 +80,7 @@ defmodule EtherCAT.SimulatorSlaveDeviceTest do
   end
 
   test "fault helpers can latch AL errors, retreat to SAFEOP, and inject mailbox aborts" do
-    slave = Device.new(Fixture.lan9252_demo(), 0)
+    slave = Device.new(Definition.lan9252_demo(), 0)
 
     errored = Device.latch_al_error(slave, 0x001D)
     assert errored.al_error?
@@ -121,7 +121,7 @@ defmodule EtherCAT.SimulatorSlaveDeviceTest do
   end
 
   test "signal access can get and set named input and output values" do
-    slave = Device.new(Fixture.lan9252_demo(), 0)
+    slave = Device.new(Definition.lan9252_demo(), 0)
 
     assert {:ok, 0} = Device.get_value(slave, :led0)
     assert {:ok, 0} = Device.get_value(slave, :button1)

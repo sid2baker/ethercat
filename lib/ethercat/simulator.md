@@ -4,9 +4,9 @@ Simulated EtherCAT segment for deep integration tests and virtual hardware.
 datagrams against them with protocol-faithful register, AL-state, mailbox, and
 logical process-data behavior.
 
-It is the public process boundary for the simulator runtime. Device-specific
-fixtures and signal-level control live in `EtherCAT.Simulator.Slave`, while the
-real UDP endpoint lives in `EtherCAT.Simulator.Udp`.
+It is the public process boundary for the simulator runtime. Device builders,
+signal-level control, and signal wiring live in `EtherCAT.Simulator.Slave`,
+while the real UDP endpoint lives in `EtherCAT.Simulator.Udp`.
 
 For the full implementation guide and the SOES-derived simulator notes, see:
 
@@ -49,14 +49,15 @@ private slave runtime and profile modules under `lib/ethercat/simulator/slave/`.
 
 Main entry points:
 
-- `start_link/1` — start a simulator with one or more fixtures
+- `start_link/1` — start a simulator with one or more devices
 - `process_datagrams/2` — execute EtherCAT datagrams directly
 - `inject_fault/2` / `clear_faults/1` — deterministic fault injection
 - `slave_info/2` / `info/1` — runtime diagnostics
 - `signals/2`, `signal_definitions/2`, `get_value/3`, `set_value/4`
+- `connect/3`, `disconnect/3`, `connections/1` — cross-slave signal wiring
 - `subscribe/4` / `unsubscribe/4` — widget-friendly signal observation
 
-Use `EtherCAT.Simulator.Slave` to build fixtures such as:
+Use `EtherCAT.Simulator.Slave` to build devices such as:
 
 - digital I/O
 - couplers

@@ -94,37 +94,37 @@ defmodule EtherCAT.Simulator.Slave.Device do
   ]
 
   @spec new(map(), non_neg_integer()) :: t()
-  def new(fixture, position) do
+  def new(definition, position) do
     behavior_state =
-      if function_exported?(fixture.behavior, :init, 1) do
-        fixture.behavior.init(fixture)
+      if function_exported?(definition.behavior, :init, 1) do
+        definition.behavior.init(definition)
       else
         %{}
       end
 
     %__MODULE__{
-      name: fixture.name,
-      profile: fixture.profile,
+      name: definition.name,
+      profile: definition.profile,
       position: position,
       station: 0,
       state: :init,
       al_error?: false,
       al_status_code: 0,
-      eeprom: fixture.eeprom,
-      memory: fixture.memory,
-      output_phys: fixture.output_phys,
-      output_size: fixture.output_size,
-      input_phys: fixture.input_phys,
-      input_size: fixture.input_size,
-      mirror_output_to_input?: fixture.mirror_output_to_input?,
-      signals: fixture.signals,
+      eeprom: definition.eeprom,
+      memory: definition.memory,
+      output_phys: definition.output_phys,
+      output_size: definition.output_size,
+      input_phys: definition.input_phys,
+      input_size: definition.input_size,
+      mirror_output_to_input?: definition.mirror_output_to_input?,
+      signals: definition.signals,
       input_overrides: %{},
-      mailbox_config: fixture.mailbox_config,
-      objects: fixture.objects,
+      mailbox_config: definition.mailbox_config,
+      objects: definition.objects,
       mailbox_abort_codes: %{},
-      behavior: fixture.behavior,
+      behavior: definition.behavior,
       behavior_state: behavior_state,
-      dc_capable?: fixture.dc_capable?
+      dc_capable?: definition.dc_capable?
     }
     |> refresh_inputs()
   end

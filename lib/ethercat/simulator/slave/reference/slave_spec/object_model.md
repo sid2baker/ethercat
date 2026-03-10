@@ -30,7 +30,7 @@ So the device shape is:
 - at least one non-PDO parameter value in the object dictionary
 
 The simulator now carries that object-dictionary idea explicitly for
-mailbox-capable fixtures:
+mailbox-capable devices:
 
 - `lan9252_demo/1` exposes a small deterministic object dictionary
 - current deep tests use `0x2000:01`
@@ -61,7 +61,7 @@ The demo object dictionary includes:
   - `0x8000`
 
 For the Elixir simulator, the first milestone does **not** need the whole CoE
-surface. But these objects tell us what the fixture should conceptually model.
+surface. But these objects tell us what the device should conceptually model.
 
 ## PDO Layout
 
@@ -87,7 +87,7 @@ The simulator now carries that shape as `lan9252_demo/1`:
   - `led1`
   - `button1`
 
-The smaller `digital_io/1` fixture still exists as the minimal Milestone 1
+The smaller `digital_io/1` device still exists as the minimal Milestone 1
 device, but `lan9252_demo/1` is the better default when a deep integration
 test wants a richer small-slave profile.
 
@@ -111,14 +111,14 @@ there.
 The important specification to carry over is not the exact objectlist arrays,
 but the semantic device shape:
 
-- one declarative fixture describes identity and process image
+- one declarative device describes identity and process image
 - PDO assignments stay explicit
 - SyncManager direction stays explicit
 - process-image bytes map back to named signals in the driver
 
 That is why the current compiled test-support split is sensible:
 
-- `EtherCAT.Simulator.Slave.Fixture`
+- `EtherCAT.Simulator.Slave.Definition`
   Declarative device identity and SII/process-image definition.
 - `EtherCAT.Simulator.Slave.Driver`
   Tiny driver that gives the master named signals for tests.
