@@ -11,8 +11,8 @@ defmodule EtherCAT.MasterTest do
   defmodule FakeBus do
     use GenServer
 
-    def start_link(responses) do
-      GenServer.start_link(__MODULE__, responses)
+    def start_link(arg) do
+      GenServer.start_link(__MODULE__, arg)
     end
 
     @impl true
@@ -282,7 +282,7 @@ defmodule EtherCAT.MasterTest do
              )
   end
 
-  test "recovering retry restarts stopped domains once runtime faults remain" do
+  test "recovering retry restarts stopped domains once runtime faults remain and the bus is usable" do
     domain_id = :"master_domain_retry_#{System.unique_integer([:positive, :monotonic])}"
 
     bus =

@@ -273,6 +273,48 @@ defmodule EtherCAT.DomainTest do
     end
   end
 
+  test "confirmed bus down stops the domain immediately without waiting for miss threshold" do
+    registered_master? = Process.whereis(EtherCAT.Master) == nil
+
+    if registered_master? do
+      Process.register(self(), EtherCAT.Master)
+      on_exit(fn -> Process.unregister(EtherCAT.Master) end)
+    end
+
+    bus = start_supervised!({FakeBus, [{:error, :down}]})
+
+    table = :ets.new(:"domain_table_#{System.unique_integer([:positive])}", [:set, :public])
+    key = {:sensor, {:sm, 0}}
+    :ets.insert(table, {key, :unset, self()})
+
+    {_, layout} = Layout.register(Layout.new(), key, 1, :input)
+    {:ok, cycle_plan} = Layout.prepare(layout)
+
+    data = %Domain{
+      id: :main,
+      bus: bus,
+      period_us: 1_000,
+      logical_base: 0,
+      next_cycle_at: System.monotonic_time(:microsecond) + 1_000,
+      layout: layout,
+      cycle_plan: cycle_plan,
+      cycle_health: :healthy,
+      miss_threshold: 500,
+      table: table
+    }
+
+    assert {:next_state, :stopped, stopped_data} =
+             Domain.handle_event(:state_timeout, :tick, :cycling, data)
+
+    assert stopped_data.miss_count == 1
+    assert stopped_data.cycle_health == {:invalid, :down}
+
+    if registered_master? do
+      assert_receive {:domain_cycle_invalid, :main, :down}
+      assert_receive {:domain_stopped, :main, :down}
+    end
+  end
+
   test "input dispatch resolves the current slave pid from the registry on each change" do
     bus =
       start_supervised!({

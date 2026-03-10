@@ -1,6 +1,8 @@
 defmodule EtherCAT.Bus.LinkMonitor do
   @moduledoc false
 
+  use GenServer
+
   alias EtherCAT.Bus.InterfaceInfo
 
   @af_netlink 16
@@ -11,21 +13,41 @@ defmodule EtherCAT.Bus.LinkMonitor do
   @poll_interval_ms 100
   @resync_interval_ms 5_000
 
+  @type mode :: :netlink | :poll
   @type event ::
           {:ethercat_link, interface :: String.t(), old_up :: boolean(), new_up :: boolean()}
 
-  @spec start_link(pid(), [String.t()], keyword()) :: {:ok, pid()}
+  @type state :: %{
+          owner: pid(),
+          interfaces: [String.t()],
+          carriers: %{optional(String.t()) => boolean()},
+          mode: mode(),
+          notify_mode_changes?: boolean(),
+          poll_interval_ms: pos_integer(),
+          resync_interval_ms: pos_integer(),
+          socket: :socket.socket() | nil,
+          select_ref: reference() | nil
+        }
+
+  @spec start_link(pid(), [String.t()], keyword()) :: GenServer.on_start()
   def start_link(owner, interfaces, opts \\ [])
       when is_pid(owner) and is_list(interfaces) and is_list(opts) do
-    interval_ms = Keyword.get(opts, :poll_interval_ms, @poll_interval_ms)
-    resync_interval_ms = Keyword.get(opts, :resync_interval_ms, @resync_interval_ms)
+    GenServer.start_link(__MODULE__, {owner, Enum.uniq(interfaces), opts})
+  end
 
-    pid =
-      spawn_link(fn ->
-        init(owner, Enum.uniq(interfaces), interval_ms, resync_interval_ms)
-      end)
+  @spec mode(pid()) :: mode()
+  def mode(pid) when is_pid(pid), do: GenServer.call(pid, :mode)
 
-    {:ok, pid}
+  @spec detect_mode() :: mode()
+  def detect_mode do
+    case open_netlink_socket() do
+      {:ok, socket, _result} ->
+        :socket.close(socket)
+        :netlink
+
+      {:error, _reason} ->
+        :poll
+    end
   end
 
   @spec snapshot([String.t()]) :: %{optional(String.t()) => boolean()}
@@ -42,99 +64,140 @@ defmodule EtherCAT.Bus.LinkMonitor do
     |> Enum.reverse()
   end
 
-  defp init(owner, interfaces, poll_interval_ms, resync_interval_ms) do
-    carriers = snapshot(interfaces)
+  @impl true
+  def init({owner, interfaces, opts}) do
+    poll_interval_ms = Keyword.get(opts, :poll_interval_ms, @poll_interval_ms)
+    resync_interval_ms = Keyword.get(opts, :resync_interval_ms, @resync_interval_ms)
 
+    state = %{
+      owner: owner,
+      interfaces: interfaces,
+      carriers: snapshot(interfaces),
+      mode: :poll,
+      notify_mode_changes?: false,
+      poll_interval_ms: poll_interval_ms,
+      resync_interval_ms: resync_interval_ms,
+      socket: nil,
+      select_ref: nil
+    }
+
+    {:ok, initialize_mode(state)}
+  end
+
+  @impl true
+  def handle_call(:mode, _from, state) do
+    {:reply, state.mode, state}
+  end
+
+  @impl true
+  def handle_info(:poll_tick, %{mode: :poll} = state) do
+    next = snapshot(state.interfaces)
+    notify_changes(state.owner, state.carriers, next)
+    schedule_poll(state.poll_interval_ms)
+    {:noreply, %{state | carriers: next}}
+  end
+
+  def handle_info(:poll_tick, state), do: {:noreply, state}
+
+  @impl true
+  def handle_info(:resync, %{mode: :netlink} = state) do
+    next = snapshot(state.interfaces)
+    notify_changes(state.owner, state.carriers, next)
+    schedule_resync(state.resync_interval_ms)
+    {:noreply, %{state | carriers: next}}
+  end
+
+  def handle_info(:resync, state), do: {:noreply, state}
+
+  @impl true
+  def handle_info(
+        {:"$socket", socket, :select, select_ref},
+        %{mode: :netlink, socket: socket, select_ref: select_ref} = state
+      ) do
+    case recv_ready_netlink(socket, state.owner, state.carriers) do
+      {:ok, carriers, next_select_ref} ->
+        {:noreply, %{state | carriers: carriers, select_ref: next_select_ref}}
+
+      {:fallback, carriers} ->
+        :socket.close(socket)
+
+        {:noreply,
+         switch_mode(%{state | carriers: carriers, socket: nil, select_ref: nil}, :poll)}
+    end
+  end
+
+  def handle_info(_msg, state), do: {:noreply, state}
+
+  @impl true
+  def terminate(_reason, %{socket: socket}) when not is_nil(socket) do
+    :socket.close(socket)
+    :ok
+  end
+
+  def terminate(_reason, _state), do: :ok
+
+  defp initialize_mode(state) do
     case open_netlink_socket() do
       {:ok, socket, {:select, select_ref}} ->
-        loop(
-          netlink_state(
-            owner,
-            interfaces,
-            carriers,
-            socket,
-            select_ref,
-            poll_interval_ms,
-            resync_interval_ms
-          )
-        )
+        state
+        |> Map.put(:socket, socket)
+        |> Map.put(:select_ref, select_ref)
+        |> switch_mode(:netlink)
 
       {:ok, socket, {:ready, msg}} ->
-        carriers = handle_netlink_message(msg, owner, carriers)
+        carriers = handle_netlink_message(msg, state.owner, state.carriers)
 
-        case recv_ready_netlink(socket, owner, carriers) do
+        case recv_ready_netlink(socket, state.owner, carriers) do
           {:ok, carriers, select_ref} ->
-            loop(
-              netlink_state(
-                owner,
-                interfaces,
-                carriers,
-                socket,
-                select_ref,
-                poll_interval_ms,
-                resync_interval_ms
-              )
-            )
+            state
+            |> Map.put(:carriers, carriers)
+            |> Map.put(:socket, socket)
+            |> Map.put(:select_ref, select_ref)
+            |> switch_mode(:netlink)
 
           {:fallback, carriers} ->
             :socket.close(socket)
-
-            loop(%{
-              owner: owner,
-              interfaces: interfaces,
-              carriers: carriers,
-              mode: :poll,
-              poll_interval_ms: poll_interval_ms,
-              resync_interval_ms: resync_interval_ms
-            })
+            switch_mode(%{state | carriers: carriers}, :poll)
         end
 
       {:error, _reason} ->
-        loop(%{
-          owner: owner,
-          interfaces: interfaces,
-          carriers: carriers,
-          mode: :poll,
-          poll_interval_ms: poll_interval_ms,
-          resync_interval_ms: resync_interval_ms
-        })
+        switch_mode(state, :poll)
     end
   end
 
-  defp loop(%{mode: :poll} = state) do
-    receive do
-      :stop ->
-        :ok
-    after
-      state.poll_interval_ms ->
-        next = snapshot(state.interfaces)
-        notify_changes(state.owner, state.carriers, next)
-        loop(%{state | carriers: next})
-    end
+  defp switch_mode(
+         %{owner: owner, mode: old_mode, notify_mode_changes?: true} = state,
+         new_mode
+       )
+       when old_mode != new_mode do
+    send(owner, {:ethercat_link_monitor_mode, old_mode, new_mode})
+
+    state =
+      case new_mode do
+        :poll ->
+          schedule_poll(state.poll_interval_ms)
+          %{state | mode: :poll}
+
+        :netlink ->
+          schedule_resync(state.resync_interval_ms)
+          %{state | mode: :netlink}
+      end
+
+    state
   end
 
-  defp loop(%{mode: {:netlink, socket, select_ref}} = state) do
-    receive do
-      :stop ->
-        :socket.close(socket)
-        :ok
-
-      {:"$socket", ^socket, :select, ^select_ref} ->
-        case recv_ready_netlink(socket, state.owner, state.carriers) do
-          {:ok, carriers, next_select_ref} ->
-            loop(%{state | carriers: carriers, mode: {:netlink, socket, next_select_ref}})
-
-          {:fallback, carriers} ->
-            :socket.close(socket)
-            loop(%{state | carriers: carriers, mode: :poll})
-        end
-    after
-      state.resync_interval_ms ->
-        next = snapshot(state.interfaces)
-        notify_changes(state.owner, state.carriers, next)
-        loop(%{state | carriers: next})
-    end
+  defp switch_mode(state, :poll) do
+    schedule_poll(state.poll_interval_ms)
+    %{state | mode: :poll, notify_mode_changes?: true}
   end
+
+  defp switch_mode(state, :netlink) do
+    schedule_resync(state.resync_interval_ms)
+    %{state | mode: :netlink, notify_mode_changes?: true}
+  end
+
+  defp schedule_poll(interval_ms), do: Process.send_after(self(), :poll_tick, interval_ms)
+  defp schedule_resync(interval_ms), do: Process.send_after(self(), :resync, interval_ms)
 
   defp open_netlink_socket do
     case :socket.open(@af_netlink, :raw, @netlink_route) do
@@ -173,7 +236,7 @@ defmodule EtherCAT.Bus.LinkMonitor do
           {:ok, {:ready, msg}} ->
             recv_ready_netlink(socket, owner, handle_netlink_message(msg, owner, carriers))
 
-          {:error, _} ->
+          {:error, _reason} ->
             {:fallback, carriers}
         end
 
@@ -320,25 +383,6 @@ defmodule EtherCAT.Bus.LinkMonitor do
   end
 
   defp align4(len), do: div(len + 3, 4) * 4
-
-  defp netlink_state(
-         owner,
-         interfaces,
-         carriers,
-         socket,
-         select_ref,
-         poll_interval_ms,
-         resync_interval_ms
-       ) do
-    %{
-      owner: owner,
-      interfaces: interfaces,
-      carriers: carriers,
-      mode: {:netlink, socket, select_ref},
-      poll_interval_ms: poll_interval_ms,
-      resync_interval_ms: resync_interval_ms
-    }
-  end
 
   defp netlink_sockaddr(groups) do
     %{

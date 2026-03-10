@@ -158,8 +158,8 @@ defmodule EtherCAT.Domain.Cycle do
     new_data =
       record_cycle_fault(data, reason, next_at, consecutive_miss_count: data.miss_count + 1)
 
-    if new_data.miss_count >= data.miss_threshold do
-      Logger.error("[Domain #{data.id}] #{data.miss_threshold} consecutive misses — stopping")
+    if stop_domain_now?(reason, new_data.miss_count, data.miss_threshold) do
+      log_domain_stop(data.id, reason, data.miss_threshold)
       Telemetry.domain_stopped(data.id, reason)
       send(EtherCAT.Master, {:domain_stopped, data.id, reason})
       {:next_state, :stopped, new_data}
@@ -234,4 +234,15 @@ defmodule EtherCAT.Domain.Cycle do
   end
 
   defp maybe_notify_cycle_recovered(_data), do: :ok
+
+  defp stop_domain_now?(:down, _miss_count, _miss_threshold), do: true
+  defp stop_domain_now?(_reason, miss_count, miss_threshold), do: miss_count >= miss_threshold
+
+  defp log_domain_stop(id, :down, _miss_threshold) do
+    Logger.error("[Domain #{id}] confirmed bus down — stopping")
+  end
+
+  defp log_domain_stop(id, _reason, miss_threshold) do
+    Logger.error("[Domain #{id}] #{miss_threshold} consecutive misses — stopping")
+  end
 end

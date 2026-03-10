@@ -18,6 +18,7 @@ defmodule EtherCAT.Bus do
   require Logger
 
   alias EtherCAT.Bus.{Datagram, Frame, InFlight, Result, Submission, Transaction}
+  alias EtherCAT.Bus.InterfaceInfo
   alias EtherCAT.Bus.LinkMonitor
   alias EtherCAT.Bus.Link.{Redundant, SinglePort}
   alias EtherCAT.Telemetry
@@ -32,9 +33,11 @@ defmodule EtherCAT.Bus do
   defstruct [
     :link,
     :link_mod,
+    :link_monitor,
     :idx,
     :in_flight,
     frame_timeout_ms: 25,
+    link_monitor_mode: :disabled,
     timeout_count: 0,
     realtime: :queue.new(),
     reliable: :queue.new()
@@ -43,9 +46,11 @@ defmodule EtherCAT.Bus do
   @opaque t :: %__MODULE__{
             link: term(),
             link_mod: module(),
+            link_monitor: pid() | nil,
             idx: non_neg_integer(),
             in_flight: term() | nil,
             frame_timeout_ms: pos_integer(),
+            link_monitor_mode: :disabled | LinkMonitor.mode(),
             timeout_count: non_neg_integer(),
             realtime: term(),
             reliable: term()
@@ -95,11 +100,16 @@ defmodule EtherCAT.Bus do
     link_opts = Keyword.drop(opts, [:name, :link_mod])
 
     with {:ok, link} <- link_mod.open(link_opts),
-         {:ok, _link_monitor} <- start_link_monitor(self(), link_mod.interfaces(link)) do
+         {:ok, link_monitor, link_monitor_mode} <-
+           start_link_monitor(self(), link_mod.interfaces(link)) do
+      maybe_log_link_monitor_mode(link_name(link_mod, link), link_monitor_mode)
+
       {:ok, :idle,
        %__MODULE__{
          link: link,
+         link_monitor: link_monitor,
          link_mod: link_mod,
+         link_monitor_mode: link_monitor_mode,
          idx: 0,
          frame_timeout_ms: frame_timeout_ms
        }}
@@ -145,6 +155,19 @@ defmodule EtherCAT.Bus do
     end
   end
 
+  @doc """
+  Return low-level bus runtime information.
+  """
+  @spec info(server()) :: {:ok, map()} | {:error, term()}
+  def info(bus) do
+    try do
+      :gen_statem.call(bus, :info, @call_timeout_ms)
+    catch
+      :exit, {:timeout, _} -> {:error, :timeout}
+      :exit, reason -> {:error, reason}
+    end
+  end
+
   @impl true
   def handle_event(:enter, _old, :idle, _data), do: :keep_state_and_data
 
@@ -169,6 +192,8 @@ defmodule EtherCAT.Bus do
         data
       )
       when state != :down do
+    Logger.warning("[Bus] carrier lost on #{ifname}")
+
     case data.link_mod.carrier(data.link, ifname, false) do
       {:ok, link} ->
         {:keep_state, %{data | link: link}}
@@ -184,6 +209,8 @@ defmodule EtherCAT.Bus do
         :down,
         data
       ) do
+    Logger.info("[Bus] carrier restored on #{ifname}")
+
     case data.link_mod.carrier(data.link, ifname, true) do
       {:ok, link} ->
         {:keep_state, %{data | link: link}, [{:state_timeout, @debounce_interval, :reconnect}]}
@@ -200,10 +227,17 @@ defmodule EtherCAT.Bus do
         data
       )
       when state in [:idle, :awaiting] do
+    Logger.info("[Bus] carrier restored on #{ifname}")
+
     case data.link_mod.carrier(data.link, ifname, true) do
       {:ok, link} -> {:keep_state, %{data | link: link}}
       {:down, link, reason} -> transition_down(%{data | link: link}, :down, reason)
     end
+  end
+
+  def handle_event(:info, {:ethercat_link_monitor_mode, old_mode, new_mode}, _state, data) do
+    Logger.notice("[Bus] link monitor mode changed: #{old_mode} -> #{new_mode}")
+    {:keep_state, %{data | link_monitor_mode: new_mode}}
   end
 
   def handle_event(:info, {:ethercat_link, _, _, _}, _state, _data) do
@@ -248,6 +282,18 @@ defmodule EtherCAT.Bus do
 
   def handle_event({:call, from}, {:set_frame_timeout, _timeout_ms}, _state, _data) do
     {:keep_state_and_data, [{:reply, from, {:error, :invalid_timeout}}]}
+  end
+
+  def handle_event({:call, from}, :info, state, data) do
+    info = %{
+      state: state,
+      link: link_name(data),
+      carrier_up: carrier_up?(data),
+      frame_timeout_ms: data.frame_timeout_ms,
+      link_monitor_mode: data.link_monitor_mode
+    }
+
+    {:keep_state_and_data, [{:reply, from, {:ok, info}}]}
   end
 
   def handle_event(:info, msg, :awaiting, data) do
@@ -646,13 +692,30 @@ defmodule EtherCAT.Bus do
   defp submission_age_us(%Submission{enqueued_at_us: enqueued_at_us}, now_us),
     do: now_us - enqueued_at_us
 
-  defp start_link_monitor(_owner, []), do: {:ok, nil}
+  defp start_link_monitor(_owner, []), do: {:ok, nil, :disabled}
 
   defp start_link_monitor(owner, interfaces) do
-    LinkMonitor.start_link(owner, interfaces)
+    case LinkMonitor.start_link(owner, interfaces) do
+      {:ok, pid} -> {:ok, pid, LinkMonitor.mode(pid)}
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   defp link_name(%{link: link, link_mod: link_mod}), do: link_mod.name(link)
+  defp link_name(link_mod, link), do: link_mod.name(link)
+
+  defp carrier_up?(%{link: link, link_mod: link_mod}) do
+    case link_mod.interfaces(link) do
+      [] -> false
+      interfaces -> Enum.any?(interfaces, &InterfaceInfo.carrier_up?/1)
+    end
+  end
+
+  defp maybe_log_link_monitor_mode(_link, :disabled), do: :ok
+
+  defp maybe_log_link_monitor_mode(link, mode) do
+    Logger.info("[Bus] link monitor mode: #{mode} (link=#{link})")
+  end
 
   defp start_named({:local, _name} = name, opts),
     do: :gen_statem.start_link(name, __MODULE__, opts, [])

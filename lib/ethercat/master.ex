@@ -180,7 +180,7 @@ defmodule EtherCAT.Master do
     now_ms = System.monotonic_time(:millisecond)
 
     new_window =
-      case Bus.transaction(bus_server(data), Transaction.brd(Registers.esc_type())) do
+      case Bus.transaction(Bus, Transaction.brd(Registers.esc_type())) do
         {:ok, [%{wkc: n}]} ->
           # Prepend new reading; keep enough history to measure a full stable span
           window = [{now_ms, n} | data.scan_window]
@@ -957,6 +957,4 @@ defmodule EtherCAT.Master do
   defp reply_await_callers(callers, reply) do
     Enum.each(callers, fn from -> :gen_statem.reply(from, reply) end)
   end
-
-  defp bus_server(_data), do: Bus
 end

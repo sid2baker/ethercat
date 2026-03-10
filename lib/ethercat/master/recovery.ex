@@ -3,6 +3,7 @@ defmodule EtherCAT.Master.Recovery do
 
   require Logger
 
+  alias EtherCAT.Bus
   alias EtherCAT.Domain.API, as: DomainAPI
   alias EtherCAT.Master.Activation
   alias EtherCAT.Slave.API, as: SlaveAPI
@@ -189,13 +190,17 @@ defmodule EtherCAT.Master.Recovery do
 
   @spec maybe_restart_stopped_domains(%EtherCAT.Master{}) :: %EtherCAT.Master{}
   def maybe_restart_stopped_domains(%{runtime_faults: runtime_faults} = data) do
-    Enum.reduce(runtime_faults, data, fn
-      {{:domain, domain_id}, {:stopped, reason}}, acc ->
-        restart_stopped_domain(acc, domain_id, reason)
+    if bus_down?() do
+      data
+    else
+      Enum.reduce(runtime_faults, data, fn
+        {{:domain, domain_id}, {:stopped, reason}}, acc ->
+          restart_stopped_domain(acc, domain_id, reason)
 
-      _other_fault, acc ->
-        acc
-    end)
+        _other_fault, acc ->
+          acc
+      end)
+    end
   end
 
   @spec put_slave_fault(%EtherCAT.Master{}, atom(), term()) :: %EtherCAT.Master{}
@@ -401,6 +406,13 @@ defmodule EtherCAT.Master.Recovery do
 
   defp dc_running? do
     is_pid(Process.whereis(EtherCAT.DC))
+  end
+
+  defp bus_down? do
+    case Bus.info(Bus) do
+      {:ok, %{carrier_up: false}} -> true
+      _other -> false
+    end
   end
 
   defp clear_tracked_slave_fault(data, name) do

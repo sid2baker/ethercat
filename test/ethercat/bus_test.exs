@@ -297,6 +297,43 @@ defmodule EtherCAT.BusTest do
     assert {:ok, [%{data: <<0x12, 0x34>>, wkc: 1}]} = Task.await(read)
   end
 
+  test "single-port bus reports link monitor mode and recovers after carrier restore" do
+    {:ok, bus} = start_bus()
+
+    assert {:ok,
+            %{
+              state: :idle,
+              link: "fake",
+              carrier_up: false,
+              frame_timeout_ms: 50,
+              link_monitor_mode: :disabled
+            }} = Bus.info(bus)
+
+    read = Task.async(fn -> Bus.transaction(bus, Transaction.fprd(0x1000, {0x0130, 2})) end)
+    assert_sent_frame()
+
+    send(bus, {:ethercat_link, "eth0", true, false})
+    assert {:error, :down} = Task.await(read)
+
+    assert {:ok, %{state: :down, carrier_up: false}} = Bus.info(bus)
+
+    while_down = Task.async(fn -> Bus.transaction(bus, Transaction.fprd(0x1000, {0x0130, 2})) end)
+    assert {:error, :down} = Task.await(while_down)
+
+    send(bus, {:ethercat_link, "eth0", false, true})
+    Process.sleep(250)
+
+    assert {:ok, %{state: :idle, carrier_up: false}} = Bus.info(bus)
+
+    after_restore =
+      Task.async(fn -> Bus.transaction(bus, Transaction.fprd(0x1000, {0x0130, 2})) end)
+
+    restored_frame = assert_sent_frame()
+    reply_with(bus, restored_frame, fn dg -> %{dg | data: <<0x12, 0x34>>, wkc: 1} end)
+
+    assert {:ok, [%{data: <<0x12, 0x34>>, wkc: 1}]} = Task.await(after_restore)
+  end
+
   defp start_bus do
     Bus.start_link(link_mod: FakeLink, transport: :udp, test_pid: self(), frame_timeout_ms: 50)
   end
