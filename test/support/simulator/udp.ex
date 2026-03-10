@@ -82,6 +82,8 @@ defmodule EtherCAT.Support.Simulator.Udp do
          {:ok, response_payload} <- Frame.encode(response_datagrams),
          :ok <- :gen_udp.send(state.socket, sender_ip, sender_port, response_payload) do
       :ok
+    else
+      {:error, :no_response} -> :ok
     end
   end
 end

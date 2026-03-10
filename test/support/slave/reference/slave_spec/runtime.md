@@ -111,7 +111,16 @@ The current scope is deliberately small:
 - expedited SDO upload/download only
 - deterministic object dictionary values
 - no segmented transfers yet
-- no mailbox error-injection yet
+- mailbox abort replies can now be injected explicitly
+
+Milestone 4 also adds explicit fault injection around the runtime boundary:
+
+- no response
+- wrong WKC
+- slave disconnect / reconnect
+- AL error latch
+- retreat to `SAFEOP`
+- mailbox abort replies
 
 ## Elixir Implication
 

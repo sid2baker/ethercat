@@ -159,6 +159,226 @@ It is also the first mailbox-capable fixture:
   values
 - the current object dictionary surface is intentionally tiny and test-oriented
 
+## What Is Still Missing For A General Slave
+
+The current support slave is already good enough for:
+
+- couplers
+- simple digital input cards
+- simple digital output cards
+- heterogeneous startup rings
+- basic mailbox diagnostics
+- deterministic protocol fault injection
+
+It is **not** yet a general slave model for:
+
+- analog input and output cards
+- RTD/temperature cards with conversion behavior
+- smart devices with rich object dictionaries
+- servo drives and CiA 402-like profiles
+- DC-sensitive devices
+
+The missing pieces are mostly above the raw ESC/datagram layer.
+
+### 1. A real device-behavior layer
+
+Today most fixtures are static plus simple process-image behavior.
+
+A general slave needs profile/device logic that can:
+
+- evolve inputs over time
+- react to outputs
+- simulate internal state machines
+- enforce device-specific operating rules
+- inject realistic delays, saturation, and device faults
+
+### 2. A richer object-dictionary model
+
+Mailbox support is still limited to small expedited SDO roundtrips.
+
+A general slave needs:
+
+- typed object entries
+- access rights
+- state-dependent access control
+- segmented upload/download
+- richer abort behavior
+- optional SDO info support
+
+### 3. A richer PDO/process-data model
+
+The current fixtures are still card-oriented.
+
+A general slave needs:
+
+- arbitrary PDO entry definitions
+- signed/unsigned/float signal types
+- scaling and conversion hooks
+- grouped process images
+- multi-SM layouts
+- profile-specific signal bundles
+
+### 4. Profile layers on top of the generic slave core
+
+The generic support slave should stay protocol-focused.
+
+Device-family behavior should live in separate profile layers for:
+
+- digital I/O
+- analog I/O
+- RTD/temperature
+- servo/drive devices
+
+### 5. More realistic state/transition discipline
+
+The simulator already enforces basic AL transition rules, but a general slave
+needs more profile-aware discipline:
+
+- mailbox-required transitions
+- SAFEOP/OP prerequisites
+- watchdog/safe-state behavior
+- profile-specific error latching and recovery
+
+### 6. Optional DC behavior
+
+Not every deep test needs DC, but a general slave eventually needs:
+
+- DC register behavior
+- sync configuration
+- lock/loss behavior
+- latch/timestamp semantics where relevant
+
+## Generalization Plan
+
+The right way to grow this support stack is:
+
+1. keep the existing ESC/datagram core stable
+2. add a proper generic device model
+3. layer richer profiles on top of it
+4. only then add profile-specific deep tests
+
+### Phase 1. Stabilize The Generic Protocol Core
+
+Goal:
+- keep `EtherCAT.Support.Slave.Device` and `EtherCAT.Support.Simulator`
+  responsible for protocol mechanics only
+
+Deliverables:
+- no profile-specific behavior in the core
+- clear boundaries between:
+  - registers/AL state
+  - SII/object model
+  - PDO layout
+  - runtime behavior hooks
+
+Exit criteria:
+- digital I/O and mailbox tests still pass unchanged
+
+### Phase 2. Introduce A Real Device Behavior Boundary
+
+Goal:
+- make slave behavior pluggable instead of hardcoded into fixture/device logic
+
+Add something like:
+- `EtherCAT.Support.Slave.Behaviour`
+- behavior callbacks for:
+  - init
+  - state transition hooks
+  - output write handling
+  - input refresh
+  - mailbox/object access hooks
+
+Exit criteria:
+- digital I/O fixtures are reimplemented using the behavior boundary
+- no special-case digital behavior remains embedded in the core
+
+### Phase 3. Generalize The Object Dictionary
+
+Goal:
+- move from a tiny mailbox test dictionary to a real typed object model
+
+Add:
+- object entry structs/types
+- access-right checks
+- state-aware access rules
+- segmented transfer support
+
+Exit criteria:
+- expedited and segmented CoE transfers both work
+- object entries can be declared as data, not mailbox callback branches
+
+### Phase 4. Generalize Process Data
+
+Goal:
+- support more than simple byte-oriented digital process images
+
+Add:
+- typed PDO entries
+- arbitrary bit/byte offsets
+- signed/unsigned/float conversion
+- scaling hooks
+- grouped output/input images
+
+Exit criteria:
+- one analog-style fixture can be modeled without bespoke device code
+- multi-byte/multi-type PDO layouts are deep-tested
+
+### Phase 5. Add First-Class Profiles
+
+Goal:
+- make common slave families reusable instead of fixture-specific
+
+Initial profiles:
+- `DigitalIO`
+- `AnalogIO`
+- `TemperatureInput`
+- `ServoDrive` (protocol/profile only, not full motion physics)
+
+Exit criteria:
+- fixtures become thin declarations over shared profile modules
+- heterogeneous deep tests use profile modules, not ad-hoc fixture logic
+
+### Phase 6. Add Servo/Drive-Oriented Support
+
+Goal:
+- support richer smart-slave regression tests, especially CiA 402-like flows
+
+Add:
+- controlword/statusword-oriented behavior
+- operation mode handling
+- drive-state progression hooks
+- profile-specific mailbox/object entries
+
+Exit criteria:
+- deep tests can boot a simulated drive, configure it in PREOP, and exercise a
+  basic enable/fault-reset/status roundtrip
+
+### Phase 7. Add Optional DC Support
+
+Goal:
+- support tests for DC-sensitive slaves without forcing DC on every fixture
+
+Add:
+- opt-in DC register behavior
+- sync-related mailbox/object state where needed
+- deterministic lock/loss simulation hooks
+
+Exit criteria:
+- at least one DC-aware simulated slave can participate in a deep test
+
+## Recommended Near-Term Order
+
+If the goal is "all kinds of slaves", the highest-value next steps are:
+
+1. introduce the behavior boundary
+2. generalize the object dictionary
+3. generalize PDO/process-data typing
+4. add a first analog-style profile
+5. only then tackle servo/drive profile support
+
+That order keeps the core reusable instead of baking servo or analog semantics
+directly into the current digital-card simulator.
+
 ## EEPROM / SII Strategy
 
 The EEPROM image is fixture-owned.
@@ -290,16 +510,37 @@ Current status:
 - expedited CoE upload/download is implemented for mailbox-capable fixtures
 - the deep integration suite now exercises public `upload_sdo/3` and
   `download_sdo/4` against a simulated slave in PREOP
-- segmented transfers and mailbox fault injection are still future work
+- segmented transfers are still future work
+- mailbox error replies are implemented through explicit abort injection
 
 ### Milestone 4
 
 - explicit fault injection:
   - no response
   - wrong WKC
+  - slave disconnect / reconnect
   - AL error latch
   - retreat to `SAFEOP`
   - mailbox error replies
+
+Current status:
+
+- persistent transport fault injection is implemented for:
+  - no response
+  - wrong WKC
+- simulator-level disconnect/reconnect is implemented by temporarily removing a
+  named slave from AP/FP/BR/logical routing until faults are cleared
+- slave-local fault injection is implemented for:
+  - AL error latch
+  - retreat to `SAFEOP`
+- mailbox abort injection is implemented for deterministic CoE error replies
+- the deep integration suite now exercises:
+  - `:recovering` entry and recovery for dropped UDP responses
+  - `:recovering` entry and recovery for wrong WKC
+  - `:recovering` entry and recovery for disconnecting and reconnecting a
+    PDO-participating slave
+  - `SAFEOP` retreat reporting through slave health polling
+  - SDO abort replies through the public mailbox API
 
 ## SOES Inputs
 

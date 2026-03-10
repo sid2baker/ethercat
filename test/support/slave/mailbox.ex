@@ -29,11 +29,11 @@ defmodule EtherCAT.Support.Slave.Mailbox do
           body: binary()
         }
 
-  @spec handle_frame(binary(), mailbox_config(), map()) :: {:ok, binary(), map()} | :ignore
-  def handle_frame(frame, mailbox_config, object_dictionary) do
+  @spec handle_frame(binary(), mailbox_config(), map(), map()) :: {:ok, binary(), map()} | :ignore
+  def handle_frame(frame, mailbox_config, object_dictionary, abort_codes \\ %{}) do
     with {:ok, request} <- parse_request(frame),
          {:ok, response_body, updated_dictionary} <-
-           handle_request(request, object_dictionary) do
+           handle_request(request, object_dictionary, abort_codes) do
       padded =
         request.counter
         |> mailbox_frame(sdo_response_service() <> response_body)
@@ -64,32 +64,41 @@ defmodule EtherCAT.Support.Slave.Mailbox do
 
   defp handle_request(
          %{type: @mailbox_type_coe, service: @sdo_request_service, body: body},
-         object_dictionary
+         object_dictionary,
+         abort_codes
        ) do
-    handle_sdo_request(body, object_dictionary)
+    handle_sdo_request(body, object_dictionary, abort_codes)
   end
 
-  defp handle_request(_request, _object_dictionary), do: :ignore
+  defp handle_request(_request, _object_dictionary, _abort_codes), do: :ignore
 
   defp handle_sdo_request(
          <<@command_upload_init_request, index::16-little, subindex::8, _::32>>,
-         object_dictionary
+         object_dictionary,
+         abort_codes
        ) do
-    case Map.fetch(object_dictionary, {index, subindex}) do
-      {:ok, value} when byte_size(value) <= 4 ->
-        {:ok, expedited_upload_response(index, subindex, value), object_dictionary}
-
-      {:ok, _value} ->
-        {:ok, abort_response(index, subindex, @abort_unsupported), object_dictionary}
+    case Map.fetch(abort_codes, {index, subindex}) do
+      {:ok, abort_code} ->
+        {:ok, abort_response(index, subindex, abort_code), object_dictionary}
 
       :error ->
-        {:ok, abort_response(index, subindex, @abort_object_not_found), object_dictionary}
+        case Map.fetch(object_dictionary, {index, subindex}) do
+          {:ok, value} when byte_size(value) <= 4 ->
+            {:ok, expedited_upload_response(index, subindex, value), object_dictionary}
+
+          {:ok, _value} ->
+            {:ok, abort_response(index, subindex, @abort_unsupported), object_dictionary}
+
+          :error ->
+            {:ok, abort_response(index, subindex, @abort_object_not_found), object_dictionary}
+        end
     end
   end
 
   defp handle_sdo_request(
          <<command::8, index::16-little, subindex::8, payload::binary-size(4)>>,
-         object_dictionary
+         object_dictionary,
+         abort_codes
        )
        when command in [
               @command_download_1,
@@ -97,20 +106,27 @@ defmodule EtherCAT.Support.Slave.Mailbox do
               @command_download_3,
               @command_download_4
             ] do
-    size = expedited_download_size(command)
-    <<value::binary-size(size), _padding::binary>> = payload
-    updated_dictionary = Map.put(object_dictionary, {index, subindex}, value)
-    {:ok, download_ack(index, subindex), updated_dictionary}
+    case Map.fetch(abort_codes, {index, subindex}) do
+      {:ok, abort_code} ->
+        {:ok, abort_response(index, subindex, abort_code), object_dictionary}
+
+      :error ->
+        size = expedited_download_size(command)
+        <<value::binary-size(size), _padding::binary>> = payload
+        updated_dictionary = Map.put(object_dictionary, {index, subindex}, value)
+        {:ok, download_ack(index, subindex), updated_dictionary}
+    end
   end
 
   defp handle_sdo_request(
          <<_command::8, index::16-little, subindex::8, _::binary>>,
-         object_dictionary
+         object_dictionary,
+         _abort_codes
        ) do
     {:ok, abort_response(index, subindex, @abort_unsupported), object_dictionary}
   end
 
-  defp handle_sdo_request(_body, object_dictionary) do
+  defp handle_sdo_request(_body, object_dictionary, _abort_codes) do
     {:ok, abort_response(0, 0, @abort_unsupported), object_dictionary}
   end
 

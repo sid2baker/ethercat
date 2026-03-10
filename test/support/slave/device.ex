@@ -25,7 +25,10 @@ defmodule EtherCAT.Support.Slave.Device do
           input_size: non_neg_integer(),
           mirror_output_to_input?: boolean(),
           mailbox_config: Mailbox.mailbox_config(),
-          object_dictionary: %{optional({non_neg_integer(), non_neg_integer()}) => binary()}
+          object_dictionary: %{optional({non_neg_integer(), non_neg_integer()}) => binary()},
+          mailbox_abort_codes: %{
+            optional({non_neg_integer(), non_neg_integer()}) => non_neg_integer()
+          }
         }
 
   defstruct [
@@ -44,7 +47,8 @@ defmodule EtherCAT.Support.Slave.Device do
     :input_size,
     :mirror_output_to_input?,
     :mailbox_config,
-    :object_dictionary
+    :object_dictionary,
+    :mailbox_abort_codes
   ]
 
   @spec new(map(), non_neg_integer()) :: t()
@@ -65,8 +69,37 @@ defmodule EtherCAT.Support.Slave.Device do
       input_size: fixture.input_size,
       mirror_output_to_input?: fixture.mirror_output_to_input?,
       mailbox_config: fixture.mailbox_config,
-      object_dictionary: fixture.object_dictionary
+      object_dictionary: fixture.object_dictionary,
+      mailbox_abort_codes: %{}
     }
+  end
+
+  @spec retreat_to_safeop(t()) :: t()
+  def retreat_to_safeop(%__MODULE__{} = slave) do
+    commit_al_state(slave, :safeop, false, @alerr_none)
+  end
+
+  @spec latch_al_error(t(), non_neg_integer()) :: t()
+  def latch_al_error(%__MODULE__{} = slave, status_code)
+      when is_integer(status_code) and status_code >= 0 do
+    commit_al_state(slave, slave.state, true, status_code)
+  end
+
+  @spec inject_mailbox_abort(t(), non_neg_integer(), non_neg_integer(), non_neg_integer()) :: t()
+  def inject_mailbox_abort(%__MODULE__{} = slave, index, subindex, abort_code)
+      when is_integer(index) and index >= 0 and is_integer(subindex) and subindex >= 0 and
+             is_integer(abort_code) and abort_code >= 0 do
+    %{
+      slave
+      | mailbox_abort_codes: Map.put(slave.mailbox_abort_codes, {index, subindex}, abort_code)
+    }
+  end
+
+  @spec clear_faults(t()) :: t()
+  def clear_faults(%__MODULE__{} = slave) do
+    slave
+    |> Map.put(:mailbox_abort_codes, %{})
+    |> commit_al_state(slave.state, false, @alerr_none)
   end
 
   @spec output_image(t()) :: binary()
@@ -266,7 +299,12 @@ defmodule EtherCAT.Support.Slave.Device do
          data
        )
        when recv_size > 0 and offset == recv_offset and byte_size(data) == recv_size do
-    case Mailbox.handle_frame(data, slave.mailbox_config, slave.object_dictionary) do
+    case Mailbox.handle_frame(
+           data,
+           slave.mailbox_config,
+           slave.object_dictionary,
+           slave.mailbox_abort_codes
+         ) do
       {:ok, response, object_dictionary} ->
         slave
         |> Map.put(:object_dictionary, object_dictionary)

@@ -21,7 +21,20 @@ defmodule EtherCAT.Support.Simulator do
   @armw 13
   @frmw 14
 
-  @type state :: %{slaves: [Device.t()]}
+  @type fault ::
+          :drop_responses
+          | {:wkc_offset, integer()}
+          | {:disconnect, atom()}
+          | {:retreat_to_safeop, atom()}
+          | {:latch_al_error, atom(), non_neg_integer()}
+          | {:mailbox_abort, atom(), non_neg_integer(), non_neg_integer(), non_neg_integer()}
+
+  @type state :: %{
+          slaves: [Device.t()],
+          drop_responses?: boolean(),
+          wkc_offset: integer(),
+          disconnected: MapSet.t(atom())
+        }
 
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
@@ -31,6 +44,16 @@ defmodule EtherCAT.Support.Simulator do
   @spec process_datagrams(pid(), [Datagram.t()]) :: {:ok, [Datagram.t()]}
   def process_datagrams(server, datagrams) do
     GenServer.call(server, {:process_datagrams, datagrams})
+  end
+
+  @spec inject_fault(pid(), fault()) :: :ok | {:error, :not_found}
+  def inject_fault(server, fault) do
+    GenServer.call(server, {:inject_fault, fault})
+  end
+
+  @spec clear_faults(pid()) :: :ok
+  def clear_faults(server) do
+    GenServer.call(server, :clear_faults)
   end
 
   @spec output_value(pid(), atom()) :: {:ok, non_neg_integer()} | {:error, :not_found}
@@ -52,17 +75,70 @@ defmodule EtherCAT.Support.Simulator do
       |> Enum.with_index()
       |> Enum.map(fn {fixture, position} -> Device.new(fixture, position) end)
 
-    {:ok, %{slaves: slaves}}
+    {:ok, %{slaves: slaves, drop_responses?: false, wkc_offset: 0, disconnected: MapSet.new()}}
+  end
+
+  def handle_call({:process_datagrams, _datagrams}, _from, %{drop_responses?: true} = state) do
+    {:reply, {:error, :no_response}, state}
   end
 
   @impl true
-  def handle_call({:process_datagrams, datagrams}, _from, %{slaves: slaves} = state) do
+  def handle_call(
+        {:process_datagrams, datagrams},
+        _from,
+        %{slaves: slaves, wkc_offset: wkc_offset, disconnected: disconnected} = state
+      ) do
     {responses, slaves} =
       Enum.map_reduce(datagrams, slaves, fn datagram, current_slaves ->
-        process_datagram(datagram, current_slaves)
+        process_datagram(datagram, current_slaves, disconnected)
       end)
 
+    responses = maybe_adjust_wkc(responses, wkc_offset)
+
     {:reply, {:ok, responses}, %{state | slaves: slaves}}
+  end
+
+  def handle_call({:inject_fault, :drop_responses}, _from, state) do
+    {:reply, :ok, %{state | drop_responses?: true}}
+  end
+
+  def handle_call({:inject_fault, {:wkc_offset, delta}}, _from, state)
+      when is_integer(delta) do
+    {:reply, :ok, %{state | wkc_offset: delta}}
+  end
+
+  def handle_call({:inject_fault, {:disconnect, slave_name}}, _from, state) do
+    {:reply, :ok, %{state | disconnected: MapSet.put(state.disconnected, slave_name)}}
+  end
+
+  def handle_call({:inject_fault, {:retreat_to_safeop, slave_name}}, _from, state) do
+    reply_with_slave_update(state, slave_name, &Device.retreat_to_safeop/1)
+  end
+
+  def handle_call({:inject_fault, {:latch_al_error, slave_name, code}}, _from, state)
+      when is_integer(code) and code >= 0 do
+    reply_with_slave_update(state, slave_name, &Device.latch_al_error(&1, code))
+  end
+
+  def handle_call(
+        {:inject_fault, {:mailbox_abort, slave_name, index, subindex, abort_code}},
+        _from,
+        state
+      )
+      when is_integer(index) and index >= 0 and is_integer(subindex) and subindex >= 0 and
+             is_integer(abort_code) and abort_code >= 0 do
+    reply_with_slave_update(
+      state,
+      slave_name,
+      &Device.inject_mailbox_abort(&1, index, subindex, abort_code)
+    )
+  end
+
+  def handle_call(:clear_faults, _from, state) do
+    slaves = Enum.map(state.slaves, &Device.clear_faults/1)
+
+    {:reply, :ok,
+     %{state | slaves: slaves, drop_responses?: false, wkc_offset: 0, disconnected: MapSet.new()}}
   end
 
   def handle_call({:output_value, slave_name}, _from, %{slaves: slaves} = state) do
@@ -89,26 +165,27 @@ defmodule EtherCAT.Support.Simulator do
     {:reply, reply, state}
   end
 
-  defp process_datagram(%Datagram{cmd: cmd} = datagram, slaves)
+  defp process_datagram(%Datagram{cmd: cmd} = datagram, slaves, disconnected)
        when cmd in [@aprd, @apwr, @aprw, @armw] do
     <<position::little-signed-16, offset::little-unsigned-16>> = datagram.address
     target_position = -position
 
     {response_data, wkc, slaves} =
-      update_single(slaves, target_position, fn slave ->
+      update_single(slaves, disconnected, target_position, fn slave ->
         process_register_command(slave, datagram, offset)
       end)
 
     {%{datagram | data: response_data, wkc: wkc}, slaves}
   end
 
-  defp process_datagram(%Datagram{cmd: cmd} = datagram, slaves)
+  defp process_datagram(%Datagram{cmd: cmd} = datagram, slaves, disconnected)
        when cmd in [@fprd, @fpwr, @fprw, @frmw] do
     <<station::little-unsigned-16, offset::little-unsigned-16>> = datagram.address
 
     {response_data, wkc, slaves} =
       update_first(
         slaves,
+        disconnected,
         fn slave ->
           slave.station == station
         end,
@@ -120,36 +197,54 @@ defmodule EtherCAT.Support.Simulator do
     {%{datagram | data: response_data, wkc: wkc}, slaves}
   end
 
-  defp process_datagram(%Datagram{cmd: cmd} = datagram, slaves)
+  defp process_datagram(%Datagram{cmd: cmd} = datagram, slaves, disconnected)
        when cmd in [@brd, @bwr, @brw] do
     <<_zero::little-signed-16, offset::little-unsigned-16>> = datagram.address
 
     {slaves, response_data, wkc} =
       Enum.reduce(slaves, {[], datagram.data, 0}, fn slave, {acc, _response_data, wkc} ->
-        {updated_slave, new_response_data, increment} =
-          process_register_command(slave, datagram, offset)
+        if MapSet.member?(disconnected, slave.name) do
+          {[slave | acc], datagram.data, wkc}
+        else
+          {updated_slave, new_response_data, increment} =
+            process_register_command(slave, datagram, offset)
 
-        {[updated_slave | acc], new_response_data, wkc + increment}
+          {[updated_slave | acc], new_response_data, wkc + increment}
+        end
       end)
 
     {%{datagram | data: response_data, wkc: wkc}, Enum.reverse(slaves)}
   end
 
-  defp process_datagram(%Datagram{cmd: cmd} = datagram, slaves) when cmd in [@lrd, @lwr, @lrw] do
+  defp process_datagram(%Datagram{cmd: cmd} = datagram, slaves, disconnected)
+       when cmd in [@lrd, @lwr, @lrw] do
     <<logical_start::little-unsigned-32>> = datagram.address
 
     {slaves, response_data, wkc} =
       Enum.reduce(slaves, {[], datagram.data, 0}, fn slave, {acc, response_data, wkc} ->
-        {updated_slave, new_response_data, increment} =
-          Device.logical_read_write(slave, cmd, logical_start, response_data)
+        if MapSet.member?(disconnected, slave.name) do
+          {[slave | acc], response_data, wkc}
+        else
+          {updated_slave, new_response_data, increment} =
+            Device.logical_read_write(slave, cmd, logical_start, response_data)
 
-        {[updated_slave | acc], new_response_data, wkc + increment}
+          {[updated_slave | acc], new_response_data, wkc + increment}
+        end
       end)
 
     {%{datagram | data: response_data, wkc: wkc}, Enum.reverse(slaves)}
   end
 
-  defp process_datagram(%Datagram{} = datagram, slaves), do: {%{datagram | wkc: 0}, slaves}
+  defp process_datagram(%Datagram{} = datagram, slaves, _disconnected),
+    do: {%{datagram | wkc: 0}, slaves}
+
+  defp maybe_adjust_wkc(datagrams, 0), do: datagrams
+
+  defp maybe_adjust_wkc(datagrams, offset) do
+    Enum.map(datagrams, fn datagram ->
+      %{datagram | wkc: max(datagram.wkc + offset, 0)}
+    end)
+  end
 
   defp process_register_command(slave, %Datagram{cmd: cmd, data: data}, offset)
        when cmd in [@aprd, @fprd, @brd] do
@@ -169,10 +264,10 @@ defmodule EtherCAT.Support.Simulator do
     {updated_slave, response_data, 1}
   end
 
-  defp update_single(slaves, target_position, fun) do
+  defp update_single(slaves, disconnected, target_position, fun) do
     {slaves, response_data, wkc, matched?} =
       Enum.reduce(slaves, {[], nil, 0, false}, fn slave, {acc, response_data, wkc, matched?} ->
-        if slave.position == target_position do
+        if slave.position == target_position and not MapSet.member?(disconnected, slave.name) do
           {updated_slave, current_response_data, current_wkc} = fun.(slave)
           {[updated_slave | acc], current_response_data, current_wkc, true}
         else
@@ -187,12 +282,15 @@ defmodule EtherCAT.Support.Simulator do
     end
   end
 
-  defp update_first(slaves, matcher, fun) do
+  defp update_first(slaves, disconnected, matcher, fun) do
     {updated_entries, matched?} =
       Enum.map_reduce(slaves, false, fn slave, matched? ->
         cond do
           matched? ->
             {{slave, nil, 0}, true}
+
+          MapSet.member?(disconnected, slave.name) ->
+            {{slave, nil, 0}, false}
 
           matcher.(slave) ->
             {updated_slave, response_data, wkc} = fun.(slave)
@@ -220,5 +318,27 @@ defmodule EtherCAT.Support.Simulator do
     else
       {<<>>, 0, slaves}
     end
+  end
+
+  defp reply_with_slave_update(state, slave_name, fun) do
+    case update_named_slave(state.slaves, slave_name, fun) do
+      {:ok, slaves} -> {:reply, :ok, %{state | slaves: slaves}}
+      :error -> {:reply, {:error, :not_found}, state}
+    end
+  end
+
+  defp update_named_slave(slaves, slave_name, fun) do
+    {slaves, matched?} =
+      Enum.map_reduce(slaves, false, fn slave, matched? ->
+        cond do
+          slave.name == slave_name ->
+            {fun.(slave), true}
+
+          true ->
+            {slave, matched?}
+        end
+      end)
+
+    if matched?, do: {:ok, slaves}, else: :error
   end
 end

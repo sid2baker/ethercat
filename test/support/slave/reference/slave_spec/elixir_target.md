@@ -88,6 +88,7 @@ Current status:
 - mailbox-capable fixtures expose deterministic object values
 - the deep integration suite covers PREOP public `upload_sdo/3` and
   `download_sdo/4`
+- mailbox abort replies are implemented through explicit fault injection
 - segmented transfers and driver-driven mailbox configuration are still pending
 
 ### Milestone 4
@@ -96,9 +97,21 @@ Add explicit fault injection:
 
 - no response
 - wrong WKC
+- slave disconnect / reconnect
 - AL error latch
 - retreat to `SAFEOP`
 - mailbox error replies
+
+Current status:
+
+- persistent simulator transport faults now cover:
+  - no response
+  - wrong WKC
+  - slave disconnect / reconnect
+- slave-local state faults now cover:
+  - AL error latch
+  - retreat to `SAFEOP`
+- mailbox abort replies are now supported for deterministic CoE error tests
 
 ## Deep Test Philosophy
 

@@ -410,6 +410,7 @@ defmodule EtherCAT.Master.Recovery do
 
   defp bus_down? do
     case Bus.info(Bus) do
+      {:ok, %{link_monitor_mode: :disabled}} -> false
       {:ok, %{carrier_up: false}} -> true
       _other -> false
     end
