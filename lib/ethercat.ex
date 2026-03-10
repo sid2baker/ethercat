@@ -145,15 +145,17 @@ defmodule EtherCAT do
 
   ## Sub-modules
 
-  `EtherCAT.Slave`, `EtherCAT.Domain`, `EtherCAT.Bus` — raw slave control,
-  domain stats, and direct frame transactions.
+  `EtherCAT.Slave.API`, `EtherCAT.Domain`, `EtherCAT.Bus` — low-level slave
+  control, domain stats, and direct frame transactions.
   """
 
-  alias EtherCAT.{Domain, Master, Slave}
+  alias EtherCAT.Domain
+  alias EtherCAT.Master.API, as: MasterAPI
+  alias EtherCAT.Slave.API, as: SlaveAPI
 
   @doc "Return the stable bus server reference for direct frame transactions."
   @spec bus() :: EtherCAT.Bus.server() | nil | {:error, :not_started}
-  def bus, do: Master.bus()
+  def bus, do: MasterAPI.bus()
 
   @doc """
   Start the master: open the interface, discover slaves, and begin
@@ -184,11 +186,11 @@ defmodule EtherCAT do
     - `:scan_stable_ms` — optional identical-count stability window in ms before startup begins
   """
   @spec start(keyword()) :: :ok | {:error, term()}
-  def start(opts \\ []), do: Master.start(opts)
+  def start(opts \\ []), do: MasterAPI.start(opts)
 
   @doc "Stop the master: shut down all slaves, domains, and the bus. Returns `:already_stopped` if not running."
   @spec stop() :: :ok | :already_stopped
-  def stop, do: Master.stop()
+  def stop, do: MasterAPI.stop()
 
   @doc """
   Block until the master reaches a usable session state, then return `:ok`.
@@ -199,7 +201,7 @@ defmodule EtherCAT do
   currently usable.
   """
   @spec await_running(timeout_ms :: pos_integer()) :: :ok | {:error, term()}
-  def await_running(timeout_ms \\ 10_000), do: Master.await_running(timeout_ms)
+  def await_running(timeout_ms \\ 10_000), do: MasterAPI.await_running(timeout_ms)
 
   @doc """
   Block until the master reaches operational cyclic runtime, then return `:ok`.
@@ -207,7 +209,7 @@ defmodule EtherCAT do
   This is stricter than `await_running/1`: `:preop_ready` is not enough.
   """
   @spec await_operational(timeout_ms :: pos_integer()) :: :ok | {:error, term()}
-  def await_operational(timeout_ms \\ 10_000), do: Master.await_operational(timeout_ms)
+  def await_operational(timeout_ms \\ 10_000), do: MasterAPI.await_operational(timeout_ms)
 
   @doc """
   Return the current public session state.
@@ -229,7 +231,7 @@ defmodule EtherCAT do
           | :operational
           | :activation_blocked
           | :recovering
-  def state, do: Master.state()
+  def state, do: MasterAPI.state()
 
   @doc """
   Return a Distributed Clocks status snapshot for the current session.
@@ -237,12 +239,12 @@ defmodule EtherCAT do
   Returns `{:error, :not_started}` if the master process does not exist.
   """
   @spec dc_status() :: EtherCAT.DC.Status.t() | {:error, :not_started}
-  def dc_status, do: Master.dc_status()
+  def dc_status, do: MasterAPI.dc_status()
 
   @doc "Return the current DC reference clock as `%{name, station}`."
   @spec reference_clock() ::
           {:ok, %{name: atom() | nil, station: non_neg_integer()}} | {:error, term()}
-  def reference_clock, do: Master.reference_clock()
+  def reference_clock, do: MasterAPI.reference_clock()
 
   @doc """
   Wait for DC lock.
@@ -250,14 +252,14 @@ defmodule EtherCAT do
   Returns `:ok` once the active DC runtime reports `:locked`.
   """
   @spec await_dc_locked(timeout_ms :: pos_integer()) :: :ok | {:error, term()}
-  def await_dc_locked(timeout_ms \\ 5_000), do: Master.await_dc_locked(timeout_ms)
+  def await_dc_locked(timeout_ms \\ 5_000), do: MasterAPI.await_dc_locked(timeout_ms)
 
   @doc """
   Return the last terminal startup/runtime failure retained after the master
   returned to `:idle`.
   """
   @spec last_failure() :: map() | nil
-  def last_failure, do: Master.last_failure()
+  def last_failure, do: MasterAPI.last_failure()
 
   @doc """
   Configure a discovered slave while the session is still in PREOP.
@@ -266,7 +268,7 @@ defmodule EtherCAT do
   up front in `start/1`.
   """
   @spec configure_slave(atom(), keyword() | EtherCAT.Slave.Config.t()) :: :ok | {:error, term()}
-  def configure_slave(slave_name, opts), do: Master.configure_slave(slave_name, opts)
+  def configure_slave(slave_name, opts), do: MasterAPI.configure_slave(slave_name, opts)
 
   @doc """
   Start cyclic operation after dynamic PREOP configuration.
@@ -275,7 +277,7 @@ defmodule EtherCAT do
   whose `target_state` is `:op`.
   """
   @spec activate() :: :ok | {:error, term()}
-  def activate, do: Master.activate()
+  def activate, do: MasterAPI.activate()
 
   @doc "Return `[%{name:, station:, server:, pid:, fault:}]` for all running slaves."
   @spec slaves() ::
@@ -289,11 +291,11 @@ defmodule EtherCAT do
             }
           ]
           | {:error, :not_started}
-  def slaves, do: Master.slaves()
+  def slaves, do: MasterAPI.slaves()
 
   @doc "Return `[{id, cycle_time_us, pid}]` for all running domains."
   @spec domains() :: list()
-  def domains, do: Master.domains()
+  def domains, do: MasterAPI.domains()
 
   @doc """
   Update the live cycle period of a running domain.
@@ -304,7 +306,7 @@ defmodule EtherCAT do
   """
   @spec update_domain_cycle_time(atom(), pos_integer()) :: :ok | {:error, term()}
   def update_domain_cycle_time(domain_id, cycle_time_us),
-    do: Master.update_domain_cycle_time(domain_id, cycle_time_us)
+    do: MasterAPI.update_domain_cycle_time(domain_id, cycle_time_us)
 
   @doc """
   Return a diagnostic snapshot for a slave.
@@ -347,7 +349,7 @@ defmodule EtherCAT do
       }}
   """
   @spec slave_info(atom()) :: {:ok, map()} | {:error, :not_found}
-  def slave_info(slave_name), do: Slave.info(slave_name)
+  def slave_info(slave_name), do: SlaveAPI.info(slave_name)
 
   @doc """
   Return a diagnostic snapshot for a domain.
@@ -393,7 +395,7 @@ defmodule EtherCAT do
   """
   @spec subscribe(atom(), atom(), pid()) :: :ok | {:error, :not_found}
   def subscribe(slave_name, name, pid \\ self()),
-    do: Slave.subscribe(slave_name, name, pid)
+    do: SlaveAPI.subscribe(slave_name, name, pid)
 
   @doc """
   Stage `value` into a slave output PDO for the next domain cycle.
@@ -404,7 +406,7 @@ defmodule EtherCAT do
   """
   @spec write_output(atom(), atom(), term()) :: :ok | {:error, term()}
   def write_output(slave_name, pdo_name, value),
-    do: Slave.write_output(slave_name, pdo_name, value)
+    do: SlaveAPI.write_output(slave_name, pdo_name, value)
 
   @doc """
   Read the latest decoded input sample for a slave input signal.
@@ -417,7 +419,7 @@ defmodule EtherCAT do
   """
   @spec read_input(atom(), atom()) :: {:ok, {term(), integer()}} | {:error, term()}
   def read_input(slave_name, pdo_name),
-    do: Slave.read_input(slave_name, pdo_name)
+    do: SlaveAPI.read_input(slave_name, pdo_name)
 
   @doc """
   Download a CoE SDO value to a slave mailbox object entry.
@@ -428,7 +430,7 @@ defmodule EtherCAT do
   @spec download_sdo(atom(), non_neg_integer(), non_neg_integer(), binary()) ::
           :ok | {:error, term()}
   def download_sdo(slave_name, index, subindex, data),
-    do: Slave.download_sdo(slave_name, index, subindex, data)
+    do: SlaveAPI.download_sdo(slave_name, index, subindex, data)
 
   @doc """
   Upload a CoE SDO value from a slave mailbox object entry.
@@ -439,5 +441,5 @@ defmodule EtherCAT do
   @spec upload_sdo(atom(), non_neg_integer(), non_neg_integer()) ::
           {:ok, binary()} | {:error, term()}
   def upload_sdo(slave_name, index, subindex),
-    do: Slave.upload_sdo(slave_name, index, subindex)
+    do: SlaveAPI.upload_sdo(slave_name, index, subindex)
 end

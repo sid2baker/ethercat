@@ -3,7 +3,7 @@ defmodule EtherCAT.Slave.Driver do
   Behaviour for slave-specific drivers.
 
   A driver is a pure module — no process state, no `Application.get_env`.
-  All configuration is passed as a `config` map from `Master.start/1`.
+  All configuration is passed as a `config` map from `EtherCAT.start/1`.
 
   If a slave config omits `:driver`, `EtherCAT.Slave.Driver.Default` is used.
   That default driver exposes no PDO profile and is intended for couplers or

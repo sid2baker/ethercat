@@ -3,8 +3,9 @@ defmodule EtherCAT.Master.Recovery do
 
   require Logger
 
-  alias EtherCAT.{Domain, Slave}
+  alias EtherCAT.Domain
   alias EtherCAT.Master.Activation
+  alias EtherCAT.Slave.API, as: SlaveAPI
 
   @spec retry_activation_blocked_state(%EtherCAT.Master{}) ::
           {:ok, :operational, %EtherCAT.Master{}}
@@ -21,7 +22,7 @@ defmodule EtherCAT.Master.Recovery do
           Map.put(acc, name, {:down, :disconnected})
 
         {name, _last_failure}, acc ->
-          case Slave.request(name, :op) do
+          case SlaveAPI.request(name, :op) do
             :ok ->
               acc
 
@@ -188,7 +189,7 @@ defmodule EtherCAT.Master.Recovery do
   end
 
   defp retry_runtime_slave_request(runtime_faults, name) do
-    case Slave.request(name, :op) do
+    case SlaveAPI.request(name, :op) do
       :ok ->
         Map.delete(runtime_faults, {:slave, name})
 
@@ -202,7 +203,7 @@ defmodule EtherCAT.Master.Recovery do
   end
 
   defp retry_slave_op_request(slave_faults, name) do
-    case Slave.request(name, :op) do
+    case SlaveAPI.request(name, :op) do
       :ok ->
         Map.delete(slave_faults, name)
 
@@ -216,7 +217,7 @@ defmodule EtherCAT.Master.Recovery do
   end
 
   defp retry_slave_reconnect_authorization(slave_faults, name) do
-    case Slave.authorize_reconnect(name) do
+    case SlaveAPI.authorize_reconnect(name) do
       :ok ->
         Map.put(slave_faults, name, {:reconnecting, :authorized})
 

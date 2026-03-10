@@ -3,9 +3,10 @@ defmodule EtherCAT.Master.Activation do
 
   require Logger
 
-  alias EtherCAT.{Bus, DC, Domain, Slave}
+  alias EtherCAT.{Bus, DC, Domain}
   alias EtherCAT.Master.Config
   alias EtherCAT.Master.Status
+  alias EtherCAT.Slave.API, as: SlaveAPI
 
   @spec activate_network(%EtherCAT.Master{}) ::
           {:ok, :preop_ready | :operational, %EtherCAT.Master{}}
@@ -107,7 +108,7 @@ defmodule EtherCAT.Master.Activation do
   defp activate_required_slaves(slave_names) do
     {safeop_ready, safeop_failures} =
       Enum.reduce(slave_names, {[], %{}}, fn name, {ready, failures} ->
-        case Slave.request(name, :safeop) do
+        case SlaveAPI.request(name, :safeop) do
           :ok ->
             {[name | ready], failures}
 
@@ -118,7 +119,7 @@ defmodule EtherCAT.Master.Activation do
       end)
 
     Enum.reduce(safeop_ready, safeop_failures, fn name, failures ->
-      case Slave.request(name, :op) do
+      case SlaveAPI.request(name, :op) do
         :ok ->
           failures
 

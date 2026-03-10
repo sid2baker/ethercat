@@ -20,8 +20,10 @@ defmodule EtherCAT.Slave.Runtime.Bootstrap do
 
   @type opts :: [auto_advance_retry_ms: pos_integer(), transition: transition_fun()]
 
+  @type init_result :: {:ok, atom(), %EtherCAT.Slave{}, list()}
+
   @spec initialize_to_preop(%EtherCAT.Slave{}, opts()) ::
-          {:ok, atom(), %EtherCAT.Slave{}} | {:ok, atom(), %EtherCAT.Slave{}, list()}
+          init_result()
   def initialize_to_preop(data, opts) do
     retry_ms = Keyword.fetch!(opts, :auto_advance_retry_ms)
     transition = Keyword.fetch!(opts, :transition)
@@ -49,7 +51,7 @@ defmodule EtherCAT.Slave.Runtime.Bootstrap do
     with {:ok, sii_data} <- read_sii_data(data, t0),
          {:ok, mailbox_data} <- configure_mailbox_sync_managers(sii_data),
          {:ok, preop_data} <- transition_to_preop(mailbox_data, transition, t0) do
-      {:ok, :preop, preop_data}
+      {:ok, :preop, preop_data, []}
     else
       {:error, reason} ->
         Logger.warning(

@@ -6,6 +6,13 @@ defmodule EtherCATTest do
     :ok
   end
 
+  defp ensure_master_running do
+    case Process.whereis(EtherCAT.Master) do
+      nil -> start_supervised!(EtherCAT.Master)
+      pid when is_pid(pid) -> pid
+    end
+  end
+
   test "start rejects nil slave placeholders" do
     assert {:error, {:invalid_slave_config, {:nil_entry, 1}}} =
              EtherCAT.start(
@@ -64,5 +71,21 @@ defmodule EtherCATTest do
 
     assert match?({:error, :not_started}, status) or
              match?(%EtherCAT.DC.Status{lock_state: :disabled}, status)
+  end
+
+  test "await_running returns timeout instead of exiting when the master call itself times out" do
+    _pid = ensure_master_running()
+    :sys.suspend(EtherCAT.Master)
+    on_exit(fn -> :sys.resume(EtherCAT.Master) end)
+
+    assert {:error, :timeout} = EtherCAT.await_running(5)
+  end
+
+  test "await_operational returns timeout instead of exiting when the master call itself times out" do
+    _pid = ensure_master_running()
+    :sys.suspend(EtherCAT.Master)
+    on_exit(fn -> :sys.resume(EtherCAT.Master) end)
+
+    assert {:error, :timeout} = EtherCAT.await_operational(5)
   end
 end

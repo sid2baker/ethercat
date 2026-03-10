@@ -2,17 +2,16 @@ defmodule EtherCAT.Slave.Runtime.Calls do
   @moduledoc false
 
   alias EtherCAT.Slave
-  alias EtherCAT.Slave.Runtime.Configuration
   alias EtherCAT.Slave.Mailbox
+  alias EtherCAT.Slave.Runtime.Bootstrap
+  alias EtherCAT.Slave.Runtime.Configuration
   alias EtherCAT.Slave.Runtime.Outputs
   alias EtherCAT.Slave.Runtime.Signals
   alias EtherCAT.Slave.Runtime.Status
 
   @type handler_opts :: [
           paths: %{optional({atom(), atom()}) => [atom()]},
-          initialize_to_preop: (%Slave{} ->
-                                  {:ok, atom(), %Slave{}}
-                                  | {:ok, atom(), %Slave{}, list()}),
+          initialize_to_preop: (%Slave{} -> Bootstrap.init_result()),
           walk_path: (%Slave{}, [atom()] ->
                         {:ok, %Slave{}} | {:error, term(), %Slave{}})
         ]
@@ -43,9 +42,6 @@ defmodule EtherCAT.Slave.Runtime.Calls do
     reconnect_data = %{data | reconnect_ready?: false}
 
     case Keyword.fetch!(opts, :initialize_to_preop).(reconnect_data) do
-      {:ok, next_state, new_data} ->
-        {:next_state, next_state, %{new_data | reconnect_ready?: false}, [{:reply, from, :ok}]}
-
       {:ok, next_state, new_data, actions} ->
         {:next_state, next_state, %{new_data | reconnect_ready?: false},
          [{:reply, from, :ok} | actions]}

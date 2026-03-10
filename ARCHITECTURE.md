@@ -142,8 +142,8 @@ calls `{:next_state, ...}`.
 6. If activatable slaves exist: `DC.start_link` — starts DC maintenance plus lock/status monitoring (after all slaves are in PreOp)
 7. If activatable slaves exist: `Domain.start_cycling` per domain — begins self-timed LRW
 8. If activatable slaves exist and `dc.await_lock? == true`: wait for the DC monitor to report `:locked`
-9. If activatable slaves exist: `Slave.request(:safeop)` per slave — SAFEOP transition completes first, then checked ESC sync/latch configuration runs as explicit post-transition work (`0x0910/0x092C` snapshot, aligned start-time plan, `0x0980`, `0x0981`)
-10. If activatable slaves exist: `Slave.request(:op)` per slave — full process data exchange active
+9. If activatable slaves exist: `Slave.API.request(:safeop)` per slave — SAFEOP transition completes first, then checked ESC sync/latch configuration runs as explicit post-transition work (`0x0910/0x092C` snapshot, aligned start-time plan, `0x0980`, `0x0981`)
+10. If activatable slaves exist: `Slave.API.request(:op)` per slave — full process data exchange active
 
 ---
 

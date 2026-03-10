@@ -1,133 +1,21 @@
 defmodule EtherCAT.Master do
-  @moduledoc """
-  Master orchestrates startup, activation, and runtime recovery for the EtherCAT session.
-
-  The master owns the public lifecycle exposed via `EtherCAT.state/0`. Each state
-  maps 1:1 to an actual Master gen_statem state.
-
-  ## Lifecycle States
-
-  - `:idle` - No session active
-  - `:discovering` - Scanning bus and counting slaves
-  - `:awaiting_preop` - Waiting for configured slaves to reach PREOP
-  - `:preop_ready` - All slaves in PREOP, ready for activation or dynamic configuration
-  - `:operational` - Cyclic operation active; non-critical per-slave faults are tracked separately
-  - `:activation_blocked` - Activation incomplete (DC lock, slave failures, etc.)
-  - `:recovering` - Runtime fault detected, healthy parts may continue
-
-  ## Startup Sequencing
-
-  ```mermaid
-  sequenceDiagram
-      autonumber
-      participant App
-      participant Master
-      participant Bus
-      participant DC
-      participant Domain
-      participant Slave
-
-      App->>Master: start/1
-      Master->>Bus: count slaves, assign stations,\\nverify link
-      opt DC is configured
-          Master->>DC: initialize clocks
-      end
-      Master->>Domain: start domains in open state
-      Master->>Slave: start slave processes
-      Slave->>Bus: reach PREOP through INIT,\\nSII, and mailbox setup
-      Slave->>Domain: register PDO layout
-      Slave-->>Master: report ready at PREOP
-      opt activation is requested and possible
-          opt DC runtime is available
-              Master->>DC: start runtime maintenance
-          end
-          Master->>Domain: start cyclic exchange
-          opt DC lock is required
-              Master->>DC: wait for lock
-          end
-          Master->>Slave: request SAFEOP
-          Master->>Slave: request OP
-      end
-      Master-->>App: state becomes preop_ready or operational
-  ```
-
-  ## Runtime Fault Recovery
-
-  ```mermaid
-  sequenceDiagram
-      autonumber
-      participant App
-      participant Domain
-      participant Slave
-      participant DC
-      participant Master
-      participant Bus
-
-      Domain-->>Master: cycle is invalid or domain stops
-      Slave-->>Master: slave goes down, retreats, or reconnects
-      DC-->>Master: runtime fails or lock is lost
-      opt a domain or DC fault is critical
-          Master-->>App: state becomes recovering
-      end
-      opt unaffected domains remain valid
-          Note over Domain,Master: healthy domains may keep cycling
-      end
-      opt a domain stopped
-          Master->>Domain: restart the affected cycle
-      end
-      opt a slave reconnects
-          Slave-->>Master: slave reconnects
-          Master->>Slave: authorize reconnect
-          Slave->>Bus: rebuild to PREOP through INIT,\\nSII, and mailbox setup
-          Slave-->>Master: report ready at PREOP
-          Master->>Slave: request OP
-      end
-      opt a DC fault is part of the runtime fault set
-          DC-->>Master: runtime recovers or lock returns
-      end
-      Master-->>App: state becomes operational
-  ```
-
-  ## State Transitions
-
-  ```mermaid
-  stateDiagram-v2
-      [*] --> idle
-      idle --> discovering: start/1
-      discovering --> awaiting_preop: configured slaves are still pending
-      discovering --> preop_ready: startup completes without activation
-      discovering --> operational: startup completes and activation succeeds
-      discovering --> activation_blocked: startup completes but activation is incomplete
-      discovering --> idle: configuration fails, stop, or bus down
-      awaiting_preop --> preop_ready: all slaves reached PREOP, no activation requested
-      awaiting_preop --> operational: all slaves reached PREOP and activation succeeds
-      awaiting_preop --> activation_blocked: all slaves reached PREOP but activation is incomplete
-      awaiting_preop --> idle: timeout, activation failure, stop, or bus down
-      preop_ready --> operational: activate/0 succeeds
-      preop_ready --> activation_blocked: activate/0 is incomplete
-      preop_ready --> idle: stop or bus down
-      operational --> recovering: runtime fault in domain or DC
-      operational --> idle: stop, bus down, or fatal DC policy
-      activation_blocked --> operational: activation failures clear and no runtime faults remain
-      activation_blocked --> recovering: activation failures clear but runtime faults remain
-      activation_blocked --> idle: stop or bus down
-      recovering --> operational: runtime faults are cleared
-      recovering --> idle: stop, bus down, or recovery fails
-  ```
-  """
+  @moduledoc File.read!(Path.join(__DIR__, "master.md"))
 
   @behaviour :gen_statem
 
   require Logger
 
-  alias EtherCAT.{DC, Domain, Bus, Slave, Telemetry}
+  alias EtherCAT.{Bus, Telemetry}
   alias EtherCAT.Bus.Transaction
   alias EtherCAT.Master.Activation
+  alias EtherCAT.Master.Calls
   alias EtherCAT.Master.Config
+  alias EtherCAT.Master.Preop
   alias EtherCAT.Master.Recovery
   alias EtherCAT.Master.Session
   alias EtherCAT.Master.Startup
   alias EtherCAT.Master.Status
+  alias EtherCAT.Slave.API, as: SlaveAPI
   alias EtherCAT.Slave.ESC.Registers
 
   @base_station 0x1000
@@ -177,188 +65,6 @@ defmodule EtherCAT.Master do
     slave_refs: %{}
   ]
 
-  # -- Public API ------------------------------------------------------------
-
-  @doc """
-  Start the master: open a bus and begin discovering slaves.
-
-  Options:
-    - `:interface` (required) — e.g. `"eth0"`
-    - `:slaves` — list of slave config entries, default `[]`. Each entry is a
-      `%EtherCAT.Slave.Config{}` (or equivalent keyword list) with keys: `:name`, `:driver`,
-      `:config`, `:process_data`, `:target_state`, and optional `:health_poll_ms`.
-      `process_data` declares what the slave should register while in PREOP:
-      - `:none`
-      - `{:all, domain_id}`
-      - `[{pdo_name, domain_id}]`
-      `target_state` is `:op` or `:preop`. `nil` entries are rejected. If omitted,
-      dynamic default slaves are started for all discovered stations and held in
-      `:preop` for runtime configuration.
-    - `:domains` — list of domain specs, default `[]`. Each entry is a keyword list with
-      keys `:id` (atom, required), `:cycle_time_us` (required), and optional
-      `:miss_threshold`. The master owns logical address allocation.
-    - `:base_station` — starting station address, default `0x1000`
-    - `:dc` — `%EtherCAT.DC.Config{}` for master-wide Distributed Clocks, or `nil` to disable DC
-    - `:frame_timeout_ms` — optional fixed bus frame response timeout (ms); if omitted,
-      master auto-tunes from slave count + cycle time
-    - `:scan_poll_ms` — optional bus discovery poll interval in ms, default `100`
-    - `:scan_stable_ms` — optional identical-count stability window in ms before startup begins, default `1000`
-    - any other option is forwarded to `Bus.start_link/1` unchanged
-  """
-  @spec start(keyword()) :: :ok | {:error, term()}
-  def start(opts \\ []), do: safe_call({:start, opts})
-
-  @doc "Stop the master: shut down all slaves, domains, and the bus. Returns `:already_stopped` if not running."
-  @spec stop() :: :ok | :already_stopped
-  def stop do
-    try do
-      :gen_statem.call(__MODULE__, :stop)
-    catch
-      :exit, {:noproc, _} -> :already_stopped
-    end
-  end
-
-  @doc "Return `[%{name:, station:, server:, pid:, fault:}]` for all named slaves."
-  @spec slaves() ::
-          [
-            %{
-              name: atom(),
-              station: non_neg_integer(),
-              server: :gen_statem.server_ref(),
-              pid: pid() | nil,
-              fault: term() | nil
-            }
-          ]
-          | {:error, :not_started}
-  def slaves, do: safe_call(:slaves)
-
-  @doc "Return `[{id, cycle_time_us, pid}]` for all running domains."
-  @spec domains() :: list() | {:error, :not_started}
-  def domains, do: safe_call(:domains)
-
-  @doc "Return the stable bus server reference."
-  @spec bus() :: Bus.server() | nil | {:error, :not_started}
-  def bus, do: safe_call(:bus)
-
-  @doc """
-  Return the last terminal startup/runtime failure retained after the master
-  returned to `:idle`.
-  """
-  @spec last_failure() :: map() | nil | {:error, :not_started}
-  def last_failure, do: safe_call(:last_failure)
-
-  @doc """
-  Return the current session state.
-  """
-  @spec state() ::
-          :idle
-          | :discovering
-          | :awaiting_preop
-          | :preop_ready
-          | :operational
-          | :activation_blocked
-          | :recovering
-          | {:error, :not_started}
-  def state, do: safe_call(:state)
-
-  @doc """
-  Configure a discovered slave while the session is still in PREOP.
-
-  Keyword-list updates merge into the current config. `%EtherCAT.Slave.Config{}`
-  replaces the current declarative config for that slave.
-  """
-  @spec configure_slave(atom(), keyword() | EtherCAT.Slave.Config.t()) :: :ok | {:error, term()}
-  def configure_slave(slave_name, spec) do
-    safe_call({:configure_slave, slave_name, spec})
-  end
-
-  @doc """
-  Start cyclic operation after dynamic PREOP configuration.
-
-  This starts DC runtime, starts all domains cycling, and advances every slave
-  whose `target_state` is `:op`.
-  """
-  @spec activate() :: :ok | {:error, term()}
-  def activate do
-    safe_call(:activate)
-  end
-
-  @doc """
-  Update the live cycle period of a configured domain.
-
-  This forwards the change to the running `Domain` process. The master keeps
-  the initial domain plan; live period changes are owned by the `Domain`
-  runtime and exposed through `domains/0` / `Domain.info/1`.
-  """
-  @spec update_domain_cycle_time(atom(), pos_integer()) :: :ok | {:error, term()}
-  def update_domain_cycle_time(domain_id, cycle_time_us)
-      when is_atom(domain_id) and is_integer(cycle_time_us) and cycle_time_us > 0 do
-    safe_call({:update_domain_cycle_time, domain_id, cycle_time_us})
-  end
-
-  @doc """
-  Block until the master reaches a usable session state, then return `:ok`.
-
-  Returns immediately if already in `:preop_ready` or `:operational`. Returns
-  `{:error, :timeout}` if the master does not reach a usable session state within
-  `timeout_ms` milliseconds.
-  Returns `{:error, :not_started}` if the master process is not running.
-  Returns `{:error, {:activation_failed, failures}}` or
-  `{:error, {:runtime_degraded, faults}}` when the current session is not
-  usable.
-  """
-  @spec await_running(timeout_ms :: pos_integer()) :: :ok | {:error, term()}
-  def await_running(timeout_ms \\ 10_000) do
-    safe_call(:await_running, timeout_ms)
-  end
-
-  @doc """
-  Block until the master reaches operational cyclic runtime, then return `:ok`.
-
-  This waits for DC/domain runtime to start and for `:op` promotion to complete.
-  Returns `{:error, :not_started}` if the master is idle or not running.
-  Returns `{:error, {:activation_failed, failures}}` for startup degradations,
-  `{:error, {:runtime_degraded, faults}}` while runtime recovery is in progress,
-  and `{:error, :timeout}` if the deadline expires first.
-  """
-  @spec await_operational(timeout_ms :: pos_integer()) :: :ok | {:error, term()}
-  def await_operational(timeout_ms \\ 10_000) do
-    safe_call(:await_operational, timeout_ms)
-  end
-
-  @doc """
-  Return a Distributed Clocks status snapshot for the current session.
-
-  The returned `%EtherCAT.DC.Status{}` includes both:
-
-  - activation-time lock gating via `await_lock?`
-  - runtime lock-loss behavior via `lock_policy`
-  """
-  @spec dc_status() :: EtherCAT.DC.Status.t() | {:error, :not_started}
-  def dc_status do
-    safe_call(:dc_status)
-  end
-
-  @doc "Return the current DC reference clock as `%{name, station}`."
-  @spec reference_clock() ::
-          {:ok, %{name: atom() | nil, station: non_neg_integer()}} | {:error, term()}
-  def reference_clock do
-    safe_call(:reference_clock)
-  end
-
-  @doc """
-  Wait for DC lock.
-
-  Returns `:ok` once the active DC runtime reports `:locked`.
-  """
-  @spec await_dc_locked(timeout_ms :: pos_integer()) :: :ok | {:error, term()}
-  def await_dc_locked(timeout_ms \\ 5_000) do
-    case safe_call(:dc_runtime) do
-      {:ok, dc_server} -> DC.await_locked(dc_server, timeout_ms)
-      {:error, _} = err -> err
-    end
-  end
-
   # -- child_spec / start_link -----------------------------------------------
 
   @doc false
@@ -384,7 +90,7 @@ defmodule EtherCAT.Master do
   @impl true
   def init(data), do: {:ok, :idle, data}
 
-  # :idle --------------------------------------------------------------------
+  # Session idle -------------------------------------------------------------
 
   @impl true
   def handle_event(:enter, _old, :idle, _data), do: :keep_state_and_data
@@ -465,7 +171,7 @@ defmodule EtherCAT.Master do
     {:keep_state_and_data, [{:reply, from, {:error, :not_started}}]}
   end
 
-  # :discovering -------------------------------------------------------------
+  # Discovery and initialization --------------------------------------------
 
   def handle_event(:enter, _old, :discovering, _data) do
     {:keep_state_and_data, [{{:timeout, :scan_poll}, 0, nil}]}
@@ -563,7 +269,7 @@ defmodule EtherCAT.Master do
     {:keep_state, %{data | await_operational_callers: [from | data.await_operational_callers]}}
   end
 
-  # :awaiting_preop ----------------------------------------------------------
+  # Configuration sequence (Init -> Pre-Op) ---------------------------------
 
   def handle_event(:enter, _old, :awaiting_preop, _data) do
     {:keep_state_and_data, [{{:timeout, :awaiting_preop}, @awaiting_preop_timeout_ms, nil}]}
@@ -630,7 +336,7 @@ defmodule EtherCAT.Master do
     {:keep_state, %{data | await_operational_callers: [from | data.await_operational_callers]}}
   end
 
-  # :preop_ready / :operational ----------------------------------------------
+  # Activation and cyclic start (Pre-Op -> Safe-Op -> Op) -------------------
 
   def handle_event(:enter, _old, :preop_ready, data) do
     Logger.info("[Master] running — slaves ready in PREOP, waiting for explicit activate/0")
@@ -686,7 +392,7 @@ defmodule EtherCAT.Master do
         :preop_ready,
         data
       ) do
-    case configure_discovered_slave(data, slave_name, spec) do
+    case Preop.configure_discovered_slave(data, slave_name, spec) do
       {:ok, new_data} ->
         {:keep_state, new_data, [{:reply, from, :ok}]}
 
@@ -715,7 +421,7 @@ defmodule EtherCAT.Master do
     end
   end
 
-  # :activation_blocked ------------------------------------------------------
+  # Activation blocked -------------------------------------------------------
 
   def handle_event(:enter, _old, :activation_blocked, data) do
     Logger.warning("[Master] activation blocked — #{Status.activation_blocked_summary(data)}")
@@ -764,7 +470,7 @@ defmodule EtherCAT.Master do
     {:keep_state_and_data, [{:reply, from, {:error, :activation_in_progress}}]}
   end
 
-  # :recovering --------------------------------------------------------------
+  # Continuous loop recovery -------------------------------------------------
 
   def handle_event(:enter, _old, :recovering, data) do
     Logger.warning("[Master] recovering — #{Status.recovering_summary(data)}")
@@ -818,68 +524,18 @@ defmodule EtherCAT.Master do
     {:keep_state_and_data, [{:reply, from, {:error, :recovery_in_progress}}]}
   end
 
-  # -- Shared handlers (all non-idle states) ---------------------------------
+  # -- Shared active-state calls ---------------------------------------------
 
-  # Query handlers — work in all active states
-  def handle_event({:call, from}, :state, state, _data) do
-    {:keep_state_and_data, [{:reply, from, state}]}
-  end
-
-  def handle_event({:call, from}, :last_failure, _state, data) do
-    {:keep_state_and_data, [{:reply, from, data.last_failure}]}
-  end
-
-  def handle_event({:call, from}, :dc_status, _state, data) do
-    {:keep_state_and_data, [{:reply, from, Status.dc_status(data)}]}
-  end
-
-  def handle_event({:call, from}, :reference_clock, _state, data) do
-    {:keep_state_and_data, [{:reply, from, Status.reference_clock_reply(Status.dc_status(data))}]}
-  end
-
-  def handle_event({:call, from}, :dc_runtime, _state, %{dc_config: nil}) do
-    {:keep_state_and_data, [{:reply, from, {:error, :dc_disabled}}]}
-  end
-
-  def handle_event({:call, from}, :dc_runtime, _state, _data) do
-    if dc_running?() do
-      {:keep_state_and_data, [{:reply, from, {:ok, dc_server()}}]}
-    else
-      {:keep_state_and_data, [{:reply, from, {:error, :dc_inactive}}]}
-    end
-  end
-
-  def handle_event({:call, from}, :slaves, _state, data) do
-    {:keep_state_and_data, [{:reply, from, Status.slaves(data)}]}
-  end
-
-  def handle_event({:call, from}, :domains, _state, data) do
-    {:keep_state_and_data, [{:reply, from, Status.domains(data)}]}
-  end
-
-  def handle_event({:call, from}, :bus, _state, data) do
-    {:keep_state_and_data, [{:reply, from, Status.bus_public_ref(data)}]}
-  end
-
-  def handle_event(
-        {:call, from},
-        {:update_domain_cycle_time, domain_id, cycle_time_us},
-        _state,
-        data
-      )
-      when is_atom(domain_id) and is_integer(cycle_time_us) and cycle_time_us > 0 do
-    case update_domain_cycle_time(data, domain_id, cycle_time_us) do
-      :ok ->
-        {:keep_state_and_data, [{:reply, from, :ok}]}
-
-      {:error, reason} ->
-        {:keep_state_and_data, [{:reply, from, {:error, reason}}]}
-    end
-  end
-
-  # Catch-all for unrecognized calls in any active state
-  def handle_event({:call, from}, _event, state, _data) do
-    {:keep_state_and_data, [{:reply, from, {:error, state}}]}
+  def handle_event({:call, from}, event, state, data)
+      when state in [
+             :discovering,
+             :awaiting_preop,
+             :preop_ready,
+             :operational,
+             :activation_blocked,
+             :recovering
+           ] do
+    Calls.handle_active(from, event, state, data)
   end
 
   # Bus crashed — clean up and return to idle
@@ -1006,7 +662,7 @@ defmodule EtherCAT.Master do
       when state in [:operational, :recovering] do
     Logger.info("[Master] slave #{name} link restored — authorizing reconnect")
 
-    case Slave.authorize_reconnect(name) do
+    case SlaveAPI.authorize_reconnect(name) do
       :ok ->
         updated = Recovery.put_slave_fault(data, name, {:reconnecting, :authorized})
         keep_state_with_slave_fault_retry(state, updated)
@@ -1026,7 +682,7 @@ defmodule EtherCAT.Master do
       when state in [:operational, :recovering] do
     Logger.info("[Master] slave #{name} reconnected and in :preop — requesting :op")
 
-    case Slave.request(name, :op) do
+    case SlaveAPI.request(name, :op) do
       :ok ->
         recovered_data =
           data
@@ -1240,64 +896,6 @@ defmodule EtherCAT.Master do
     )
   end
 
-  defp configure_discovered_slave(data, slave_name, spec) do
-    with {:ok, current_config, config_idx} <-
-           Config.fetch_slave_config(data.slave_configs || [], slave_name),
-         {:ok, normalized_config} <-
-           Config.normalize_runtime_slave_config(slave_name, spec, current_config),
-         :ok <- ensure_known_domains(data, normalized_config),
-         :ok <- ensure_slave_in_preop(slave_name),
-         :ok <- maybe_apply_slave_configuration(slave_name, current_config, normalized_config) do
-      updated_slave_configs = List.replace_at(data.slave_configs, config_idx, normalized_config)
-
-      {:ok,
-       %{
-         data
-         | slave_configs: updated_slave_configs,
-           activatable_slaves: Config.activatable_slave_names(updated_slave_configs)
-       }}
-    end
-  end
-
-  defp ensure_known_domains(data, slave_config) do
-    unknown_domains = Config.unknown_domain_ids(data.domain_configs || [], slave_config)
-
-    case unknown_domains do
-      [] -> :ok
-      domains -> {:error, {:unknown_domains, domains}}
-    end
-  end
-
-  defp ensure_slave_in_preop(slave_name) do
-    case Slave.state(slave_name) do
-      :preop -> :ok
-      state -> {:error, {:not_preop, state}}
-    end
-  end
-
-  defp maybe_apply_slave_configuration(slave_name, current_config, updated_config) do
-    if Config.local_config_changed?(current_config, updated_config) do
-      Slave.configure(
-        slave_name,
-        driver: updated_config.driver,
-        config: updated_config.config,
-        process_data: updated_config.process_data,
-        sync: updated_config.sync,
-        health_poll_ms: updated_config.health_poll_ms
-      )
-    else
-      :ok
-    end
-  end
-
-  defp update_domain_cycle_time(%{domain_configs: domain_configs}, domain_id, cycle_time_us) do
-    if Enum.any?(domain_configs || [], &(&1.id == domain_id)) do
-      Domain.update_cycle_time(domain_id, cycle_time_us)
-    else
-      {:error, {:unknown_domain, domain_id}}
-    end
-  end
-
   defp reset_master(last_failure), do: %__MODULE__{last_failure: last_failure}
 
   defp track_slave_fault(state, data, name, reason) do
@@ -1369,28 +967,5 @@ defmodule EtherCAT.Master do
     Enum.each(callers, fn from -> :gen_statem.reply(from, reply) end)
   end
 
-  defp safe_call(msg) do
-    try do
-      :gen_statem.call(__MODULE__, msg)
-    catch
-      :exit, {:noproc, _} -> {:error, :not_started}
-    end
-  end
-
-  defp safe_call(msg, timeout) do
-    try do
-      :gen_statem.call(__MODULE__, msg, timeout)
-    catch
-      :exit, {:noproc, _} -> {:error, :not_started}
-      :exit, {:timeout, _} -> {:error, :timeout}
-    end
-  end
-
   defp bus_server(_data), do: Bus
-
-  defp dc_server, do: DC
-
-  defp dc_running? do
-    is_pid(Process.whereis(DC))
-  end
 end
