@@ -48,4 +48,4 @@ Observed with:
 
 Still worth adding later:
 
-- more granular mailbox milestones than “next matching segment”
+- mailbox protocol-shape faults like toggle or mailbox-counter mismatches

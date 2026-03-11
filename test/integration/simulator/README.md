@@ -44,6 +44,7 @@ letting the loop invent arbitrary refactors.
 - `12`: startup mailbox abort during driver PREOP mailbox configuration
 - `13`: targeted logical-WKC skew without inventing a slave-local fault
 - `14`: command-targeted WKC skew outside logical PDO traffic
+- `15`: mailbox milestone-timed segmented abort after successful segment progress
 
 These are the current regression scenarios, not just backlog items. Each one
 should keep its `.md` note and matching `_test.exs` file aligned.
@@ -70,11 +71,13 @@ Current milestones:
 
 - `{:healthy_exchanges, count}`
 - `{:healthy_polls, slave_name, count}`
+- `{:mailbox_step, slave_name, step, count}`
 
 Current in-script wait steps:
 
 - `{:wait_for_milestone, {:healthy_exchanges, count}}`
 - `{:wait_for_milestone, {:healthy_polls, slave_name, count}}`
+- `{:wait_for_milestone, {:mailbox_step, slave_name, step, count}}`
 
 For raw transport corruption, use the UDP-edge API instead:
 
@@ -100,7 +103,7 @@ instead of relying on sleeps alone.
 The next useful scenarios are the narrower ones the existing notes still call
 out:
 
-- more granular mailbox milestones than “next matching segment”
+- mailbox protocol-shape faults like toggle or mailbox-counter mismatches
 
 ## Current Rule Of Thumb
 

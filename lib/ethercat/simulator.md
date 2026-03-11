@@ -123,6 +123,12 @@ Slave-local mutations can still be injected directly, or scheduled for later:
 - `{:mailbox_abort, slave_name, index, subindex, abort_code, :upload_segment}`
 - `{:mailbox_abort, slave_name, index, subindex, abort_code, :download_segment}`
 
+Current milestones include:
+
+- `{:healthy_exchanges, count}`
+- `{:healthy_polls, slave_name, count}`
+- `{:mailbox_step, slave_name, step, count}`
+
 That split is deliberate. Exchange-scoped wrappers model transport/runtime fault
 windows, while delayed scheduling lets tests combine them with later slave-local
 state changes without relying on brittle sleeps alone.
@@ -152,6 +158,11 @@ EtherCAT.Simulator.inject_fault(
 
 EtherCAT.Simulator.inject_fault(
   {:after_milestone, {:healthy_polls, :outputs, 10}, {:retreat_to_safeop, :outputs}}
+)
+
+EtherCAT.Simulator.inject_fault(
+  {:after_milestone, {:mailbox_step, :mailbox, :upload_segment, 2},
+   {:mailbox_abort, :mailbox, 0x2003, 0x01, 0x0800_0000, :upload_segment}}
 )
 
 EtherCAT.Simulator.inject_fault(

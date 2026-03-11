@@ -44,4 +44,4 @@ Current API is now enough for targeted logical WKC skew coverage through
 
 Still worth adding later:
 
-- more granular mailbox milestones than “next matching segment”
+- mailbox protocol-shape faults like toggle or mailbox-counter mismatches

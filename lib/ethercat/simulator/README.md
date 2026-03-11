@@ -93,6 +93,7 @@ Sequential fault scripts can also pause on:
 
 - `{:wait_for_milestone, {:healthy_exchanges, count}}`
 - `{:wait_for_milestone, {:healthy_polls, slave_name, count}}`
+- `{:wait_for_milestone, {:mailbox_step, slave_name, step, count}}`
 
 The simulator is already strong enough to exercise the real master through:
 
@@ -339,6 +340,7 @@ now covers:
 - `12` startup mailbox abort during driver PREOP mailbox configuration
 - `13` targeted logical-WKC skew without inventing slave-local faults
 - `14` command-targeted WKC skew outside logical PDO traffic
+- `15` mailbox milestone-timed segmented abort after successful segments
 
 ## Widget-Facing Signal API
 
@@ -469,6 +471,11 @@ EtherCAT.Simulator.inject_fault({:after_ms, 250, {:retreat_to_safeop, :outputs}}
 
 EtherCAT.Simulator.inject_fault(
   {:after_milestone, {:healthy_polls, :outputs, 10}, {:retreat_to_safeop, :outputs}}
+)
+
+EtherCAT.Simulator.inject_fault(
+  {:after_milestone, {:mailbox_step, :mailbox, :upload_segment, 2},
+   {:mailbox_abort, :mailbox, 0x2003, 0x01, 0x0800_0000, :upload_segment}}
 )
 
 EtherCAT.Simulator.inject_fault(

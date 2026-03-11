@@ -48,4 +48,4 @@ Current API is enough for startup-time mailbox abort coverage through direct
 
 Still worth adding later:
 
-- WKC skew targeted at a specific slave or datagram contribution
+- mailbox response timeouts during PREOP configuration, not just deterministic aborts

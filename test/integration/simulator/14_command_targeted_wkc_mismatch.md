@@ -45,4 +45,4 @@ Current API is now enough for command-targeted WKC skew through
 
 Still worth adding later:
 
-- more granular mailbox milestones than “next matching segment”
+- mailbox protocol-shape faults like toggle or mailbox-counter mismatches

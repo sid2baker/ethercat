@@ -49,4 +49,4 @@ Current API is now enough for mid-transfer mailbox abort coverage through:
 
 Still worth adding later:
 
-- more granular mailbox milestones than “next matching segment”
+- mailbox protocol-shape faults like toggle or mailbox-counter mismatches

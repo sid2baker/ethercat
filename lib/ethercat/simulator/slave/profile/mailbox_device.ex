@@ -63,6 +63,16 @@ defmodule EtherCAT.Simulator.Slave.Profile.MailboxDevice do
             value: segmented_blob(),
             access: :rw,
             group: :diagnostics
+          ),
+        {0x2003, 0x01} =>
+          Object.new(
+            index: 0x2003,
+            subindex: 0x01,
+            name: :multi_segment_blob,
+            type: {:binary, 192},
+            value: multi_segment_blob(),
+            access: :rw,
+            group: :diagnostics
           )
       },
       dc_capable?: false,
@@ -107,6 +117,12 @@ defmodule EtherCAT.Simulator.Slave.Profile.MailboxDevice do
 
   defp segmented_blob do
     0..79
+    |> Enum.to_list()
+    |> :erlang.list_to_binary()
+  end
+
+  defp multi_segment_blob do
+    0..191
     |> Enum.to_list()
     |> :erlang.list_to_binary()
   end
