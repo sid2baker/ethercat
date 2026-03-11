@@ -77,6 +77,8 @@ Datagram/runtime fault injection now has two modes:
   - `{:next_exchange, fault}`
   - `{:next_exchanges, count, fault}`
   - `{:exchange_script, [fault, ...]}`
+- delayed fault injection through:
+  - `{:after_ms, delay_ms, fault}`
 
 The current queued exchange-fault set is:
 
@@ -322,6 +324,7 @@ now covers:
 - `05` slave-local `SAFEOP` retreat with health polling
 - `06` mailbox aborts in PREOP
 - `07` combined exchange fault scripts across timeout, WKC skew, and reconnect
+- `08` delayed slave-local mutation after exchange-fault recovery
 
 ## Widget-Facing Signal API
 
@@ -365,6 +368,7 @@ Stop the simulator runtime with `stop/0`.
 
 - `next_fault`
 - `pending_faults`
+- `scheduled_faults`
 - UDP state under `udp`
 
 To wire one simulated slave signal into another:
@@ -445,6 +449,7 @@ slave availability:
 EtherCAT.Simulator.inject_fault({:next_exchanges, 10, :drop_responses})
 EtherCAT.Simulator.inject_fault({:next_exchanges, 6, {:wkc_offset, -1}})
 EtherCAT.Simulator.inject_fault({:exchange_script, [:drop_responses, {:disconnect, :outputs}]})
+EtherCAT.Simulator.inject_fault({:after_ms, 250, {:retreat_to_safeop, :outputs}})
 ```
 
 Use the UDP-side API when the fault should corrupt raw replies at the transport
@@ -574,6 +579,24 @@ The simulator remains a library feature for:
 - local tooling and widgets
 - deterministic protocol experiments
 - ring-shaped deep integration coverage built from real drivers
+
+## Scale Boundaries
+
+Keep simulator integration scenarios protocol-honest.
+
+The current stack uses the same EtherCAT address widths as the runtime:
+
+- auto-increment positions are encoded as signed 16-bit values
+- configured station addresses are encoded as unsigned 16-bit values
+
+That means a discovered topology must satisfy both:
+
+- `slave_count <= 32_769`
+- `base_station + slave_count - 1 <= 0xFFFF`
+
+So a literal `70_000`-slave ring is not a meaningful simulator integration
+test here. Treat those as address-space boundary checks in master/startup unit
+tests, not as giant end-to-end simulator scenarios.
 
 ## Completed Milestone Coverage
 

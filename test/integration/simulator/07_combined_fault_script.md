@@ -44,5 +44,3 @@ Current API is enough for basic combined exchange scripts.
 Still worth adding later:
 
 - script steps that wait on explicit milestones instead of raw exchange counts
-- mixed scripts that can combine exchange faults with delayed slave-local
-  mutations such as `SAFEOP` retreat

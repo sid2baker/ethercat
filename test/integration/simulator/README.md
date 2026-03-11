@@ -37,6 +37,7 @@ letting the loop invent arbitrary refactors.
 - `05`: slave retreat to `SAFEOP` with health polling
 - `06`: mailbox abort during startup or recovery
 - `07`: combined fault script, e.g. timeout -> reconnect -> WKC skew
+- `08`: delayed slave-local mutation after exchange-fault recovery
 
 These are the current regression scenarios, not just backlog items. Each one
 should keep its `.md` note and matching `_test.exs` file aligned.
@@ -48,6 +49,7 @@ For datagram/runtime faults, prefer the queued simulator API:
 - `EtherCAT.Simulator.inject_fault({:next_exchange, fault})`
 - `EtherCAT.Simulator.inject_fault({:next_exchanges, count, fault})`
 - `EtherCAT.Simulator.inject_fault({:exchange_script, [fault, ...]})`
+- `EtherCAT.Simulator.inject_fault({:after_ms, delay_ms, fault})`
 
 Current exchange-scoped faults:
 
@@ -69,15 +71,15 @@ Current UDP corruption modes:
 - `:replay_previous`
 
 `EtherCAT.Simulator.info/0` and `EtherCAT.Simulator.Udp.info/0` expose
-`next_fault` and `pending_faults`, so new scenarios should assert queue drain
-explicitly instead of relying on sleeps alone.
+queued and delayed fault state through `next_fault`, `pending_faults`, and
+`scheduled_faults`, so new scenarios should assert queue drain explicitly
+instead of relying on sleeps alone.
 
 ## Next Directions
 
 The next useful scenarios are the ones the existing notes still call out:
 
 - milestone-aware or delayed scripts instead of raw exchange counts
-- mixed scripts that combine exchange faults with delayed slave-local mutations
 - segmented mailbox aborts during upload/download
 
 ## Current Rule Of Thumb
@@ -88,6 +90,9 @@ The next useful scenarios are the ones the existing notes still call out:
   test helpers before changing runtime behavior.
 - If the scenario exposes a mismatch with expected master behavior, fix the bug
   before adding more scenarios on top.
+- If the idea is really an address-space or protocol-limit boundary, cover it
+  in focused master/startup unit tests instead of inventing giant simulator
+  rings the transport cannot honestly address.
 - Keep the fault boundary honest:
   datagram/runtime faults belong on `EtherCAT.Simulator`, while raw reply
   corruption belongs on `EtherCAT.Simulator.Udp`.

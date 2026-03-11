@@ -79,6 +79,7 @@ type used by those builders and optional driver hydration.
 
 - `next_fault`
 - `pending_faults`
+- `scheduled_faults`
 - `udp` transport info when the UDP endpoint is running
 
 ## Fault Injection
@@ -100,6 +101,7 @@ For datagram/runtime faults, `EtherCAT.Simulator.inject_fault/1` supports both:
 - sticky faults such as `:drop_responses` or `{:disconnect, :outputs}`
 - exchange-scoped wrappers such as `{:next_exchange, fault}`,
   `{:next_exchanges, count, fault}`, and `{:exchange_script, [fault, ...]}`
+- delayed scheduling through `{:after_ms, delay_ms, fault}`
 
 The current exchange-scoped fault set is:
 
@@ -110,15 +112,15 @@ The current exchange-scoped fault set is:
 These queueable faults are the ones that change datagram/runtime outcomes over
 successive exchanges.
 
-Slave-local mutations remain immediate operations today:
+Slave-local mutations can still be injected directly, or scheduled for later:
 
 - `{:retreat_to_safeop, slave_name}`
 - `{:latch_al_error, slave_name, code}`
 - `{:mailbox_abort, slave_name, index, subindex, abort_code}`
 
 That split is deliberate. Exchange-scoped wrappers model transport/runtime fault
-windows; direct slave-local faults model device state changes that are not tied
-to “the next N exchanges”.
+windows, while delayed scheduling lets tests combine them with later slave-local
+state changes without relying on brittle sleeps alone.
 
 Typical queued runtime examples:
 
@@ -129,6 +131,10 @@ EtherCAT.Simulator.inject_fault({:next_exchanges, 6, {:wkc_offset, -1}})
 
 EtherCAT.Simulator.inject_fault(
   {:exchange_script, [:drop_responses, {:wkc_offset, -1}]}
+)
+
+EtherCAT.Simulator.inject_fault(
+  {:after_ms, 250, {:retreat_to_safeop, :outputs}}
 )
 ```
 

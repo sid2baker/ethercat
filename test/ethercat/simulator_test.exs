@@ -54,4 +54,22 @@ defmodule EtherCAT.SimulatorTest do
 
     assert pending_faults == [:drop_responses, {:wkc_offset, -1}]
   end
+
+  test "info/0 reports delayed scheduled faults and drains them when due" do
+    assert {:ok, _pid} = Simulator.start_link(devices: [])
+
+    assert :ok =
+             Simulator.inject_fault({:after_ms, 50, {:exchange_script, [:drop_responses]}})
+
+    assert {:ok, %{scheduled_faults: [%{fault: {:exchange_script, [:drop_responses]}}]}} =
+             Simulator.info()
+
+    Process.sleep(80)
+
+    assert {:ok,
+            %{next_fault: {:next_exchange, :drop_responses}, pending_faults: [:drop_responses]}} =
+             Simulator.info()
+
+    assert {:ok, %{scheduled_faults: []}} = Simulator.info()
+  end
 end

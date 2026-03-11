@@ -19,6 +19,8 @@ defmodule EtherCAT.Master.Startup do
   @frame_timeout_max_ms 10
   @init_poll_limit 100
   @init_poll_interval_ms 10
+  @max_auto_increment_slaves 32_769
+  @max_station_address 0xFFFF
 
   @spec tune_bus_frame_timeout(%EtherCAT.Master{}, non_neg_integer()) :: :ok
   def tune_bus_frame_timeout(data, slave_count) do
@@ -51,7 +53,8 @@ defmodule EtherCAT.Master.Startup do
     count = data.slave_count
     Logger.info("[Master] configuring #{count} slave(s)")
 
-    with {:ok, stations} <- assign_station_addresses(data, count),
+    with :ok <- validate_topology_addressing(data, count),
+         {:ok, stations} <- assign_station_addresses(data, count),
          {:ok, slave_topology} <- read_topology_statuses(stations),
          :ok <- reset_slaves_to_init(stations),
          {:ok, dc_ref_station, dc_stations} <- initialize_distributed_clocks(data, slave_topology),
@@ -105,6 +108,27 @@ defmodule EtherCAT.Master.Startup do
 
   def recommended_frame_timeout_ms(data, _slave_count) do
     min(@frame_timeout_host_floor_ms, cycle_relative_timeout_cap_ms(data))
+  end
+
+  @doc false
+  @spec validate_topology_addressing(%EtherCAT.Master{}, non_neg_integer()) ::
+          :ok | {:error, term()}
+  def validate_topology_addressing(%{base_station: base_station}, slave_count)
+      when is_integer(base_station) and is_integer(slave_count) and slave_count >= 0 do
+    cond do
+      slave_count > @max_auto_increment_slaves ->
+        {:error,
+         {:unsupported_topology,
+          {:too_many_slaves_for_auto_increment, slave_count, @max_auto_increment_slaves}}}
+
+      slave_count > 0 and base_station + slave_count - 1 > @max_station_address ->
+        {:error,
+         {:unsupported_topology,
+          {:station_address_overflow, base_station, slave_count, @max_station_address}}}
+
+      true ->
+        :ok
+    end
   end
 
   defp ceil_div(value, divisor) when is_integer(value) and is_integer(divisor) and divisor > 0 do

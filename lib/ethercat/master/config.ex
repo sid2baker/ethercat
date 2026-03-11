@@ -8,6 +8,7 @@ defmodule EtherCAT.Master.Config do
   alias EtherCAT.Slave.Config, as: SlaveConfig
 
   @default_base_station 0x1000
+  @max_station_address 0xFFFF
   @master_option_keys [
     :slaves,
     :domains,
@@ -137,8 +138,10 @@ defmodule EtherCAT.Master.Config do
     end
   end
 
-  defp validate_base_station(base_station) when is_integer(base_station) and base_station >= 0,
-    do: :ok
+  defp validate_base_station(base_station)
+       when is_integer(base_station) and base_station >= 0 and
+              base_station <= @max_station_address,
+       do: :ok
 
   defp validate_base_station(_base_station),
     do: {:error, {:invalid_start_options, :invalid_base_station}}

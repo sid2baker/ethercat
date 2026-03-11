@@ -37,4 +37,25 @@ defmodule EtherCAT.Master.StartupTest do
 
     assert Startup.recommended_frame_timeout_ms(data, 4) == 7
   end
+
+  test "validate_topology_addressing allows the signed auto-increment boundary" do
+    data = %Master{base_station: 0}
+
+    assert :ok = Startup.validate_topology_addressing(data, 32_769)
+  end
+
+  test "validate_topology_addressing rejects rings larger than auto-increment addressing" do
+    data = %Master{base_station: 0}
+
+    assert {:error,
+            {:unsupported_topology, {:too_many_slaves_for_auto_increment, 32_770, 32_769}}} =
+             Startup.validate_topology_addressing(data, 32_770)
+  end
+
+  test "validate_topology_addressing rejects configured station address overflow" do
+    data = %Master{base_station: 0xFFFF}
+
+    assert {:error, {:unsupported_topology, {:station_address_overflow, 0xFFFF, 2, 0xFFFF}}} =
+             Startup.validate_topology_addressing(data, 2)
+  end
 end

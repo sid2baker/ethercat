@@ -13,8 +13,7 @@ defmodule EtherCAT.Simulator do
   alias EtherCAT.Simulator.Runtime.Wiring
 
   @type exchange_fault :: Faults.exchange_fault()
-
-  @type fault ::
+  @type immediate_fault ::
           exchange_fault()
           | {:next_exchange, exchange_fault()}
           | {:next_exchanges, pos_integer(), exchange_fault()}
@@ -22,6 +21,8 @@ defmodule EtherCAT.Simulator do
           | {:retreat_to_safeop, atom()}
           | {:latch_al_error, atom(), non_neg_integer()}
           | {:mailbox_abort, atom(), non_neg_integer(), non_neg_integer(), non_neg_integer()}
+
+  @type fault :: immediate_fault() | {:after_ms, non_neg_integer(), immediate_fault()}
 
   @type signal_ref :: {atom(), atom()}
   @type connection :: %{
@@ -250,64 +251,23 @@ defmodule EtherCAT.Simulator do
     end
   end
 
-  def handle_call({:inject_fault, :drop_responses}, _from, state) do
-    {:reply, :ok, %{state | faults: Faults.inject(state.faults, :drop_responses)}}
-  end
+  def handle_call({:inject_fault, fault}, _from, state) do
+    case inject_fault_into_state(state, fault) do
+      {:ok, state} ->
+        {:reply, :ok, state}
 
-  def handle_call({:inject_fault, {:wkc_offset, delta}}, _from, state)
-      when is_integer(delta) do
-    {:reply, :ok, %{state | faults: Faults.inject(state.faults, {:wkc_offset, delta})}}
-  end
-
-  def handle_call({:inject_fault, {:disconnect, slave_name}}, _from, state) do
-    {:reply, :ok, %{state | faults: Faults.inject(state.faults, {:disconnect, slave_name})}}
-  end
-
-  def handle_call({:inject_fault, {:next_exchange, fault}}, _from, state) do
-    reply_with_enqueued_fault(state, {:next_exchange, fault})
-  end
-
-  def handle_call({:inject_fault, {:next_exchanges, count, fault}}, _from, state) do
-    reply_with_enqueued_fault(state, {:next_exchanges, count, fault})
-  end
-
-  def handle_call({:inject_fault, {:exchange_script, planned_faults}}, _from, state) do
-    reply_with_enqueued_fault(state, {:exchange_script, planned_faults})
-  end
-
-  def handle_call({:inject_fault, {:retreat_to_safeop, slave_name}}, _from, state) do
-    reply_with_slave_update(state, slave_name, &Device.retreat_to_safeop/1)
-  end
-
-  def handle_call({:inject_fault, {:latch_al_error, slave_name, code}}, _from, state)
-      when is_integer(code) and code >= 0 do
-    reply_with_slave_update(state, slave_name, &Device.latch_al_error(&1, code))
-  end
-
-  def handle_call(
-        {:inject_fault, {:mailbox_abort, slave_name, index, subindex, abort_code}},
-        _from,
-        state
-      )
-      when is_integer(index) and index >= 0 and is_integer(subindex) and subindex >= 0 and
-             is_integer(abort_code) and abort_code >= 0 do
-    reply_with_slave_update(
-      state,
-      slave_name,
-      &Device.inject_mailbox_abort(&1, index, subindex, abort_code)
-    )
-  end
-
-  def handle_call({:inject_fault, _fault}, _from, state) do
-    {:reply, {:error, :invalid_fault}, state}
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
   end
 
   def handle_call(:clear_faults, _from, state) do
     before_signals = Wiring.capture_signal_values(state.slaves)
     slaves = Enum.map(state.slaves, &Device.clear_faults/1)
+    clear_scheduled_faults(state.scheduled_faults)
 
     state =
-      %{state | slaves: slaves, faults: Faults.clear(state.faults)}
+      %{state | slaves: slaves, faults: Faults.clear(state.faults), scheduled_faults: []}
       |> finalize_signal_changes(before_signals)
 
     {:reply, :ok, state}
@@ -472,26 +432,18 @@ defmodule EtherCAT.Simulator do
     {:noreply, %{state | subscriptions: Subscriptions.handle_down(state.subscriptions, ref, pid)}}
   end
 
-  defp reply_with_slave_update(state, slave_name, fun) do
-    before_signals = Wiring.capture_signal_values(state.slaves)
+  def handle_info({:apply_scheduled_fault, id, fault}, state) do
+    case pop_scheduled_fault(state.scheduled_faults, id) do
+      {:ok, _entry, scheduled_faults} ->
+        state = %{state | scheduled_faults: scheduled_faults}
 
-    case update_named_slave(state.slaves, slave_name, fun) do
-      {:ok, slaves} ->
-        state = %{state | slaves: slaves} |> finalize_signal_changes(before_signals)
-        {:reply, :ok, state}
-
-      {:error, reason} ->
-        {:reply, {:error, reason}, state}
-    end
-  end
-
-  defp reply_with_enqueued_fault(state, planned_fault) do
-    case Faults.enqueue(state.faults, planned_fault) do
-      {:ok, faults} ->
-        {:reply, :ok, %{state | faults: faults}}
+        case apply_immediate_fault(state, fault) do
+          {:ok, state} -> {:noreply, state}
+          {:error, _reason} -> {:noreply, state}
+        end
 
       :error ->
-        {:reply, {:error, :invalid_fault}, state}
+        {:noreply, state}
     end
   end
 
@@ -532,4 +484,137 @@ defmodule EtherCAT.Simulator do
     :ok = Subscriptions.notify(subscriptions, self(), changes)
     %{state | slaves: slaves}
   end
+
+  defp inject_fault_into_state(state, {:after_ms, delay_ms, fault})
+       when is_integer(delay_ms) and delay_ms >= 0 do
+    schedule_fault(state, delay_ms, fault)
+  end
+
+  defp inject_fault_into_state(state, fault) do
+    apply_immediate_fault(state, fault)
+  end
+
+  defp apply_immediate_fault(state, :drop_responses) do
+    {:ok, %{state | faults: Faults.inject(state.faults, :drop_responses)}}
+  end
+
+  defp apply_immediate_fault(state, {:wkc_offset, delta}) when is_integer(delta) do
+    {:ok, %{state | faults: Faults.inject(state.faults, {:wkc_offset, delta})}}
+  end
+
+  defp apply_immediate_fault(state, {:disconnect, slave_name}) when is_atom(slave_name) do
+    {:ok, %{state | faults: Faults.inject(state.faults, {:disconnect, slave_name})}}
+  end
+
+  defp apply_immediate_fault(state, {:next_exchange, _fault} = planned_fault) do
+    apply_planned_fault(state, planned_fault)
+  end
+
+  defp apply_immediate_fault(state, {:next_exchanges, _count, _fault} = planned_fault) do
+    apply_planned_fault(state, planned_fault)
+  end
+
+  defp apply_immediate_fault(state, {:exchange_script, _faults} = planned_fault) do
+    apply_planned_fault(state, planned_fault)
+  end
+
+  defp apply_immediate_fault(state, {:retreat_to_safeop, slave_name}) do
+    apply_slave_update(state, slave_name, &Device.retreat_to_safeop/1)
+  end
+
+  defp apply_immediate_fault(state, {:latch_al_error, slave_name, code})
+       when is_integer(code) and code >= 0 do
+    apply_slave_update(state, slave_name, &Device.latch_al_error(&1, code))
+  end
+
+  defp apply_immediate_fault(state, {:mailbox_abort, slave_name, index, subindex, abort_code})
+       when is_integer(index) and index >= 0 and is_integer(subindex) and subindex >= 0 and
+              is_integer(abort_code) and abort_code >= 0 do
+    apply_slave_update(
+      state,
+      slave_name,
+      &Device.inject_mailbox_abort(&1, index, subindex, abort_code)
+    )
+  end
+
+  defp apply_immediate_fault(_state, _fault), do: {:error, :invalid_fault}
+
+  defp apply_planned_fault(state, planned_fault) do
+    case Faults.enqueue(state.faults, planned_fault) do
+      {:ok, faults} -> {:ok, %{state | faults: faults}}
+      :error -> {:error, :invalid_fault}
+    end
+  end
+
+  defp apply_slave_update(state, slave_name, fun) do
+    before_signals = Wiring.capture_signal_values(state.slaves)
+
+    case update_named_slave(state.slaves, slave_name, fun) do
+      {:ok, slaves} ->
+        {:ok, %{state | slaves: slaves} |> finalize_signal_changes(before_signals)}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp schedule_fault(state, delay_ms, fault) do
+    if valid_schedulable_fault?(fault) do
+      id = System.unique_integer([:positive, :monotonic])
+      due_at_ms = System.monotonic_time(:millisecond) + delay_ms
+      timer_ref = Process.send_after(self(), {:apply_scheduled_fault, id, fault}, delay_ms)
+
+      scheduled_fault = %{id: id, timer_ref: timer_ref, due_at_ms: due_at_ms, fault: fault}
+
+      {:ok, %{state | scheduled_faults: state.scheduled_faults ++ [scheduled_fault]}}
+    else
+      {:error, :invalid_fault}
+    end
+  end
+
+  defp clear_scheduled_faults(scheduled_faults) do
+    Enum.each(scheduled_faults, fn %{timer_ref: timer_ref} ->
+      Process.cancel_timer(timer_ref)
+    end)
+  end
+
+  defp pop_scheduled_fault(scheduled_faults, id) do
+    {matches, scheduled_faults} = Enum.split_with(scheduled_faults, &(&1.id == id))
+
+    case matches do
+      [entry] -> {:ok, entry, scheduled_faults}
+      [] -> :error
+    end
+  end
+
+  defp valid_schedulable_fault?(:drop_responses), do: true
+  defp valid_schedulable_fault?({:wkc_offset, delta}) when is_integer(delta), do: true
+  defp valid_schedulable_fault?({:disconnect, slave_name}) when is_atom(slave_name), do: true
+
+  defp valid_schedulable_fault?({:next_exchange, fault}),
+    do: Faults.enqueue(Faults.new(), {:next_exchange, fault}) != :error
+
+  defp valid_schedulable_fault?({:next_exchanges, count, fault})
+       when is_integer(count) and count > 0 do
+    Faults.enqueue(Faults.new(), {:next_exchanges, count, fault}) != :error
+  end
+
+  defp valid_schedulable_fault?({:exchange_script, faults}) when is_list(faults) do
+    Faults.enqueue(Faults.new(), {:exchange_script, faults}) != :error
+  end
+
+  defp valid_schedulable_fault?({:retreat_to_safeop, slave_name}) when is_atom(slave_name),
+    do: true
+
+  defp valid_schedulable_fault?({:latch_al_error, slave_name, code})
+       when is_atom(slave_name) and is_integer(code) and code >= 0,
+       do: true
+
+  defp valid_schedulable_fault?({:mailbox_abort, slave_name, index, subindex, abort_code})
+       when is_atom(slave_name) and is_integer(index) and index >= 0 and is_integer(subindex) and
+              subindex >= 0 and is_integer(abort_code) and abort_code >= 0,
+       do: true
+
+  defp valid_schedulable_fault?({:after_ms, _delay_ms, _fault}), do: false
+  defp valid_schedulable_fault?(_fault), do: false
 end

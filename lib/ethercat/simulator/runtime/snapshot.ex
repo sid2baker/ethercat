@@ -13,14 +13,17 @@ defmodule EtherCAT.Simulator.Runtime.Snapshot do
         slaves: slaves,
         faults: faults,
         connections: connections,
-        subscriptions: subscriptions
+        subscriptions: subscriptions,
+        scheduled_faults: scheduled_faults
       }) do
     faults_info = Faults.info(faults)
+    scheduled_faults = scheduled_fault_info(scheduled_faults)
 
     %{
       slaves: Enum.map(slaves, &Device.info/1),
       connections: connections,
-      subscriptions: Subscriptions.info(subscriptions)
+      subscriptions: Subscriptions.info(subscriptions),
+      scheduled_faults: scheduled_faults
     }
     |> Map.merge(faults_info)
   end
@@ -56,5 +59,18 @@ defmodule EtherCAT.Simulator.Runtime.Snapshot do
       nil -> {:error, :not_found}
       slave -> {:ok, slave}
     end
+  end
+
+  defp scheduled_fault_info(scheduled_faults) do
+    now_ms = System.monotonic_time(:millisecond)
+
+    scheduled_faults
+    |> Enum.sort_by(& &1.due_at_ms)
+    |> Enum.map(fn %{due_at_ms: due_at_ms, fault: fault} ->
+      %{
+        fault: fault,
+        due_in_ms: max(due_at_ms - now_ms, 0)
+      }
+    end)
   end
 end

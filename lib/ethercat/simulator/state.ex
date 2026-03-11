@@ -5,14 +5,15 @@ defmodule EtherCAT.Simulator.State do
   alias EtherCAT.Simulator.Runtime.{Faults, Subscriptions}
   alias EtherCAT.Simulator.Slave.Runtime.Device
 
-  @enforce_keys [:slaves, :faults, :connections, :subscriptions]
-  defstruct [:slaves, :faults, :connections, :subscriptions]
+  @enforce_keys [:slaves, :faults, :connections, :subscriptions, :scheduled_faults]
+  defstruct [:slaves, :faults, :connections, :subscriptions, :scheduled_faults]
 
   @type t :: %__MODULE__{
           slaves: [Device.t()],
           faults: Faults.t(),
           connections: [Simulator.connection()],
-          subscriptions: Subscriptions.t()
+          subscriptions: Subscriptions.t(),
+          scheduled_faults: [map()]
         }
 
   @spec new([Device.t()]) :: t()
@@ -21,7 +22,8 @@ defmodule EtherCAT.Simulator.State do
       slaves: slaves,
       faults: Faults.new(),
       connections: [],
-      subscriptions: Subscriptions.new()
+      subscriptions: Subscriptions.new(),
+      scheduled_faults: []
     }
   end
 end
