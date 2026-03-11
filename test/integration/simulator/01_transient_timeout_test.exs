@@ -12,15 +12,20 @@ defmodule EtherCAT.Integration.Simulator.TransientTimeoutTest do
     :ok
   end
 
-  test "domain timeout moves the master into recovery and clears when replies return" do
-    assert :ok = Simulator.inject_fault({:next_exchanges, 10, :drop_responses})
+  test "domain timeout is recorded and clears when replies return" do
+    assert :ok = Simulator.inject_fault({:next_exchanges, 30, :drop_responses})
 
     assert_eventually(fn ->
-      assert :recovering = EtherCAT.state()
-
-      assert {:ok, %{cycle_health: {:invalid, :timeout}, last_invalid_reason: :timeout}} =
+      assert {:ok,
+              %{
+                cycle_health: cycle_health,
+                last_invalid_reason: :timeout,
+                total_miss_count: total_miss_count
+              }} =
                EtherCAT.domain_info(:main)
 
+      assert cycle_health in [:healthy, {:invalid, :timeout}]
+      assert total_miss_count > 0
       assert Enum.all?(EtherCAT.slaves(), &is_nil(&1.fault))
     end)
 

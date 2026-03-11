@@ -41,6 +41,8 @@ letting the loop invent arbitrary refactors.
 - `09`: milestone-aware slave-local fault after healthy polls
 - `10`: segmented mailbox abort during upload/download
 - `11`: reusable fault script with embedded milestone wait
+- `12`: startup mailbox abort during driver PREOP mailbox configuration
+- `13`: targeted logical-WKC skew without inventing a slave-local fault
 
 These are the current regression scenarios, not just backlog items. Each one
 should keep its `.md` note and matching `_test.exs` file aligned.
@@ -59,6 +61,7 @@ Current exchange-scoped faults:
 
 - `:drop_responses`
 - `{:wkc_offset, delta}`
+- `{:logical_wkc_offset, slave_name, delta}`
 - `{:disconnect, slave_name}`
 
 Current milestones:
@@ -85,17 +88,18 @@ Current UDP corruption modes:
 - `:replay_previous`
 
 `EtherCAT.Simulator.info/0` and `EtherCAT.Simulator.Udp.info/0` expose
-queued and delayed fault state through `next_fault`, `pending_faults`, and
-`scheduled_faults`, including milestone `waiting_on` / `remaining`, so new
-scenarios should assert queue drain explicitly
+queued and delayed fault state through `next_fault`, `pending_faults`,
+`scheduled_faults`, and active `logical_wkc_offsets`, including milestone
+`waiting_on` / `remaining`, so new scenarios should assert queue drain explicitly
 instead of relying on sleeps alone.
 
 ## Next Directions
 
-The next useful scenarios are the ones the existing notes still call out:
+The next useful scenarios are the narrower ones the existing notes still call
+out:
 
-- startup-time mailbox aborts through driver mailbox configuration
-- WKC skew targeted at a specific slave or datagram contribution
+- command-targeted WKC skew beyond logical PDO traffic
+- more granular mailbox milestones than “next matching segment”
 
 ## Current Rule Of Thumb
 

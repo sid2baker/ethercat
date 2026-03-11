@@ -43,7 +43,3 @@ Observed with:
 Current API is now enough for mixed exchange faults plus delayed slave-local
 mutations through `{:after_ms, delay_ms, fault}`. For milestone-based timing,
 prefer the dedicated `09` scenario and `{:after_milestone, milestone, fault}`.
-
-Still worth adding later:
-
-- startup-time mailbox aborts through driver mailbox configuration

@@ -42,5 +42,4 @@ Current API is enough for direct mailbox abort coverage.
 
 Still worth adding later:
 
-- startup-time mailbox abort through driver `mailbox_config/1` steps
 - mailbox aborts during PREOP retry paths, not just direct public SDO calls

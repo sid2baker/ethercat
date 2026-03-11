@@ -1,0 +1,40 @@
+defmodule EtherCAT.Integration.Simulator.TargetedWKCMismatchTest do
+  use ExUnit.Case, async: false
+
+  alias EtherCAT.IntegrationSupport.SimulatorRing
+  alias EtherCAT.Simulator
+
+  import EtherCAT.Integration.Assertions
+
+  setup do
+    on_exit(fn -> SimulatorRing.stop_all!() end)
+
+    SimulatorRing.boot_operational!(slave_config_opts: [output_health_poll_ms: 20])
+    :ok
+  end
+
+  test "targeted logical wkc skew degrades the domain without inventing a slave-local fault" do
+    assert :ok = Simulator.inject_fault({:next_exchanges, 6, {:logical_wkc_offset, :outputs, -1}})
+
+    assert_eventually(fn ->
+      assert :recovering = EtherCAT.state()
+
+      assert {:ok,
+              %{
+                cycle_health: {:invalid, {:wkc_mismatch, %{expected: 3, actual: 2}}},
+                last_invalid_reason: {:wkc_mismatch, %{expected: 3, actual: 2}}
+              }} = EtherCAT.domain_info(:main)
+
+      assert Enum.all?(EtherCAT.slaves(), &is_nil(&1.fault))
+      assert {:ok, %{al_state: :op}} = EtherCAT.slave_info(:outputs)
+    end)
+
+    assert_eventually(fn ->
+      assert {:ok, %{next_fault: nil, pending_faults: []}} = Simulator.info()
+      assert :operational = EtherCAT.state()
+      assert {:ok, %{cycle_health: :healthy}} = EtherCAT.domain_info(:main)
+      assert Enum.all?(EtherCAT.slaves(), &is_nil(&1.fault))
+      assert {:ok, %{al_state: :op}} = EtherCAT.slave_info(:outputs)
+    end)
+  end
+end

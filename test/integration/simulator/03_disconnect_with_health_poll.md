@@ -50,9 +50,5 @@ The architectural nuance still matters:
 
 ## Simulator API Notes
 
-Current API is enough for counted disconnect windows.
-
-Still worth adding later:
-
-- richer scripted fault timelines so reconnect tests can express multi-step
-  sequences without tuning exchange counts
+Current API is enough for counted disconnect windows and richer scripted
+timelines through `{:fault_script, steps}`.

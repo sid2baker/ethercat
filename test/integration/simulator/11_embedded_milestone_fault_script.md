@@ -48,5 +48,4 @@ Observed with:
 
 Still worth adding later:
 
-- startup-time mailbox aborts through driver mailbox configuration
-- WKC skew targeted at a specific slave or datagram contribution
+- command-targeted WKC skew beyond logical PDO traffic

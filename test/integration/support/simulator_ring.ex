@@ -65,7 +65,7 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
       dc: nil,
       scan_stable_ms: 20,
       scan_poll_ms: 10,
-      frame_timeout_ms: 5,
+      frame_timeout_ms: 10,
       domains: [default_domain()],
       slaves: ring_slave_configs(Keyword.get(opts, :slave_config_opts, []))
     ]

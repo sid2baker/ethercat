@@ -49,5 +49,4 @@ Current API is now enough for mid-transfer mailbox abort coverage through:
 
 Still worth adding later:
 
-- startup-time mailbox aborts through driver mailbox configuration
 - more granular mailbox milestones than “next matching segment”

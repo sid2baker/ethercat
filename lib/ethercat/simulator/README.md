@@ -62,7 +62,7 @@ What is already implemented and validated:
 - expedited CoE upload/download for mailbox-capable devices
 - deterministic fault injection:
   - dropped responses
-  - wrong WKC
+  - wrong WKC, globally or from one named logical slave contribution
   - slave disconnect / reconnect
   - `SAFEOP` retreat
   - AL error latch
@@ -79,11 +79,13 @@ Datagram/runtime fault injection now has two modes:
   - `{:fault_script, [step, ...]}`
 - delayed fault injection through:
   - `{:after_ms, delay_ms, fault}`
+  - `{:after_milestone, milestone, fault}`
 
 The current exchange-scoped fault set is:
 
 - `:drop_responses`
 - `{:wkc_offset, delta}`
+- `{:logical_wkc_offset, slave_name, delta}`
 - `{:disconnect, slave_name}`
 
 Sequential fault scripts can also pause on:
@@ -333,6 +335,8 @@ now covers:
 - `09` milestone-aware slave-local timing after healthy polls
 - `10` segmented mailbox aborts during upload/download
 - `11` reusable fault scripts with embedded milestone waits
+- `12` startup mailbox abort during driver PREOP mailbox configuration
+- `13` targeted logical-WKC skew without inventing slave-local faults
 
 ## Widget-Facing Signal API
 
@@ -456,6 +460,7 @@ slave availability:
 ```elixir
 EtherCAT.Simulator.inject_fault({:next_exchanges, 10, :drop_responses})
 EtherCAT.Simulator.inject_fault({:next_exchanges, 6, {:wkc_offset, -1}})
+EtherCAT.Simulator.inject_fault({:next_exchanges, 6, {:logical_wkc_offset, :outputs, -1}})
 EtherCAT.Simulator.inject_fault({:fault_script, [:drop_responses, {:disconnect, :outputs}]})
 EtherCAT.Simulator.inject_fault({:after_ms, 250, {:retreat_to_safeop, :outputs}})
 

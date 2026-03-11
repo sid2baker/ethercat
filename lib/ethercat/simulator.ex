@@ -257,7 +257,8 @@ defmodule EtherCAT.Simulator do
           datagrams,
           slaves,
           effective_faults.disconnected,
-          effective_faults.wkc_offset
+          effective_faults.wkc_offset,
+          effective_faults.logical_wkc_offsets
         )
 
       state =
@@ -530,6 +531,12 @@ defmodule EtherCAT.Simulator do
     {:ok, %{state | faults: Faults.inject(state.faults, {:wkc_offset, delta})}}
   end
 
+  defp apply_immediate_fault(state, {:logical_wkc_offset, slave_name, delta})
+       when is_atom(slave_name) and is_integer(delta) do
+    {:ok,
+     %{state | faults: Faults.inject(state.faults, {:logical_wkc_offset, slave_name, delta})}}
+  end
+
   defp apply_immediate_fault(state, {:disconnect, slave_name}) when is_atom(slave_name) do
     {:ok, %{state | faults: Faults.inject(state.faults, {:disconnect, slave_name})}}
   end
@@ -730,6 +737,11 @@ defmodule EtherCAT.Simulator do
 
   defp valid_schedulable_fault?(:drop_responses), do: true
   defp valid_schedulable_fault?({:wkc_offset, delta}) when is_integer(delta), do: true
+
+  defp valid_schedulable_fault?({:logical_wkc_offset, slave_name, delta})
+       when is_atom(slave_name) and is_integer(delta),
+       do: true
+
   defp valid_schedulable_fault?({:disconnect, slave_name}) when is_atom(slave_name), do: true
 
   defp valid_schedulable_fault?({:next_exchange, fault}),
@@ -867,6 +879,11 @@ defmodule EtherCAT.Simulator do
 
   defp valid_fault_script_step?(:drop_responses), do: true
   defp valid_fault_script_step?({:wkc_offset, delta}) when is_integer(delta), do: true
+
+  defp valid_fault_script_step?({:logical_wkc_offset, slave_name, delta})
+       when is_atom(slave_name) and is_integer(delta),
+       do: true
+
   defp valid_fault_script_step?({:disconnect, slave_name}) when is_atom(slave_name), do: true
 
   defp valid_fault_script_step?({:retreat_to_safeop, slave_name}) when is_atom(slave_name),
@@ -891,6 +908,11 @@ defmodule EtherCAT.Simulator do
 
   defp fault_script_exchange_step?(:drop_responses), do: true
   defp fault_script_exchange_step?({:wkc_offset, delta}) when is_integer(delta), do: true
+
+  defp fault_script_exchange_step?({:logical_wkc_offset, slave_name, delta})
+       when is_atom(slave_name) and is_integer(delta),
+       do: true
+
   defp fault_script_exchange_step?({:disconnect, slave_name}) when is_atom(slave_name), do: true
   defp fault_script_exchange_step?(_step), do: false
 

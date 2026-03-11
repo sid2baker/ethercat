@@ -19,20 +19,31 @@ defmodule EtherCAT.Simulator.Runtime.Router do
   @armw 13
   @frmw 14
 
-  @spec process_datagrams([Datagram.t()], [Device.t()], MapSet.t(atom()), integer()) ::
+  @spec process_datagrams(
+          [Datagram.t()],
+          [Device.t()],
+          MapSet.t(atom()),
+          integer(),
+          %{optional(atom()) => integer()}
+        ) ::
           {[Datagram.t()], [Device.t()]}
-  def process_datagrams(datagrams, slaves, disconnected, wkc_offset) do
+  def process_datagrams(datagrams, slaves, disconnected, wkc_offset, logical_wkc_offsets) do
     slaves = Enum.map(slaves, &Device.prepare/1)
 
     {responses, slaves} =
       Enum.map_reduce(datagrams, slaves, fn datagram, current_slaves ->
-        process_datagram(datagram, current_slaves, disconnected)
+        process_datagram(datagram, current_slaves, disconnected, logical_wkc_offsets)
       end)
 
     {maybe_adjust_wkc(responses, wkc_offset), slaves}
   end
 
-  defp process_datagram(%Datagram{cmd: cmd} = datagram, slaves, disconnected)
+  defp process_datagram(
+         %Datagram{cmd: cmd} = datagram,
+         slaves,
+         disconnected,
+         _logical_wkc_offsets
+       )
        when cmd in [@aprd, @apwr, @aprw, @armw] do
     <<position::little-signed-16, offset::little-unsigned-16>> = datagram.address
     target_position = -position
@@ -45,7 +56,12 @@ defmodule EtherCAT.Simulator.Runtime.Router do
     {%{datagram | data: response_data, wkc: wkc}, slaves}
   end
 
-  defp process_datagram(%Datagram{cmd: cmd} = datagram, slaves, disconnected)
+  defp process_datagram(
+         %Datagram{cmd: cmd} = datagram,
+         slaves,
+         disconnected,
+         _logical_wkc_offsets
+       )
        when cmd in [@fprd, @fpwr, @fprw, @frmw] do
     <<station::little-unsigned-16, offset::little-unsigned-16>> = datagram.address
 
@@ -60,7 +76,12 @@ defmodule EtherCAT.Simulator.Runtime.Router do
     {%{datagram | data: response_data, wkc: wkc}, slaves}
   end
 
-  defp process_datagram(%Datagram{cmd: cmd} = datagram, slaves, disconnected)
+  defp process_datagram(
+         %Datagram{cmd: cmd} = datagram,
+         slaves,
+         disconnected,
+         _logical_wkc_offsets
+       )
        when cmd in [@brd, @bwr, @brw] do
     <<_zero::little-signed-16, offset::little-unsigned-16>> = datagram.address
 
@@ -79,7 +100,7 @@ defmodule EtherCAT.Simulator.Runtime.Router do
     {%{datagram | data: response_data, wkc: wkc}, Enum.reverse(slaves)}
   end
 
-  defp process_datagram(%Datagram{cmd: cmd} = datagram, slaves, disconnected)
+  defp process_datagram(%Datagram{cmd: cmd} = datagram, slaves, disconnected, logical_wkc_offsets)
        when cmd in [@lrd, @lwr, @lrw] do
     <<logical_start::little-unsigned-32>> = datagram.address
 
@@ -91,14 +112,17 @@ defmodule EtherCAT.Simulator.Runtime.Router do
           {updated_slave, new_response_data, increment} =
             Device.logical_read_write(slave, cmd, logical_start, response_data)
 
-          {[updated_slave | acc], new_response_data, wkc + increment}
+          adjusted_increment =
+            maybe_adjust_logical_increment(increment, slave.name, logical_wkc_offsets)
+
+          {[updated_slave | acc], new_response_data, wkc + adjusted_increment}
         end
       end)
 
     {%{datagram | data: response_data, wkc: wkc}, Enum.reverse(slaves)}
   end
 
-  defp process_datagram(%Datagram{} = datagram, slaves, _disconnected),
+  defp process_datagram(%Datagram{} = datagram, slaves, _disconnected, _logical_wkc_offsets),
     do: {%{datagram | wkc: 0}, slaves}
 
   defp maybe_adjust_wkc(datagrams, 0), do: datagrams
@@ -107,6 +131,13 @@ defmodule EtherCAT.Simulator.Runtime.Router do
     Enum.map(datagrams, fn datagram ->
       %{datagram | wkc: max(datagram.wkc + offset, 0)}
     end)
+  end
+
+  defp maybe_adjust_logical_increment(increment, slave_name, logical_wkc_offsets)
+       when is_integer(increment) and increment >= 0 do
+    increment
+    |> Kernel.+(Map.get(logical_wkc_offsets, slave_name, 0))
+    |> max(0)
   end
 
   defp process_register_command(slave, %Datagram{cmd: cmd, data: data}, offset)

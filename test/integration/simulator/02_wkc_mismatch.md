@@ -44,5 +44,5 @@ Current API is enough for coarse WKC skew coverage.
 
 Nice follow-up API:
 
-- target the skew at a specific command or slave contribution instead of a
-  global offset across all datagrams
+- target the skew at a specific command beyond logical PDO traffic, now that
+  named-slave logical WKC skew exists

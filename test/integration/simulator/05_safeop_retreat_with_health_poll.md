@@ -45,9 +45,5 @@ This matches the intended slave-local recovery policy.
 
 ## Simulator API Notes
 
-Current API is enough.
-
-Nice follow-up API:
-
-- one-shot fault scripts that say "retreat after N healthy polls" instead of
-  changing the state immediately
+Current API is enough, including milestone scheduling through
+`{:after_milestone, {:healthy_polls, slave_name, count}, fault}`.

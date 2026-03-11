@@ -47,7 +47,3 @@ Observed with:
 
 Current API is now enough for milestone-aware slave-local fault scheduling
 through `{:after_milestone, {:healthy_polls, slave_name, count}, fault}`.
-
-Still worth adding later:
-
-- startup-time mailbox aborts through driver mailbox configuration
