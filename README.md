@@ -4,6 +4,11 @@
 [![Hexdocs](https://img.shields.io/badge/docs-hexdocs-purple)](https://hexdocs.pm/ethercat)
 [![License](https://img.shields.io/hexpm/l/ethercat)](https://github.com/sid2baker/ethercat/blob/main/LICENSE)
 
+> **Disclaimer:** This repo is not ready for production yet. I’m exploring
+> where soft-real-time devices fit in automation and would like to develop this
+> into a bachelor’s thesis. If you know a professor, or someone who could help
+> me pursue that, feel free to reach out! :)
+
 [![EtherCAT demo](https://img.youtube.com/vi/huwbTsmTPHc/maxresdefault.jpg)](https://www.youtube.com/watch?v=huwbTsmTPHc)
 
 Pure-Elixir EtherCAT master built on OTP.
