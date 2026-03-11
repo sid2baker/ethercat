@@ -44,4 +44,4 @@ Current API is now enough for targeted logical WKC skew coverage through
 
 Still worth adding later:
 
-- command-targeted WKC skew beyond logical PDO traffic
+- more granular mailbox milestones than “next matching segment”

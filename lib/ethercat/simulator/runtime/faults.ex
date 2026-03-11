@@ -1,11 +1,45 @@
 defmodule EtherCAT.Simulator.Runtime.Faults do
   @moduledoc false
 
+  @command_names [
+    :aprd,
+    :apwr,
+    :aprw,
+    :fprd,
+    :fpwr,
+    :fprw,
+    :brd,
+    :bwr,
+    :brw,
+    :lrd,
+    :lwr,
+    :lrw,
+    :armw,
+    :frmw
+  ]
+
   @type sticky_fault ::
           :drop_responses
           | {:wkc_offset, integer()}
+          | {:command_wkc_offset, command_name(), integer()}
           | {:logical_wkc_offset, atom(), integer()}
           | {:disconnect, atom()}
+
+  @type command_name ::
+          :aprd
+          | :apwr
+          | :aprw
+          | :fprd
+          | :fpwr
+          | :fprw
+          | :brd
+          | :bwr
+          | :brw
+          | :lrd
+          | :lwr
+          | :lrw
+          | :armw
+          | :frmw
 
   @type exchange_fault :: sticky_fault()
 
@@ -26,6 +60,7 @@ defmodule EtherCAT.Simulator.Runtime.Faults do
   @type t :: %__MODULE__{
           drop_responses?: boolean(),
           wkc_offset: integer(),
+          command_wkc_offsets: %{optional(command_name()) => integer()},
           logical_wkc_offsets: %{optional(atom()) => integer()},
           disconnected: MapSet.t(atom()),
           pending_faults: [pending_fault_entry()]
@@ -34,17 +69,26 @@ defmodule EtherCAT.Simulator.Runtime.Faults do
   @enforce_keys [
     :drop_responses?,
     :wkc_offset,
+    :command_wkc_offsets,
     :logical_wkc_offsets,
     :disconnected,
     :pending_faults
   ]
-  defstruct [:drop_responses?, :wkc_offset, :logical_wkc_offsets, :disconnected, :pending_faults]
+  defstruct [
+    :drop_responses?,
+    :wkc_offset,
+    :command_wkc_offsets,
+    :logical_wkc_offsets,
+    :disconnected,
+    :pending_faults
+  ]
 
   @spec new() :: t()
   def new do
     %__MODULE__{
       drop_responses?: false,
       wkc_offset: 0,
+      command_wkc_offsets: %{},
       logical_wkc_offsets: %{},
       disconnected: MapSet.new(),
       pending_faults: []
@@ -56,6 +100,7 @@ defmodule EtherCAT.Simulator.Runtime.Faults do
     %{
       drop_responses?: faults.drop_responses?,
       wkc_offset: faults.wkc_offset,
+      command_wkc_offsets: faults.command_wkc_offsets,
       logical_wkc_offsets: faults.logical_wkc_offsets,
       disconnected: MapSet.to_list(faults.disconnected),
       next_fault: next_fault_info(faults.pending_faults),
@@ -70,6 +115,11 @@ defmodule EtherCAT.Simulator.Runtime.Faults do
 
   def inject(%__MODULE__{} = faults, {:wkc_offset, delta}) when is_integer(delta) do
     %{faults | wkc_offset: delta}
+  end
+
+  def inject(%__MODULE__{} = faults, {:command_wkc_offset, command_name, delta})
+      when command_name in @command_names and is_integer(delta) do
+    %{faults | command_wkc_offsets: Map.put(faults.command_wkc_offsets, command_name, delta)}
   end
 
   def inject(%__MODULE__{} = faults, {:logical_wkc_offset, slave_name, delta})
@@ -140,6 +190,11 @@ defmodule EtherCAT.Simulator.Runtime.Faults do
   def apply_pending(%__MODULE__{} = faults, {:wkc_offset, delta}) when is_integer(delta),
     do: %{faults | wkc_offset: delta}
 
+  def apply_pending(%__MODULE__{} = faults, {:command_wkc_offset, command_name, delta})
+      when command_name in @command_names and is_integer(delta) do
+    %{faults | command_wkc_offsets: Map.put(faults.command_wkc_offsets, command_name, delta)}
+  end
+
   def apply_pending(%__MODULE__{} = faults, {:logical_wkc_offset, slave_name, delta})
       when is_atom(slave_name) and is_integer(delta) do
     %{faults | logical_wkc_offsets: Map.put(faults.logical_wkc_offsets, slave_name, delta)}
@@ -155,6 +210,7 @@ defmodule EtherCAT.Simulator.Runtime.Faults do
       faults
       | drop_responses?: false,
         wkc_offset: 0,
+        command_wkc_offsets: %{},
         logical_wkc_offsets: %{},
         disconnected: MapSet.new(),
         pending_faults: []
@@ -163,6 +219,10 @@ defmodule EtherCAT.Simulator.Runtime.Faults do
 
   defp valid_exchange_fault?(:drop_responses), do: true
   defp valid_exchange_fault?({:wkc_offset, delta}) when is_integer(delta), do: true
+
+  defp valid_exchange_fault?({:command_wkc_offset, command_name, delta})
+       when command_name in @command_names and is_integer(delta),
+       do: true
 
   defp valid_exchange_fault?({:logical_wkc_offset, slave_name, delta})
        when is_atom(slave_name) and is_integer(delta),

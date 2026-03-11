@@ -2,6 +2,7 @@ defmodule EtherCAT.Simulator.Runtime.Router do
   @moduledoc false
 
   alias EtherCAT.Bus.Datagram
+  alias EtherCAT.Simulator.Runtime.Faults
   alias EtherCAT.Simulator.Slave.Runtime.Device
 
   @aprd 1
@@ -24,18 +25,32 @@ defmodule EtherCAT.Simulator.Runtime.Router do
           [Device.t()],
           MapSet.t(atom()),
           integer(),
+          %{optional(Faults.command_name()) => integer()},
           %{optional(atom()) => integer()}
         ) ::
           {[Datagram.t()], [Device.t()]}
-  def process_datagrams(datagrams, slaves, disconnected, wkc_offset, logical_wkc_offsets) do
+  def process_datagrams(
+        datagrams,
+        slaves,
+        disconnected,
+        wkc_offset,
+        command_wkc_offsets,
+        logical_wkc_offsets
+      ) do
     slaves = Enum.map(slaves, &Device.prepare/1)
 
     {responses, slaves} =
       Enum.map_reduce(datagrams, slaves, fn datagram, current_slaves ->
-        process_datagram(datagram, current_slaves, disconnected, logical_wkc_offsets)
+        {response, updated_slaves} =
+          process_datagram(datagram, current_slaves, disconnected, logical_wkc_offsets)
+
+        {
+          adjust_datagram_wkc(response, wkc_offset, command_wkc_offsets),
+          updated_slaves
+        }
       end)
 
-    {maybe_adjust_wkc(responses, wkc_offset), slaves}
+    {responses, slaves}
   end
 
   defp process_datagram(
@@ -125,12 +140,17 @@ defmodule EtherCAT.Simulator.Runtime.Router do
   defp process_datagram(%Datagram{} = datagram, slaves, _disconnected, _logical_wkc_offsets),
     do: {%{datagram | wkc: 0}, slaves}
 
-  defp maybe_adjust_wkc(datagrams, 0), do: datagrams
+  defp adjust_datagram_wkc(
+         %Datagram{cmd: cmd, wkc: wkc} = datagram,
+         global_offset,
+         command_wkc_offsets
+       ) do
+    command_offset =
+      cmd
+      |> command_name()
+      |> then(&Map.get(command_wkc_offsets, &1, 0))
 
-  defp maybe_adjust_wkc(datagrams, offset) do
-    Enum.map(datagrams, fn datagram ->
-      %{datagram | wkc: max(datagram.wkc + offset, 0)}
-    end)
+    %{datagram | wkc: max(wkc + global_offset + command_offset, 0)}
   end
 
   defp maybe_adjust_logical_increment(increment, slave_name, logical_wkc_offsets)
@@ -213,4 +233,19 @@ defmodule EtherCAT.Simulator.Runtime.Router do
       {<<>>, 0, slaves}
     end
   end
+
+  defp command_name(@aprd), do: :aprd
+  defp command_name(@apwr), do: :apwr
+  defp command_name(@aprw), do: :aprw
+  defp command_name(@fprd), do: :fprd
+  defp command_name(@fpwr), do: :fpwr
+  defp command_name(@fprw), do: :fprw
+  defp command_name(@brd), do: :brd
+  defp command_name(@bwr), do: :bwr
+  defp command_name(@brw), do: :brw
+  defp command_name(@lrd), do: :lrd
+  defp command_name(@lwr), do: :lwr
+  defp command_name(@lrw), do: :lrw
+  defp command_name(@armw), do: :armw
+  defp command_name(@frmw), do: :frmw
 end

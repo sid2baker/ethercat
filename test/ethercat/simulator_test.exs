@@ -65,6 +65,13 @@ defmodule EtherCAT.SimulatorTest do
     assert {:ok, %{logical_wkc_offsets: %{coupler: -1}}} = Simulator.info()
   end
 
+  test "info/0 reports active command wkc offsets" do
+    assert {:ok, _pid} = Simulator.start_link(devices: [])
+    assert :ok = Simulator.inject_fault({:command_wkc_offset, :fprd, -1})
+
+    assert {:ok, %{command_wkc_offsets: %{fprd: -1}}} = Simulator.info()
+  end
+
   test "info/0 reports delayed scheduled faults and drains them when due" do
     assert {:ok, _pid} = Simulator.start_link(devices: [])
 

@@ -48,4 +48,4 @@ Observed with:
 
 Still worth adding later:
 
-- command-targeted WKC skew beyond logical PDO traffic
+- more granular mailbox milestones than “next matching segment”

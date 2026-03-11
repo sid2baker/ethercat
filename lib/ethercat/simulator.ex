@@ -258,6 +258,7 @@ defmodule EtherCAT.Simulator do
           slaves,
           effective_faults.disconnected,
           effective_faults.wkc_offset,
+          effective_faults.command_wkc_offsets,
           effective_faults.logical_wkc_offsets
         )
 
@@ -531,6 +532,27 @@ defmodule EtherCAT.Simulator do
     {:ok, %{state | faults: Faults.inject(state.faults, {:wkc_offset, delta})}}
   end
 
+  defp apply_immediate_fault(state, {:command_wkc_offset, command_name, delta})
+       when command_name in [
+              :aprd,
+              :apwr,
+              :aprw,
+              :fprd,
+              :fpwr,
+              :fprw,
+              :brd,
+              :bwr,
+              :brw,
+              :lrd,
+              :lwr,
+              :lrw,
+              :armw,
+              :frmw
+            ] and is_integer(delta) do
+    {:ok,
+     %{state | faults: Faults.inject(state.faults, {:command_wkc_offset, command_name, delta})}}
+  end
+
   defp apply_immediate_fault(state, {:logical_wkc_offset, slave_name, delta})
        when is_atom(slave_name) and is_integer(delta) do
     {:ok,
@@ -738,6 +760,25 @@ defmodule EtherCAT.Simulator do
   defp valid_schedulable_fault?(:drop_responses), do: true
   defp valid_schedulable_fault?({:wkc_offset, delta}) when is_integer(delta), do: true
 
+  defp valid_schedulable_fault?({:command_wkc_offset, command_name, delta})
+       when command_name in [
+              :aprd,
+              :apwr,
+              :aprw,
+              :fprd,
+              :fpwr,
+              :fprw,
+              :brd,
+              :bwr,
+              :brw,
+              :lrd,
+              :lwr,
+              :lrw,
+              :armw,
+              :frmw
+            ] and is_integer(delta),
+       do: true
+
   defp valid_schedulable_fault?({:logical_wkc_offset, slave_name, delta})
        when is_atom(slave_name) and is_integer(delta),
        do: true
@@ -880,6 +921,25 @@ defmodule EtherCAT.Simulator do
   defp valid_fault_script_step?(:drop_responses), do: true
   defp valid_fault_script_step?({:wkc_offset, delta}) when is_integer(delta), do: true
 
+  defp valid_fault_script_step?({:command_wkc_offset, command_name, delta})
+       when command_name in [
+              :aprd,
+              :apwr,
+              :aprw,
+              :fprd,
+              :fpwr,
+              :fprw,
+              :brd,
+              :bwr,
+              :brw,
+              :lrd,
+              :lwr,
+              :lrw,
+              :armw,
+              :frmw
+            ] and is_integer(delta),
+       do: true
+
   defp valid_fault_script_step?({:logical_wkc_offset, slave_name, delta})
        when is_atom(slave_name) and is_integer(delta),
        do: true
@@ -908,6 +968,25 @@ defmodule EtherCAT.Simulator do
 
   defp fault_script_exchange_step?(:drop_responses), do: true
   defp fault_script_exchange_step?({:wkc_offset, delta}) when is_integer(delta), do: true
+
+  defp fault_script_exchange_step?({:command_wkc_offset, command_name, delta})
+       when command_name in [
+              :aprd,
+              :apwr,
+              :aprw,
+              :fprd,
+              :fpwr,
+              :fprw,
+              :brd,
+              :bwr,
+              :brw,
+              :lrd,
+              :lwr,
+              :lrw,
+              :armw,
+              :frmw
+            ] and is_integer(delta),
+       do: true
 
   defp fault_script_exchange_step?({:logical_wkc_offset, slave_name, delta})
        when is_atom(slave_name) and is_integer(delta),

@@ -108,6 +108,7 @@ The current exchange-scoped fault set is:
 
 - `:drop_responses`
 - `{:wkc_offset, delta}`
+- `{:command_wkc_offset, command_name, delta}`
 - `{:logical_wkc_offset, slave_name, delta}`
 - `{:disconnect, slave_name}`
 
@@ -132,6 +133,10 @@ Typical queued runtime examples:
 EtherCAT.Simulator.inject_fault({:next_exchanges, 10, :drop_responses})
 
 EtherCAT.Simulator.inject_fault({:next_exchanges, 6, {:wkc_offset, -1}})
+
+EtherCAT.Simulator.inject_fault(
+  {:next_exchanges, 30, {:command_wkc_offset, :fprd, -1}}
+)
 
 EtherCAT.Simulator.inject_fault(
   {:next_exchanges, 6, {:logical_wkc_offset, :outputs, -1}}

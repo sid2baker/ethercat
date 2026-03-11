@@ -85,6 +85,7 @@ The current exchange-scoped fault set is:
 
 - `:drop_responses`
 - `{:wkc_offset, delta}`
+- `{:command_wkc_offset, command_name, delta}`
 - `{:logical_wkc_offset, slave_name, delta}`
 - `{:disconnect, slave_name}`
 
@@ -337,6 +338,7 @@ now covers:
 - `11` reusable fault scripts with embedded milestone waits
 - `12` startup mailbox abort during driver PREOP mailbox configuration
 - `13` targeted logical-WKC skew without inventing slave-local faults
+- `14` command-targeted WKC skew outside logical PDO traffic
 
 ## Widget-Facing Signal API
 
@@ -460,6 +462,7 @@ slave availability:
 ```elixir
 EtherCAT.Simulator.inject_fault({:next_exchanges, 10, :drop_responses})
 EtherCAT.Simulator.inject_fault({:next_exchanges, 6, {:wkc_offset, -1}})
+EtherCAT.Simulator.inject_fault({:next_exchanges, 30, {:command_wkc_offset, :fprd, -1}})
 EtherCAT.Simulator.inject_fault({:next_exchanges, 6, {:logical_wkc_offset, :outputs, -1}})
 EtherCAT.Simulator.inject_fault({:fault_script, [:drop_responses, {:disconnect, :outputs}]})
 EtherCAT.Simulator.inject_fault({:after_ms, 250, {:retreat_to_safeop, :outputs}})
