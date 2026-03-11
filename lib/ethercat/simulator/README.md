@@ -103,6 +103,7 @@ Mailbox-local response faults now include:
 
 Current mailbox protocol fault kinds:
 
+- `:drop_response`
 - `:counter_mismatch`
 - `:toggle_mismatch`
 - `{:mailbox_type, type}`
@@ -364,6 +365,7 @@ now covers:
 - `19` malformed segmented CoE upload responses like bad padding or segment commands
 - `20` malformed segmented CoE download acknowledgements after partial or final progress
 - `21` startup segmented-download acknowledgement faults during PREOP configuration
+- `22` startup mailbox response timeouts during PREOP configuration
 
 ## Widget-Facing Signal API
 

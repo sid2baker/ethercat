@@ -23,7 +23,8 @@ defmodule EtherCAT.Simulator do
              :request | :upload_segment | :download_segment}
           | {:mailbox_protocol_fault, atom(), non_neg_integer(), non_neg_integer(),
              :request | :upload_init | :upload_segment | :download_init | :download_segment,
-             :counter_mismatch
+             :drop_response
+             | :counter_mismatch
              | :toggle_mismatch
              | {:mailbox_type, 0..15}
              | {:coe_service, 0..15}
@@ -1040,6 +1041,10 @@ defmodule EtherCAT.Simulator do
   defp fault_entry_fault(%{fault: fault}), do: fault
 
   defp valid_mailbox_protocol_fault?(stage, :counter_mismatch)
+       when stage in [:request, :upload_init, :upload_segment, :download_init, :download_segment],
+       do: true
+
+  defp valid_mailbox_protocol_fault?(stage, :drop_response)
        when stage in [:request, :upload_init, :upload_segment, :download_init, :download_segment],
        do: true
 

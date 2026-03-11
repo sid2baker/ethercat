@@ -17,6 +17,9 @@ defmodule EtherCAT.Simulator.Slave.Runtime.CoE do
         |> write_memory(updated_slave.mailbox_config.send_offset, response)
         |> write_memory(status_offset, <<0x08>>)
 
+      {:drop_response, updated_slave} ->
+        updated_slave
+
       :ignore ->
         slave
     end

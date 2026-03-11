@@ -171,6 +171,10 @@ EtherCAT.Simulator.inject_fault(
 )
 
 EtherCAT.Simulator.inject_fault(
+  {:mailbox_protocol_fault, :mailbox, 0x2003, 0x01, :download_segment, :drop_response}
+)
+
+EtherCAT.Simulator.inject_fault(
   {:mailbox_protocol_fault, :mailbox, 0x2001, 0x01, :upload_init, {:mailbox_type, 0x04}}
 )
 

@@ -30,7 +30,8 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
           | :download_segment
 
   @type protocol_fault_kind ::
-          :counter_mismatch
+          :drop_response
+          | :counter_mismatch
           | :toggle_mismatch
           | {:mailbox_type, 0..15}
           | {:coe_service, 0..15}
@@ -71,18 +72,23 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
     %{slave | mailbox_protocol_fault_rules: []}
   end
 
-  @spec handle_frame(binary(), Device.t()) :: {:ok, binary(), Device.t()} | :ignore
+  @spec handle_frame(binary(), Device.t()) ::
+          {:ok, binary(), Device.t()} | {:drop_response, Device.t()} | :ignore
   def handle_frame(frame, %Device{} = slave) do
     with {:ok, request} <- parse_request(frame),
-         {:ok, response, updated_slave} <- handle_request(request, slave),
-         {:ok, response_counter, response, updated_slave} <-
-           maybe_apply_protocol_fault(response, request.counter, updated_slave) do
-      response =
-        response_counter
-        |> mailbox_frame(response)
-        |> pad_send_mailbox(updated_slave.mailbox_config.send_size)
+         {:ok, response, updated_slave} <- handle_request(request, slave) do
+      case maybe_apply_protocol_fault(response, request.counter, updated_slave) do
+        {:ok, response_counter, response, updated_slave} ->
+          response =
+            response_counter
+            |> mailbox_frame(response)
+            |> pad_send_mailbox(updated_slave.mailbox_config.send_size)
 
-      {:ok, response, updated_slave}
+          {:ok, response, updated_slave}
+
+        {:drop_response, updated_slave} ->
+          {:drop_response, updated_slave}
+      end
     else
       :ignore -> :ignore
     end
@@ -372,6 +378,9 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
          slave
        ) do
     case protocol_fault(slave, index, subindex, stage) do
+      {:ok, :drop_response} ->
+        {:drop_response, slave}
+
       {:ok, :counter_mismatch} ->
         {:ok, next_mailbox_counter(request_counter), response, slave}
 
@@ -557,6 +566,10 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
 
   defp flip_toggle(0), do: 1
   defp flip_toggle(1), do: 0
+
+  defp valid_protocol_fault?(stage, :drop_response)
+       when stage in [:request, :upload_init, :upload_segment, :download_init, :download_segment],
+       do: true
 
   defp valid_protocol_fault?(stage, :counter_mismatch)
        when stage in [:request, :upload_init, :upload_segment, :download_init, :download_segment],
