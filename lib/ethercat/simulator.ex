@@ -7,6 +7,7 @@ defmodule EtherCAT.Simulator do
   alias EtherCAT.Simulator.Runtime.Faults
   alias EtherCAT.Simulator.Runtime.Router
   alias EtherCAT.Simulator.Runtime.Snapshot
+  alias EtherCAT.Simulator.State
   alias EtherCAT.Simulator.Slave.Runtime.Device
   alias EtherCAT.Simulator.Runtime.Subscriptions
   alias EtherCAT.Simulator.Runtime.Wiring
@@ -25,12 +26,7 @@ defmodule EtherCAT.Simulator do
           target: signal_ref()
         }
 
-  @type state :: %{
-          slaves: [map()],
-          faults: map(),
-          connections: [connection()],
-          subscriptions: map()
-        }
+  @type state :: State.t()
 
   @default_name __MODULE__
   @supervisor EtherCAT.Simulator.Supervisor
@@ -175,13 +171,7 @@ defmodule EtherCAT.Simulator do
       |> Enum.with_index()
       |> Enum.map(fn {definition, position} -> Device.new(definition, position) end)
 
-    {:ok,
-     %{
-       slaves: slaves,
-       faults: Faults.new(),
-       connections: [],
-       subscriptions: Subscriptions.new()
-     }}
+    {:ok, State.new(slaves)}
   end
 
   defp normalize_start_opts(opts) do
@@ -225,7 +215,7 @@ defmodule EtherCAT.Simulator do
 
   @impl true
   def handle_call(:info, _from, state) do
-    {:reply, {:ok, Snapshot.simulator(%{state | faults: Faults.info(state.faults)})}, state}
+    {:reply, {:ok, Snapshot.simulator(state)}, state}
   end
 
   def handle_call(
@@ -293,9 +283,7 @@ defmodule EtherCAT.Simulator do
     slaves = Enum.map(state.slaves, &Device.clear_faults/1)
 
     state =
-      state
-      |> Map.put(:slaves, slaves)
-      |> Map.put(:faults, Faults.clear(state.faults))
+      %{state | slaves: slaves, faults: Faults.clear(state.faults)}
       |> finalize_signal_changes(before_signals)
 
     {:reply, :ok, state}
