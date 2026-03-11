@@ -543,6 +543,9 @@ defmodule EtherCAT.Slave.Mailbox.CoE do
         <<@command_abort, _::16-little, _::8, abort_code::32-little, _::binary>> ->
           {:error, {:sdo_abort, index, subindex, abort_code}}
 
+        <<command::8, _::binary>> ->
+          {:error, {:unexpected_sdo_segment_command, command}}
+
         _ ->
           {:error, {:unexpected_sdo_segment_response, response}}
       end
@@ -621,6 +624,9 @@ defmodule EtherCAT.Slave.Mailbox.CoE do
 
         <<@command_abort, _::16-little, _::8, abort_code::32-little, _::binary>> ->
           {:error, {:sdo_abort, index, subindex, abort_code}}
+
+        <<command::8, _::binary>> ->
+          {:error, {:unexpected_sdo_segment_command, command}}
 
         _ ->
           {:error, {:unexpected_sdo_segment_response, response}}

@@ -44,5 +44,5 @@ Current API is now enough for targeted logical WKC skew coverage through
 
 Still worth adding later:
 
-- malformed segmented CoE payloads, like invalid segment padding or unexpected
-  segment response bodies
+- malformed segmented download acknowledgements, not just upload-segment
+  responses

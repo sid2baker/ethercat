@@ -36,6 +36,8 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
           | {:coe_service, 0..15}
           | :invalid_coe_payload
           | {:sdo_command, 0..255}
+          | :invalid_segment_padding
+          | {:segment_command, 0..255}
 
   @type response_spec :: %{
           required(:body) => binary(),
@@ -389,6 +391,13 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
         {:ok, request_counter, %{response | body: replace_sdo_command(response.body, command)},
          slave}
 
+      {:ok, :invalid_segment_padding} ->
+        {:ok, request_counter,
+         %{response | body: invalid_segment_padding_body(response.body, stage)}, slave}
+
+      {:ok, {:segment_command, command}} ->
+        {:ok, request_counter, %{response | body: replace_segment_command(command)}, slave}
+
       :error ->
         {:ok, request_counter, response, slave}
     end
@@ -476,6 +485,17 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
   defp replace_sdo_command(<<_::8, rest::binary>>, command), do: <<command::8, rest::binary>>
   defp replace_sdo_command(_body, command), do: <<command::8>>
 
+  defp invalid_segment_padding_body(
+         <<0::3, toggle::1, _unused::3, _last::1, _segment::binary>>,
+         :upload_segment
+       ) do
+    <<0::3, toggle::1, 7::3, 1::1>>
+  end
+
+  defp invalid_segment_padding_body(body, _stage), do: body
+
+  defp replace_segment_command(command), do: <<command::8>>
+
   defp download_ack(index, subindex) do
     <<0x60, index::16-little, subindex::8, 0::32-little>>
   end
@@ -562,6 +582,15 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
 
   defp valid_protocol_fault?(stage, {:sdo_command, command})
        when stage == :upload_init and is_integer(command) and command >= 0 and command <= 255,
+       do: true
+
+  defp valid_protocol_fault?(stage, :invalid_segment_padding)
+       when stage == :upload_segment,
+       do: true
+
+  defp valid_protocol_fault?(stage, {:segment_command, command})
+       when stage in [:upload_segment, :download_segment] and is_integer(command) and
+              command >= 0 and command <= 255,
        do: true
 
   defp valid_protocol_fault?(_stage, _fault_kind), do: false

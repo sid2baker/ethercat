@@ -322,6 +322,48 @@ defmodule EtherCAT.Slave.Mailbox.CoETest do
              CoE.upload_sdo(bus, @station, @mailbox_config, 0, 0x3000, 0x02)
   end
 
+  test "upload_sdo rejects invalid segmented padding" do
+    bus =
+      start_supervised!({
+        FakeBus,
+        [
+          write_ok(),
+          mailbox_ready(),
+          mailbox_read(
+            upload_init_segmented_response(1, 0x3000, 0x02, 10, <<1, 2>>),
+            @mailbox_config.send_size
+          ),
+          write_ok(),
+          mailbox_ready(),
+          mailbox_read(mailbox_frame(2, coe_sdo_response(<<0x0F>>)), @mailbox_config.send_size)
+        ]
+      })
+
+    assert {:error, {:invalid_segment_padding, 7}} =
+             CoE.upload_sdo(bus, @station, @mailbox_config, 0, 0x3000, 0x02)
+  end
+
+  test "upload_sdo rejects unexpected segmented commands" do
+    bus =
+      start_supervised!({
+        FakeBus,
+        [
+          write_ok(),
+          mailbox_ready(),
+          mailbox_read(
+            upload_init_segmented_response(1, 0x3000, 0x02, 10, <<1, 2>>),
+            @mailbox_config.send_size
+          ),
+          write_ok(),
+          mailbox_ready(),
+          mailbox_read(mailbox_frame(2, coe_sdo_response(<<0x20>>)), @mailbox_config.send_size)
+        ]
+      })
+
+    assert {:error, {:unexpected_sdo_segment_command, 0x20}} =
+             CoE.upload_sdo(bus, @station, @mailbox_config, 0, 0x3000, 0x02)
+  end
+
   test "slave PREOP mailbox configuration supports segmented CoE downloads" do
     from = {self(), make_ref()}
 

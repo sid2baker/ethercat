@@ -109,6 +109,8 @@ Current mailbox protocol fault kinds:
 - `{:coe_service, service}`
 - `:invalid_coe_payload`
 - `{:sdo_command, command}`
+- `:invalid_segment_padding`
+- `{:segment_command, command}`
 
 The simulator is already strong enough to exercise the real master through:
 
@@ -359,6 +361,7 @@ now covers:
 - `16` mailbox protocol-shape faults like bad counters or toggles
 - `17` malformed mailbox response headers like wrong mailbox type or CoE service
 - `18` malformed CoE payloads like truncated CoE headers or bad SDO commands
+- `19` malformed segmented CoE upload responses like bad padding or segment commands
 
 ## Widget-Facing Signal API
 
@@ -506,6 +509,10 @@ EtherCAT.Simulator.inject_fault(
 
 EtherCAT.Simulator.inject_fault(
   {:mailbox_protocol_fault, :mailbox, 0x2001, 0x01, :upload_init, :invalid_coe_payload}
+)
+
+EtherCAT.Simulator.inject_fault(
+  {:mailbox_protocol_fault, :mailbox, 0x2003, 0x01, :upload_segment, :invalid_segment_padding}
 )
 
 EtherCAT.Simulator.inject_fault(

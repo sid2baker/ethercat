@@ -28,7 +28,9 @@ defmodule EtherCAT.Simulator do
              | {:mailbox_type, 0..15}
              | {:coe_service, 0..15}
              | :invalid_coe_payload
-             | {:sdo_command, 0..255}}
+             | {:sdo_command, 0..255}
+             | :invalid_segment_padding
+             | {:segment_command, 0..255}}
 
   @type fault_script_step ::
           exchange_fault()
@@ -1061,6 +1063,15 @@ defmodule EtherCAT.Simulator do
 
   defp valid_mailbox_protocol_fault?(stage, {:sdo_command, command})
        when stage == :upload_init and is_integer(command) and command >= 0 and command <= 255,
+       do: true
+
+  defp valid_mailbox_protocol_fault?(stage, :invalid_segment_padding)
+       when stage == :upload_segment,
+       do: true
+
+  defp valid_mailbox_protocol_fault?(stage, {:segment_command, command})
+       when stage in [:upload_segment, :download_segment] and is_integer(command) and
+              command >= 0 and command <= 255,
        do: true
 
   defp valid_mailbox_protocol_fault?(_stage, _fault_kind), do: false

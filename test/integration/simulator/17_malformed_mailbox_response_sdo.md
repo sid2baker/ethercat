@@ -45,5 +45,5 @@ Current API is now enough for malformed mailbox response headers through:
 
 Still worth adding later:
 
-- malformed segmented CoE payloads, like invalid segment padding or unexpected
-  segment response bodies
+- malformed segmented download acknowledgements, not just upload-segment
+  responses
