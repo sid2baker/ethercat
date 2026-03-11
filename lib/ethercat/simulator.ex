@@ -15,16 +15,24 @@ defmodule EtherCAT.Simulator do
 
   @type exchange_fault :: Faults.exchange_fault()
   @type milestone :: Milestones.milestone()
-  @type immediate_fault ::
-          exchange_fault()
-          | {:next_exchange, exchange_fault()}
-          | {:next_exchanges, pos_integer(), exchange_fault()}
-          | {:exchange_script, [exchange_fault(), ...]}
-          | {:retreat_to_safeop, atom()}
+  @type slave_fault ::
+          {:retreat_to_safeop, atom()}
           | {:latch_al_error, atom(), non_neg_integer()}
           | {:mailbox_abort, atom(), non_neg_integer(), non_neg_integer(), non_neg_integer()}
           | {:mailbox_abort, atom(), non_neg_integer(), non_neg_integer(), non_neg_integer(),
              :request | :upload_segment | :download_segment}
+
+  @type fault_script_step ::
+          exchange_fault()
+          | slave_fault()
+          | {:wait_for_milestone, milestone()}
+
+  @type immediate_fault ::
+          exchange_fault()
+          | {:next_exchange, exchange_fault()}
+          | {:next_exchanges, pos_integer(), exchange_fault()}
+          | {:fault_script, [fault_script_step(), ...]}
+          | slave_fault()
 
   @type fault ::
           immediate_fault()
@@ -235,12 +243,12 @@ defmodule EtherCAT.Simulator do
         _from,
         %{slaves: slaves, faults: faults} = state
       ) do
-    {planned_fault, faults} = Faults.pop_pending(faults)
-    effective_faults = Faults.apply_pending(faults, planned_fault)
+    {planned_fault_entry, faults} = Faults.pop_pending(faults)
+    effective_faults = Faults.apply_pending(faults, planned_fault_entry)
     state = %{state | faults: faults}
 
     if effective_faults.drop_responses? do
-      {:reply, {:error, :no_response}, state}
+      {:reply, {:error, :no_response}, maybe_resume_fault_script(state, planned_fault_entry)}
     else
       before_signals = Wiring.capture_signal_values(slaves)
 
@@ -255,7 +263,13 @@ defmodule EtherCAT.Simulator do
       state =
         %{state | slaves: slaves}
         |> finalize_signal_changes(before_signals)
-        |> maybe_trigger_milestone_faults(datagrams, responses, faults, planned_fault)
+        |> maybe_trigger_milestone_faults(
+          datagrams,
+          responses,
+          faults,
+          fault_entry_fault(planned_fault_entry)
+        )
+        |> maybe_resume_fault_script(planned_fault_entry)
 
       {:reply, {:ok, responses}, state}
     end
@@ -528,8 +542,8 @@ defmodule EtherCAT.Simulator do
     apply_planned_fault(state, planned_fault)
   end
 
-  defp apply_immediate_fault(state, {:exchange_script, _faults} = planned_fault) do
-    apply_planned_fault(state, planned_fault)
+  defp apply_immediate_fault(state, {:fault_script, steps}) do
+    apply_fault_script(state, steps)
   end
 
   defp apply_immediate_fault(state, {:retreat_to_safeop, slave_name}) do
@@ -574,6 +588,14 @@ defmodule EtherCAT.Simulator do
     end
   end
 
+  defp apply_fault_script(state, steps) when is_list(steps) do
+    if valid_fault_script_steps?(steps) do
+      resume_fault_script(state, System.unique_integer([:positive, :monotonic]), steps)
+    else
+      {:error, :invalid_fault}
+    end
+  end
+
   defp apply_slave_update(state, slave_name, fun) do
     before_signals = Wiring.capture_signal_values(state.slaves)
 
@@ -584,6 +606,71 @@ defmodule EtherCAT.Simulator do
       {:error, reason} ->
         {:error, reason}
     end
+  end
+
+  defp resume_fault_script(state, _script_id, []), do: {:ok, state}
+
+  defp resume_fault_script(state, script_id, steps) do
+    {exchange_steps, rest_steps} = Enum.split_while(steps, &fault_script_exchange_step?/1)
+
+    cond do
+      exchange_steps != [] ->
+        with {:ok, faults} <- Faults.enqueue_script_steps(state.faults, script_id, exchange_steps) do
+          state = %{state | faults: faults}
+
+          {:ok, maybe_store_script_resume(state, script_id, length(exchange_steps), rest_steps)}
+        else
+          :error -> {:error, :invalid_fault}
+        end
+
+      steps == [] ->
+        {:ok, state}
+
+      true ->
+        advance_non_exchange_script_step(state, script_id, steps)
+    end
+  end
+
+  defp advance_non_exchange_script_step(
+         state,
+         script_id,
+         [{:wait_for_milestone, milestone} | rest_steps]
+       ) do
+    if Milestones.valid?(milestone) do
+      scheduled_fault = %{
+        id: System.unique_integer([:positive, :monotonic]),
+        kind: :script_milestone,
+        script_id: script_id,
+        milestone: milestone,
+        remaining: Milestones.initial_remaining(milestone),
+        steps: rest_steps
+      }
+
+      {:ok, %{state | scheduled_faults: state.scheduled_faults ++ [scheduled_fault]}}
+    else
+      {:error, :invalid_fault}
+    end
+  end
+
+  defp advance_non_exchange_script_step(state, script_id, [step | rest_steps]) do
+    case apply_immediate_fault(state, step) do
+      {:ok, next_state} -> resume_fault_script(next_state, script_id, rest_steps)
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp maybe_store_script_resume(state, _script_id, _count, []), do: state
+
+  defp maybe_store_script_resume(state, script_id, count, steps) do
+    scheduled_fault = %{
+      id: System.unique_integer([:positive, :monotonic]),
+      kind: :script_resume,
+      script_id: script_id,
+      remaining_exchange_steps: count,
+      steps: steps
+    }
+
+    %{state | scheduled_faults: state.scheduled_faults ++ [scheduled_fault]}
   end
 
   defp schedule_fault(state, delay_ms, fault) do
@@ -653,8 +740,8 @@ defmodule EtherCAT.Simulator do
     Faults.enqueue(Faults.new(), {:next_exchanges, count, fault}) != :error
   end
 
-  defp valid_schedulable_fault?({:exchange_script, faults}) when is_list(faults) do
-    Faults.enqueue(Faults.new(), {:exchange_script, faults}) != :error
+  defp valid_schedulable_fault?({:fault_script, steps}) when is_list(steps) do
+    valid_fault_script_steps?(steps)
   end
 
   defp valid_schedulable_fault?({:retreat_to_safeop, slave_name}) when is_atom(slave_name),
@@ -682,7 +769,7 @@ defmodule EtherCAT.Simulator do
   defp maybe_trigger_milestone_faults(state, datagrams, responses, faults, planned_fault) do
     observations = Milestones.observe(datagrams, responses, state.slaves, faults, planned_fault)
 
-    {scheduled_faults, ready_faults} =
+    {scheduled_faults, ready_actions} =
       Enum.reduce(state.scheduled_faults, {[], []}, fn
         %{kind: :milestone, milestone: milestone, remaining: remaining, fault: fault} = entry,
         {kept, ready} ->
@@ -690,7 +777,19 @@ defmodule EtherCAT.Simulator do
           next_remaining = max(remaining - progress, 0)
 
           if next_remaining == 0 do
-            {kept, ready ++ [fault]}
+            {kept, ready ++ [{:fault, fault}]}
+          else
+            {kept ++ [%{entry | remaining: next_remaining}], ready}
+          end
+
+        %{kind: :script_milestone, milestone: milestone, remaining: remaining, steps: steps} =
+            entry,
+        {kept, ready} ->
+          progress = Milestones.progress(milestone, observations)
+          next_remaining = max(remaining - progress, 0)
+
+          if next_remaining == 0 do
+            {kept, ready ++ [{:script, entry.script_id, steps}]}
           else
             {kept ++ [%{entry | remaining: next_remaining}], ready}
           end
@@ -699,12 +798,102 @@ defmodule EtherCAT.Simulator do
           {kept ++ [entry], ready}
       end)
 
-    Enum.reduce(ready_faults, %{state | scheduled_faults: scheduled_faults}, fn fault,
-                                                                                current_state ->
-      case apply_immediate_fault(current_state, fault) do
-        {:ok, next_state} -> next_state
-        {:error, _reason} -> current_state
-      end
+    Enum.reduce(ready_actions, %{state | scheduled_faults: scheduled_faults}, fn
+      {:fault, fault}, current_state ->
+        case apply_immediate_fault(current_state, fault) do
+          {:ok, next_state} -> next_state
+          {:error, _reason} -> current_state
+        end
+
+      {:script, script_id, steps}, current_state ->
+        case resume_fault_script(current_state, script_id, steps) do
+          {:ok, next_state} -> next_state
+          {:error, _reason} -> current_state
+        end
     end)
   end
+
+  defp maybe_resume_fault_script(state, %{source: {:script, script_id}}) do
+    case pop_script_resume(state.scheduled_faults, script_id) do
+      {:ok, nil, scheduled_faults} ->
+        %{state | scheduled_faults: scheduled_faults}
+
+      {:ok, steps, scheduled_faults} ->
+        case resume_fault_script(%{state | scheduled_faults: scheduled_faults}, script_id, steps) do
+          {:ok, next_state} -> next_state
+          {:error, _reason} -> %{state | scheduled_faults: scheduled_faults}
+        end
+
+      :error ->
+        state
+    end
+  end
+
+  defp maybe_resume_fault_script(state, _planned_fault_entry), do: state
+
+  defp pop_script_resume(scheduled_faults, script_id) do
+    case Enum.reduce_while(scheduled_faults, {:not_found, [], []}, fn
+           %{
+             kind: :script_resume,
+             script_id: ^script_id,
+             remaining_exchange_steps: 1,
+             steps: steps
+           },
+           {:not_found, left, right} ->
+             {:halt, {:ok, steps, Enum.reverse(left, right)}}
+
+           %{kind: :script_resume, script_id: ^script_id, remaining_exchange_steps: count} = entry,
+           {:not_found, left, right} ->
+             updated = %{entry | remaining_exchange_steps: count - 1}
+             {:halt, {:ok, nil, Enum.reverse(left, [updated | right])}}
+
+           entry, {:not_found, left, right} ->
+             {:cont, {:not_found, [entry | left], right}}
+
+           _entry, result ->
+             {:halt, result}
+         end) do
+      {:not_found, _left, _right} -> :error
+      result -> result
+    end
+  end
+
+  defp valid_fault_script_steps?(steps) when is_list(steps) do
+    steps != [] and Enum.all?(steps, &valid_fault_script_step?/1)
+  end
+
+  defp valid_fault_script_step?({:wait_for_milestone, milestone}),
+    do: Milestones.valid?(milestone)
+
+  defp valid_fault_script_step?(:drop_responses), do: true
+  defp valid_fault_script_step?({:wkc_offset, delta}) when is_integer(delta), do: true
+  defp valid_fault_script_step?({:disconnect, slave_name}) when is_atom(slave_name), do: true
+
+  defp valid_fault_script_step?({:retreat_to_safeop, slave_name}) when is_atom(slave_name),
+    do: true
+
+  defp valid_fault_script_step?({:latch_al_error, slave_name, code})
+       when is_atom(slave_name) and is_integer(code) and code >= 0,
+       do: true
+
+  defp valid_fault_script_step?({:mailbox_abort, slave_name, index, subindex, abort_code})
+       when is_atom(slave_name) and is_integer(index) and index >= 0 and is_integer(subindex) and
+              subindex >= 0 and is_integer(abort_code) and abort_code >= 0,
+       do: true
+
+  defp valid_fault_script_step?({:mailbox_abort, slave_name, index, subindex, abort_code, stage})
+       when is_atom(slave_name) and is_integer(index) and index >= 0 and is_integer(subindex) and
+              subindex >= 0 and is_integer(abort_code) and abort_code >= 0 and
+              stage in [:request, :upload_segment, :download_segment],
+       do: true
+
+  defp valid_fault_script_step?(_step), do: false
+
+  defp fault_script_exchange_step?(:drop_responses), do: true
+  defp fault_script_exchange_step?({:wkc_offset, delta}) when is_integer(delta), do: true
+  defp fault_script_exchange_step?({:disconnect, slave_name}) when is_atom(slave_name), do: true
+  defp fault_script_exchange_step?(_step), do: false
+
+  defp fault_entry_fault(nil), do: nil
+  defp fault_entry_fault(%{fault: fault}), do: fault
 end

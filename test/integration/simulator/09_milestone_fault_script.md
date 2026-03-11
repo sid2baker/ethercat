@@ -22,7 +22,7 @@ few polls.
 
 Observed with:
 
-- `Simulator.inject_fault({:exchange_script, List.duplicate(:drop_responses, 6) ++ List.duplicate({:wkc_offset, -1}, 4)})`
+- `Simulator.inject_fault({:fault_script, List.duplicate(:drop_responses, 6) ++ List.duplicate({:wkc_offset, -1}, 4)})`
 - `Simulator.inject_fault({:after_milestone, {:healthy_polls, :outputs, 12}, {:retreat_to_safeop, :outputs}})`
 
 - the master first enters `:recovering`
@@ -36,7 +36,7 @@ Observed with:
 ## Test Shape
 
 1. boot the ring with health polling enabled on the affected slave
-2. inject a short exchange fault script
+2. inject a short fault script
 3. schedule a `SAFEOP` retreat after `N` healthy polls on the outputs slave
 4. assert the master first recovers from the exchange faults
 5. assert the milestone-scheduled fault stays pending while the ring is healthy
@@ -50,5 +50,4 @@ through `{:after_milestone, {:healthy_polls, slave_name, count}, fault}`.
 
 Still worth adding later:
 
-- milestone steps that can be embedded directly inside a single reusable script
 - startup-time mailbox aborts through driver mailbox configuration

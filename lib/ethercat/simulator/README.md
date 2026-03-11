@@ -72,19 +72,24 @@ What is already implemented and validated:
 Datagram/runtime fault injection now has two modes:
 
 - sticky faults that stay active until `EtherCAT.Simulator.clear_faults/0`
-- queued exchange faults injected through `EtherCAT.Simulator.inject_fault/1`
+- queued and scripted runtime faults injected through `EtherCAT.Simulator.inject_fault/1`
   with:
   - `{:next_exchange, fault}`
   - `{:next_exchanges, count, fault}`
-  - `{:exchange_script, [fault, ...]}`
+  - `{:fault_script, [step, ...]}`
 - delayed fault injection through:
   - `{:after_ms, delay_ms, fault}`
 
-The current queued exchange-fault set is:
+The current exchange-scoped fault set is:
 
 - `:drop_responses`
 - `{:wkc_offset, delta}`
 - `{:disconnect, slave_name}`
+
+Sequential fault scripts can also pause on:
+
+- `{:wait_for_milestone, {:healthy_exchanges, count}}`
+- `{:wait_for_milestone, {:healthy_polls, slave_name, count}}`
 
 The simulator is already strong enough to exercise the real master through:
 
@@ -179,7 +184,7 @@ Main modules:
 - `EtherCAT.Simulator`
   - public named simulator process
   - multi-slave datagram routing and WKC accumulation
-  - sticky and queued exchange fault injection
+  - sticky and scripted runtime fault injection
 - `EtherCAT.Simulator.Runtime.Snapshot`
   - stable read-model assembly for widgets and tooling
 - `EtherCAT.Simulator.Udp`
@@ -323,10 +328,11 @@ now covers:
 - `04` UDP reply corruption, replay, and scripted transport faults
 - `05` slave-local `SAFEOP` retreat with health polling
 - `06` mailbox aborts in PREOP
-- `07` combined exchange fault scripts across timeout, WKC skew, and reconnect
+- `07` combined fault scripts across timeout, WKC skew, and reconnect
 - `08` delayed slave-local mutation after exchange-fault recovery
 - `09` milestone-aware slave-local timing after healthy polls
 - `10` segmented mailbox aborts during upload/download
+- `11` reusable fault scripts with embedded milestone waits
 
 ## Widget-Facing Signal API
 
@@ -450,11 +456,20 @@ slave availability:
 ```elixir
 EtherCAT.Simulator.inject_fault({:next_exchanges, 10, :drop_responses})
 EtherCAT.Simulator.inject_fault({:next_exchanges, 6, {:wkc_offset, -1}})
-EtherCAT.Simulator.inject_fault({:exchange_script, [:drop_responses, {:disconnect, :outputs}]})
+EtherCAT.Simulator.inject_fault({:fault_script, [:drop_responses, {:disconnect, :outputs}]})
 EtherCAT.Simulator.inject_fault({:after_ms, 250, {:retreat_to_safeop, :outputs}})
 
 EtherCAT.Simulator.inject_fault(
   {:after_milestone, {:healthy_polls, :outputs, 10}, {:retreat_to_safeop, :outputs}}
+)
+
+EtherCAT.Simulator.inject_fault(
+  {:fault_script,
+   [
+     :drop_responses,
+     {:wait_for_milestone, {:healthy_polls, :outputs, 10}},
+     {:retreat_to_safeop, :outputs}
+   ]}
 )
 ```
 

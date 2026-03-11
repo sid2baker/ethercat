@@ -40,6 +40,7 @@ letting the loop invent arbitrary refactors.
 - `08`: delayed slave-local mutation after exchange-fault recovery
 - `09`: milestone-aware slave-local fault after healthy polls
 - `10`: segmented mailbox abort during upload/download
+- `11`: reusable fault script with embedded milestone wait
 
 These are the current regression scenarios, not just backlog items. Each one
 should keep its `.md` note and matching `_test.exs` file aligned.
@@ -50,7 +51,7 @@ For datagram/runtime faults, prefer the queued simulator API:
 
 - `EtherCAT.Simulator.inject_fault({:next_exchange, fault})`
 - `EtherCAT.Simulator.inject_fault({:next_exchanges, count, fault})`
-- `EtherCAT.Simulator.inject_fault({:exchange_script, [fault, ...]})`
+- `EtherCAT.Simulator.inject_fault({:fault_script, [step, ...]})`
 - `EtherCAT.Simulator.inject_fault({:after_ms, delay_ms, fault})`
 - `EtherCAT.Simulator.inject_fault({:after_milestone, milestone, fault})`
 
@@ -64,6 +65,11 @@ Current milestones:
 
 - `{:healthy_exchanges, count}`
 - `{:healthy_polls, slave_name, count}`
+
+Current in-script wait steps:
+
+- `{:wait_for_milestone, {:healthy_exchanges, count}}`
+- `{:wait_for_milestone, {:healthy_polls, slave_name, count}}`
 
 For raw transport corruption, use the UDP-edge API instead:
 
@@ -88,7 +94,6 @@ instead of relying on sleeps alone.
 
 The next useful scenarios are the ones the existing notes still call out:
 
-- milestone steps embedded directly inside reusable fault scripts
 - startup-time mailbox aborts through driver mailbox configuration
 - WKC skew targeted at a specific slave or datagram contribution
 

@@ -50,7 +50,7 @@ defmodule EtherCAT.SimulatorTest do
 
   test "info/0 reports queued exchange faults" do
     assert {:ok, _pid} = Simulator.start_link(devices: [])
-    assert :ok = Simulator.inject_fault({:exchange_script, [:drop_responses, {:wkc_offset, -1}]})
+    assert :ok = Simulator.inject_fault({:fault_script, [:drop_responses, {:wkc_offset, -1}]})
 
     assert {:ok, %{next_fault: {:next_exchange, :drop_responses}, pending_faults: pending_faults}} =
              Simulator.info()
@@ -62,9 +62,9 @@ defmodule EtherCAT.SimulatorTest do
     assert {:ok, _pid} = Simulator.start_link(devices: [])
 
     assert :ok =
-             Simulator.inject_fault({:after_ms, 50, {:exchange_script, [:drop_responses]}})
+             Simulator.inject_fault({:after_ms, 50, {:fault_script, [:drop_responses]}})
 
-    assert {:ok, %{scheduled_faults: [%{fault: {:exchange_script, [:drop_responses]}}]}} =
+    assert {:ok, %{scheduled_faults: [%{fault: {:fault_script, [:drop_responses]}}]}} =
              Simulator.info()
 
     Process.sleep(80)
@@ -74,6 +74,58 @@ defmodule EtherCAT.SimulatorTest do
              Simulator.info()
 
     assert {:ok, %{scheduled_faults: []}} = Simulator.info()
+  end
+
+  test "fault scripts can wait on milestones between queued and slave-local steps" do
+    device = SimSlave.from_driver(EK1100, name: :coupler)
+
+    assert {:ok, _pid} = Simulator.start_link(devices: [device])
+
+    assert :ok =
+             Simulator.inject_fault(
+               {:fault_script,
+                [
+                  :drop_responses,
+                  {:wait_for_milestone, {:healthy_exchanges, 2}},
+                  {:disconnect, :coupler}
+                ]}
+             )
+
+    assert {:ok,
+            %{
+              next_fault: {:next_exchange, :drop_responses},
+              pending_faults: [:drop_responses],
+              scheduled_faults: [
+                %{
+                  fault:
+                    {:fault_script,
+                     [{:wait_for_milestone, {:healthy_exchanges, 2}}, {:disconnect, :coupler}]},
+                  waiting_on: {:queued_exchange_steps, 1},
+                  remaining: 1
+                }
+              ]
+            }} = Simulator.info()
+
+    datagram = %Datagram{
+      cmd: 1,
+      idx: 1,
+      address: <<0::little-signed-16, 0x0010::little-unsigned-16>>,
+      data: <<0, 0>>
+    }
+
+    assert {:error, :no_response} = Simulator.process_datagrams([datagram])
+
+    assert {:ok,
+            %{
+              pending_faults: [],
+              scheduled_faults: [
+                %{
+                  fault: {:fault_script, [{:disconnect, :coupler}]},
+                  waiting_on: {:healthy_exchanges, 2},
+                  remaining: 2
+                }
+              ]
+            }} = Simulator.info()
   end
 
   test "info/0 reports milestone-scheduled faults and arms them after healthy exchanges" do

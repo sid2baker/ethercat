@@ -1,4 +1,4 @@
-defmodule EtherCAT.Integration.Simulator.DelayedSlaveFaultScriptTest do
+defmodule EtherCAT.Integration.Simulator.EmbeddedMilestoneFaultScriptTest do
   use ExUnit.Case, async: false
 
   alias EtherCAT.IntegrationSupport.SimulatorRing
@@ -18,12 +18,13 @@ defmodule EtherCAT.Integration.Simulator.DelayedSlaveFaultScriptTest do
     :ok
   end
 
-  test "delayed slave-local faults can follow exchange-fault recovery without manual cleanup" do
+  test "fault scripts can embed milestone waits between exchange and slave-local steps" do
     fault_script =
-      List.duplicate(:drop_responses, 6) ++ List.duplicate({:wkc_offset, -1}, 4)
+      List.duplicate(:drop_responses, 6) ++
+        List.duplicate({:wkc_offset, -1}, 4) ++
+        [{:wait_for_milestone, {:healthy_polls, :outputs, 12}}, {:retreat_to_safeop, :outputs}]
 
     assert :ok = Simulator.inject_fault({:fault_script, fault_script})
-    assert :ok = Simulator.inject_fault({:after_ms, 600, {:retreat_to_safeop, :outputs}})
 
     assert_eventually(
       fn ->
@@ -34,14 +35,24 @@ defmodule EtherCAT.Integration.Simulator.DelayedSlaveFaultScriptTest do
 
     assert_eventually(
       fn ->
-        assert {:ok, %{pending_faults: [], scheduled_faults: [%{fault: scheduled_fault}]}} =
-                 Simulator.info()
+        assert {:ok,
+                %{
+                  pending_faults: [],
+                  scheduled_faults: [
+                    %{
+                      fault: {:fault_script, [{:retreat_to_safeop, :outputs}]},
+                      waiting_on: {:healthy_polls, :outputs, 12},
+                      remaining: remaining
+                    }
+                  ]
+                }} = Simulator.info()
 
-        assert scheduled_fault == {:retreat_to_safeop, :outputs}
+        assert remaining > 0
+        assert remaining < 12
         assert :operational = EtherCAT.state()
         assert nil == SimulatorRing.fault_for(:outputs)
       end,
-      120
+      180
     )
 
     assert_eventually(
@@ -50,18 +61,18 @@ defmodule EtherCAT.Integration.Simulator.DelayedSlaveFaultScriptTest do
         assert :operational = EtherCAT.state()
         assert {:ok, %{al_state: :safeop}} = EtherCAT.slave_info(:outputs)
       end,
-      120
+      220
     )
 
     assert_eventually(
       fn ->
-        assert {:ok, %{pending_faults: [], scheduled_faults: []}} = Simulator.info()
+        assert {:ok, %{scheduled_faults: []}} = Simulator.info()
         assert nil == SimulatorRing.fault_for(:outputs)
         assert :operational = EtherCAT.state()
         assert {:ok, %{al_state: :op}} = EtherCAT.slave_info(:outputs)
         assert {:ok, %{cycle_health: :healthy}} = EtherCAT.domain_info(:main)
       end,
-      200
+      220
     )
 
     assert :ok = EtherCAT.write_output(:outputs, :ch1, 1)

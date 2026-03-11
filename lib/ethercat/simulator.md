@@ -100,7 +100,7 @@ For datagram/runtime faults, `EtherCAT.Simulator.inject_fault/1` supports both:
 
 - sticky faults such as `:drop_responses` or `{:disconnect, :outputs}`
 - exchange-scoped wrappers such as `{:next_exchange, fault}`,
-  `{:next_exchanges, count, fault}`, and `{:exchange_script, [fault, ...]}`
+  `{:next_exchanges, count, fault}`, and `{:fault_script, [step, ...]}`
 - delayed scheduling through `{:after_ms, delay_ms, fault}`
 - milestone scheduling through `{:after_milestone, milestone, fault}`
 
@@ -133,7 +133,7 @@ EtherCAT.Simulator.inject_fault({:next_exchanges, 10, :drop_responses})
 EtherCAT.Simulator.inject_fault({:next_exchanges, 6, {:wkc_offset, -1}})
 
 EtherCAT.Simulator.inject_fault(
-  {:exchange_script, [:drop_responses, {:wkc_offset, -1}]}
+  {:fault_script, [:drop_responses, {:wkc_offset, -1}]}
 )
 
 EtherCAT.Simulator.inject_fault(
@@ -142,6 +142,15 @@ EtherCAT.Simulator.inject_fault(
 
 EtherCAT.Simulator.inject_fault(
   {:after_milestone, {:healthy_polls, :outputs, 10}, {:retreat_to_safeop, :outputs}}
+)
+
+EtherCAT.Simulator.inject_fault(
+  {:fault_script,
+   [
+     :drop_responses,
+     {:wait_for_milestone, {:healthy_polls, :outputs, 10}},
+     {:retreat_to_safeop, :outputs}
+   ]}
 )
 ```
 

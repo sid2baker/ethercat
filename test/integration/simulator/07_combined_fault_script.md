@@ -20,7 +20,7 @@ drops briefly before reconnecting.
 
 Observed with:
 
-`Simulator.inject_fault({:exchange_script, [:drop_responses, {:wkc_offset, -1}] ++ List.duplicate({:disconnect, :outputs}, 30)})`
+`Simulator.inject_fault({:fault_script, List.duplicate(:drop_responses, 6) ++ List.duplicate({:wkc_offset, -1}, 4) ++ List.duplicate({:disconnect, :outputs}, 30)})`
 
 - the master enters `:recovering`
 - the outputs slave later becomes `{:down, :disconnected}`
@@ -31,7 +31,7 @@ Observed with:
 ## Test Shape
 
 1. boot the ring with health polling enabled on the affected slave
-2. inject one combined exchange script
+2. inject one combined fault script
 3. assert recovery and the outputs slave-down fault
 4. assert the script queue drains
 5. assert the slave reconnects and the system returns to `:operational`
@@ -39,8 +39,4 @@ Observed with:
 
 ## Simulator API Notes
 
-Current API is enough for basic combined exchange scripts.
-
-Still worth adding later:
-
-- milestone wait steps embedded directly inside a single reusable script
+Current API is enough for basic combined sequential fault scripts.

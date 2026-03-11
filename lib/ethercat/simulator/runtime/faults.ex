@@ -11,15 +11,22 @@ defmodule EtherCAT.Simulator.Runtime.Faults do
   @type planned_fault ::
           {:next_exchange, exchange_fault()}
           | {:next_exchanges, pos_integer(), exchange_fault()}
-          | {:exchange_script, [exchange_fault(), ...]}
+          | {:fault_script, [exchange_fault(), ...]}
 
   @type fault :: sticky_fault() | planned_fault()
+
+  @type pending_fault_source :: :manual | {:script, pos_integer()}
+
+  @type pending_fault_entry :: %{
+          fault: exchange_fault(),
+          source: pending_fault_source()
+        }
 
   @type t :: %__MODULE__{
           drop_responses?: boolean(),
           wkc_offset: integer(),
           disconnected: MapSet.t(atom()),
-          pending_faults: [exchange_fault()]
+          pending_faults: [pending_fault_entry()]
         }
 
   @enforce_keys [:drop_responses?, :wkc_offset, :disconnected, :pending_faults]
@@ -42,7 +49,7 @@ defmodule EtherCAT.Simulator.Runtime.Faults do
       wkc_offset: faults.wkc_offset,
       disconnected: MapSet.to_list(faults.disconnected),
       next_fault: next_fault_info(faults.pending_faults),
-      pending_faults: faults.pending_faults
+      pending_faults: Enum.map(faults.pending_faults, & &1.fault)
     }
   end
 
@@ -62,7 +69,7 @@ defmodule EtherCAT.Simulator.Runtime.Faults do
   @spec enqueue(t(), planned_fault()) :: {:ok, t()} | :error
   def enqueue(%__MODULE__{} = faults, {:next_exchange, fault}) do
     if valid_exchange_fault?(fault) do
-      {:ok, %{faults | pending_faults: faults.pending_faults ++ [fault]}}
+      {:ok, enqueue_entry(faults, %{fault: fault, source: :manual})}
     else
       :error
     end
@@ -71,16 +78,18 @@ defmodule EtherCAT.Simulator.Runtime.Faults do
   def enqueue(%__MODULE__{} = faults, {:next_exchanges, count, fault})
       when is_integer(count) and count > 0 do
     if valid_exchange_fault?(fault) do
-      {:ok, %{faults | pending_faults: faults.pending_faults ++ List.duplicate(fault, count)}}
+      entries = List.duplicate(%{fault: fault, source: :manual}, count)
+      {:ok, %{faults | pending_faults: faults.pending_faults ++ entries}}
     else
       :error
     end
   end
 
-  def enqueue(%__MODULE__{} = faults, {:exchange_script, planned_faults})
+  def enqueue(%__MODULE__{} = faults, {:fault_script, planned_faults})
       when is_list(planned_faults) do
     if planned_faults != [] and Enum.all?(planned_faults, &valid_exchange_fault?/1) do
-      {:ok, %{faults | pending_faults: faults.pending_faults ++ planned_faults}}
+      entries = Enum.map(planned_faults, &%{fault: &1, source: :manual})
+      {:ok, %{faults | pending_faults: faults.pending_faults ++ entries}}
     else
       :error
     end
@@ -88,14 +97,27 @@ defmodule EtherCAT.Simulator.Runtime.Faults do
 
   def enqueue(%__MODULE__{}, _planned_fault), do: :error
 
-  @spec pop_pending(t()) :: {exchange_fault() | nil, t()}
+  @spec enqueue_script_steps(t(), pos_integer(), [exchange_fault(), ...]) :: {:ok, t()} | :error
+  def enqueue_script_steps(%__MODULE__{} = faults, script_id, planned_faults)
+      when is_integer(script_id) and script_id > 0 and is_list(planned_faults) do
+    if planned_faults != [] and Enum.all?(planned_faults, &valid_exchange_fault?/1) do
+      entries = Enum.map(planned_faults, &%{fault: &1, source: {:script, script_id}})
+      {:ok, %{faults | pending_faults: faults.pending_faults ++ entries}}
+    else
+      :error
+    end
+  end
+
+  @spec pop_pending(t()) :: {pending_fault_entry() | nil, t()}
   def pop_pending(%__MODULE__{pending_faults: []} = faults), do: {nil, faults}
 
-  def pop_pending(%__MODULE__{pending_faults: [fault | rest]} = faults),
-    do: {fault, %{faults | pending_faults: rest}}
+  def pop_pending(%__MODULE__{pending_faults: [entry | rest]} = faults),
+    do: {entry, %{faults | pending_faults: rest}}
 
-  @spec apply_pending(t(), exchange_fault() | nil) :: t()
+  @spec apply_pending(t(), pending_fault_entry() | exchange_fault() | nil) :: t()
   def apply_pending(%__MODULE__{} = faults, nil), do: faults
+
+  def apply_pending(%__MODULE__{} = faults, %{fault: fault}), do: apply_pending(faults, fault)
 
   def apply_pending(%__MODULE__{} = faults, :drop_responses),
     do: %{faults | drop_responses?: true}
@@ -124,5 +146,9 @@ defmodule EtherCAT.Simulator.Runtime.Faults do
   defp valid_exchange_fault?(_fault), do: false
 
   defp next_fault_info([]), do: nil
-  defp next_fault_info([fault | _rest]), do: {:next_exchange, fault}
+  defp next_fault_info([%{fault: fault} | _rest]), do: {:next_exchange, fault}
+
+  defp enqueue_entry(%__MODULE__{} = faults, entry) do
+    %{faults | pending_faults: faults.pending_faults ++ [entry]}
+  end
 end

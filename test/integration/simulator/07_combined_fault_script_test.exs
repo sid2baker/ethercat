@@ -11,6 +11,7 @@ defmodule EtherCAT.Integration.Simulator.CombinedFaultScriptTest do
 
     SimulatorRing.boot_operational!(
       slave_config_opts: [output_health_poll_ms: 20],
+      start_opts: [frame_timeout_ms: 10],
       await_operational_ms: 2_500
     )
 
@@ -18,9 +19,12 @@ defmodule EtherCAT.Integration.Simulator.CombinedFaultScriptTest do
   end
 
   test "combined exchange scripts drive recovery and heal without manual fault clearing" do
-    script = [:drop_responses, {:wkc_offset, -1}] ++ List.duplicate({:disconnect, :outputs}, 30)
+    script =
+      List.duplicate(:drop_responses, 6) ++
+        List.duplicate({:wkc_offset, -1}, 4) ++
+        List.duplicate({:disconnect, :outputs}, 30)
 
-    assert :ok = Simulator.inject_fault({:exchange_script, script})
+    assert :ok = Simulator.inject_fault({:fault_script, script})
 
     assert_eventually(
       fn ->

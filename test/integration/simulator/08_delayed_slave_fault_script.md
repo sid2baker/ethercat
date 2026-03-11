@@ -20,7 +20,7 @@ device later retreats to `SAFEOP` due to a local condition.
 
 Observed with:
 
-- `Simulator.inject_fault({:exchange_script, List.duplicate(:drop_responses, 6) ++ List.duplicate({:wkc_offset, -1}, 4)})`
+- `Simulator.inject_fault({:fault_script, List.duplicate(:drop_responses, 6) ++ List.duplicate({:wkc_offset, -1}, 4)})`
 - `Simulator.inject_fault({:after_ms, 600, {:retreat_to_safeop, :outputs}})`
 
 - the master first enters `:recovering`
@@ -32,7 +32,7 @@ Observed with:
 ## Test Shape
 
 1. boot the ring with health polling enabled on the affected slave
-2. inject a short exchange fault script
+2. inject a short fault script
 3. schedule a delayed `SAFEOP` retreat for the outputs slave
 4. assert the master first recovers from the exchange faults
 5. assert the delayed fault becomes a slave-local `{:retreated, :safeop}`
@@ -46,5 +46,4 @@ prefer the dedicated `09` scenario and `{:after_milestone, milestone, fault}`.
 
 Still worth adding later:
 
-- milestone wait steps embedded directly inside a single reusable script
 - startup-time mailbox aborts through driver mailbox configuration
