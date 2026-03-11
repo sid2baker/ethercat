@@ -49,6 +49,8 @@ letting the loop invent arbitrary refactors.
 - `17`: malformed mailbox response headers during public SDO upload
 - `18`: malformed CoE payloads during public SDO upload
 - `19`: malformed segmented CoE upload responses
+- `20`: malformed segmented CoE download acknowledgements
+- `21`: startup segmented-download acknowledgement faults during PREOP configuration
 
 These are the current regression scenarios, not just backlog items. Each one
 should keep its `.md` note and matching `_test.exs` file aligned.
@@ -118,8 +120,8 @@ Current mailbox protocol fault kinds:
 The next useful scenarios are the narrower ones the existing notes still call
 out:
 
-- malformed segmented download acknowledgements, not just upload-segment
-  responses
+- mailbox response timeouts during PREOP configuration, not just deterministic
+  aborts or malformed acknowledgements
 
 ## Current Rule Of Thumb
 

@@ -71,7 +71,7 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
     ]
 
     start_opts = Keyword.merge(default_start_opts, Keyword.get(opts, :start_opts, []))
-    assert_ok!(EtherCAT.start(start_opts))
+    assert_ok!(start_master_with_retry(start_opts, 5))
   end
 
   @spec boot_operational!(keyword()) :: %{port: :inet.port_number()}
@@ -157,4 +157,19 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
   defp assert_ok!(other) do
     raise ArgumentError, "expected :ok or {:ok, _}, got: #{inspect(other)}"
   end
+
+  defp start_master_with_retry(start_opts, attempts_left)
+
+  defp start_master_with_retry(start_opts, attempts_left) when attempts_left > 1 do
+    case EtherCAT.start(start_opts) do
+      {:error, :eaddrinuse} ->
+        Process.sleep(20)
+        start_master_with_retry(start_opts, attempts_left - 1)
+
+      other ->
+        other
+    end
+  end
+
+  defp start_master_with_retry(start_opts, _attempts_left), do: EtherCAT.start(start_opts)
 end

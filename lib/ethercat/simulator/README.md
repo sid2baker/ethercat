@@ -362,6 +362,8 @@ now covers:
 - `17` malformed mailbox response headers like wrong mailbox type or CoE service
 - `18` malformed CoE payloads like truncated CoE headers or bad SDO commands
 - `19` malformed segmented CoE upload responses like bad padding or segment commands
+- `20` malformed segmented CoE download acknowledgements after partial or final progress
+- `21` startup segmented-download acknowledgement faults during PREOP configuration
 
 ## Widget-Facing Signal API
 

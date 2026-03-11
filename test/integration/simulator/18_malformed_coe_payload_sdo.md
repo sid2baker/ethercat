@@ -44,5 +44,5 @@ Current API is now enough for malformed CoE payloads through:
 
 Still worth adding later:
 
-- malformed segmented download acknowledgements, not just upload-segment
-  responses
+- malformed segmented-download-ack coverage through driver PREOP mailbox
+  configuration, not just public SDO helpers
