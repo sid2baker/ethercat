@@ -1,61 +1,24 @@
 defmodule EtherCAT.Integration.Simulator.RingTest do
   use ExUnit.Case, async: false
 
-  alias EtherCAT.Domain.Config, as: DomainConfig
-  alias EtherCAT.IntegrationSupport.Drivers.{EK1100, EL1809, EL2809}
+  alias EtherCAT.IntegrationSupport.SimulatorRing
   alias EtherCAT.Simulator
-  alias EtherCAT.Simulator.Slave
-  alias EtherCAT.Slave.Config, as: SlaveConfig
 
   import EtherCAT.Integration.Assertions
 
-  @master_ip {127, 0, 0, 1}
-  @simulator_ip {127, 0, 0, 2}
-
   setup do
-    _ = EtherCAT.stop()
-    _ = Simulator.stop()
-
-    devices = [
-      Slave.from_driver(EK1100, name: :coupler),
-      Slave.from_driver(EL1809, name: :inputs),
-      Slave.from_driver(EL2809, name: :outputs)
-    ]
-
-    {:ok, _supervisor} = Simulator.start(devices: devices, udp: [ip: @simulator_ip, port: 0])
-    {:ok, %{udp: %{port: port}}} = Simulator.info()
-
-    Process.sleep(20)
-
-    assert :ok = Slave.connect({:outputs, :ch1}, {:inputs, :ch1})
-    assert :ok = Slave.connect({:outputs, :ch16}, {:inputs, :ch16})
+    SimulatorRing.reset!()
+    %{port: port} = SimulatorRing.start_simulator!()
 
     on_exit(fn ->
-      case EtherCAT.stop() do
-        :ok -> :ok
-        :already_stopped -> :ok
-      end
-
-      :ok = Simulator.stop()
+      SimulatorRing.stop_all!()
     end)
 
     {:ok, port: port}
   end
 
   test "boots the simulated EK1100 -> EL1809 -> EL2809 ring to operational", %{port: port} do
-    assert :ok =
-             EtherCAT.start(
-               transport: :udp,
-               bind_ip: @master_ip,
-               host: @simulator_ip,
-               port: port,
-               dc: nil,
-               scan_stable_ms: 20,
-               scan_poll_ms: 10,
-               frame_timeout_ms: 5,
-               domains: [%DomainConfig{id: :main, cycle_time_us: 10_000}],
-               slaves: ring_slave_configs()
-             )
+    assert :ok = SimulatorRing.start_master!(port)
 
     assert :ok = EtherCAT.await_operational(2_000)
     assert :operational = EtherCAT.state()
@@ -66,19 +29,7 @@ defmodule EtherCAT.Integration.Simulator.RingTest do
   end
 
   test "reads EL1809 inputs and stages EL2809 outputs through the simulated ring", %{port: port} do
-    assert :ok =
-             EtherCAT.start(
-               transport: :udp,
-               bind_ip: @master_ip,
-               host: @simulator_ip,
-               port: port,
-               dc: nil,
-               scan_stable_ms: 20,
-               scan_poll_ms: 10,
-               frame_timeout_ms: 5,
-               domains: [%DomainConfig{id: :main, cycle_time_us: 10_000}],
-               slaves: ring_slave_configs()
-             )
+    assert :ok = SimulatorRing.start_master!(port)
 
     assert :ok = EtherCAT.await_operational(2_000)
 
@@ -99,28 +50,5 @@ defmodule EtherCAT.Integration.Simulator.RingTest do
       assert {:ok, %{value: true}} = Simulator.signal_snapshot(:outputs, :ch1)
       assert {:ok, %{value: true}} = Simulator.signal_snapshot(:outputs, :ch16)
     end)
-  end
-
-  defp ring_slave_configs do
-    [
-      %SlaveConfig{
-        name: :coupler,
-        driver: EK1100,
-        process_data: :none,
-        target_state: :op
-      },
-      %SlaveConfig{
-        name: :inputs,
-        driver: EL1809,
-        process_data: {:all, :main},
-        target_state: :op
-      },
-      %SlaveConfig{
-        name: :outputs,
-        driver: EL2809,
-        process_data: {:all, :main},
-        target_state: :op
-      }
-    ]
   end
 end

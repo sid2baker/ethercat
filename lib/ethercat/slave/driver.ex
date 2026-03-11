@@ -21,15 +21,15 @@ defmodule EtherCAT.Slave.Driver do
   That metadata is useful for future driver discovery against scanned bus
   identity and for tooling. Keep it high-level: vendor, product, and revision.
 
-  Drivers may also optionally expose `simulator_definition/1` so
-  `EtherCAT.Simulator.Slave.from_driver/2` can hydrate a simulated device from
-  the same driver module. This keeps simulator integration close to the real
-  driver without pushing raw ESC register maps or SII binaries into the driver
-  behavior.
+  Exact simulator authoring does not live in the real driver behaviour. Use an
+  optional `MyDriver.Simulator` companion module that implements
+  `EtherCAT.Simulator.DriverAdapter` when
+  `EtherCAT.Simulator.Slave.from_driver/2` needs profile-specific simulator
+  configuration.
 
-  ## Process-data model
+  ## Signal model
 
-  `process_data_model/1` returns a keyword list of `{signal_name, declaration}` pairs.
+  `signal_model/1` returns a keyword list of `{signal_name, declaration}` pairs.
   Each value declares where that signal lives in the slave's PDO layout:
 
   - an integer means "this signal spans the whole PDO at that index"
@@ -55,7 +55,7 @@ defmodule EtherCAT.Slave.Driver do
   - `test/integration/support/drivers/el1809.ex`
   - `test/integration/support/drivers/el2809.ex`
 
-  They show the minimal `process_data_model/1` and bit-oriented
+  They show the minimal `signal_model/1` and bit-oriented
   `encode_signal/3` / `decode_signal/3` callbacks for Beckhoff-style
   16-channel digital I/O terminals.
 
@@ -65,7 +65,7 @@ defmodule EtherCAT.Slave.Driver do
         @behaviour EtherCAT.Slave.Driver
 
         @impl true
-        def process_data_model(_config) do
+        def signal_model(_config) do
           # 0x1A00 = channel 1 (SM3, bytes 0–3), 0x1A01 = channel 2 (SM3, bytes 4–7)
           [channel1: 0x1A00, channel2: 0x1A01]
         end
@@ -98,8 +98,6 @@ defmodule EtherCAT.Slave.Driver do
       end
   """
 
-  alias EtherCAT.Simulator.Slave.Definition, as: SimulatorDefinition
-
   alias EtherCAT.Slave.ProcessData.Signal
   alias EtherCAT.Slave.Sync.Config, as: SyncConfig
 
@@ -116,7 +114,6 @@ defmodule EtherCAT.Slave.Driver do
   @type mailbox_step ::
           {:sdo_download, index :: non_neg_integer(), subindex :: non_neg_integer(),
            data :: binary()}
-  @type simulator_definition :: SimulatorDefinition.t()
 
   @doc """
   Static device identity for this driver, or `nil` if the driver does not
@@ -133,16 +130,16 @@ defmodule EtherCAT.Slave.Driver do
 
   Each signal maps to either a whole PDO index or a `%Signal{}` slice.
 
-  An optional 2-arity version `process_data_model/2` receives the SII PDO configs
+  An optional 2-arity version `signal_model/2` receives the SII PDO configs
   as its second argument. When exported, the runtime calls it instead of `/1`, giving
   the driver access to hardware layout for dynamic model generation. The `Default`
   driver uses this to auto-discover all PDOs without any hand-written mapping.
   """
-  @callback process_data_model(config()) ::
+  @callback signal_model(config()) ::
               [{signal_name(), non_neg_integer() | Signal.t()}]
 
   @doc """
-  Optional 2-arity variant of `process_data_model/1` that receives SII PDO configs.
+  Optional 2-arity variant of `signal_model/1` that receives SII PDO configs.
 
   Each entry in `sii_pdo_configs` is a map with keys:
     - `:index` — PDO object index (e.g. `0x1A00`)
@@ -151,9 +148,9 @@ defmodule EtherCAT.Slave.Driver do
     - `:bit_size` — total PDO size in bits
     - `:bit_offset` — PDO offset within its SyncManager image in bits
 
-  When this callback is exported, it takes precedence over `process_data_model/1`.
+  When this callback is exported, it takes precedence over `signal_model/1`.
   """
-  @callback process_data_model(config(), sii_pdo_configs :: [map()]) ::
+  @callback signal_model(config(), sii_pdo_configs :: [map()]) ::
               [{signal_name(), non_neg_integer() | Signal.t()}]
 
   @doc "Encode one logical output signal into raw bytes for the process image."
@@ -203,19 +200,8 @@ defmodule EtherCAT.Slave.Driver do
   """
   @callback on_latch(atom(), config(), 0 | 1, latch_edge(), non_neg_integer()) :: :ok
 
-  @doc """
-  Simulator definition used to hydrate a simulated device for this driver, or
-  `nil` if the driver does not expose simulator hydration.
-
-  The callback should return a high-level simulator definition map suitable for
-  `EtherCAT.Simulator.Slave.from_driver/2`. The simulator derives ESC memory
-  and EEPROM from that definition; drivers should not hand-author raw register
-  maps or SII binaries.
-  """
-  @callback simulator_definition(config()) :: simulator_definition() | nil
-
   @optional_callbacks [
-    process_data_model: 2,
+    signal_model: 2,
     on_preop: 2,
     on_safeop: 2,
     on_op: 2,
@@ -231,10 +217,21 @@ defmodule EtherCAT.Slave.Driver do
     |> normalize_identity()
   end
 
-  @spec simulator_definition(module(), config()) ::
-          simulator_definition() | nil
-  def simulator_definition(driver, config) when is_atom(driver) and is_map(config) do
-    apply(driver, :simulator_definition, [config])
+  @spec signal_model(module(), config()) ::
+          [{signal_name(), non_neg_integer() | Signal.t()}]
+  def signal_model(driver, config) when is_atom(driver) and is_map(config) do
+    apply(driver, :signal_model, [config])
+  end
+
+  @spec signal_model(module(), config(), [map()]) ::
+          [{signal_name(), non_neg_integer() | Signal.t()}]
+  def signal_model(driver, config, sii_pdo_configs)
+      when is_atom(driver) and is_map(config) and is_list(sii_pdo_configs) do
+    if function_exported?(driver, :signal_model, 2) do
+      apply(driver, :signal_model, [config, sii_pdo_configs])
+    else
+      signal_model(driver, config)
+    end
   end
 
   defp normalize_identity(nil), do: nil

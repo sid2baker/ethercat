@@ -44,4 +44,14 @@ defmodule EtherCAT.SimulatorTest do
     assert is_integer(port)
     assert port > 0
   end
+
+  test "info/0 reports queued exchange faults" do
+    assert {:ok, _pid} = Simulator.start_link(devices: [])
+    assert :ok = Simulator.inject_fault({:exchange_script, [:drop_responses, {:wkc_offset, -1}]})
+
+    assert {:ok, %{next_fault: {:next_exchange, :drop_responses}, pending_faults: pending_faults}} =
+             Simulator.info()
+
+    assert pending_faults == [:drop_responses, {:wkc_offset, -1}]
+  end
 end

@@ -6,13 +6,13 @@ defmodule EtherCAT.Simulator.Slave do
   `EtherCAT.Slave.Driver` modules and to inspect or override named signal
   values on a running simulator.
 
-  For drivers that opt in, `from_driver/2` can hydrate a simulated device from
-  a real `EtherCAT.Slave.Driver` module via its optional
-  `simulator_definition/1` callback.
+  `from_driver/2` can hydrate a simulated device from a real
+  `EtherCAT.Slave.Driver` plus an optional simulator-side companion module such
+  as `MyDriver.Simulator`.
   """
 
   alias EtherCAT.Simulator
-  alias EtherCAT.Slave.Driver, as: SlaveDriver
+  alias EtherCAT.Simulator.DriverAdapter
   alias EtherCAT.Simulator.Slave.Definition
 
   @type driver :: module()
@@ -23,15 +23,11 @@ defmodule EtherCAT.Simulator.Slave do
   def from_driver(driver, opts \\ []) when is_atom(driver) do
     config = Keyword.get(opts, :config, %{})
     name = Keyword.get(opts, :name)
+    simulator = Keyword.get(opts, :simulator)
+    adapter = resolve_adapter!(driver, simulator)
 
-    case SlaveDriver.simulator_definition(driver, config) do
-      %Definition{} = definition ->
-        maybe_override_name(definition, name)
-
-      nil ->
-        raise ArgumentError,
-              "driver #{inspect(driver)} does not implement simulator_definition/1"
-    end
+    Definition.from_driver(driver, config, adapter)
+    |> maybe_override_name(name)
   end
 
   @spec signals(device()) :: [atom()]
@@ -123,4 +119,15 @@ defmodule EtherCAT.Simulator.Slave do
 
   defp maybe_override_name(definition, nil), do: definition
   defp maybe_override_name(definition, name) when is_atom(name), do: %{definition | name: name}
+
+  defp resolve_adapter!(driver, simulator) do
+    case DriverAdapter.resolve(driver, simulator) do
+      adapter when is_atom(adapter) and not is_nil(adapter) ->
+        adapter
+
+      nil ->
+        raise ArgumentError,
+              "driver #{inspect(driver)} does not expose a simulator companion; define #{inspect(Module.concat(driver, "Simulator"))} implementing EtherCAT.Simulator.DriverAdapter or pass :simulator explicitly"
+    end
+  end
 end

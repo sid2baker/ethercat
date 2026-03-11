@@ -7,6 +7,7 @@ defmodule EtherCAT.Slave.ProcessData do
   alias EtherCAT.Bus.Transaction
   alias EtherCAT.Domain.API, as: DomainAPI
   alias EtherCAT.Slave
+  alias EtherCAT.Slave.Driver
   alias EtherCAT.Slave.ProcessData.Plan
   alias EtherCAT.Slave.ProcessData.Plan.DomainAttachment
   alias EtherCAT.Slave.ProcessData.Plan.SmGroup
@@ -32,13 +33,14 @@ defmodule EtherCAT.Slave.ProcessData do
            Plan.normalize_request(
              mailbox_data.process_data_request,
              mailbox_data.driver,
-             mailbox_data.config
+             mailbox_data.config,
+             mailbox_data.sii_pdo_configs
            ),
          :ok <- validate_subscription_names(requested_signals, mailbox_data.sync_config),
          {:ok, sm_groups} <-
            Plan.build(
              requested_signals,
-             call_process_data_model(mailbox_data),
+             call_signal_model(mailbox_data),
              mailbox_data.sii_pdo_configs,
              mailbox_data.sii_sm_configs
            ),
@@ -474,12 +476,8 @@ defmodule EtherCAT.Slave.ProcessData do
 
   defp ensure_expected_wkcs(_replies, _expected_wkc, error_tag), do: {:error, error_tag}
 
-  defp call_process_data_model(data) do
-    if function_exported?(data.driver, :process_data_model, 2) do
-      data.driver.process_data_model(data.config, data.sii_pdo_configs)
-    else
-      data.driver.process_data_model(data.config)
-    end
+  defp call_signal_model(data) do
+    Driver.signal_model(data.driver, data.config, data.sii_pdo_configs)
   end
 
   defp binary_pad(data, size) when byte_size(data) >= size, do: binary_part(data, 0, size)

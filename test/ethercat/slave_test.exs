@@ -12,10 +12,7 @@ defmodule EtherCAT.SlaveTest do
     def identity, do: nil
 
     @impl true
-    def simulator_definition(_config), do: nil
-
-    @impl true
-    def process_data_model(_config), do: %{}
+    def signal_model(_config), do: %{}
 
     @impl true
     def encode_signal(_signal, _config, _value), do: <<>>
@@ -34,10 +31,7 @@ defmodule EtherCAT.SlaveTest do
     def identity, do: nil
 
     @impl true
-    def simulator_definition(_config), do: nil
-
-    @impl true
-    def process_data_model(_config), do: %{}
+    def signal_model(_config), do: %{}
 
     @impl true
     def encode_signal(_signal, _config, value), do: <<value::8>>
@@ -56,10 +50,7 @@ defmodule EtherCAT.SlaveTest do
     def identity, do: nil
 
     @impl true
-    def simulator_definition(_config), do: nil
-
-    @impl true
-    def process_data_model(_config), do: [ch1: 0, ch2: 1]
+    def signal_model(_config), do: [ch1: 0, ch2: 1]
 
     @impl true
     def encode_signal(_signal, _config, value), do: <<value::8>>
@@ -75,10 +66,7 @@ defmodule EtherCAT.SlaveTest do
     def identity, do: nil
 
     @impl true
-    def simulator_definition(_config), do: nil
-
-    @impl true
-    def process_data_model(_config), do: %{}
+    def signal_model(_config), do: %{}
 
     @impl true
     def encode_signal(_signal, _config, _value), do: <<>>
@@ -97,10 +85,7 @@ defmodule EtherCAT.SlaveTest do
     def identity, do: nil
 
     @impl true
-    def simulator_definition(_config), do: nil
-
-    @impl true
-    def process_data_model(_config), do: %{}
+    def signal_model(_config), do: %{}
 
     @impl true
     def encode_signal(_signal, _config, _value), do: <<>>
@@ -119,10 +104,7 @@ defmodule EtherCAT.SlaveTest do
     def identity, do: nil
 
     @impl true
-    def simulator_definition(_config), do: nil
-
-    @impl true
-    def process_data_model(_config), do: %{}
+    def signal_model(_config), do: %{}
 
     @impl true
     def encode_signal(_signal, _config, _value), do: <<>>

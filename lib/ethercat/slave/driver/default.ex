@@ -16,13 +16,10 @@ defmodule EtherCAT.Slave.Driver.Default do
   def identity, do: nil
 
   @impl true
-  def simulator_definition(_config), do: nil
+  def signal_model(_config), do: []
 
   @impl true
-  def process_data_model(_config), do: []
-
-  @impl true
-  def process_data_model(_config, sii_pdo_configs) do
+  def signal_model(_config, sii_pdo_configs) do
     sii_pdo_configs
     |> Enum.map(fn %{index: index} ->
       name = String.to_atom("pdo_0x" <> String.downcase(Integer.to_string(index, 16)))

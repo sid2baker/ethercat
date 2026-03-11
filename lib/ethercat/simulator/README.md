@@ -69,6 +69,21 @@ What is already implemented and validated:
   - mailbox abort replies
 - signal-level get/set API for external tooling
 
+Datagram/runtime fault injection now has two modes:
+
+- sticky faults that stay active until `EtherCAT.Simulator.clear_faults/0`
+- queued exchange faults injected through `EtherCAT.Simulator.inject_fault/1`
+  with:
+  - `{:next_exchange, fault}`
+  - `{:next_exchanges, count, fault}`
+  - `{:exchange_script, [fault, ...]}`
+
+The current queued exchange-fault set is:
+
+- `:drop_responses`
+- `{:wkc_offset, delta}`
+- `{:disconnect, slave_name}`
+
 The simulator is already strong enough to exercise the real master through:
 
 - startup to `:operational`
@@ -162,6 +177,7 @@ Main modules:
 - `EtherCAT.Simulator`
   - public named simulator process
   - multi-slave datagram routing and WKC accumulation
+  - sticky and queued exchange fault injection
 - `EtherCAT.Simulator.Runtime.Snapshot`
   - stable read-model assembly for widgets and tooling
 - `EtherCAT.Simulator.Udp`
@@ -188,8 +204,12 @@ Drivers can also opt in directly. A real `EtherCAT.Slave.Driver` may expose:
 
 - `identity/0`
   - static vendor/product/revision metadata for discovery and tooling
-- `simulator_definition/1`
-  - a high-level simulator definition used by
+- `signal_model/1`
+  - the runtime-facing logical signal declarations for the real slave
+- `MyDriver.Simulator`
+  - an optional simulator companion implementing
+    `EtherCAT.Simulator.DriverAdapter`
+  - it returns simulator definition options used by
     `EtherCAT.Simulator.Slave.from_driver/2`
 
 That keeps simulator hydration close to the real driver without requiring
@@ -250,8 +270,8 @@ The public simulator API now prefers real-device hydration through drivers:
 - `EtherCAT.Simulator.Slave.from_driver(MyApp.EL2809, name: :outputs)`
 
 Internal profile modules still exist, but they are implementation detail. They
-provide reusable authored defaults that real drivers can turn into concrete
-simulator definitions through `simulator_definition/1`.
+provide reusable authored defaults that simulator companion modules can turn
+into concrete simulator definitions.
 
 The first-class public story is:
 
@@ -291,6 +311,18 @@ ETHERCAT_INTERFACE=enp0s31f6 mix test --include hardware test/integration/hardwa
 The simulator itself is also covered by unit-level and subsystem-level tests
 under `test/ethercat/simulator/` and related simulator-focused test files.
 
+The integration scenario loop under
+[`test/integration/simulator/`](/home/n0gg1n/Development/Work/opencode/ethercat/test/integration/simulator/)
+now covers:
+
+- `01` transient timeout through queued `:drop_responses`
+- `02` WKC mismatch through queued `{:wkc_offset, delta}`
+- `03` disconnect/reconnect through queued `{:disconnect, slave}`
+- `04` UDP reply corruption, replay, and scripted transport faults
+- `05` slave-local `SAFEOP` retreat with health polling
+- `06` mailbox aborts in PREOP
+- `07` combined exchange fault scripts across timeout, WKC skew, and reconnect
+
 ## Widget-Facing Signal API
 
 The simulator now exposes a small signal-oriented API intended for higher-level
@@ -328,6 +360,12 @@ Use `start_link/1` directly only when you need the in-memory simulator core.
 Use `start/1` for the common case where a real `UdpSocket` transport should
 talk to the simulator end to end.
 Stop the simulator runtime with `stop/0`.
+
+`EtherCAT.Simulator.info/0` now exposes queued fault state through:
+
+- `next_fault`
+- `pending_faults`
+- UDP state under `udp`
 
 To wire one simulated slave signal into another:
 
@@ -397,6 +435,34 @@ The simulator is already suitable for:
 - mailbox-capable smart devices
 - servo/drive profile regression tests
 - heterogeneous rings mixing several device families
+
+## Fault API Split
+
+Use the runtime-side API when the fault should affect datagram semantics or
+slave availability:
+
+```elixir
+EtherCAT.Simulator.inject_fault({:next_exchanges, 10, :drop_responses})
+EtherCAT.Simulator.inject_fault({:next_exchanges, 6, {:wkc_offset, -1}})
+EtherCAT.Simulator.inject_fault({:exchange_script, [:drop_responses, {:disconnect, :outputs}]})
+```
+
+Use the UDP-side API when the fault should corrupt raw replies at the transport
+edge:
+
+```elixir
+EtherCAT.Simulator.Udp.inject_fault({:corrupt_next_response, :truncate})
+EtherCAT.Simulator.Udp.inject_fault({:corrupt_next_responses, 2, :wrong_idx})
+
+EtherCAT.Simulator.Udp.inject_fault(
+  {:corrupt_response_script, [:unsupported_type, :replay_previous]}
+)
+```
+
+That boundary matters:
+
+- `EtherCAT.Simulator` owns datagram/runtime behavior
+- `EtherCAT.Simulator.Udp` owns malformed, stale, or mismatched raw replies
 
 ## Remaining Intentional Limits
 

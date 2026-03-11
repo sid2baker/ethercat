@@ -10,7 +10,7 @@ defmodule EtherCAT.Slave.Config do
     - `:process_data` — one of:
       - `:none` — do not auto-register process data
       - `{:all, domain_id}` — register all signal names from the driver's
-        `process_data_model/1` against one domain
+        `signal_model/1` against one domain
       - `[{signal_name, domain_id}]` — explicit signal-to-domain assignments
     - `:target_state` — desired startup target for this slave:
       - `:op` — master will advance it to cyclic operation

@@ -12,10 +12,7 @@ defmodule EtherCAT.Slave.ProcessData.PlanTest do
     def identity, do: nil
 
     @impl true
-    def simulator_definition(_config), do: nil
-
-    @impl true
-    def process_data_model(_config) do
+    def signal_model(_config) do
       [
         out1: 0x1600,
         in1: 0x1A00,
@@ -33,19 +30,19 @@ defmodule EtherCAT.Slave.ProcessData.PlanTest do
   end
 
   test "normalizes :none and {:all, domain} requests" do
-    assert {:ok, []} = Plan.normalize_request(:none, TestDriver, %{})
+    assert {:ok, []} = Plan.normalize_request(:none, TestDriver, %{}, [])
 
     assert {:ok,
             [out1: :main, in1: :main, in2: :main, status_word: :main, actual_position: :main]} =
-             Plan.normalize_request({:all, :main}, TestDriver, %{})
+             Plan.normalize_request({:all, :main}, TestDriver, %{}, [])
   end
 
   test "rejects invalid process_data requests" do
     assert {:error, :invalid_process_data_request} =
-             Plan.normalize_request([{:bad, "main"}], TestDriver, %{})
+             Plan.normalize_request([{:bad, "main"}], TestDriver, %{}, [])
 
     assert {:error, :invalid_process_data_request} =
-             Plan.normalize_request(:bad, TestDriver, %{})
+             Plan.normalize_request(:bad, TestDriver, %{}, [])
   end
 
   test "builds sync-manager groups from driver model and SII metadata" do

@@ -29,10 +29,10 @@ constructor helpers.
 
 This means:
 
-- real drivers should carry identity and optional `simulator_definition/1`
+- real drivers should carry identity and signal modeling only
 - simulator docs should lead with driver-backed device creation
-- profiles should primarily serve as reusable defaults behind
-  `simulator_definition/1`, not as the center of the public simulator story
+- simulator-specific authored defaults should live in simulator-side adapters,
+  not real-driver callbacks
 
 ## Why This Exists
 
@@ -138,8 +138,10 @@ The simulator should stay aligned with the real driver layer.
 Preferred authored flow:
 
 - real driver implements `identity/0`
-- real driver optionally implements `simulator_definition/1`
-- simulator builds a device from that definition through
+- real driver implements `signal_model/1`
+- optional companion simulator adapter provides simulator-specific definition
+  options
+- simulator builds a device from those driver-backed declarations through
   `EtherCAT.Simulator.Slave.from_driver/2`
 
 Profiles remain useful internally, but they should read as reusable defaults

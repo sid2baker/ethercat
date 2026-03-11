@@ -1,0 +1,52 @@
+defmodule EtherCAT.Integration.Simulator.CombinedFaultScriptTest do
+  use ExUnit.Case, async: false
+
+  alias EtherCAT.IntegrationSupport.SimulatorRing
+  alias EtherCAT.Simulator
+
+  import EtherCAT.Integration.Assertions
+
+  setup do
+    on_exit(fn -> SimulatorRing.stop_all!() end)
+
+    SimulatorRing.boot_operational!(
+      slave_config_opts: [output_health_poll_ms: 20],
+      await_operational_ms: 2_500
+    )
+
+    :ok
+  end
+
+  test "combined exchange scripts drive recovery and heal without manual fault clearing" do
+    script = [:drop_responses, {:wkc_offset, -1}] ++ List.duplicate({:disconnect, :outputs}, 30)
+
+    assert :ok = Simulator.inject_fault({:exchange_script, script})
+
+    assert_eventually(
+      fn ->
+        assert :recovering = EtherCAT.state()
+        assert {:down, :disconnected} = SimulatorRing.fault_for(:outputs)
+      end,
+      120
+    )
+
+    assert_eventually(
+      fn ->
+        assert {:ok, %{next_fault: nil, pending_faults: []}} = Simulator.info()
+        assert :operational = EtherCAT.state()
+        assert nil == SimulatorRing.fault_for(:outputs)
+        assert {:ok, %{cycle_health: :healthy}} = EtherCAT.domain_info(:main)
+        assert {:ok, %{al_state: :op}} = EtherCAT.slave_info(:outputs)
+      end,
+      200
+    )
+
+    assert :ok = EtherCAT.write_output(:outputs, :ch1, 1)
+
+    assert_eventually(fn ->
+      assert {:ok, {1, updated_at_us}} = EtherCAT.read_input(:inputs, :ch1)
+      assert is_integer(updated_at_us)
+      assert {:ok, %{value: true}} = Simulator.signal_snapshot(:outputs, :ch1)
+    end)
+  end
+end

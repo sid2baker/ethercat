@@ -1,0 +1,93 @@
+## Simulator Integration Loop
+
+Use this folder as a bounded self-improvement loop for the simulator and the
+master runtime.
+
+The rule is simple:
+
+1. Write a short scenario spec first as `NN_case_name.md`.
+2. Add the smallest failing integration test as `NN_case_name_test.exs`.
+3. Classify the failure:
+   - simulator cannot express the fault
+   - simulator expresses it, but assertions/observability are weak
+   - master/domain/slave behavior is wrong
+4. Fix the smallest layer that unblocks the scenario:
+   - missing fault model -> extend simulator API
+   - missing visibility -> extend snapshots, telemetry, or test helpers
+   - product bug -> fix implementation
+5. Re-run the targeted test, then the simulator suite.
+6. Only then move to a harder scenario.
+
+The point is to keep every improvement tied to a concrete scenario instead of
+letting the loop invent arbitrary refactors.
+
+## Naming
+
+- Scenario doc: `NN_case_name.md`
+- Matching test: `NN_case_name_test.exs`
+- Shared harness code lives in `test/integration/support/`
+
+## Current Scenario Set
+
+- `00`: baseline healthy ring boot and PDO exchange
+- `01`: transient full-response timeout
+- `02`: cyclic WKC mismatch
+- `03`: slave disconnect with health polling and reconnect
+- `04`: raw frame corruption or stale/duplicate frame
+- `05`: slave retreat to `SAFEOP` with health polling
+- `06`: mailbox abort during startup or recovery
+- `07`: combined fault script, e.g. timeout -> reconnect -> WKC skew
+
+These are the current regression scenarios, not just backlog items. Each one
+should keep its `.md` note and matching `_test.exs` file aligned.
+
+## Current Fault Shapes
+
+For datagram/runtime faults, prefer the queued simulator API:
+
+- `EtherCAT.Simulator.inject_fault({:next_exchange, fault})`
+- `EtherCAT.Simulator.inject_fault({:next_exchanges, count, fault})`
+- `EtherCAT.Simulator.inject_fault({:exchange_script, [fault, ...]})`
+
+Current exchange-scoped faults:
+
+- `:drop_responses`
+- `{:wkc_offset, delta}`
+- `{:disconnect, slave_name}`
+
+For raw transport corruption, use the UDP-edge API instead:
+
+- `EtherCAT.Simulator.Udp.inject_fault({:corrupt_next_response, mode})`
+- `EtherCAT.Simulator.Udp.inject_fault({:corrupt_next_responses, count, mode})`
+- `EtherCAT.Simulator.Udp.inject_fault({:corrupt_response_script, [mode, ...]})`
+
+Current UDP corruption modes:
+
+- `:truncate`
+- `:unsupported_type`
+- `:wrong_idx`
+- `:replay_previous`
+
+`EtherCAT.Simulator.info/0` and `EtherCAT.Simulator.Udp.info/0` expose
+`next_fault` and `pending_faults`, so new scenarios should assert queue drain
+explicitly instead of relying on sleeps alone.
+
+## Next Directions
+
+The next useful scenarios are the ones the existing notes still call out:
+
+- milestone-aware or delayed scripts instead of raw exchange counts
+- mixed scripts that combine exchange faults with delayed slave-local mutations
+- segmented mailbox aborts during upload/download
+
+## Current Rule Of Thumb
+
+- If the scenario is awkward because fault timing is too coarse, prefer a more
+  scriptable simulator API over brittle sleeps in tests.
+- If the scenario is easy to trigger but hard to assert, improve snapshots or
+  test helpers before changing runtime behavior.
+- If the scenario exposes a mismatch with expected master behavior, fix the bug
+  before adding more scenarios on top.
+- Keep the fault boundary honest:
+  datagram/runtime faults belong on `EtherCAT.Simulator`, while raw reply
+  corruption belongs on `EtherCAT.Simulator.Udp`.

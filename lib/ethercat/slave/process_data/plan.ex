@@ -57,6 +57,7 @@ end
 defmodule EtherCAT.Slave.ProcessData.Plan do
   @moduledoc false
 
+  alias EtherCAT.Slave.Driver
   alias EtherCAT.Slave.ProcessData.Plan.DomainAttachment
   alias EtherCAT.Slave.ProcessData.Plan.SmGroup
   alias EtherCAT.Slave.ProcessData.Signal
@@ -75,24 +76,25 @@ defmodule EtherCAT.Slave.ProcessData.Plan do
           required(:bit_offset) => non_neg_integer()
         }
 
-  @type process_data_model :: [{signal_name(), non_neg_integer() | Signal.t()}]
+  @type signal_model :: [{signal_name(), non_neg_integer() | Signal.t()}]
 
   @type resolved_signal :: {signal_name(), atom(), Signal.t(), sii_pdo_config()}
 
-  @spec normalize_request(process_data_request(), module() | nil, map()) ::
+  @spec normalize_request(process_data_request(), module() | nil, map(), [sii_pdo_config()]) ::
           {:ok, [{signal_name(), atom()}]} | {:error, term()}
-  def normalize_request(:none, _driver, _config), do: {:ok, []}
+  def normalize_request(:none, _driver, _config, _sii_pdo_configs), do: {:ok, []}
 
-  def normalize_request({:all, domain_id}, driver, config)
+  def normalize_request({:all, domain_id}, driver, config, sii_pdo_configs)
       when is_atom(domain_id) and not is_nil(driver) do
     requested =
-      driver.process_data_model(config)
+      Driver.signal_model(driver, config, sii_pdo_configs)
       |> Enum.map(fn {signal_name, _declaration} -> {signal_name, domain_id} end)
 
     {:ok, requested}
   end
 
-  def normalize_request(requested_signals, _driver, _config) when is_list(requested_signals) do
+  def normalize_request(requested_signals, _driver, _config, _sii_pdo_configs)
+      when is_list(requested_signals) do
     if Enum.all?(requested_signals, &valid_requested_signal?/1) do
       {:ok, requested_signals}
     else
@@ -100,9 +102,10 @@ defmodule EtherCAT.Slave.ProcessData.Plan do
     end
   end
 
-  def normalize_request(_request, _driver, _config), do: {:error, :invalid_process_data_request}
+  def normalize_request(_request, _driver, _config, _sii_pdo_configs),
+    do: {:error, :invalid_process_data_request}
 
-  @spec build([{signal_name(), atom()}], process_data_model(), [sii_pdo_config()], [
+  @spec build([{signal_name(), atom()}], signal_model(), [sii_pdo_config()], [
           sii_sm_config()
         ]) ::
           {:ok, [SmGroup.t()]} | {:error, term()}

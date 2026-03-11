@@ -75,6 +75,12 @@ Use `EtherCAT.Simulator.Slave` to build devices such as:
 `EtherCAT.Simulator.Slave.Definition` is the public opaque authored device
 type used by those builders and optional driver hydration.
 
+`info/0` also exposes queued fault visibility for tooling and tests through:
+
+- `next_fault`
+- `pending_faults`
+- `udp` transport info when the UDP endpoint is running
+
 ## Fault Injection
 
 The simulator supports deterministic runtime faults for integration coverage:
@@ -89,11 +95,58 @@ The simulator supports deterministic runtime faults for integration coverage:
 This allows deep recovery tests against the real master/runtime without
 physical hardware.
 
+For datagram/runtime faults, `EtherCAT.Simulator.inject_fault/1` supports both:
+
+- sticky faults such as `:drop_responses` or `{:disconnect, :outputs}`
+- exchange-scoped wrappers such as `{:next_exchange, fault}`,
+  `{:next_exchanges, count, fault}`, and `{:exchange_script, [fault, ...]}`
+
+The current exchange-scoped fault set is:
+
+- `:drop_responses`
+- `{:wkc_offset, delta}`
+- `{:disconnect, slave_name}`
+
+These queueable faults are the ones that change datagram/runtime outcomes over
+successive exchanges.
+
+Slave-local mutations remain immediate operations today:
+
+- `{:retreat_to_safeop, slave_name}`
+- `{:latch_al_error, slave_name, code}`
+- `{:mailbox_abort, slave_name, index, subindex, abort_code}`
+
+That split is deliberate. Exchange-scoped wrappers model transport/runtime fault
+windows; direct slave-local faults model device state changes that are not tied
+to “the next N exchanges”.
+
+Typical queued runtime examples:
+
+```elixir
+EtherCAT.Simulator.inject_fault({:next_exchanges, 10, :drop_responses})
+
+EtherCAT.Simulator.inject_fault({:next_exchanges, 6, {:wkc_offset, -1}})
+
+EtherCAT.Simulator.inject_fault(
+  {:exchange_script, [:drop_responses, {:wkc_offset, -1}]}
+)
+```
+
+Transport-edge reply corruption is intentionally separate from those runtime
+faults.
+
+- Use `EtherCAT.Simulator` fault injection for datagram/runtime behavior.
+- Use `EtherCAT.Simulator.Udp` fault injection for malformed or mismatched raw
+  EtherCAT UDP replies.
+
 ## Transport Split
 
 `EtherCAT.Simulator` itself is transport-agnostic.
 
 - `EtherCAT.Simulator.Udp` exposes it over a real UDP socket.
+- `EtherCAT.Simulator.Udp.inject_fault/1` can corrupt the next UDP reply, a
+  counted reply window, or a scripted sequence of replies for integration
+  coverage of bus decode and reply-matching paths.
 - `start/1` accepts `udp: [...]` when the common simulator-plus-UDP setup
   should run under the simulator supervisor.
 - Raw-socket simulation is intentionally separate and not part of this module.

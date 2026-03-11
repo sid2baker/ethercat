@@ -10,6 +10,7 @@ defmodule EtherCAT.Simulator.Slave.Definition do
 
   alias EtherCAT.Simulator.Slave.Object
   alias EtherCAT.Simulator.Slave.Profile
+  alias EtherCAT.Slave.Driver, as: SlaveDriver
 
   @typedoc "Mailbox SM layout declared by the simulated device."
   @type mailbox_config :: %{
@@ -116,4 +117,45 @@ defmodule EtherCAT.Simulator.Slave.Definition do
       dc_capable?: dc_capable?
     }
   end
+
+  @spec from_driver(module(), map(), module()) :: t()
+  def from_driver(driver, config, adapter)
+      when is_atom(driver) and is_map(config) and is_atom(adapter) do
+    opts =
+      adapter
+      |> EtherCAT.Simulator.DriverAdapter.definition_options(config)
+      |> normalize_definition_options!(adapter)
+      |> merge_driver_identity(driver)
+
+    profile = Keyword.fetch!(opts, :profile)
+    opts = Keyword.delete(opts, :profile)
+    build(profile, opts)
+  end
+
+  defp normalize_definition_options!(opts, _adapter) when is_list(opts), do: opts
+
+  defp normalize_definition_options!(other, adapter) do
+    raise ArgumentError,
+          "simulator adapter #{inspect(adapter)} must return keyword definition options, got: #{inspect(other)}"
+  end
+
+  defp merge_driver_identity(opts, driver) do
+    case SlaveDriver.identity(driver) do
+      %{vendor_id: vendor_id, product_code: product_code, revision: revision} ->
+        opts
+        |> Keyword.put_new(:vendor_id, vendor_id)
+        |> Keyword.put_new(:product_code, product_code)
+        |> maybe_put_identity_revision(revision)
+
+      nil ->
+        opts
+    end
+  end
+
+  defp maybe_put_identity_revision(opts, revision)
+       when is_integer(revision) and revision >= 0 do
+    Keyword.put_new(opts, :revision, revision)
+  end
+
+  defp maybe_put_identity_revision(opts, _revision), do: opts
 end

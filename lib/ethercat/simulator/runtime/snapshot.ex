@@ -19,12 +19,10 @@ defmodule EtherCAT.Simulator.Runtime.Snapshot do
 
     %{
       slaves: Enum.map(slaves, &Device.info/1),
-      disconnected: faults_info.disconnected,
-      drop_responses?: faults_info.drop_responses?,
-      wkc_offset: faults_info.wkc_offset,
       connections: connections,
       subscriptions: Subscriptions.info(subscriptions)
     }
+    |> Map.merge(faults_info)
   end
 
   @spec device(simulator_state(), atom()) :: {:ok, map()} | {:error, :not_found}

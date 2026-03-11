@@ -406,7 +406,7 @@ responses by higher WKC.
 ESM state machine (Init → PreOp → SafeOp → Op and backward). Reads SII EEPROM at
 startup to get identity and mailbox config. Looks up the driver module by
 `{vendor_id, product_code}`. In PreOp, executes the driver's mailbox plan, then
-resolves its `process_data_model/1` into SM/FMMU registrations for the target domains.
+resolves its `signal_model/1` into SM/FMMU registrations for the target domains.
 
 **ProcessImage** (`EtherCAT.Slave.ProcessImage`): Stateless utility. Given a list
 of `{station, pid}` pairs and a profile map, writes SM and FMMU registers. Builds
@@ -419,7 +419,7 @@ exchange. Multiple domains can run independently at different rates on the same 
 
 **Driver behaviour** (`EtherCAT.Slave.Driver`): Implemented by the user for each
 slave type. Three mandatory callbacks:
-- `process_data_model/1` — logical signal declarations over the slave's PDO layout
+- `signal_model/1` — logical signal declarations over the slave's PDO layout
 - `encode_signal/3` — application terms → raw signal binary
 - `decode_signal/3` — raw signal binary → application terms
 

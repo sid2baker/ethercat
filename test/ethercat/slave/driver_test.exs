@@ -4,7 +4,6 @@ defmodule EtherCAT.Slave.DriverTest do
   alias EtherCAT.IntegrationSupport.Drivers.{EL1809, EL2809}
   alias EtherCAT.Slave.Driver
   alias EtherCAT.Simulator.Slave
-  alias EtherCAT.Simulator.Slave.Definition
 
   defmodule IdentityDriver do
     @behaviour EtherCAT.Slave.Driver
@@ -15,12 +14,7 @@ defmodule EtherCAT.Slave.DriverTest do
     end
 
     @impl true
-    def simulator_definition(_config) do
-      Definition.build(:digital_io, name: :driver_default)
-    end
-
-    @impl true
-    def process_data_model(_config), do: [out: 0x1600, in: 0x1A00]
+    def signal_model(_config), do: [out: 0x1600, in: 0x1A00]
 
     @impl true
     def encode_signal(_signal, _config, value), do: <<value::8>>
@@ -36,16 +30,49 @@ defmodule EtherCAT.Slave.DriverTest do
     def identity, do: nil
 
     @impl true
-    def simulator_definition(_config), do: nil
-
-    @impl true
-    def process_data_model(_config), do: [out: 0x1600]
+    def signal_model(_config), do: [out: 0x1600]
 
     @impl true
     def encode_signal(_signal, _config, value), do: <<value::8>>
 
     @impl true
     def decode_signal(_signal, _config, <<value::8>>), do: value
+  end
+
+  defmodule RevisionIdentityDriver do
+    @behaviour EtherCAT.Slave.Driver
+
+    @impl true
+    def identity do
+      %{vendor_id: 0x0000_00BB, product_code: 0x0000_2601, revision: 0x0000_0007}
+    end
+
+    @impl true
+    def signal_model(_config), do: [out: 0x1600]
+
+    @impl true
+    def encode_signal(_signal, _config, value), do: <<value::8>>
+
+    @impl true
+    def decode_signal(_signal, _config, <<value::8>>), do: value
+  end
+
+  defmodule IdentityDriver.Simulator do
+    @behaviour EtherCAT.Simulator.DriverAdapter
+
+    @impl true
+    def definition_options(_config) do
+      [profile: :digital_io, name: :driver_default]
+    end
+  end
+
+  defmodule RevisionIdentityDriver.Simulator do
+    @behaviour EtherCAT.Simulator.DriverAdapter
+
+    @impl true
+    def definition_options(_config) do
+      [profile: :digital_io, name: :revision_default]
+    end
   end
 
   test "identity/1 returns normalized driver identity" do
@@ -57,23 +84,37 @@ defmodule EtherCAT.Slave.DriverTest do
     assert nil == Driver.identity(NoSimulationDriver)
   end
 
-  test "simulator_definition/2 returns nil when the driver does not expose one" do
-    assert nil == Driver.simulator_definition(NoSimulationDriver, %{})
+  test "signal_model/2 returns the driver's logical signals" do
+    assert [out: 0x1600, in: 0x1A00] == Driver.signal_model(IdentityDriver, %{})
   end
 
-  test "simulator slave can hydrate a device from a driver callback" do
+  test "from_driver/2 defaults simulator identity from the driver" do
+    definition = Slave.from_driver(IdentityDriver)
+    assert definition.vendor_id == 0x0000_00AA
+    assert definition.product_code == 0x0000_1601
+    assert definition.revision == 0x0000_0001
+  end
+
+  test "from_driver/2 carries integer revision from driver identity" do
+    definition = Slave.from_driver(RevisionIdentityDriver)
+    assert definition.vendor_id == 0x0000_00BB
+    assert definition.product_code == 0x0000_2601
+    assert definition.revision == 0x0000_0007
+  end
+
+  test "simulator slave can hydrate a device from a driver companion module" do
     definition = Slave.from_driver(IdentityDriver, name: :hydrated, config: %{})
 
     assert definition.name == :hydrated
     assert definition.profile == :digital_io
-    assert definition.vendor_id == 0x0000_0ACE
+    assert definition.vendor_id == 0x0000_00AA
     assert definition.product_code == 0x0000_1601
     assert Map.has_key?(definition.signals, :out)
     assert Map.has_key?(definition.signals, :in)
   end
 
-  test "from_driver/2 raises when the driver does not expose simulator hydration" do
-    assert_raise ArgumentError, ~r/does not implement simulator_definition\/1/, fn ->
+  test "from_driver/2 raises when the driver does not expose simulator support" do
+    assert_raise ArgumentError, ~r/does not expose a simulator companion/, fn ->
       Slave.from_driver(NoSimulationDriver)
     end
   end

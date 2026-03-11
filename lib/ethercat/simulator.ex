@@ -12,10 +12,13 @@ defmodule EtherCAT.Simulator do
   alias EtherCAT.Simulator.Runtime.Subscriptions
   alias EtherCAT.Simulator.Runtime.Wiring
 
+  @type exchange_fault :: Faults.exchange_fault()
+
   @type fault ::
-          :drop_responses
-          | {:wkc_offset, integer()}
-          | {:disconnect, atom()}
+          exchange_fault()
+          | {:next_exchange, exchange_fault()}
+          | {:next_exchanges, pos_integer(), exchange_fault()}
+          | {:exchange_script, [exchange_fault(), ...]}
           | {:retreat_to_safeop, atom()}
           | {:latch_al_error, atom(), non_neg_integer()}
           | {:mailbox_abort, atom(), non_neg_integer(), non_neg_integer(), non_neg_integer()}
@@ -106,7 +109,7 @@ defmodule EtherCAT.Simulator do
     :exit, {:timeout, _} -> {:error, :timeout}
   end
 
-  @spec inject_fault(fault()) :: :ok | {:error, :not_found}
+  @spec inject_fault(fault()) :: :ok | {:error, :invalid_fault | :not_found}
   def inject_fault(fault), do: GenServer.call(@default_name, {:inject_fault, fault})
 
   @spec clear_faults() :: :ok
@@ -218,28 +221,33 @@ defmodule EtherCAT.Simulator do
     {:reply, {:ok, Snapshot.simulator(state)}, state}
   end
 
-  def handle_call(
-        {:process_datagrams, _datagrams},
-        _from,
-        %{faults: %{drop_responses?: true}} = state
-      ) do
-    {:reply, {:error, :no_response}, state}
-  end
-
   @impl true
   def handle_call(
         {:process_datagrams, datagrams},
         _from,
         %{slaves: slaves, faults: faults} = state
       ) do
-    before_signals = Wiring.capture_signal_values(slaves)
+    {planned_fault, faults} = Faults.pop_pending(faults)
+    effective_faults = Faults.apply_pending(faults, planned_fault)
+    state = %{state | faults: faults}
 
-    {responses, slaves} =
-      Router.process_datagrams(datagrams, slaves, faults.disconnected, faults.wkc_offset)
+    if effective_faults.drop_responses? do
+      {:reply, {:error, :no_response}, state}
+    else
+      before_signals = Wiring.capture_signal_values(slaves)
 
-    state = finalize_signal_changes(%{state | slaves: slaves}, before_signals)
+      {responses, slaves} =
+        Router.process_datagrams(
+          datagrams,
+          slaves,
+          effective_faults.disconnected,
+          effective_faults.wkc_offset
+        )
 
-    {:reply, {:ok, responses}, state}
+      state = finalize_signal_changes(%{state | slaves: slaves}, before_signals)
+
+      {:reply, {:ok, responses}, state}
+    end
   end
 
   def handle_call({:inject_fault, :drop_responses}, _from, state) do
@@ -253,6 +261,18 @@ defmodule EtherCAT.Simulator do
 
   def handle_call({:inject_fault, {:disconnect, slave_name}}, _from, state) do
     {:reply, :ok, %{state | faults: Faults.inject(state.faults, {:disconnect, slave_name})}}
+  end
+
+  def handle_call({:inject_fault, {:next_exchange, fault}}, _from, state) do
+    reply_with_enqueued_fault(state, {:next_exchange, fault})
+  end
+
+  def handle_call({:inject_fault, {:next_exchanges, count, fault}}, _from, state) do
+    reply_with_enqueued_fault(state, {:next_exchanges, count, fault})
+  end
+
+  def handle_call({:inject_fault, {:exchange_script, planned_faults}}, _from, state) do
+    reply_with_enqueued_fault(state, {:exchange_script, planned_faults})
   end
 
   def handle_call({:inject_fault, {:retreat_to_safeop, slave_name}}, _from, state) do
@@ -276,6 +296,10 @@ defmodule EtherCAT.Simulator do
       slave_name,
       &Device.inject_mailbox_abort(&1, index, subindex, abort_code)
     )
+  end
+
+  def handle_call({:inject_fault, _fault}, _from, state) do
+    {:reply, {:error, :invalid_fault}, state}
   end
 
   def handle_call(:clear_faults, _from, state) do
@@ -458,6 +482,16 @@ defmodule EtherCAT.Simulator do
 
       {:error, reason} ->
         {:reply, {:error, reason}, state}
+    end
+  end
+
+  defp reply_with_enqueued_fault(state, planned_fault) do
+    case Faults.enqueue(state.faults, planned_fault) do
+      {:ok, faults} ->
+        {:reply, :ok, %{state | faults: faults}}
+
+      :error ->
+        {:reply, {:error, :invalid_fault}, state}
     end
   end
 

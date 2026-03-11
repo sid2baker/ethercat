@@ -45,10 +45,7 @@ defmodule EtherCAT.Slave.Mailbox.CoETest do
     def identity, do: nil
 
     @impl true
-    def simulator_definition(_config), do: nil
-
-    @impl true
-    def process_data_model(_config), do: %{}
+    def signal_model(_config), do: %{}
 
     @impl true
     def encode_signal(_signal, _config, _value), do: <<>>
@@ -69,10 +66,7 @@ defmodule EtherCAT.Slave.Mailbox.CoETest do
     def identity, do: nil
 
     @impl true
-    def simulator_definition(_config), do: nil
-
-    @impl true
-    def process_data_model(_config), do: %{}
+    def signal_model(_config), do: %{}
 
     @impl true
     def encode_signal(_signal, _config, _value), do: <<>>
