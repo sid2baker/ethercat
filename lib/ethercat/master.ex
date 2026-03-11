@@ -10,6 +10,7 @@ defmodule EtherCAT.Master do
   alias EtherCAT.Master.Activation
   alias EtherCAT.Master.Calls
   alias EtherCAT.Master.Config
+  alias EtherCAT.Master.Deactivation
   alias EtherCAT.Master.Preop
   alias EtherCAT.Master.Recovery
   alias EtherCAT.Master.Session
@@ -39,6 +40,7 @@ defmodule EtherCAT.Master do
     :scan_poll_ms,
     :scan_stable_ms,
     base_station: @base_station,
+    desired_runtime_target: :op,
     activatable_slaves: [],
     slaves: [],
     # [{monotonic_ms, count}] — sliding window for scan stability
@@ -46,7 +48,7 @@ defmodule EtherCAT.Master do
     slave_count: nil,
     # MapSet of slave names still waiting to report :preop
     pending_preop: MapSet.new(),
-    # %{slave_name => reason} for startup activation blockers
+    # %{slave_name => reason} for desired-runtime-target transition blockers
     activation_failures: %{},
     # %{fault_key => reason} for critical runtime degradations that block healthy cyclic runtime
     runtime_faults: %{},
@@ -111,6 +113,7 @@ defmodule EtherCAT.Master do
           frame_timeout_override_ms: start_config.frame_timeout_override_ms,
           scan_poll_ms: start_config.scan_poll_ms,
           scan_stable_ms: start_config.scan_stable_ms,
+          desired_runtime_target: runtime_target_from_configs(start_config.slave_config),
           activatable_slaves: [],
           slaves: [],
           scan_window: [],
@@ -202,6 +205,11 @@ defmodule EtherCAT.Master do
 
       case Startup.configure_network(config_data) do
         {:ok, configured} ->
+          configured = %{
+            configured
+            | desired_runtime_target: runtime_target_from_names(configured.activatable_slaves)
+          }
+
           if MapSet.size(configured.pending_preop) == 0 do
             Logger.info("[Master] all slaves in :preop — activating")
 
@@ -344,6 +352,12 @@ defmodule EtherCAT.Master do
     {:keep_state, %{data | await_callers: []}}
   end
 
+  def handle_event(:enter, _old, :deactivated, data) do
+    Logger.info("[Master] deactivated — runtime settled below OP, waiting for activate/0")
+    reply_await_callers(data.await_callers, :ok)
+    {:keep_state, %{data | await_callers: []}}
+  end
+
   def handle_event(:enter, _old, :operational, data) do
     Logger.info("[Master] running")
     reply_await_callers(data.await_callers, :ok)
@@ -353,14 +367,14 @@ defmodule EtherCAT.Master do
   end
 
   def handle_event({:call, from}, :stop, state, data)
-      when state in [:preop_ready, :operational] do
+      when state in [:preop_ready, :deactivated, :operational] do
     stop_session(data)
     reply_await_callers(data.await_operational_callers, {:error, :stopped})
     {:next_state, :idle, reset_master(data.last_failure), [{:reply, from, :ok}]}
   end
 
   def handle_event({:call, from}, :await_running, state, _data)
-      when state in [:preop_ready, :operational] do
+      when state in [:preop_ready, :deactivated, :operational] do
     {:keep_state_and_data, [{:reply, from, :ok}]}
   end
 
@@ -374,6 +388,10 @@ defmodule EtherCAT.Master do
   end
 
   def handle_event({:call, from}, :await_operational, :preop_ready, data) do
+    {:keep_state, %{data | await_operational_callers: [from | data.await_operational_callers]}}
+  end
+
+  def handle_event({:call, from}, :await_operational, :deactivated, data) do
     {:keep_state, %{data | await_operational_callers: [from | data.await_operational_callers]}}
   end
 
@@ -401,6 +419,15 @@ defmodule EtherCAT.Master do
     end
   end
 
+  def handle_event(
+        {:call, from},
+        {:configure_slave, _slave_name, _spec},
+        :deactivated,
+        _data
+      ) do
+    {:keep_state_and_data, [{:reply, from, {:error, :not_preop}}]}
+  end
+
   def handle_event({:call, from}, :activate, :operational, _data) do
     {:keep_state_and_data, [{:reply, from, {:error, :already_activated}}]}
   end
@@ -408,7 +435,7 @@ defmodule EtherCAT.Master do
   def handle_event({:call, from}, :activate, :preop_ready, data) do
     case Activation.activate_network(data) do
       {:ok, next_state, active_data} ->
-        reply_await_callers(active_data.await_operational_callers, :ok)
+        maybe_reply_await_operational(active_data.await_operational_callers, next_state)
 
         {:next_state, next_state, %{active_data | await_operational_callers: []},
          [{:reply, from, :ok}]}
@@ -419,6 +446,48 @@ defmodule EtherCAT.Master do
       {:error, reason, _failed_data} ->
         {:keep_state_and_data, [{:reply, from, {:error, reason}}]}
     end
+  end
+
+  def handle_event({:call, from}, :activate, :deactivated, data) do
+    activating = %{data | desired_runtime_target: :op}
+
+    case Activation.activate_network(activating) do
+      {:ok, next_state, active_data} ->
+        maybe_reply_await_operational(active_data.await_operational_callers, next_state)
+
+        {:next_state, next_state, %{active_data | await_operational_callers: []},
+         [{:reply, from, :ok}]}
+
+      {:activation_blocked, blocked_data} ->
+        {:next_state, :activation_blocked, blocked_data, [{:reply, from, :ok}]}
+
+      {:error, reason, _failed_data} ->
+        {:keep_state_and_data, [{:reply, from, {:error, reason}}]}
+    end
+  end
+
+  def handle_event({:call, from}, {:deactivate, :preop}, :preop_ready, data) do
+    {:keep_state, %{data | desired_runtime_target: :preop}, [{:reply, from, :ok}]}
+  end
+
+  def handle_event({:call, from}, {:deactivate, target}, state, data)
+      when state in [:deactivated, :operational, :activation_blocked, :recovering] and
+             target in [:safeop, :preop] do
+    if deactivated_target_settled?(state, data, target) do
+      {:keep_state, %{data | desired_runtime_target: target}, [{:reply, from, :ok}]}
+    else
+      case Deactivation.deactivate_network(%{data | desired_runtime_target: target}, target) do
+        {:ok, next_state, deactivated_data} ->
+          {:next_state, next_state, deactivated_data, [{:reply, from, :ok}]}
+
+        {:activation_blocked, blocked_data} ->
+          {:next_state, :activation_blocked, blocked_data, [{:reply, from, :ok}]}
+      end
+    end
+  end
+
+  def handle_event({:call, from}, {:deactivate, :safeop}, :preop_ready, _data) do
+    {:keep_state_and_data, [{:reply, from, {:error, :not_operational}}]}
   end
 
   # Activation blocked -------------------------------------------------------
@@ -563,6 +632,7 @@ defmodule EtherCAT.Master do
              :discovering,
              :awaiting_preop,
              :preop_ready,
+             :deactivated,
              :operational,
              :activation_blocked,
              :recovering
@@ -895,6 +965,21 @@ defmodule EtherCAT.Master do
 
   defp reset_master(last_failure), do: %__MODULE__{last_failure: last_failure}
 
+  defp runtime_target_from_configs(slave_configs) do
+    if Config.activatable_slave_names(slave_configs || []) == [] do
+      :preop
+    else
+      :op
+    end
+  end
+
+  defp runtime_target_from_names([]), do: :preop
+  defp runtime_target_from_names(_activatable_slaves), do: :op
+
+  defp deactivated_target_settled?(state, _data, :safeop) when state == :deactivated, do: true
+  defp deactivated_target_settled?(state, _data, :preop) when state == :preop_ready, do: true
+  defp deactivated_target_settled?(_state, _data, _target), do: false
+
   defp track_slave_fault(state, data, name, reason) do
     updated = Recovery.put_slave_fault(data, name, reason)
 
@@ -953,6 +1038,12 @@ defmodule EtherCAT.Master do
   defp stop_session(data) do
     Session.stop(data)
   end
+
+  defp maybe_reply_await_operational(callers, :operational) do
+    reply_await_callers(callers, :ok)
+  end
+
+  defp maybe_reply_await_operational(_callers, _next_state), do: :ok
 
   defp reply_await_callers(callers, reply) do
     Enum.each(callers, fn from -> :gen_statem.reply(from, reply) end)

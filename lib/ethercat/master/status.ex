@@ -6,22 +6,38 @@ defmodule EtherCAT.Master.Status do
   alias EtherCAT.DC.Status, as: DCStatus
   alias EtherCAT.Domain.API, as: DomainAPI
 
+  @spec desired_runtime_target(%EtherCAT.Master{}) :: :op | :safeop | :preop
+  def desired_runtime_target(%{desired_runtime_target: target})
+      when target in [:op, :safeop, :preop] do
+    target
+  end
+
+  def desired_runtime_target(_data), do: :op
+
+  @spec desired_public_state(%EtherCAT.Master{}) :: :preop_ready | :deactivated | :operational
+  def desired_public_state(data) do
+    case desired_runtime_target(data) do
+      :op -> :operational
+      :safeop -> :deactivated
+      :preop -> :preop_ready
+    end
+  end
+
   @spec activation_blocked_reply(%EtherCAT.Master{}) :: {:error, term()}
   def activation_blocked_reply(data) do
     activation_failures = data.activation_failures
     runtime_faults = data.runtime_faults
+    desired_target = desired_runtime_target(data)
 
     cond do
       map_size(activation_failures) > 0 and map_size(runtime_faults) == 0 ->
-        {:error, {:activation_failed, activation_failures}}
+        activation_blocked_transition_reply(desired_target, activation_failures)
 
       map_size(activation_failures) == 0 and map_size(runtime_faults) > 0 ->
         {:error, {:runtime_degraded, runtime_faults}}
 
       true ->
-        {:error,
-         {:activation_blocked,
-          %{activation_failures: activation_failures, runtime_faults: runtime_faults}}}
+        activation_blocked_combined_reply(desired_target, activation_failures, runtime_faults)
     end
   end
 
@@ -36,12 +52,12 @@ defmodule EtherCAT.Master.Status do
     runtime_count = map_size(data.runtime_faults)
     slave_fault_count = map_size(data.slave_faults)
 
-    "activation_failures=#{activation_count} runtime_faults=#{runtime_count} slave_faults=#{slave_fault_count}"
+    "target=#{desired_runtime_target(data)} activation_failures=#{activation_count} runtime_faults=#{runtime_count} slave_faults=#{slave_fault_count}"
   end
 
   @spec recovering_summary(%EtherCAT.Master{}) :: String.t()
   def recovering_summary(data) do
-    "runtime_faults=#{map_size(data.runtime_faults)} activation_failures=#{map_size(data.activation_failures)} slave_faults=#{map_size(data.slave_faults)}"
+    "target=#{desired_runtime_target(data)} runtime_faults=#{map_size(data.runtime_faults)} activation_failures=#{map_size(data.activation_failures)} slave_faults=#{map_size(data.slave_faults)}"
   end
 
   @spec dc_status(%EtherCAT.Master{}) :: DCStatus.t()
@@ -161,5 +177,29 @@ defmodule EtherCAT.Master.Status do
 
   defp dc_running? do
     is_pid(Process.whereis(DC))
+  end
+
+  defp activation_blocked_transition_reply(:op, activation_failures) do
+    {:error, {:activation_failed, activation_failures}}
+  end
+
+  defp activation_blocked_transition_reply(target, activation_failures) do
+    {:error, {:deactivation_failed, target, activation_failures}}
+  end
+
+  defp activation_blocked_combined_reply(:op, activation_failures, runtime_faults) do
+    {:error,
+     {:activation_blocked,
+      %{activation_failures: activation_failures, runtime_faults: runtime_faults}}}
+  end
+
+  defp activation_blocked_combined_reply(target, activation_failures, runtime_faults) do
+    {:error,
+     {:target_blocked,
+      %{
+        target: target,
+        activation_failures: activation_failures,
+        runtime_faults: runtime_faults
+      }}}
   end
 end

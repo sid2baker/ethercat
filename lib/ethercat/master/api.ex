@@ -47,6 +47,15 @@ defmodule EtherCAT.Master.API do
   @spec activate() :: :ok | {:error, term()}
   def activate, do: safe_call(:activate)
 
+  @spec deactivate(:safeop | :preop) :: :ok | {:error, term()}
+  def deactivate(target \\ :safeop)
+
+  def deactivate(target) when target in [:safeop, :preop] do
+    safe_call({:deactivate, target})
+  end
+
+  def deactivate(_target), do: {:error, :invalid_deactivate_target}
+
   @spec update_domain_cycle_time(atom(), pos_integer()) :: :ok | {:error, term()}
   def update_domain_cycle_time(domain_id, cycle_time_us)
       when is_atom(domain_id) and is_integer(cycle_time_us) and cycle_time_us > 0 do

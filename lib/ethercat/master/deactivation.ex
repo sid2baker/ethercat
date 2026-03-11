@@ -1,0 +1,100 @@
+defmodule EtherCAT.Master.Deactivation do
+  @moduledoc false
+
+  require Logger
+
+  alias EtherCAT.DC
+  alias EtherCAT.Domain.API, as: DomainAPI
+  alias EtherCAT.Master.Config
+  alias EtherCAT.Master.Status
+  alias EtherCAT.Slave.API, as: SlaveAPI
+
+  @spec deactivate_network(%EtherCAT.Master{}, :safeop | :preop) ::
+          {:ok, :deactivated | :preop_ready, %EtherCAT.Master{}}
+          | {:activation_blocked, %EtherCAT.Master{}}
+  def deactivate_network(data, target) when target in [:safeop, :preop] do
+    Logger.info(
+      "[Master] deactivating — stopping cyclic runtime and retreating activatable slaves to :#{target}"
+    )
+
+    stopped_data =
+      data
+      |> stop_domain_cycles()
+      |> stop_dc_runtime()
+      |> Map.put(:desired_runtime_target, target)
+      |> Map.put(:runtime_faults, %{})
+      |> Map.put(:activation_failures, %{})
+
+    {activation_failures, slave_faults} =
+      Enum.reduce(stopped_data.activatable_slaves, {%{}, stopped_data.slave_faults}, fn name,
+                                                                                        {failures,
+                                                                                         faults} ->
+        case SlaveAPI.request(name, target) do
+          :ok ->
+            {failures, Map.delete(faults, name)}
+
+          {:error, reason} ->
+            Logger.warning(
+              "[Master] slave #{inspect(name)} → #{target} failed during deactivation: #{inspect(reason)}"
+            )
+
+            {Map.put(failures, name, {target, reason}), faults}
+        end
+      end)
+
+    updated_data = %{
+      stopped_data
+      | activation_failures: activation_failures,
+        slave_faults: slave_faults
+    }
+
+    if map_size(activation_failures) == 0 do
+      {:ok, Status.desired_public_state(updated_data), updated_data}
+    else
+      {:activation_blocked, updated_data}
+    end
+  end
+
+  defp stop_domain_cycles(data) do
+    Enum.each(Config.domain_ids(data.domain_configs || []), fn domain_id ->
+      case DomainAPI.stop_cycling(domain_id) do
+        :ok ->
+          :ok
+
+        {:error, :not_found} ->
+          :ok
+
+        {:error, reason} ->
+          Logger.warning(
+            "[Master] failed to stop domain #{domain_id} during deactivation: #{inspect(reason)}"
+          )
+      end
+    end)
+
+    data
+  end
+
+  defp stop_dc_runtime(%{dc_ref: ref} = data) when is_reference(ref) do
+    Process.demonitor(ref, [:flush])
+
+    case Process.whereis(DC) do
+      pid when is_pid(pid) ->
+        _ = DynamicSupervisor.terminate_child(EtherCAT.SessionSupervisor, pid)
+        %{data | dc_ref: nil}
+
+      nil ->
+        %{data | dc_ref: nil}
+    end
+  end
+
+  defp stop_dc_runtime(data) do
+    case Process.whereis(DC) do
+      pid when is_pid(pid) ->
+        _ = DynamicSupervisor.terminate_child(EtherCAT.SessionSupervisor, pid)
+        %{data | dc_ref: nil}
+
+      nil ->
+        %{data | dc_ref: nil}
+    end
+  end
+end

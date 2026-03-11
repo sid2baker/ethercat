@@ -28,8 +28,9 @@ state machine, while the helpers own the operational detail.
 - `:discovering` - Scanning the bus, counting slaves, assigning stations, and preparing startup
 - `:awaiting_preop` - Waiting for configured slaves to reach PREOP
 - `:preop_ready` - All slaves in PREOP, ready for activation or dynamic configuration
+- `:deactivated` - Session stays live but the desired runtime target is intentionally below OP
 - `:operational` - Cyclic operation active; non-critical per-slave faults are tracked separately
-- `:activation_blocked` - Activation incomplete (DC lock, slave failures, etc.)
+- `:activation_blocked` - Transition to the desired runtime target is incomplete
 - `:recovering` - Runtime fault detected and the master is healing critical runtime faults
 
 ## Startup Sequencing
@@ -121,15 +122,27 @@ stateDiagram-v2
     awaiting_preop --> activation_blocked: all slaves reached PREOP but activation is incomplete
     awaiting_preop --> idle: timeout, fatal activation failure, or stop/0
     preop_ready --> operational: activate/0 succeeds
+    preop_ready --> deactivated: deactivate/0 settles in SAFEOP
     preop_ready --> activation_blocked: activate/0 is incomplete
     preop_ready --> recovering: critical runtime fault
     preop_ready --> idle: stop/0 or fatal subsystem exit
+    deactivated --> operational: activate/0 succeeds
+    deactivated --> preop_ready: deactivate(:preop)
+    deactivated --> activation_blocked: target transition remains incomplete
+    deactivated --> recovering: runtime fault in retained session structure
+    deactivated --> idle: stop/0 or fatal subsystem exit
     operational --> recovering: runtime fault in domain or DC
+    operational --> deactivated: deactivate/0 settles in SAFEOP
+    operational --> preop_ready: deactivate(:preop)
     operational --> idle: stop/0 or fatal subsystem exit
-    activation_blocked --> operational: activation failures clear and no runtime faults remain
+    activation_blocked --> operational: activation failures clear and target is OP
+    activation_blocked --> deactivated: transition failures clear and target is SAFEOP
+    activation_blocked --> preop_ready: transition failures clear and target is PREOP
     activation_blocked --> recovering: activation failures clear but runtime faults remain
     activation_blocked --> idle: stop/0 or fatal subsystem exit
-    recovering --> operational: critical runtime faults are cleared
+    recovering --> operational: critical runtime faults are cleared and target is OP
+    recovering --> deactivated: critical runtime faults are cleared and target is SAFEOP
+    recovering --> preop_ready: critical runtime faults are cleared and target is PREOP
     recovering --> idle: stop/0 or recovery fails
 ```
 

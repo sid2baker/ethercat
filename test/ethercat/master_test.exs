@@ -74,14 +74,15 @@ defmodule EtherCAT.MasterTest do
       {:keep_state_and_data, [{:reply, from, authorize_reply}]}
     end
 
-    def handle_event({:call, from}, {:request, :op}, _state, _data) do
+    def handle_event({:call, from}, {:request, target}, _state, _data)
+        when target in [:preop, :safeop, :op] do
       {:keep_state_and_data, [{:reply, from, :ok}]}
     end
 
     def handle_event(_type, _event, _state, data), do: {:keep_state, data}
   end
 
-  test "state reports preop_ready and operational distinctly" do
+  test "state reports preop_ready, deactivated, and operational distinctly" do
     from = {self(), make_ref()}
 
     assert {:keep_state_and_data, [{:reply, ^from, :preop_ready}]} =
@@ -89,6 +90,14 @@ defmodule EtherCAT.MasterTest do
                {:call, from},
                :state,
                :preop_ready,
+               %EtherCAT.Master{}
+             )
+
+    assert {:keep_state_and_data, [{:reply, ^from, :deactivated}]} =
+             EtherCAT.Master.handle_event(
+               {:call, from},
+               :state,
+               :deactivated,
                %EtherCAT.Master{}
              )
 
@@ -125,6 +134,14 @@ defmodule EtherCAT.MasterTest do
                {:call, from},
                :await_operational,
                :preop_ready,
+               %EtherCAT.Master{await_operational_callers: []}
+             )
+
+    assert {:keep_state, %EtherCAT.Master{await_operational_callers: [^from]}} =
+             EtherCAT.Master.handle_event(
+               {:call, from},
+               :await_operational,
+               :deactivated,
                %EtherCAT.Master{await_operational_callers: []}
              )
 
@@ -244,6 +261,93 @@ defmodule EtherCAT.MasterTest do
              )
 
     assert healed.activation_failures == %{}
+  end
+
+  test "activation_blocked honors a SAFEOP deactivation target when the slave reaches preop" do
+    start_supervised!(%{
+      id: make_ref(),
+      start: {FakeSlave, :start_link, [:sensor, :ok]}
+    })
+
+    data = %EtherCAT.Master{
+      desired_runtime_target: :safeop,
+      activation_failures: %{sensor: {:down, :disconnected}},
+      slave_configs: [%SlaveConfig{name: :sensor, process_data: {:all, :main}}],
+      slaves: [{:sensor, 0x1001}]
+    }
+
+    assert {:keep_state, %EtherCAT.Master{} = authorized, _actions} =
+             EtherCAT.Master.handle_event(
+               :info,
+               {:slave_reconnected, :sensor},
+               :activation_blocked,
+               data
+             )
+
+    assert authorized.activation_failures == %{sensor: {:reconnecting, :authorized}}
+
+    assert {:next_state, :deactivated, %EtherCAT.Master{} = settled} =
+             EtherCAT.Master.handle_event(
+               :info,
+               {:slave_ready, :sensor, :preop},
+               :activation_blocked,
+               authorized
+             )
+
+    assert settled.activation_failures == %{}
+    assert settled.desired_runtime_target == :safeop
+  end
+
+  test "deactivate from operational settles in deactivated by default" do
+    from = {self(), make_ref()}
+
+    start_supervised!(%{
+      id: make_ref(),
+      start: {FakeSlave, :start_link, [:sensor, :ok]}
+    })
+
+    data = %EtherCAT.Master{
+      activatable_slaves: [:sensor],
+      slave_configs: [%SlaveConfig{name: :sensor, process_data: {:all, :main}}],
+      slaves: [{:sensor, 0x1001}]
+    }
+
+    assert {:next_state, :deactivated, %EtherCAT.Master{} = updated, [{:reply, ^from, :ok}]} =
+             EtherCAT.Master.handle_event(
+               {:call, from},
+               {:deactivate, :safeop},
+               :operational,
+               data
+             )
+
+    assert updated.desired_runtime_target == :safeop
+    assert updated.activation_failures == %{}
+  end
+
+  test "deactivate(:preop) from operational settles in preop_ready" do
+    from = {self(), make_ref()}
+
+    start_supervised!(%{
+      id: make_ref(),
+      start: {FakeSlave, :start_link, [:sensor, :ok]}
+    })
+
+    data = %EtherCAT.Master{
+      activatable_slaves: [:sensor],
+      slave_configs: [%SlaveConfig{name: :sensor, process_data: {:all, :main}}],
+      slaves: [{:sensor, 0x1001}]
+    }
+
+    assert {:next_state, :preop_ready, %EtherCAT.Master{} = updated, [{:reply, ^from, :ok}]} =
+             EtherCAT.Master.handle_event(
+               {:call, from},
+               {:deactivate, :preop},
+               :operational,
+               data
+             )
+
+    assert updated.desired_runtime_target == :preop
+    assert updated.activation_failures == %{}
   end
 
   test "activation_blocked ignores reconnect events for slaves that are not activation blockers" do

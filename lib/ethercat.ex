@@ -20,6 +20,7 @@ defmodule EtherCAT do
   - `:discovering`
   - `:awaiting_preop`
   - `:preop_ready`
+  - `:deactivated`
   - `:operational`
   - `:activation_blocked`
   - `:recovering`
@@ -46,15 +47,27 @@ defmodule EtherCAT do
       awaiting_preop --> activation_blocked: all slaves reached PREOP but activation is incomplete
       awaiting_preop --> idle: timeout, fatal activation failure, or stop/0
       preop_ready --> operational: activate/0 succeeds
+      preop_ready --> deactivated: deactivate/0 settles in SAFEOP
       preop_ready --> activation_blocked: activate/0 is incomplete
       preop_ready --> recovering: critical runtime fault
       preop_ready --> idle: stop/0 or fatal subsystem exit
+      deactivated --> operational: activate/0 succeeds
+      deactivated --> preop_ready: deactivate(:preop)
+      deactivated --> activation_blocked: target transition is incomplete
+      deactivated --> recovering: critical runtime fault
+      deactivated --> idle: stop/0 or fatal subsystem exit
       activation_blocked --> operational: retry clears activation failures and no runtime faults remain
+      activation_blocked --> deactivated: retry clears transition failures and SAFEOP is healthy
+      activation_blocked --> preop_ready: retry clears transition failures and PREOP is healthy
       activation_blocked --> recovering: activation failures clear but runtime faults remain
       activation_blocked --> idle: stop/0 or fatal subsystem exit
+      operational --> deactivated: deactivate/0 settles in SAFEOP
+      operational --> preop_ready: deactivate(:preop)
       operational --> recovering: runtime fault in domain or DC
       operational --> idle: stop/0 or fatal subsystem exit
-      recovering --> operational: critical runtime faults are cleared
+      recovering --> operational: critical runtime faults are cleared and target is OP
+      recovering --> deactivated: critical runtime faults are cleared and target is SAFEOP
+      recovering --> preop_ready: critical runtime faults are cleared and target is PREOP
       recovering --> idle: stop/0 or recovery fails
   ```
 
@@ -130,6 +143,7 @@ defmodule EtherCAT do
       EtherCAT.subscribe(:sensor, :ch1)   # receive {:ethercat, :signal, :sensor, :ch1, value}
       EtherCAT.write_output(:valve, :ch1, 1)
 
+      EtherCAT.deactivate()
       EtherCAT.stop()
 
   ## Dynamic PREOP Configuration
@@ -203,7 +217,7 @@ defmodule EtherCAT do
   @spec start(keyword()) :: :ok | {:error, term()}
   def start(opts \\ []), do: MasterAPI.start(opts)
 
-  @doc "Stop the master: shut down all slaves, domains, and the bus. Returns `:already_stopped` if not running."
+  @doc "Stop the master: tear the session down completely. Returns `:already_stopped` if not running."
   @spec stop() :: :ok | :already_stopped
   def stop, do: MasterAPI.stop()
 
@@ -221,7 +235,8 @@ defmodule EtherCAT do
   @doc """
   Block until the master reaches operational cyclic runtime, then return `:ok`.
 
-  This is stricter than `await_running/1`: `:preop_ready` is not enough.
+  This is stricter than `await_running/1`: `:preop_ready` and `:deactivated`
+  are not enough.
   """
   @spec await_operational(timeout_ms :: pos_integer()) :: :ok | {:error, term()}
   def await_operational(timeout_ms \\ 10_000), do: MasterAPI.await_operational(timeout_ms)
@@ -234,8 +249,9 @@ defmodule EtherCAT do
     - `:discovering`
     - `:awaiting_preop`
     - `:preop_ready`
+    - `:deactivated` — session is live but intentionally settled below OP, typically SAFEOP
     - `:operational` — cyclic OP path is healthy; inspect `slaves/0` for non-critical per-slave faults
-    - `:activation_blocked` — startup/activation is blocked before operational cyclic runtime
+    - `:activation_blocked` — the transition to the desired runtime target is blocked
     - `:recovering` — runtime fault recovery in progress
 
   Returns `{:error, :not_started}` if the master does not exist and
@@ -246,6 +262,7 @@ defmodule EtherCAT do
           | :discovering
           | :awaiting_preop
           | :preop_ready
+          | :deactivated
           | :operational
           | :activation_blocked
           | :recovering
@@ -301,6 +318,15 @@ defmodule EtherCAT do
   """
   @spec activate() :: :ok | {:error, term()}
   def activate, do: MasterAPI.activate()
+
+  @doc """
+  Leave OP while keeping the session alive.
+
+  `deactivate/0` settles the runtime in SAFEOP by default. Use
+  `deactivate(:preop)` when you need to re-enter PREOP for reconfiguration.
+  """
+  @spec deactivate(:safeop | :preop) :: :ok | {:error, term()}
+  def deactivate(target \\ :safeop), do: MasterAPI.deactivate(target)
 
   @doc """
   Return `[%{name:, station:, server:, pid:, fault:}]` for all running slaves.
