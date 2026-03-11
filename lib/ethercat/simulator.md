@@ -49,17 +49,18 @@ private slave runtime and profile modules under `lib/ethercat/simulator/slave/`.
 
 Main entry points:
 
-- `start_link/1` — start only the in-memory simulator core
-- `start/1` — start the common public simulator runtime
-- `stop/1` — stop either a simulator core or a combined simulator-plus-UDP runtime
-- `process_datagrams/2` — execute EtherCAT datagrams directly
-- `inject_fault/2` / `clear_faults/1` — deterministic fault injection
-- `info/1`, `device_snapshot/2`, `signal_snapshot/3`, `connection_snapshot/1`
+- `start/1` — start the public simulator runtime under
+  `EtherCAT.Simulator.Supervisor`
+- `start_link/1` — low-level in-memory simulator core only
+- `stop/0` — stop the singleton simulator runtime
+- `process_datagrams/1` — execute EtherCAT datagrams directly
+- `inject_fault/1` / `clear_faults/0` — deterministic fault injection
+- `info/0`, `device_snapshot/1`, `signal_snapshot/2`, `connection_snapshot/0`
   — stable runtime snapshots for tooling
-- `slave_info/2` — compatibility-oriented per-device diagnostic lookup
-- `signals/2`, `signal_definitions/2`, `get_value/3`, `set_value/4`
-- `connect/3`, `disconnect/3`, `connections/1` — cross-slave signal wiring
-- `subscribe/4` / `unsubscribe/4` — widget-friendly signal observation
+- `slave_info/1` — compatibility-oriented per-device diagnostic lookup
+- `signals/1`, `signal_definitions/1`, `get_value/2`, `set_value/3`
+- `connect/2`, `disconnect/2`, `connections/0` — cross-slave signal wiring
+- `subscribe/3` / `unsubscribe/3` — widget-friendly signal observation
 
 Use `EtherCAT.Simulator.Slave` to build devices such as:
 
@@ -93,6 +94,6 @@ physical hardware.
 `EtherCAT.Simulator` itself is transport-agnostic.
 
 - `EtherCAT.Simulator.Udp` exposes it over a real UDP socket.
-- `start/1` is the convenience entry point for the common simulator-plus-UDP
-  setup used by integration tests and tooling.
+- `start/1` accepts `udp: [...]` when the common simulator-plus-UDP setup
+  should run under the simulator supervisor.
 - Raw-socket simulation is intentionally separate and not part of this module.

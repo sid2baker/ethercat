@@ -39,67 +39,86 @@ defmodule EtherCAT.Simulator.Slave do
     Map.keys(signals)
   end
 
+  @spec signals(atom()) :: {:ok, [atom()]} | {:error, :not_found}
+  def signals(slave_name) when is_atom(slave_name) do
+    Simulator.signals(slave_name)
+  end
+
   @spec signal_definitions(device()) :: %{optional(atom()) => map()}
   def signal_definitions(%{signals: signals}), do: signals
 
-  @spec signal_definitions(pid(), atom()) ::
+  @spec signal_definitions(atom()) ::
           {:ok, %{optional(atom()) => map()}} | {:error, :not_found}
-  def signal_definitions(simulator, slave_name)
-      when is_pid(simulator) and is_atom(slave_name) do
-    Simulator.signal_definitions(simulator, slave_name)
+  def signal_definitions(slave_name) when is_atom(slave_name) do
+    Simulator.signal_definitions(slave_name)
   end
 
-  @spec signals(pid(), atom()) :: {:ok, [atom()]} | {:error, :not_found}
-  def signals(simulator, slave_name) when is_pid(simulator) and is_atom(slave_name) do
-    Simulator.signals(simulator, slave_name)
-  end
-
-  @spec get_value(pid(), atom(), atom()) ::
+  @spec get_value(atom(), atom()) ::
           {:ok, term()} | {:error, :not_found | :unknown_signal}
-  def get_value(simulator, slave_name, signal_name)
-      when is_pid(simulator) and is_atom(slave_name) and is_atom(signal_name) do
-    Simulator.get_value(simulator, slave_name, signal_name)
+  def get_value(slave_name, signal_name)
+      when is_atom(slave_name) and is_atom(signal_name) do
+    Simulator.get_value(slave_name, signal_name)
   end
 
-  @spec set_value(pid(), atom(), atom(), term()) ::
+  @spec set_value(atom(), atom(), term()) ::
           :ok | {:error, :not_found | :unknown_signal | :invalid_value}
-  def set_value(simulator, slave_name, signal_name, value)
-      when is_pid(simulator) and is_atom(slave_name) and is_atom(signal_name) do
-    Simulator.set_value(simulator, slave_name, signal_name, value)
+  def set_value(slave_name, signal_name, value)
+      when is_atom(slave_name) and is_atom(signal_name) do
+    Simulator.set_value(slave_name, signal_name, value)
   end
 
-  @spec connect(pid(), signal_ref(), signal_ref()) ::
+  @spec connect(signal_ref(), signal_ref()) ::
           :ok | {:error, :not_found | :unknown_signal | :invalid_value}
-  def connect(simulator, {source_slave, source_signal}, {target_slave, target_signal})
-      when is_pid(simulator) and is_atom(source_slave) and is_atom(source_signal) and
-             is_atom(target_slave) and is_atom(target_signal) do
-    Simulator.connect(simulator, {source_slave, source_signal}, {target_slave, target_signal})
+  def connect({source_slave, source_signal}, {target_slave, target_signal})
+      when is_atom(source_slave) and is_atom(source_signal) and is_atom(target_slave) and
+             is_atom(target_signal) do
+    Simulator.connect({source_slave, source_signal}, {target_slave, target_signal})
   end
 
-  @spec disconnect(pid(), signal_ref(), signal_ref()) :: :ok | {:error, :not_found}
-  def disconnect(simulator, {source_slave, source_signal}, {target_slave, target_signal})
-      when is_pid(simulator) and is_atom(source_slave) and is_atom(source_signal) and
-             is_atom(target_slave) and is_atom(target_signal) do
-    Simulator.disconnect(simulator, {source_slave, source_signal}, {target_slave, target_signal})
+  @spec disconnect(signal_ref(), signal_ref()) :: :ok | {:error, :not_found}
+  def disconnect({source_slave, source_signal}, {target_slave, target_signal})
+      when is_atom(source_slave) and is_atom(source_signal) and is_atom(target_slave) and
+             is_atom(target_signal) do
+    Simulator.disconnect({source_slave, source_signal}, {target_slave, target_signal})
   end
 
-  @spec connections(pid()) :: {:ok, [map()]} | {:error, :not_found | :timeout}
-  def connections(simulator) when is_pid(simulator) do
-    Simulator.connections(simulator)
+  @spec connections() :: {:ok, [map()]} | {:error, :not_found | :timeout}
+  def connections, do: Simulator.connections()
+
+  @spec subscribe(atom()) :: :ok | {:error, :not_found}
+  def subscribe(slave_name) when is_atom(slave_name) do
+    Simulator.subscribe(slave_name, :all, self())
   end
 
-  @spec subscribe(pid(), atom(), atom() | :all, pid()) :: :ok | {:error, :not_found}
-  def subscribe(simulator, slave_name, signal_name \\ :all, subscriber \\ self())
-      when is_pid(simulator) and is_atom(slave_name) and
-             (is_atom(signal_name) or signal_name == :all) and is_pid(subscriber) do
-    Simulator.subscribe(simulator, slave_name, signal_name, subscriber)
+  @spec subscribe(atom(), atom() | :all) :: :ok | {:error, :not_found}
+  def subscribe(slave_name, signal_name)
+      when is_atom(slave_name) and (is_atom(signal_name) or signal_name == :all) do
+    Simulator.subscribe(slave_name, signal_name, self())
   end
 
-  @spec unsubscribe(pid(), atom(), atom() | :all, pid()) :: :ok | {:error, :not_found}
-  def unsubscribe(simulator, slave_name, signal_name \\ :all, subscriber \\ self())
-      when is_pid(simulator) and is_atom(slave_name) and
-             (is_atom(signal_name) or signal_name == :all) and is_pid(subscriber) do
-    Simulator.unsubscribe(simulator, slave_name, signal_name, subscriber)
+  @spec subscribe(atom(), atom() | :all, pid()) :: :ok | {:error, :not_found}
+  def subscribe(slave_name, signal_name, subscriber)
+      when is_atom(slave_name) and (is_atom(signal_name) or signal_name == :all) and
+             is_pid(subscriber) do
+    Simulator.subscribe(slave_name, signal_name, subscriber)
+  end
+
+  @spec unsubscribe(atom()) :: :ok | {:error, :not_found}
+  def unsubscribe(slave_name) when is_atom(slave_name) do
+    Simulator.unsubscribe(slave_name, :all, self())
+  end
+
+  @spec unsubscribe(atom(), atom() | :all) :: :ok | {:error, :not_found}
+  def unsubscribe(slave_name, signal_name)
+      when is_atom(slave_name) and (is_atom(signal_name) or signal_name == :all) do
+    Simulator.unsubscribe(slave_name, signal_name, self())
+  end
+
+  @spec unsubscribe(atom(), atom() | :all, pid()) :: :ok | {:error, :not_found}
+  def unsubscribe(slave_name, signal_name, subscriber)
+      when is_atom(slave_name) and (is_atom(signal_name) or signal_name == :all) and
+             is_pid(subscriber) do
+    Simulator.unsubscribe(slave_name, signal_name, subscriber)
   end
 
   defp maybe_override_name(definition, nil), do: definition

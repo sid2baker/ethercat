@@ -46,7 +46,7 @@ not a `test/support` helper.
 
 What is already implemented and validated:
 
-- one or more simulated slaves behind one simulator instance
+- one or more simulated slaves behind one named simulator instance
 - real UDP transport path through `EtherCAT.Bus.Transport.UdpSocket`
 - startup addressing modes:
   - broadcast
@@ -160,12 +160,12 @@ lib/ethercat/simulator/
 Main modules:
 
 - `EtherCAT.Simulator`
-  - public simulator process
+  - public named simulator process
   - multi-slave datagram routing and WKC accumulation
 - `EtherCAT.Simulator.Runtime.Snapshot`
   - stable read-model assembly for widgets and tooling
 - `EtherCAT.Simulator.Udp`
-  - real UDP endpoint, defaulting to EtherCAT UDP port `0x88A4`
+  - optional UDP endpoint, defaulting to EtherCAT UDP port `0x88A4`
 - `EtherCAT.Simulator.Slave`
   - public device and simulator-facing signal API
 - `EtherCAT.Simulator.Slave.Definition`
@@ -311,41 +311,36 @@ EtherCAT.Simulator.Slave.signal_definitions(device)
 For runtime control of a running simulator:
 
 ```elixir
-{:ok, runtime} =
+{:ok, _supervisor} =
   EtherCAT.Simulator.start(
     devices: [device],
-    ip: {127, 0, 0, 2},
-    port: 0
+    udp: [ip: {127, 0, 0, 2}, port: 0]
   )
 
-%{simulator: simulator, port: port} = runtime
+{:ok, %{udp: %{port: port}}} = EtherCAT.Simulator.info()
 
-EtherCAT.Simulator.Slave.set_value(simulator, :io, :button1, 7)
-EtherCAT.Simulator.Slave.get_value(simulator, :io, :led0)
-EtherCAT.Simulator.Slave.signals(simulator, :io)
+EtherCAT.Simulator.Slave.set_value(:io, :button1, 7)
+EtherCAT.Simulator.Slave.get_value(:io, :led0)
+EtherCAT.Simulator.Slave.signals(:io)
 ```
 
-Use `start_link/1` directly when you only need the in-memory simulator core.
+Use `start_link/1` directly only when you need the in-memory simulator core.
 Use `start/1` for the common case where a real `UdpSocket` transport should
 talk to the simulator end to end.
-Stop either kind of runtime with `stop/1`.
+Stop the simulator runtime with `stop/0`.
 
 To wire one simulated slave signal into another:
 
 ```elixir
 :ok =
-  EtherCAT.Simulator.Slave.connect(
-    simulator,
-    {:out_card, :out},
-    {:in_card, :in}
-  )
+  EtherCAT.Simulator.Slave.connect({:out_card, :out}, {:in_card, :in})
 ```
 
 Current semantics:
 
 - values are read and written by named signal
-- `set_value/4` accepts integers, booleans, or exact-size binaries
-- `get_value/3` currently returns raw integer values
+- `set_value/3` accepts integers, booleans, or exact-size binaries
+- `get_value/2` currently returns raw integer values
 - input values set through this API persist even on devices that also mirror
   outputs into inputs by default
 
@@ -354,20 +349,18 @@ specific device profile or driver callback contract.
 
 Widget-oriented features that are now implemented:
 
-- change notifications via `subscribe/4` and `unsubscribe/4`
-- richer signal metadata through `signal_definitions/1` and `signal_definitions/2`
+- change notifications via `subscribe/3` and `unsubscribe/3`
+- richer signal metadata through `signal_definitions/1`
 - stable tooling snapshots through:
-  - `info/1`
-  - `device_snapshot/2`
-  - `signal_snapshot/3`
-  - `connection_snapshot/1`
+  - `info/0`
+  - `device_snapshot/1`
+  - `signal_snapshot/2`
+  - `connection_snapshot/0`
 - profile-aware value validation through typed signal definitions
-- easy composition of multiple devices into one virtual ring via
-  `EtherCAT.Simulator.start_link(devices: devices)`
-- one-call simulator + UDP endpoint setup via
-  `EtherCAT.Simulator.start/1`
+- easy composition of multiple devices into one virtual ring
+- one-call simulator + UDP endpoint setup via `EtherCAT.Simulator.start/1`
 - explicit cross-slave wiring via
-  `EtherCAT.Simulator.Slave.connect/3`
+  `EtherCAT.Simulator.Slave.connect/2`
 - real-device hydration through:
   - `EtherCAT.Simulator.Slave.from_driver/2`
 

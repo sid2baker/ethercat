@@ -1,0 +1,47 @@
+defmodule EtherCAT.SimulatorTest do
+  use ExUnit.Case, async: false
+
+  alias EtherCAT.Simulator
+
+  @loopback {127, 0, 0, 1}
+
+  setup do
+    _ = Simulator.stop()
+
+    on_exit(fn ->
+      _ = Simulator.stop()
+    end)
+
+    :ok
+  end
+
+  test "stop/0 shuts down the supervised simulator runtime" do
+    assert {:ok, _supervisor} =
+             Simulator.start(devices: [], udp: [ip: @loopback, port: 0])
+
+    assert {:ok, info} = Simulator.info()
+    assert %{udp: %{port: port}} = info
+    assert is_integer(port)
+    assert port > 0
+
+    assert :ok = Simulator.stop()
+    assert {:error, :not_found} = Simulator.info()
+  end
+
+  test "stop/0 shuts down the default unsupervised simulator runtime" do
+    assert {:ok, _pid} = Simulator.start_link(devices: [])
+    assert {:ok, _info} = Simulator.info()
+
+    assert :ok = Simulator.stop()
+    assert {:error, :not_found} = Simulator.info()
+  end
+
+  test "setup cleanup can stop the supervised simulator runtime" do
+    assert {:ok, _supervisor} =
+             Simulator.start(devices: [], udp: [ip: @loopback, port: 0])
+
+    assert {:ok, %{udp: %{port: port}}} = Simulator.info()
+    assert is_integer(port)
+    assert port > 0
+  end
+end

@@ -14,6 +14,7 @@ defmodule EtherCAT.Integration.Simulator.RingTest do
 
   setup do
     _ = EtherCAT.stop()
+    _ = Simulator.stop()
 
     devices = [
       Slave.from_driver(EK1100, name: :coupler),
@@ -21,13 +22,13 @@ defmodule EtherCAT.Integration.Simulator.RingTest do
       Slave.from_driver(EL2809, name: :outputs)
     ]
 
-    {:ok, udp_link} = Simulator.start(devices: devices, ip: @simulator_ip, port: 0)
-    %{simulator: simulator, port: port} = udp_link
+    {:ok, _supervisor} = Simulator.start(devices: devices, udp: [ip: @simulator_ip, port: 0])
+    {:ok, %{udp: %{port: port}}} = Simulator.info()
 
     Process.sleep(20)
 
-    assert :ok = Slave.connect(simulator, {:outputs, :ch1}, {:inputs, :ch1})
-    assert :ok = Slave.connect(simulator, {:outputs, :ch16}, {:inputs, :ch16})
+    assert :ok = Slave.connect({:outputs, :ch1}, {:inputs, :ch1})
+    assert :ok = Slave.connect({:outputs, :ch16}, {:inputs, :ch16})
 
     on_exit(fn ->
       case EtherCAT.stop() do
@@ -35,10 +36,10 @@ defmodule EtherCAT.Integration.Simulator.RingTest do
         :already_stopped -> :ok
       end
 
-      :ok = Simulator.stop(udp_link)
+      :ok = Simulator.stop()
     end)
 
-    {:ok, simulator: simulator, port: port}
+    {:ok, port: port}
   end
 
   test "boots the simulated EK1100 -> EL1809 -> EL2809 ring to operational", %{port: port} do
@@ -64,10 +65,7 @@ defmodule EtherCAT.Integration.Simulator.RingTest do
     assert {:ok, %{station: 0x1002, al_state: :op}} = EtherCAT.slave_info(:outputs)
   end
 
-  test "reads EL1809 inputs and stages EL2809 outputs through the simulated ring", %{
-    port: port,
-    simulator: simulator
-  } do
+  test "reads EL1809 inputs and stages EL2809 outputs through the simulated ring", %{port: port} do
     assert :ok =
              EtherCAT.start(
                transport: :udp,
@@ -98,8 +96,8 @@ defmodule EtherCAT.Integration.Simulator.RingTest do
     end)
 
     assert_eventually(fn ->
-      assert {:ok, %{value: true}} = Simulator.signal_snapshot(simulator, :outputs, :ch1)
-      assert {:ok, %{value: true}} = Simulator.signal_snapshot(simulator, :outputs, :ch16)
+      assert {:ok, %{value: true}} = Simulator.signal_snapshot(:outputs, :ch1)
+      assert {:ok, %{value: true}} = Simulator.signal_snapshot(:outputs, :ch16)
     end)
   end
 
