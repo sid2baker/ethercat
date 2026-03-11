@@ -44,4 +44,5 @@ Current API is now enough for targeted logical WKC skew coverage through
 
 Still worth adding later:
 
-- mailbox protocol-shape faults like toggle or mailbox-counter mismatches
+- malformed mailbox payloads beyond valid type/service headers, like invalid
+  CoE payloads or unexpected SDO commands

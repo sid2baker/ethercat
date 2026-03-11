@@ -243,6 +243,49 @@ defmodule EtherCAT.Slave.Mailbox.CoETest do
              CoE.download_sdo(bus, @station, @mailbox_config, 0, 0x2000, 0x01, <<0x34, 0x12>>)
   end
 
+  test "upload_sdo rejects unexpected mailbox types" do
+    bus =
+      start_supervised!({
+        FakeBus,
+        [
+          write_ok(),
+          mailbox_ready(),
+          mailbox_read(
+            mailbox_frame(
+              1,
+              coe_sdo_response(<<0x4B, 0x00, 0x30, 0x02, 0xAA, 0xBB, 0x00, 0x00>>),
+              0x04
+            ),
+            @mailbox_config.send_size
+          )
+        ]
+      })
+
+    assert {:error, {:unexpected_mailbox_type, 4}} =
+             CoE.upload_sdo(bus, @station, @mailbox_config, 0, 0x3000, 0x02)
+  end
+
+  test "upload_sdo rejects unexpected CoE services" do
+    bus =
+      start_supervised!({
+        FakeBus,
+        [
+          write_ok(),
+          mailbox_ready(),
+          mailbox_read(
+            mailbox_frame(
+              1,
+              coe_payload(0x02, <<0x4B, 0x00, 0x30, 0x02, 0xAA, 0xBB, 0x00, 0x00>>)
+            ),
+            @mailbox_config.send_size
+          )
+        ]
+      })
+
+    assert {:error, {:unexpected_coe_service, 2}} =
+             CoE.upload_sdo(bus, @station, @mailbox_config, 0, 0x3000, 0x02)
+  end
+
   test "slave PREOP mailbox configuration supports segmented CoE downloads" do
     from = {self(), make_ref()}
 
@@ -378,14 +421,15 @@ defmodule EtherCAT.Slave.Mailbox.CoETest do
 
   defp download_segment_ack_command(toggle), do: 0x20 + toggle * 16
 
-  defp mailbox_frame(counter, payload) do
-    <<byte_size(payload)::16-little, 0::16-little, 0::8, mailbox_type(counter)::8,
+  defp mailbox_frame(counter, payload, type \\ 0x03) do
+    <<byte_size(payload)::16-little, 0::16-little, 0::8, mailbox_type(counter, type)::8,
       payload::binary>>
   end
 
   defp coe_sdo_response(body), do: <<0x3000::16-little, body::binary>>
+  defp coe_payload(service, body), do: <<service * 4096::16-little, body::binary>>
 
-  defp mailbox_type(counter), do: counter * 16 + 0x03
+  defp mailbox_type(counter, type), do: counter * 16 + type
 
   defp pad_frame(frame, size) do
     frame <> :binary.copy(<<0>>, size - byte_size(frame))

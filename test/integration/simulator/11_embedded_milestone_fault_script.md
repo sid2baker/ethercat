@@ -48,4 +48,5 @@ Observed with:
 
 Still worth adding later:
 
-- mailbox protocol-shape faults like toggle or mailbox-counter mismatches
+- malformed mailbox payloads beyond valid type/service headers, like invalid
+  CoE payloads or unexpected SDO commands

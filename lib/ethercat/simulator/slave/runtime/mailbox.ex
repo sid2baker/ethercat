@@ -22,13 +22,59 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
           required(:send_size) => non_neg_integer()
         }
 
+  @type protocol_fault_stage ::
+          :request
+          | :upload_init
+          | :upload_segment
+          | :download_init
+          | :download_segment
+
+  @type protocol_fault_kind ::
+          :counter_mismatch
+          | :toggle_mismatch
+          | {:mailbox_type, 0..15}
+          | {:coe_service, 0..15}
+
+  @type response_spec :: %{
+          required(:body) => binary(),
+          required(:index) => non_neg_integer(),
+          required(:subindex) => non_neg_integer(),
+          required(:stage) => protocol_fault_stage(),
+          required(:mailbox_type) => 0..15,
+          required(:service) => 0..15
+        }
+
+  @spec inject_protocol_fault(
+          map(),
+          non_neg_integer(),
+          non_neg_integer(),
+          protocol_fault_stage(),
+          protocol_fault_kind()
+        ) :: map()
+  def inject_protocol_fault(slave, index, subindex, stage, fault_kind)
+      when stage in [:request, :upload_init, :upload_segment, :download_init, :download_segment] do
+    if valid_protocol_fault?(stage, fault_kind) do
+      rule = %{index: index, subindex: subindex, stage: stage, fault_kind: fault_kind}
+      %{slave | mailbox_protocol_fault_rules: upsert_protocol_fault_rule(slave, rule)}
+    else
+      slave
+    end
+  end
+
+  @spec clear_protocol_faults(map()) :: map()
+  def clear_protocol_faults(slave) do
+    %{slave | mailbox_protocol_fault_rules: []}
+  end
+
   @spec handle_frame(binary(), Device.t()) :: {:ok, binary(), Device.t()} | :ignore
   def handle_frame(frame, %Device{} = slave) do
     with {:ok, request} <- parse_request(frame),
-         {:ok, response_body, updated_slave} <- handle_request(request, slave) do
+         {:ok, response, updated_slave} <- handle_request(request, slave),
+         {:ok, response_counter, response, updated_slave} <-
+           maybe_apply_protocol_fault(response, request.counter, updated_slave) do
       response =
-        request.counter
-        |> mailbox_frame(sdo_response_service() <> response_body)
+        response_counter
+        |> mailbox_frame(response.service, response.mailbox_type, response.body)
         |> pad_send_mailbox(updated_slave.mailbox_config.send_size)
 
       {:ok, response, updated_slave}
@@ -68,7 +114,13 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
        ) do
     case Dictionary.read_entry(slave, index, subindex) do
       {:ok, data, updated_slave} when byte_size(data) <= 4 ->
-        {:ok, expedited_upload_response(index, subindex, data), updated_slave}
+        {:ok,
+         response(
+           expedited_upload_response(index, subindex, data),
+           index,
+           subindex,
+           :upload_init
+         ), updated_slave}
 
       {:ok, data, updated_slave} ->
         init_size = max(updated_slave.mailbox_config.send_size - 16, 0)
@@ -81,11 +133,18 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
             | mailbox_upload: upload_state(index, subindex, remaining, mailbox_counter)
           }
 
-        {:ok, segmented_upload_init_response(index, subindex, byte_size(data), initial),
-         next_slave}
+        {:ok,
+         response(
+           segmented_upload_init_response(index, subindex, byte_size(data), initial),
+           index,
+           subindex,
+           :upload_init
+         ), next_slave}
 
       {:error, abort_code, updated_slave} ->
-        {:ok, abort_response(index, subindex, abort_code), updated_slave}
+        {:ok,
+         response(abort_response(index, subindex, abort_code), index, subindex, :upload_init),
+         updated_slave}
     end
   end
 
@@ -100,10 +159,13 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
 
     case Dictionary.write_entry(slave, index, subindex, data) do
       {:ok, updated_slave} ->
-        {:ok, download_ack(index, subindex), updated_slave}
+        {:ok, response(download_ack(index, subindex), index, subindex, :download_init),
+         updated_slave}
 
       {:error, abort_code, updated_slave} ->
-        {:ok, abort_response(index, subindex, abort_code), updated_slave}
+        {:ok,
+         response(abort_response(index, subindex, abort_code), index, subindex, :download_init),
+         updated_slave}
     end
   end
 
@@ -120,10 +182,13 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
 
       case Dictionary.write_entry(slave, index, subindex, data) do
         {:ok, updated_slave} ->
-          {:ok, download_ack(index, subindex), updated_slave}
+          {:ok, response(download_ack(index, subindex), index, subindex, :download_init),
+           updated_slave}
 
         {:error, abort_code, updated_slave} ->
-          {:ok, abort_response(index, subindex, abort_code), updated_slave}
+          {:ok,
+           response(abort_response(index, subindex, abort_code), index, subindex, :download_init),
+           updated_slave}
       end
     else
       next_slave = %{
@@ -138,7 +203,7 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
           }
       }
 
-      {:ok, download_ack(index, subindex), next_slave}
+      {:ok, response(download_ack(index, subindex), index, subindex, :download_init), next_slave}
     end
   end
 
@@ -157,28 +222,41 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
          _mailbox_counter,
          slave
        ) do
-    {:ok, abort_response(index, subindex, @abort_unsupported), slave}
+    {:ok,
+     response(abort_response(index, subindex, @abort_unsupported), index, subindex, :request),
+     slave}
   end
 
   defp handle_sdo_request(_body, _mailbox_counter, slave) do
-    {:ok, abort_response(0, 0, @abort_unsupported), slave}
+    {:ok, response(abort_response(0, 0, @abort_unsupported), 0, 0, :request), slave}
   end
 
   defp handle_download_segment(_command, _payload, %{mailbox_download: nil} = slave) do
-    {:ok, abort_response(0, 0, @abort_unsupported), slave}
+    {:ok, response(abort_response(0, 0, @abort_unsupported), 0, 0, :download_segment), slave}
   end
 
   defp handle_download_segment(command, payload, %{mailbox_download: transfer} = slave) do
     case Dictionary.abort_code(slave, transfer.index, transfer.subindex, :download_segment) do
       {:ok, abort_code} ->
-        {:ok, abort_response(transfer.index, transfer.subindex, abort_code),
-         %{slave | mailbox_download: nil}}
+        {:ok,
+         response(
+           abort_response(transfer.index, transfer.subindex, abort_code),
+           transfer.index,
+           transfer.subindex,
+           :download_segment
+         ), %{slave | mailbox_download: nil}}
 
       :error ->
         toggle = band_toggle(command)
 
         if toggle != transfer.toggle do
-          {:ok, abort_response(transfer.index, transfer.subindex, @abort_toggle_mismatch), slave}
+          {:ok,
+           response(
+             abort_response(transfer.index, transfer.subindex, @abort_toggle_mismatch),
+             transfer.index,
+             transfer.subindex,
+             :download_segment
+           ), slave}
         else
           last_segment? = band_last_segment?(command)
           padding = band_padding(command)
@@ -190,35 +268,64 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
 
             case Dictionary.write_entry(slave, transfer.index, transfer.subindex, final) do
               {:ok, updated_slave} ->
-                {:ok, segment_download_ack(toggle), %{updated_slave | mailbox_download: nil}}
+                {:ok,
+                 response(
+                   segment_download_ack(toggle),
+                   transfer.index,
+                   transfer.subindex,
+                   :download_segment
+                 ), %{updated_slave | mailbox_download: nil}}
 
               {:error, abort_code, updated_slave} ->
-                {:ok, abort_response(transfer.index, transfer.subindex, abort_code),
-                 %{updated_slave | mailbox_download: nil}}
+                {:ok,
+                 response(
+                   abort_response(transfer.index, transfer.subindex, abort_code),
+                   transfer.index,
+                   transfer.subindex,
+                   :download_segment
+                 ), %{updated_slave | mailbox_download: nil}}
             end
           else
             next_transfer = %{transfer | data: data, toggle: flip_toggle(transfer.toggle)}
-            {:ok, segment_download_ack(toggle), %{slave | mailbox_download: next_transfer}}
+
+            {:ok,
+             response(
+               segment_download_ack(toggle),
+               transfer.index,
+               transfer.subindex,
+               :download_segment
+             ), %{slave | mailbox_download: next_transfer}}
           end
         end
     end
   end
 
   defp handle_upload_segment(_command, %{mailbox_upload: nil} = slave) do
-    {:ok, abort_response(0, 0, @abort_unsupported), slave}
+    {:ok, response(abort_response(0, 0, @abort_unsupported), 0, 0, :upload_segment), slave}
   end
 
   defp handle_upload_segment(command, %{mailbox_upload: transfer} = slave) do
     case Dictionary.abort_code(slave, transfer.index, transfer.subindex, :upload_segment) do
       {:ok, abort_code} ->
-        {:ok, abort_response(transfer.index, transfer.subindex, abort_code),
-         %{slave | mailbox_upload: nil}}
+        {:ok,
+         response(
+           abort_response(transfer.index, transfer.subindex, abort_code),
+           transfer.index,
+           transfer.subindex,
+           :upload_segment
+         ), %{slave | mailbox_upload: nil}}
 
       :error ->
         toggle = band_toggle(command)
 
         if toggle != transfer.toggle do
-          {:ok, abort_response(transfer.index, transfer.subindex, @abort_toggle_mismatch), slave}
+          {:ok,
+           response(
+             abort_response(transfer.index, transfer.subindex, @abort_toggle_mismatch),
+             transfer.index,
+             transfer.subindex,
+             :upload_segment
+           ), slave}
         else
           chunk_size = max(slave.mailbox_config.send_size - 9, 0)
           remaining = transfer.remaining
@@ -227,7 +334,7 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
           last_segment? = byte_size(rest) == 0
           {segment, unused} = upload_segment_payload(chunk, last_segment?)
 
-          response = upload_segment_response(toggle, last_segment?, unused, segment)
+          segment_response_body = upload_segment_response(toggle, last_segment?, unused, segment)
 
           next_slave =
             if last_segment? do
@@ -243,8 +350,37 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
               }
             end
 
-          {:ok, response, next_slave}
+          {:ok,
+           response(
+             segment_response_body,
+             transfer.index,
+             transfer.subindex,
+             :upload_segment
+           ), next_slave}
         end
+    end
+  end
+
+  defp maybe_apply_protocol_fault(
+         %{index: index, subindex: subindex, stage: stage} = response,
+         request_counter,
+         slave
+       ) do
+    case protocol_fault(slave, index, subindex, stage) do
+      {:ok, :counter_mismatch} ->
+        {:ok, next_mailbox_counter(request_counter), response, slave}
+
+      {:ok, :toggle_mismatch} ->
+        {:ok, request_counter, %{response | body: maybe_flip_toggle(response.body, stage)}, slave}
+
+      {:ok, {:mailbox_type, mailbox_type}} ->
+        {:ok, request_counter, %{response | mailbox_type: mailbox_type}, slave}
+
+      {:ok, {:coe_service, service}} ->
+        {:ok, request_counter, %{response | service: service}, slave}
+
+      :error ->
+        {:ok, request_counter, response, slave}
     end
   end
 
@@ -254,8 +390,10 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
   defp mailbox_body(<<_service::16-little, body::binary>>), do: body
   defp mailbox_body(_payload), do: <<>>
 
-  defp mailbox_frame(counter, payload) do
-    <<byte_size(payload)::16-little, 0::16-little, 0::8, mailbox_type(counter)::8,
+  defp mailbox_frame(counter, service, mailbox_type, body) do
+    payload = <<service * 4096::16-little, body::binary>>
+
+    <<byte_size(payload)::16-little, 0::16-little, 0::8, mailbox_type(counter, mailbox_type)::8,
       payload::binary>>
   end
 
@@ -287,6 +425,37 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
 
   defp upload_segment_payload(chunk, _last_segment?), do: {chunk, 0}
 
+  defp response(body, index, subindex, stage) do
+    %{
+      body: body,
+      index: index,
+      subindex: subindex,
+      stage: stage,
+      mailbox_type: @mailbox_type_coe,
+      service: @service_sdo_response
+    }
+  end
+
+  defp protocol_fault(slave, index, subindex, stage) do
+    case Enum.find(
+           slave.mailbox_protocol_fault_rules,
+           &matches_protocol_fault_rule?(&1, index, subindex, stage)
+         ) do
+      %{fault_kind: fault_kind} -> {:ok, fault_kind}
+      nil -> :error
+    end
+  end
+
+  defp maybe_flip_toggle(<<0::2, 1::1, toggle::1, rest::4, tail::binary>>, :download_segment) do
+    <<0::2, 1::1, flip_toggle(toggle)::1, rest::4, tail::binary>>
+  end
+
+  defp maybe_flip_toggle(<<0::3, toggle::1, rest::4, tail::binary>>, :upload_segment) do
+    <<0::3, flip_toggle(toggle)::1, rest::4, tail::binary>>
+  end
+
+  defp maybe_flip_toggle(body, _stage), do: body
+
   defp download_ack(index, subindex) do
     <<0x60, index::16-little, subindex::8, 0::32-little>>
   end
@@ -299,8 +468,11 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
     <<@command_abort, index::16-little, subindex::8, abort_code::32-little>>
   end
 
-  defp sdo_response_service, do: <<@service_sdo_response * 4096::16-little>>
-  defp mailbox_type(counter), do: counter * 16 + @mailbox_type_coe
+  defp mailbox_type(counter, type), do: counter * 16 + type
+  defp next_mailbox_counter(7), do: 1
+
+  defp next_mailbox_counter(counter) when is_integer(counter) and counter >= 0 and counter < 7,
+    do: counter + 1
 
   defp expedited_download_size(0x2F), do: 1
   defp expedited_download_size(0x2B), do: 2
@@ -345,4 +517,37 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
 
   defp flip_toggle(0), do: 1
   defp flip_toggle(1), do: 0
+
+  defp valid_protocol_fault?(stage, :counter_mismatch)
+       when stage in [:request, :upload_init, :upload_segment, :download_init, :download_segment],
+       do: true
+
+  defp valid_protocol_fault?(stage, :toggle_mismatch)
+       when stage in [:upload_segment, :download_segment],
+       do: true
+
+  defp valid_protocol_fault?(stage, {:mailbox_type, mailbox_type})
+       when stage in [:request, :upload_init, :upload_segment, :download_init, :download_segment] and
+              is_integer(mailbox_type) and mailbox_type >= 0 and mailbox_type <= 15,
+       do: true
+
+  defp valid_protocol_fault?(stage, {:coe_service, service})
+       when stage in [:request, :upload_init, :upload_segment, :download_init, :download_segment] and
+              is_integer(service) and service >= 0 and service <= 15,
+       do: true
+
+  defp valid_protocol_fault?(_stage, _fault_kind), do: false
+
+  defp upsert_protocol_fault_rule(slave, %{index: index, subindex: subindex, stage: stage} = rule) do
+    filtered =
+      Enum.reject(slave.mailbox_protocol_fault_rules, fn existing ->
+        existing.index == index and existing.subindex == subindex and existing.stage == stage
+      end)
+
+    filtered ++ [rule]
+  end
+
+  defp matches_protocol_fault_rule?(rule, index, subindex, stage) do
+    rule.index == index and rule.subindex == subindex and rule.stage == stage
+  end
 end

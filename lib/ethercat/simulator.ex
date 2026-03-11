@@ -21,6 +21,12 @@ defmodule EtherCAT.Simulator do
           | {:mailbox_abort, atom(), non_neg_integer(), non_neg_integer(), non_neg_integer()}
           | {:mailbox_abort, atom(), non_neg_integer(), non_neg_integer(), non_neg_integer(),
              :request | :upload_segment | :download_segment}
+          | {:mailbox_protocol_fault, atom(), non_neg_integer(), non_neg_integer(),
+             :request | :upload_init | :upload_segment | :download_init | :download_segment,
+             :counter_mismatch
+             | :toggle_mismatch
+             | {:mailbox_type, 0..15}
+             | {:coe_service, 0..15}}
 
   @type fault_script_step ::
           exchange_fault()
@@ -608,6 +614,22 @@ defmodule EtherCAT.Simulator do
     )
   end
 
+  defp apply_immediate_fault(
+         state,
+         {:mailbox_protocol_fault, slave_name, index, subindex, stage, fault_kind}
+       )
+       when is_integer(index) and index >= 0 and is_integer(subindex) and subindex >= 0 do
+    if valid_mailbox_protocol_fault?(stage, fault_kind) do
+      apply_slave_update(
+        state,
+        slave_name,
+        &Device.inject_mailbox_protocol_fault(&1, index, subindex, stage, fault_kind)
+      )
+    else
+      {:error, :invalid_fault}
+    end
+  end
+
   defp apply_immediate_fault(_state, _fault), do: {:error, :invalid_fault}
 
   defp apply_planned_fault(state, planned_fault) do
@@ -815,6 +837,14 @@ defmodule EtherCAT.Simulator do
               stage in [:request, :upload_segment, :download_segment],
        do: true
 
+  defp valid_schedulable_fault?(
+         {:mailbox_protocol_fault, slave_name, index, subindex, stage, fault_kind}
+       )
+       when is_atom(slave_name) and is_integer(index) and index >= 0 and is_integer(subindex) and
+              subindex >= 0 do
+    valid_mailbox_protocol_fault?(stage, fault_kind)
+  end
+
   defp valid_schedulable_fault?({:after_ms, _delay_ms, _fault}), do: false
   defp valid_schedulable_fault?({:after_milestone, _milestone, _fault}), do: false
   defp valid_schedulable_fault?(_fault), do: false
@@ -964,6 +994,13 @@ defmodule EtherCAT.Simulator do
               stage in [:request, :upload_segment, :download_segment],
        do: true
 
+  defp valid_fault_script_step?(
+         {:mailbox_protocol_fault, slave_name, index, subindex, stage, fault_kind}
+       )
+       when is_atom(slave_name) and is_integer(index) and index >= 0 and is_integer(subindex) and
+              subindex >= 0,
+       do: valid_mailbox_protocol_fault?(stage, fault_kind)
+
   defp valid_fault_script_step?(_step), do: false
 
   defp fault_script_exchange_step?(:drop_responses), do: true
@@ -997,4 +1034,24 @@ defmodule EtherCAT.Simulator do
 
   defp fault_entry_fault(nil), do: nil
   defp fault_entry_fault(%{fault: fault}), do: fault
+
+  defp valid_mailbox_protocol_fault?(stage, :counter_mismatch)
+       when stage in [:request, :upload_init, :upload_segment, :download_init, :download_segment],
+       do: true
+
+  defp valid_mailbox_protocol_fault?(stage, :toggle_mismatch)
+       when stage in [:upload_segment, :download_segment],
+       do: true
+
+  defp valid_mailbox_protocol_fault?(stage, {:mailbox_type, mailbox_type})
+       when stage in [:request, :upload_init, :upload_segment, :download_init, :download_segment] and
+              is_integer(mailbox_type) and mailbox_type >= 0 and mailbox_type <= 15,
+       do: true
+
+  defp valid_mailbox_protocol_fault?(stage, {:coe_service, service})
+       when stage in [:request, :upload_init, :upload_segment, :download_init, :download_segment] and
+              is_integer(service) and service >= 0 and service <= 15,
+       do: true
+
+  defp valid_mailbox_protocol_fault?(_stage, _fault_kind), do: false
 end

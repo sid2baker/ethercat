@@ -40,6 +40,7 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Device do
           mailbox_config: Mailbox.mailbox_config(),
           objects: %{optional({non_neg_integer(), non_neg_integer()}) => Object.t()},
           mailbox_abort_rules: [map()],
+          mailbox_protocol_fault_rules: [map()],
           mailbox_upload: map() | nil,
           mailbox_download: map() | nil,
           behavior: module(),
@@ -67,6 +68,7 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Device do
     :mailbox_config,
     :objects,
     :mailbox_abort_rules,
+    :mailbox_protocol_fault_rules,
     :behavior,
     :behavior_state,
     :dc_capable?
@@ -91,6 +93,7 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Device do
     :mailbox_config,
     :objects,
     :mailbox_abort_rules,
+    :mailbox_protocol_fault_rules,
     :behavior,
     :behavior_state,
     :dc_capable?,
@@ -129,6 +132,7 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Device do
       mailbox_config: definition.mailbox_config,
       objects: definition.objects,
       mailbox_abort_rules: [],
+      mailbox_protocol_fault_rules: [],
       behavior: definition.behavior,
       behavior_state: behavior_state,
       dc_capable?: definition.dc_capable?
@@ -195,10 +199,23 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Device do
     Dictionary.inject_abort(slave, index, subindex, abort_code, stage)
   end
 
+  @spec inject_mailbox_protocol_fault(
+          t(),
+          non_neg_integer(),
+          non_neg_integer(),
+          Mailbox.protocol_fault_stage(),
+          Mailbox.protocol_fault_kind()
+        ) :: t()
+  def inject_mailbox_protocol_fault(%__MODULE__{} = slave, index, subindex, stage, fault_kind)
+      when is_integer(index) and index >= 0 and is_integer(subindex) and subindex >= 0 do
+    Mailbox.inject_protocol_fault(slave, index, subindex, stage, fault_kind)
+  end
+
   @spec clear_faults(t()) :: t()
   def clear_faults(%__MODULE__{} = slave) do
     slave
     |> Dictionary.clear_aborts()
+    |> Mailbox.clear_protocol_faults()
     |> Map.put(:mailbox_upload, nil)
     |> Map.put(:mailbox_download, nil)
     |> AL.clear_error()

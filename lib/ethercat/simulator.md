@@ -122,6 +122,7 @@ Slave-local mutations can still be injected directly, or scheduled for later:
 - `{:mailbox_abort, slave_name, index, subindex, abort_code}`
 - `{:mailbox_abort, slave_name, index, subindex, abort_code, :upload_segment}`
 - `{:mailbox_abort, slave_name, index, subindex, abort_code, :download_segment}`
+- `{:mailbox_protocol_fault, slave_name, index, subindex, stage, fault_kind}`
 
 Current milestones include:
 
@@ -163,6 +164,14 @@ EtherCAT.Simulator.inject_fault(
 EtherCAT.Simulator.inject_fault(
   {:after_milestone, {:mailbox_step, :mailbox, :upload_segment, 2},
    {:mailbox_abort, :mailbox, 0x2003, 0x01, 0x0800_0000, :upload_segment}}
+)
+
+EtherCAT.Simulator.inject_fault(
+  {:mailbox_protocol_fault, :mailbox, 0x2003, 0x01, :upload_segment, :toggle_mismatch}
+)
+
+EtherCAT.Simulator.inject_fault(
+  {:mailbox_protocol_fault, :mailbox, 0x2001, 0x01, :upload_init, {:mailbox_type, 0x04}}
 )
 
 EtherCAT.Simulator.inject_fault(

@@ -95,6 +95,19 @@ Sequential fault scripts can also pause on:
 - `{:wait_for_milestone, {:healthy_polls, slave_name, count}}`
 - `{:wait_for_milestone, {:mailbox_step, slave_name, step, count}}`
 
+Mailbox-local response faults now include:
+
+- `{:mailbox_abort, slave_name, index, subindex, abort_code}`
+- `{:mailbox_abort, slave_name, index, subindex, abort_code, stage}`
+- `{:mailbox_protocol_fault, slave_name, index, subindex, stage, fault_kind}`
+
+Current mailbox protocol fault kinds:
+
+- `:counter_mismatch`
+- `:toggle_mismatch`
+- `{:mailbox_type, type}`
+- `{:coe_service, service}`
+
 The simulator is already strong enough to exercise the real master through:
 
 - startup to `:operational`
@@ -341,6 +354,8 @@ now covers:
 - `13` targeted logical-WKC skew without inventing slave-local faults
 - `14` command-targeted WKC skew outside logical PDO traffic
 - `15` mailbox milestone-timed segmented abort after successful segments
+- `16` mailbox protocol-shape faults like bad counters or toggles
+- `17` malformed mailbox response headers like wrong mailbox type or CoE service
 
 ## Widget-Facing Signal API
 
@@ -476,6 +491,14 @@ EtherCAT.Simulator.inject_fault(
 EtherCAT.Simulator.inject_fault(
   {:after_milestone, {:mailbox_step, :mailbox, :upload_segment, 2},
    {:mailbox_abort, :mailbox, 0x2003, 0x01, 0x0800_0000, :upload_segment}}
+)
+
+EtherCAT.Simulator.inject_fault(
+  {:mailbox_protocol_fault, :mailbox, 0x2003, 0x01, :upload_segment, :toggle_mismatch}
+)
+
+EtherCAT.Simulator.inject_fault(
+  {:mailbox_protocol_fault, :mailbox, 0x2001, 0x01, :upload_init, {:coe_service, 0x02}}
 )
 
 EtherCAT.Simulator.inject_fault(

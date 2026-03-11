@@ -45,6 +45,8 @@ letting the loop invent arbitrary refactors.
 - `13`: targeted logical-WKC skew without inventing a slave-local fault
 - `14`: command-targeted WKC skew outside logical PDO traffic
 - `15`: mailbox milestone-timed segmented abort after successful segment progress
+- `16`: mailbox protocol-shape faults during public SDO upload
+- `17`: malformed mailbox response headers during public SDO upload
 
 These are the current regression scenarios, not just backlog items. Each one
 should keep its `.md` note and matching `_test.exs` file aligned.
@@ -98,12 +100,20 @@ queued and delayed fault state through `next_fault`, `pending_faults`,
 including milestone `waiting_on` / `remaining`, so new scenarios should assert queue drain explicitly
 instead of relying on sleeps alone.
 
+Current mailbox protocol fault kinds:
+
+- `:counter_mismatch`
+- `:toggle_mismatch`
+- `{:mailbox_type, type}`
+- `{:coe_service, service}`
+
 ## Next Directions
 
 The next useful scenarios are the narrower ones the existing notes still call
 out:
 
-- mailbox protocol-shape faults like toggle or mailbox-counter mismatches
+- malformed mailbox payloads beyond valid type/service headers, like invalid
+  CoE payloads or unexpected SDO commands
 
 ## Current Rule Of Thumb
 
