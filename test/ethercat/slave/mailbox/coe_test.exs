@@ -286,6 +286,42 @@ defmodule EtherCAT.Slave.Mailbox.CoETest do
              CoE.upload_sdo(bus, @station, @mailbox_config, 0, 0x3000, 0x02)
   end
 
+  test "upload_sdo rejects invalid CoE payloads" do
+    bus =
+      start_supervised!({
+        FakeBus,
+        [
+          write_ok(),
+          mailbox_ready(),
+          mailbox_read(mailbox_frame(1, <<0x03>>), @mailbox_config.send_size)
+        ]
+      })
+
+    assert {:error, :invalid_coe_response} =
+             CoE.upload_sdo(bus, @station, @mailbox_config, 0, 0x3000, 0x02)
+  end
+
+  test "upload_sdo rejects unexpected SDO commands" do
+    bus =
+      start_supervised!({
+        FakeBus,
+        [
+          write_ok(),
+          mailbox_ready(),
+          mailbox_read(
+            mailbox_frame(
+              1,
+              coe_sdo_response(<<0x60, 0x00, 0x30, 0x02, 0::32-little>>)
+            ),
+            @mailbox_config.send_size
+          )
+        ]
+      })
+
+    assert {:error, {:unexpected_sdo_command, 0x60}} =
+             CoE.upload_sdo(bus, @station, @mailbox_config, 0, 0x3000, 0x02)
+  end
+
   test "slave PREOP mailbox configuration supports segmented CoE downloads" do
     from = {self(), make_ref()}
 

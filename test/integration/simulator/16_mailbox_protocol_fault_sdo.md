@@ -44,5 +44,5 @@ Current API is now enough for mailbox protocol-shape faults through:
 
 Still worth adding later:
 
-- malformed mailbox payloads beyond valid type/service headers, like invalid
-  CoE payloads or unexpected SDO commands
+- malformed segmented CoE payloads, like invalid segment padding or unexpected
+  segment response bodies

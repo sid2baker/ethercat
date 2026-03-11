@@ -47,6 +47,7 @@ letting the loop invent arbitrary refactors.
 - `15`: mailbox milestone-timed segmented abort after successful segment progress
 - `16`: mailbox protocol-shape faults during public SDO upload
 - `17`: malformed mailbox response headers during public SDO upload
+- `18`: malformed CoE payloads during public SDO upload
 
 These are the current regression scenarios, not just backlog items. Each one
 should keep its `.md` note and matching `_test.exs` file aligned.
@@ -106,14 +107,16 @@ Current mailbox protocol fault kinds:
 - `:toggle_mismatch`
 - `{:mailbox_type, type}`
 - `{:coe_service, service}`
+- `:invalid_coe_payload`
+- `{:sdo_command, command}`
 
 ## Next Directions
 
 The next useful scenarios are the narrower ones the existing notes still call
 out:
 
-- malformed mailbox payloads beyond valid type/service headers, like invalid
-  CoE payloads or unexpected SDO commands
+- malformed segmented CoE payloads, like invalid segment padding or unexpected
+  segment response bodies
 
 ## Current Rule Of Thumb
 

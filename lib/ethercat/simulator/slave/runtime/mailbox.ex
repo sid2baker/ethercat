@@ -34,6 +34,8 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
           | :toggle_mismatch
           | {:mailbox_type, 0..15}
           | {:coe_service, 0..15}
+          | :invalid_coe_payload
+          | {:sdo_command, 0..255}
 
   @type response_spec :: %{
           required(:body) => binary(),
@@ -41,7 +43,8 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
           required(:subindex) => non_neg_integer(),
           required(:stage) => protocol_fault_stage(),
           required(:mailbox_type) => 0..15,
-          required(:service) => 0..15
+          required(:service) => 0..15,
+          required(:payload_override) => binary() | nil
         }
 
   @spec inject_protocol_fault(
@@ -74,7 +77,7 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
            maybe_apply_protocol_fault(response, request.counter, updated_slave) do
       response =
         response_counter
-        |> mailbox_frame(response.service, response.mailbox_type, response.body)
+        |> mailbox_frame(response)
         |> pad_send_mailbox(updated_slave.mailbox_config.send_size)
 
       {:ok, response, updated_slave}
@@ -379,6 +382,13 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
       {:ok, {:coe_service, service}} ->
         {:ok, request_counter, %{response | service: service}, slave}
 
+      {:ok, :invalid_coe_payload} ->
+        {:ok, request_counter, %{response | payload_override: <<@service_sdo_response>>}, slave}
+
+      {:ok, {:sdo_command, command}} ->
+        {:ok, request_counter, %{response | body: replace_sdo_command(response.body, command)},
+         slave}
+
       :error ->
         {:ok, request_counter, response, slave}
     end
@@ -390,7 +400,13 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
   defp mailbox_body(<<_service::16-little, body::binary>>), do: body
   defp mailbox_body(_payload), do: <<>>
 
-  defp mailbox_frame(counter, service, mailbox_type, body) do
+  defp mailbox_frame(counter, %{payload_override: payload, mailbox_type: mailbox_type})
+       when is_binary(payload) do
+    <<byte_size(payload)::16-little, 0::16-little, 0::8, mailbox_type(counter, mailbox_type)::8,
+      payload::binary>>
+  end
+
+  defp mailbox_frame(counter, %{service: service, mailbox_type: mailbox_type, body: body}) do
     payload = <<service * 4096::16-little, body::binary>>
 
     <<byte_size(payload)::16-little, 0::16-little, 0::8, mailbox_type(counter, mailbox_type)::8,
@@ -432,7 +448,8 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
       subindex: subindex,
       stage: stage,
       mailbox_type: @mailbox_type_coe,
-      service: @service_sdo_response
+      service: @service_sdo_response,
+      payload_override: nil
     }
   end
 
@@ -455,6 +472,9 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
   end
 
   defp maybe_flip_toggle(body, _stage), do: body
+
+  defp replace_sdo_command(<<_::8, rest::binary>>, command), do: <<command::8, rest::binary>>
+  defp replace_sdo_command(_body, command), do: <<command::8>>
 
   defp download_ack(index, subindex) do
     <<0x60, index::16-little, subindex::8, 0::32-little>>
@@ -534,6 +554,14 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
   defp valid_protocol_fault?(stage, {:coe_service, service})
        when stage in [:request, :upload_init, :upload_segment, :download_init, :download_segment] and
               is_integer(service) and service >= 0 and service <= 15,
+       do: true
+
+  defp valid_protocol_fault?(stage, :invalid_coe_payload)
+       when stage in [:request, :upload_init, :upload_segment, :download_init, :download_segment],
+       do: true
+
+  defp valid_protocol_fault?(stage, {:sdo_command, command})
+       when stage == :upload_init and is_integer(command) and command >= 0 and command <= 255,
        do: true
 
   defp valid_protocol_fault?(_stage, _fault_kind), do: false

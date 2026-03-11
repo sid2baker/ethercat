@@ -26,7 +26,9 @@ defmodule EtherCAT.Simulator do
              :counter_mismatch
              | :toggle_mismatch
              | {:mailbox_type, 0..15}
-             | {:coe_service, 0..15}}
+             | {:coe_service, 0..15}
+             | :invalid_coe_payload
+             | {:sdo_command, 0..255}}
 
   @type fault_script_step ::
           exchange_fault()
@@ -1051,6 +1053,14 @@ defmodule EtherCAT.Simulator do
   defp valid_mailbox_protocol_fault?(stage, {:coe_service, service})
        when stage in [:request, :upload_init, :upload_segment, :download_init, :download_segment] and
               is_integer(service) and service >= 0 and service <= 15,
+       do: true
+
+  defp valid_mailbox_protocol_fault?(stage, :invalid_coe_payload)
+       when stage in [:request, :upload_init, :upload_segment, :download_init, :download_segment],
+       do: true
+
+  defp valid_mailbox_protocol_fault?(stage, {:sdo_command, command})
+       when stage == :upload_init and is_integer(command) and command >= 0 and command <= 255,
        do: true
 
   defp valid_mailbox_protocol_fault?(_stage, _fault_kind), do: false
