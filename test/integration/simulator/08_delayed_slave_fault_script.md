@@ -41,10 +41,10 @@ Observed with:
 ## Simulator API Notes
 
 Current API is now enough for mixed exchange faults plus delayed slave-local
-mutations through `{:after_ms, delay_ms, fault}`.
+mutations through `{:after_ms, delay_ms, fault}`. For milestone-based timing,
+prefer the dedicated `09` scenario and `{:after_milestone, milestone, fault}`.
 
 Still worth adding later:
 
-- milestone-aware scripts that wait on explicit runtime milestones instead of
-  wall-clock delay
-- segmented mailbox aborts that land after a transfer has already started
+- milestone wait steps embedded directly inside a single reusable script
+- startup-time mailbox aborts through driver mailbox configuration

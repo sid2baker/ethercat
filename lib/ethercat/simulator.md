@@ -102,6 +102,7 @@ For datagram/runtime faults, `EtherCAT.Simulator.inject_fault/1` supports both:
 - exchange-scoped wrappers such as `{:next_exchange, fault}`,
   `{:next_exchanges, count, fault}`, and `{:exchange_script, [fault, ...]}`
 - delayed scheduling through `{:after_ms, delay_ms, fault}`
+- milestone scheduling through `{:after_milestone, milestone, fault}`
 
 The current exchange-scoped fault set is:
 
@@ -117,6 +118,8 @@ Slave-local mutations can still be injected directly, or scheduled for later:
 - `{:retreat_to_safeop, slave_name}`
 - `{:latch_al_error, slave_name, code}`
 - `{:mailbox_abort, slave_name, index, subindex, abort_code}`
+- `{:mailbox_abort, slave_name, index, subindex, abort_code, :upload_segment}`
+- `{:mailbox_abort, slave_name, index, subindex, abort_code, :download_segment}`
 
 That split is deliberate. Exchange-scoped wrappers model transport/runtime fault
 windows, while delayed scheduling lets tests combine them with later slave-local
@@ -135,6 +138,10 @@ EtherCAT.Simulator.inject_fault(
 
 EtherCAT.Simulator.inject_fault(
   {:after_ms, 250, {:retreat_to_safeop, :outputs}}
+)
+
+EtherCAT.Simulator.inject_fault(
+  {:after_milestone, {:healthy_polls, :outputs, 10}, {:retreat_to_safeop, :outputs}}
 )
 ```
 

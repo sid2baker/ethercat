@@ -1,7 +1,10 @@
 defmodule EtherCAT.SimulatorTest do
   use ExUnit.Case, async: false
 
+  alias EtherCAT.Bus.Datagram
+  alias EtherCAT.IntegrationSupport.Drivers.EK1100
   alias EtherCAT.Simulator
+  alias EtherCAT.Simulator.Slave, as: SimSlave
 
   @loopback {127, 0, 0, 1}
 
@@ -65,6 +68,56 @@ defmodule EtherCAT.SimulatorTest do
              Simulator.info()
 
     Process.sleep(80)
+
+    assert {:ok,
+            %{next_fault: {:next_exchange, :drop_responses}, pending_faults: [:drop_responses]}} =
+             Simulator.info()
+
+    assert {:ok, %{scheduled_faults: []}} = Simulator.info()
+  end
+
+  test "info/0 reports milestone-scheduled faults and arms them after healthy exchanges" do
+    device = SimSlave.from_driver(EK1100, name: :coupler)
+
+    assert {:ok, _pid} = Simulator.start_link(devices: [device])
+
+    assert :ok =
+             Simulator.inject_fault(
+               {:after_milestone, {:healthy_exchanges, 2}, {:next_exchange, :drop_responses}}
+             )
+
+    assert {:ok,
+            %{
+              scheduled_faults: [
+                %{
+                  fault: {:next_exchange, :drop_responses},
+                  waiting_on: {:healthy_exchanges, 2},
+                  remaining: 2
+                }
+              ]
+            }} = Simulator.info()
+
+    datagram = %Datagram{
+      cmd: 1,
+      idx: 1,
+      address: <<0::little-signed-16, 0x0010::little-unsigned-16>>,
+      data: <<0, 0>>
+    }
+
+    assert {:ok, [%Datagram{wkc: 1}]} = Simulator.process_datagrams([datagram])
+
+    assert {:ok,
+            %{
+              scheduled_faults: [
+                %{
+                  fault: {:next_exchange, :drop_responses},
+                  waiting_on: {:healthy_exchanges, 2},
+                  remaining: 1
+                }
+              ]
+            }} = Simulator.info()
+
+    assert {:ok, [%Datagram{wkc: 1}]} = Simulator.process_datagrams([datagram])
 
     assert {:ok,
             %{next_fault: {:next_exchange, :drop_responses}, pending_faults: [:drop_responses]}} =

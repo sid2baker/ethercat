@@ -39,9 +39,7 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Device do
           input_overrides: %{optional(atom()) => term()},
           mailbox_config: Mailbox.mailbox_config(),
           objects: %{optional({non_neg_integer(), non_neg_integer()}) => Object.t()},
-          mailbox_abort_codes: %{
-            optional({non_neg_integer(), non_neg_integer()}) => non_neg_integer()
-          },
+          mailbox_abort_rules: [map()],
           mailbox_upload: map() | nil,
           mailbox_download: map() | nil,
           behavior: module(),
@@ -68,7 +66,7 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Device do
     :input_overrides,
     :mailbox_config,
     :objects,
-    :mailbox_abort_codes,
+    :mailbox_abort_rules,
     :behavior,
     :behavior_state,
     :dc_capable?
@@ -92,7 +90,7 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Device do
     :input_overrides,
     :mailbox_config,
     :objects,
-    :mailbox_abort_codes,
+    :mailbox_abort_rules,
     :behavior,
     :behavior_state,
     :dc_capable?,
@@ -130,7 +128,7 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Device do
       input_overrides: %{},
       mailbox_config: definition.mailbox_config,
       objects: definition.objects,
-      mailbox_abort_codes: %{},
+      mailbox_abort_rules: [],
       behavior: definition.behavior,
       behavior_state: behavior_state,
       dc_capable?: definition.dc_capable?
@@ -180,7 +178,21 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Device do
   def inject_mailbox_abort(%__MODULE__{} = slave, index, subindex, abort_code)
       when is_integer(index) and index >= 0 and is_integer(subindex) and subindex >= 0 and
              is_integer(abort_code) and abort_code >= 0 do
-    Dictionary.inject_abort(slave, index, subindex, abort_code)
+    Dictionary.inject_abort(slave, index, subindex, abort_code, :request)
+  end
+
+  @spec inject_mailbox_abort(
+          t(),
+          non_neg_integer(),
+          non_neg_integer(),
+          non_neg_integer(),
+          :request | :upload_segment | :download_segment
+        ) :: t()
+  def inject_mailbox_abort(%__MODULE__{} = slave, index, subindex, abort_code, stage)
+      when is_integer(index) and index >= 0 and is_integer(subindex) and subindex >= 0 and
+             is_integer(abort_code) and abort_code >= 0 and
+             stage in [:request, :upload_segment, :download_segment] do
+    Dictionary.inject_abort(slave, index, subindex, abort_code, stage)
   end
 
   @spec clear_faults(t()) :: t()

@@ -38,6 +38,8 @@ letting the loop invent arbitrary refactors.
 - `06`: mailbox abort during startup or recovery
 - `07`: combined fault script, e.g. timeout -> reconnect -> WKC skew
 - `08`: delayed slave-local mutation after exchange-fault recovery
+- `09`: milestone-aware slave-local fault after healthy polls
+- `10`: segmented mailbox abort during upload/download
 
 These are the current regression scenarios, not just backlog items. Each one
 should keep its `.md` note and matching `_test.exs` file aligned.
@@ -50,12 +52,18 @@ For datagram/runtime faults, prefer the queued simulator API:
 - `EtherCAT.Simulator.inject_fault({:next_exchanges, count, fault})`
 - `EtherCAT.Simulator.inject_fault({:exchange_script, [fault, ...]})`
 - `EtherCAT.Simulator.inject_fault({:after_ms, delay_ms, fault})`
+- `EtherCAT.Simulator.inject_fault({:after_milestone, milestone, fault})`
 
 Current exchange-scoped faults:
 
 - `:drop_responses`
 - `{:wkc_offset, delta}`
 - `{:disconnect, slave_name}`
+
+Current milestones:
+
+- `{:healthy_exchanges, count}`
+- `{:healthy_polls, slave_name, count}`
 
 For raw transport corruption, use the UDP-edge API instead:
 
@@ -72,15 +80,17 @@ Current UDP corruption modes:
 
 `EtherCAT.Simulator.info/0` and `EtherCAT.Simulator.Udp.info/0` expose
 queued and delayed fault state through `next_fault`, `pending_faults`, and
-`scheduled_faults`, so new scenarios should assert queue drain explicitly
+`scheduled_faults`, including milestone `waiting_on` / `remaining`, so new
+scenarios should assert queue drain explicitly
 instead of relying on sleeps alone.
 
 ## Next Directions
 
 The next useful scenarios are the ones the existing notes still call out:
 
-- milestone-aware or delayed scripts instead of raw exchange counts
-- segmented mailbox aborts during upload/download
+- milestone steps embedded directly inside reusable fault scripts
+- startup-time mailbox aborts through driver mailbox configuration
+- WKC skew targeted at a specific slave or datagram contribution
 
 ## Current Rule Of Thumb
 

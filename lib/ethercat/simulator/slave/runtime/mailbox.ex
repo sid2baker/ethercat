@@ -169,31 +169,38 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
   end
 
   defp handle_download_segment(command, payload, %{mailbox_download: transfer} = slave) do
-    toggle = band_toggle(command)
+    case Dictionary.abort_code(slave, transfer.index, transfer.subindex, :download_segment) do
+      {:ok, abort_code} ->
+        {:ok, abort_response(transfer.index, transfer.subindex, abort_code),
+         %{slave | mailbox_download: nil}}
 
-    if toggle != transfer.toggle do
-      {:ok, abort_response(transfer.index, transfer.subindex, @abort_toggle_mismatch), slave}
-    else
-      last_segment? = band_last_segment?(command)
-      padding = band_padding(command)
-      segment = segment_download_payload(payload, last_segment?, padding)
-      data = transfer.data <> segment
+      :error ->
+        toggle = band_toggle(command)
 
-      if last_segment? do
-        final = binary_part(data, 0, min(byte_size(data), transfer.size))
+        if toggle != transfer.toggle do
+          {:ok, abort_response(transfer.index, transfer.subindex, @abort_toggle_mismatch), slave}
+        else
+          last_segment? = band_last_segment?(command)
+          padding = band_padding(command)
+          segment = segment_download_payload(payload, last_segment?, padding)
+          data = transfer.data <> segment
 
-        case Dictionary.write_entry(slave, transfer.index, transfer.subindex, final) do
-          {:ok, updated_slave} ->
-            {:ok, segment_download_ack(toggle), %{updated_slave | mailbox_download: nil}}
+          if last_segment? do
+            final = binary_part(data, 0, min(byte_size(data), transfer.size))
 
-          {:error, abort_code, updated_slave} ->
-            {:ok, abort_response(transfer.index, transfer.subindex, abort_code),
-             %{updated_slave | mailbox_download: nil}}
+            case Dictionary.write_entry(slave, transfer.index, transfer.subindex, final) do
+              {:ok, updated_slave} ->
+                {:ok, segment_download_ack(toggle), %{updated_slave | mailbox_download: nil}}
+
+              {:error, abort_code, updated_slave} ->
+                {:ok, abort_response(transfer.index, transfer.subindex, abort_code),
+                 %{updated_slave | mailbox_download: nil}}
+            end
+          else
+            next_transfer = %{transfer | data: data, toggle: flip_toggle(transfer.toggle)}
+            {:ok, segment_download_ack(toggle), %{slave | mailbox_download: next_transfer}}
+          end
         end
-      else
-        next_transfer = %{transfer | data: data, toggle: flip_toggle(transfer.toggle)}
-        {:ok, segment_download_ack(toggle), %{slave | mailbox_download: next_transfer}}
-      end
     end
   end
 
@@ -202,32 +209,42 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
   end
 
   defp handle_upload_segment(command, %{mailbox_upload: transfer} = slave) do
-    toggle = band_toggle(command)
+    case Dictionary.abort_code(slave, transfer.index, transfer.subindex, :upload_segment) do
+      {:ok, abort_code} ->
+        {:ok, abort_response(transfer.index, transfer.subindex, abort_code),
+         %{slave | mailbox_upload: nil}}
 
-    if toggle != transfer.toggle do
-      {:ok, abort_response(transfer.index, transfer.subindex, @abort_toggle_mismatch), slave}
-    else
-      chunk_size = max(slave.mailbox_config.send_size - 9, 0)
-      remaining = transfer.remaining
-      chunk = binary_part(remaining, 0, min(byte_size(remaining), chunk_size))
-      rest = binary_part(remaining, byte_size(chunk), byte_size(remaining) - byte_size(chunk))
-      last_segment? = byte_size(rest) == 0
-      unused = if(last_segment?, do: chunk_size - byte_size(chunk), else: 0)
-      padded_chunk = chunk <> :binary.copy(<<0>>, unused)
+      :error ->
+        toggle = band_toggle(command)
 
-      response = upload_segment_response(toggle, last_segment?, unused, padded_chunk)
-
-      next_slave =
-        if last_segment? do
-          %{slave | mailbox_upload: nil}
+        if toggle != transfer.toggle do
+          {:ok, abort_response(transfer.index, transfer.subindex, @abort_toggle_mismatch), slave}
         else
-          %{
-            slave
-            | mailbox_upload: %{transfer | remaining: rest, toggle: flip_toggle(transfer.toggle)}
-          }
-        end
+          chunk_size = max(slave.mailbox_config.send_size - 9, 0)
+          remaining = transfer.remaining
+          chunk = binary_part(remaining, 0, min(byte_size(remaining), chunk_size))
+          rest = binary_part(remaining, byte_size(chunk), byte_size(remaining) - byte_size(chunk))
+          last_segment? = byte_size(rest) == 0
+          {segment, unused} = upload_segment_payload(chunk, last_segment?)
 
-      {:ok, response, next_slave}
+          response = upload_segment_response(toggle, last_segment?, unused, segment)
+
+          next_slave =
+            if last_segment? do
+              %{slave | mailbox_upload: nil}
+            else
+              %{
+                slave
+                | mailbox_upload: %{
+                    transfer
+                    | remaining: rest,
+                      toggle: flip_toggle(transfer.toggle)
+                  }
+              }
+            end
+
+          {:ok, response, next_slave}
+        end
     end
   end
 
@@ -262,6 +279,13 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
     command = toggle * 16 + unused * 2 + last_flag
     <<command::8, segment::binary>>
   end
+
+  defp upload_segment_payload(chunk, true) when byte_size(chunk) < 7 do
+    padding = 7 - byte_size(chunk)
+    {chunk <> :binary.copy(<<0>>, padding), padding}
+  end
+
+  defp upload_segment_payload(chunk, _last_segment?), do: {chunk, 0}
 
   defp download_ack(index, subindex) do
     <<0x60, index::16-little, subindex::8, 0::32-little>>

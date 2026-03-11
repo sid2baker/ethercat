@@ -236,7 +236,14 @@ defmodule EtherCAT.Slave.Mailbox.CoE do
              mailbox_config,
              build_download_segment_frame(chunk, last_segment?, transfer.toggle, next_counter)
            ),
-         :ok <- validate_download_segment_response(response, next_counter, transfer.toggle) do
+         :ok <-
+           validate_download_segment_response(
+             response,
+             next_counter,
+             transfer.toggle,
+             transfer.index,
+             transfer.subindex
+           ) do
       next_transfer = %Download{
         transfer
         | offset: transfer.offset + chunk_size,
@@ -306,7 +313,13 @@ defmodule EtherCAT.Slave.Mailbox.CoE do
              )
            ),
          {:ok, segment, last_segment?} <-
-           parse_upload_segment_response(response, next_counter, upload.toggle) do
+           parse_upload_segment_response(
+             response,
+             next_counter,
+             upload.toggle,
+             upload.index,
+             upload.subindex
+           ) do
       next_upload = %Upload{
         upload
         | data_rev: [segment | upload.data_rev],
@@ -512,7 +525,13 @@ defmodule EtherCAT.Slave.Mailbox.CoE do
     end
   end
 
-  defp validate_download_segment_response(response, expected_counter, expected_toggle) do
+  defp validate_download_segment_response(
+         response,
+         expected_counter,
+         expected_toggle,
+         index,
+         subindex
+       ) do
     with {:ok, body} <- sdo_response_body(response, expected_counter) do
       case body do
         <<0::2, 1::1, toggle::1, _::4, _rest::binary>> when toggle == expected_toggle ->
@@ -522,7 +541,7 @@ defmodule EtherCAT.Slave.Mailbox.CoE do
           {:error, {:toggle_mismatch, expected_toggle, toggle}}
 
         <<@command_abort, _::16-little, _::8, abort_code::32-little, _::binary>> ->
-          {:error, {:sdo_abort, abort_code}}
+          {:error, {:sdo_abort, index, subindex, abort_code}}
 
         _ ->
           {:error, {:unexpected_sdo_segment_response, response}}
@@ -578,7 +597,13 @@ defmodule EtherCAT.Slave.Mailbox.CoE do
     {:error, {:unexpected_sdo_response, index, subindex, response}}
   end
 
-  defp parse_upload_segment_response(response, expected_counter, expected_toggle) do
+  defp parse_upload_segment_response(
+         response,
+         expected_counter,
+         expected_toggle,
+         index,
+         subindex
+       ) do
     with {:ok, body} <- sdo_response_body(response, expected_counter) do
       case body do
         <<0::3, toggle::1, unused::3, last::1, segment::binary>> when toggle == expected_toggle ->
@@ -595,7 +620,7 @@ defmodule EtherCAT.Slave.Mailbox.CoE do
           {:error, {:toggle_mismatch, expected_toggle, toggle}}
 
         <<@command_abort, _::16-little, _::8, abort_code::32-little, _::binary>> ->
-          {:error, {:sdo_abort, abort_code}}
+          {:error, {:sdo_abort, index, subindex, abort_code}}
 
         _ ->
           {:error, {:unexpected_sdo_segment_response, response}}

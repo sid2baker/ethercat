@@ -5,6 +5,7 @@ defmodule EtherCAT.Simulator do
 
   alias EtherCAT.Bus.Datagram
   alias EtherCAT.Simulator.Runtime.Faults
+  alias EtherCAT.Simulator.Runtime.Milestones
   alias EtherCAT.Simulator.Runtime.Router
   alias EtherCAT.Simulator.Runtime.Snapshot
   alias EtherCAT.Simulator.State
@@ -13,6 +14,7 @@ defmodule EtherCAT.Simulator do
   alias EtherCAT.Simulator.Runtime.Wiring
 
   @type exchange_fault :: Faults.exchange_fault()
+  @type milestone :: Milestones.milestone()
   @type immediate_fault ::
           exchange_fault()
           | {:next_exchange, exchange_fault()}
@@ -21,8 +23,13 @@ defmodule EtherCAT.Simulator do
           | {:retreat_to_safeop, atom()}
           | {:latch_al_error, atom(), non_neg_integer()}
           | {:mailbox_abort, atom(), non_neg_integer(), non_neg_integer(), non_neg_integer()}
+          | {:mailbox_abort, atom(), non_neg_integer(), non_neg_integer(), non_neg_integer(),
+             :request | :upload_segment | :download_segment}
 
-  @type fault :: immediate_fault() | {:after_ms, non_neg_integer(), immediate_fault()}
+  @type fault ::
+          immediate_fault()
+          | {:after_ms, non_neg_integer(), immediate_fault()}
+          | {:after_milestone, milestone(), immediate_fault()}
 
   @type signal_ref :: {atom(), atom()}
   @type connection :: %{
@@ -245,7 +252,10 @@ defmodule EtherCAT.Simulator do
           effective_faults.wkc_offset
         )
 
-      state = finalize_signal_changes(%{state | slaves: slaves}, before_signals)
+      state =
+        %{state | slaves: slaves}
+        |> finalize_signal_changes(before_signals)
+        |> maybe_trigger_milestone_faults(datagrams, responses, faults, planned_fault)
 
       {:reply, {:ok, responses}, state}
     end
@@ -490,6 +500,10 @@ defmodule EtherCAT.Simulator do
     schedule_fault(state, delay_ms, fault)
   end
 
+  defp inject_fault_into_state(state, {:after_milestone, milestone, fault}) do
+    schedule_fault_after_milestone(state, milestone, fault)
+  end
+
   defp inject_fault_into_state(state, fault) do
     apply_immediate_fault(state, fault)
   end
@@ -537,6 +551,20 @@ defmodule EtherCAT.Simulator do
     )
   end
 
+  defp apply_immediate_fault(
+         state,
+         {:mailbox_abort, slave_name, index, subindex, abort_code, stage}
+       )
+       when is_integer(index) and index >= 0 and is_integer(subindex) and subindex >= 0 and
+              is_integer(abort_code) and abort_code >= 0 and
+              stage in [:request, :upload_segment, :download_segment] do
+    apply_slave_update(
+      state,
+      slave_name,
+      &Device.inject_mailbox_abort(&1, index, subindex, abort_code, stage)
+    )
+  end
+
   defp apply_immediate_fault(_state, _fault), do: {:error, :invalid_fault}
 
   defp apply_planned_fault(state, planned_fault) do
@@ -564,7 +592,29 @@ defmodule EtherCAT.Simulator do
       due_at_ms = System.monotonic_time(:millisecond) + delay_ms
       timer_ref = Process.send_after(self(), {:apply_scheduled_fault, id, fault}, delay_ms)
 
-      scheduled_fault = %{id: id, timer_ref: timer_ref, due_at_ms: due_at_ms, fault: fault}
+      scheduled_fault = %{
+        id: id,
+        kind: :timer,
+        timer_ref: timer_ref,
+        due_at_ms: due_at_ms,
+        fault: fault
+      }
+
+      {:ok, %{state | scheduled_faults: state.scheduled_faults ++ [scheduled_fault]}}
+    else
+      {:error, :invalid_fault}
+    end
+  end
+
+  defp schedule_fault_after_milestone(state, milestone, fault) do
+    if valid_schedulable_fault?(fault) and Milestones.valid?(milestone) do
+      scheduled_fault = %{
+        id: System.unique_integer([:positive, :monotonic]),
+        kind: :milestone,
+        milestone: milestone,
+        remaining: Milestones.initial_remaining(milestone),
+        fault: fault
+      }
 
       {:ok, %{state | scheduled_faults: state.scheduled_faults ++ [scheduled_fault]}}
     else
@@ -573,8 +623,12 @@ defmodule EtherCAT.Simulator do
   end
 
   defp clear_scheduled_faults(scheduled_faults) do
-    Enum.each(scheduled_faults, fn %{timer_ref: timer_ref} ->
-      Process.cancel_timer(timer_ref)
+    Enum.each(scheduled_faults, fn
+      %{kind: :timer, timer_ref: timer_ref} ->
+        Process.cancel_timer(timer_ref)
+
+      _scheduled_fault ->
+        :ok
     end)
   end
 
@@ -615,6 +669,42 @@ defmodule EtherCAT.Simulator do
               subindex >= 0 and is_integer(abort_code) and abort_code >= 0,
        do: true
 
+  defp valid_schedulable_fault?({:mailbox_abort, slave_name, index, subindex, abort_code, stage})
+       when is_atom(slave_name) and is_integer(index) and index >= 0 and is_integer(subindex) and
+              subindex >= 0 and is_integer(abort_code) and abort_code >= 0 and
+              stage in [:request, :upload_segment, :download_segment],
+       do: true
+
   defp valid_schedulable_fault?({:after_ms, _delay_ms, _fault}), do: false
+  defp valid_schedulable_fault?({:after_milestone, _milestone, _fault}), do: false
   defp valid_schedulable_fault?(_fault), do: false
+
+  defp maybe_trigger_milestone_faults(state, datagrams, responses, faults, planned_fault) do
+    observations = Milestones.observe(datagrams, responses, state.slaves, faults, planned_fault)
+
+    {scheduled_faults, ready_faults} =
+      Enum.reduce(state.scheduled_faults, {[], []}, fn
+        %{kind: :milestone, milestone: milestone, remaining: remaining, fault: fault} = entry,
+        {kept, ready} ->
+          progress = Milestones.progress(milestone, observations)
+          next_remaining = max(remaining - progress, 0)
+
+          if next_remaining == 0 do
+            {kept, ready ++ [fault]}
+          else
+            {kept ++ [%{entry | remaining: next_remaining}], ready}
+          end
+
+        entry, {kept, ready} ->
+          {kept ++ [entry], ready}
+      end)
+
+    Enum.reduce(ready_faults, %{state | scheduled_faults: scheduled_faults}, fn fault,
+                                                                                current_state ->
+      case apply_immediate_fault(current_state, fault) do
+        {:ok, next_state} -> next_state
+        {:error, _reason} -> current_state
+      end
+    end)
+  end
 end

@@ -117,7 +117,7 @@ defmodule EtherCAT.SimulatorSlaveDeviceTest do
     cleared = Device.clear_faults(aborting)
     refute cleared.al_error?
     assert cleared.al_status_code == 0
-    assert cleared.mailbox_abort_codes == %{}
+    assert cleared.mailbox_abort_rules == []
   end
 
   test "signal access can get and set named input and output values" do

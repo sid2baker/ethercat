@@ -53,6 +53,16 @@ defmodule EtherCAT.Simulator.Slave.Profile.MailboxDevice do
             value: "hello-sim\0\0\0",
             access: :rw,
             group: :diagnostics
+          ),
+        {0x2002, 0x01} =>
+          Object.new(
+            index: 0x2002,
+            subindex: 0x01,
+            name: :segmented_blob,
+            type: {:binary, 80},
+            value: segmented_blob(),
+            access: :rw,
+            group: :diagnostics
           )
       },
       dc_capable?: false,
@@ -94,4 +104,10 @@ defmodule EtherCAT.Simulator.Slave.Profile.MailboxDevice do
   end
 
   def init(_definition), do: %{}
+
+  defp segmented_blob do
+    0..79
+    |> Enum.to_list()
+    |> :erlang.list_to_binary()
+  end
 end

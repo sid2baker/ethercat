@@ -64,13 +64,19 @@ defmodule EtherCAT.Simulator.Runtime.Snapshot do
   defp scheduled_fault_info(scheduled_faults) do
     now_ms = System.monotonic_time(:millisecond)
 
-    scheduled_faults
-    |> Enum.sort_by(& &1.due_at_ms)
-    |> Enum.map(fn %{due_at_ms: due_at_ms, fault: fault} ->
-      %{
-        fault: fault,
-        due_in_ms: max(due_at_ms - now_ms, 0)
-      }
+    Enum.map(scheduled_faults, fn
+      %{kind: :timer, due_at_ms: due_at_ms, fault: fault} ->
+        %{
+          fault: fault,
+          due_in_ms: max(due_at_ms - now_ms, 0)
+        }
+
+      %{kind: :milestone, milestone: milestone, remaining: remaining, fault: fault} ->
+        %{
+          fault: fault,
+          waiting_on: milestone,
+          remaining: remaining
+        }
     end)
   end
 end

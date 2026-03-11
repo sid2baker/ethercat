@@ -325,6 +325,8 @@ now covers:
 - `06` mailbox aborts in PREOP
 - `07` combined exchange fault scripts across timeout, WKC skew, and reconnect
 - `08` delayed slave-local mutation after exchange-fault recovery
+- `09` milestone-aware slave-local timing after healthy polls
+- `10` segmented mailbox aborts during upload/download
 
 ## Widget-Facing Signal API
 
@@ -450,6 +452,10 @@ EtherCAT.Simulator.inject_fault({:next_exchanges, 10, :drop_responses})
 EtherCAT.Simulator.inject_fault({:next_exchanges, 6, {:wkc_offset, -1}})
 EtherCAT.Simulator.inject_fault({:exchange_script, [:drop_responses, {:disconnect, :outputs}]})
 EtherCAT.Simulator.inject_fault({:after_ms, 250, {:retreat_to_safeop, :outputs}})
+
+EtherCAT.Simulator.inject_fault(
+  {:after_milestone, {:healthy_polls, :outputs, 10}, {:retreat_to_safeop, :outputs}}
+)
 ```
 
 Use the UDP-side API when the fault should corrupt raw replies at the transport
@@ -624,6 +630,7 @@ The original simulator milestones are now all covered:
     - AL error latch
     - retreat to `SAFEOP`
     - mailbox abort replies
+    - delayed and milestone-triggered slave-local faults
   - deep recovery tests through the real UDP transport
 
 ## SOES Inputs

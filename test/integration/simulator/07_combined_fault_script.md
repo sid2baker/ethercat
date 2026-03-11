@@ -43,4 +43,4 @@ Current API is enough for basic combined exchange scripts.
 
 Still worth adding later:
 
-- script steps that wait on explicit milestones instead of raw exchange counts
+- milestone wait steps embedded directly inside a single reusable script
