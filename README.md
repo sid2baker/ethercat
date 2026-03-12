@@ -37,7 +37,8 @@ def deps do
 end
 ```
 
-For release notes and post-`0.3.0` work, see [CHANGELOG.md](CHANGELOG.md).
+For release notes and post-`0.3.0` work, see the
+[changelog](https://github.com/sid2baker/ethercat/blob/main/CHANGELOG.md).
 
 If you want the current `main` branch instead of the latest Hex cut:
 
@@ -207,7 +208,7 @@ For detailed state diagrams and sequencing, see the moduledocs:
 - Slave reconnect is PREOP-first: the slave rebuilds its local state, then the master decides when to return it to OP.
 
 The maintained end-to-end hardware walkthrough is
-`test/integration/hardware/scripts/fault_tolerance.exs`.
+`MIX_ENV=test mix run test/integration/hardware/scripts/fault_tolerance.exs --interface <eth-iface>`.
 
 ## Where To Start
 
@@ -225,6 +226,10 @@ handling without a physical EtherCAT stack on your desk.
 ### Maintained hardware scripts
 
 The repo ships maintained hardware scripts under `test/integration/hardware/`.
+Run them with `MIX_ENV=test mix run test/integration/hardware/scripts/<script>.exs ...`
+because they reuse support modules compiled only in test env. See
+`test/integration/hardware/README.md` for the maintained script matrix and flags.
+
 Recommended first stops:
 
 - `test/integration/hardware/scripts/scan.exs`
