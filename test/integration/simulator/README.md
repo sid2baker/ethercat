@@ -139,6 +139,49 @@ The same mailbox protocol fault used as a step inside `Fault.script/1` is
 consumed on first match, which is the preferred way to model "first retry
 fails, later retry self-heals" reconnect scenarios.
 
+## Cyclic Scenario Rules
+
+Many simulator regressions are really cycle-level bugs, not generic timing
+bugs. Write those scenarios in terms of exchanges, polls, and recovery windows
+instead of wall-clock sleeps.
+
+Use exchange-scoped timing when the master should observe a fault on the next
+few cyclic turns:
+
+- `Fault.next(fault)` / `Fault.next(fault, count)` for exact exchange windows
+- `Fault.wait_for(Fault.healthy_exchanges(count))` when the test should resume
+  after a known number of clean round trips
+- `{:wkc_offset, delta}` or `{:logical_wkc_offset, slave, delta}` when the
+  bug is about cyclic validity, not about a slave-local AL transition
+
+Use poll- or mailbox-scoped timing when the interesting edge is slower than one
+domain cycle:
+
+- `Fault.wait_for(Fault.healthy_polls(slave_name, count))` for health-poll and
+  reconnect stories
+- `Fault.wait_for(Fault.mailbox_step(slave_name, step, count))` for segmented
+  mailbox progress
+
+Use wall-clock timing only when the trigger really is elapsed time:
+
+- `Fault.after_ms/2` delays when a fault becomes active
+- it does **not** simulate late-but-valid transport replies or random jitter
+- if a scenario needs "reply arrives too late" semantics, that is a missing
+  UDP-edge fault shape, not a reason to sprinkle `Process.sleep/1` into the
+  test
+
+For cyclic assertions, prefer checking the user-visible runtime effect instead
+of inferring it from helper internals:
+
+- domain invalid/recovered transitions
+- master `:recovering` entry and exit
+- retained or cleared slave faults
+- simulator queue drain through `Expect.simulator_queue_empty/0`
+
+That keeps cycle-level scenarios honest: the simulator schedules deterministic
+fault windows, while the test asserts what the real master actually did with
+those windows.
+
 ## Integration Helper API
 
 Prefer the new test helpers for new scenarios:
@@ -177,6 +220,105 @@ The next useful scenarios after the critical PDO reconnect PREOP self-heal case 
   counted disconnect, and the resulting master `:recovering` entry then arms a
   follow-up `SAFEOP` retreat, proving these telemetry triggers compose without
   promoting master-observed events into simulator milestones
+
+## When To Combine Scenarios
+
+Keep the default shape as one scenario per regression.
+
+Combine two fault stories only when all of these are true:
+
+- they are one causal chain in the same operational window
+- the second fault is only interesting because the first fault already
+  happened
+- the expected assertion is about the combined recovery behavior, not just the
+  individual faults in sequence
+
+Do **not** combine scenarios just because the setup ring is the same. Shared
+builders and helpers are cheaper than mixed assertions and harder-to-read trace
+output.
+
+Good reasons to combine:
+
+- retained reconnect PREOP degradation that later changes how a cyclic
+  disconnect should be recovered
+- master `:recovering` entry that should synchronously arm a follow-up runtime
+  fault in the same scenario
+
+Bad reasons to combine:
+
+- "these are both mailbox faults"
+- "these both mention SAFEOP"
+- "this saves one more scenario file"
+
+If a combined story stops being easy to name in one sentence, it probably
+should stay split.
+
+## Promotion Path
+
+When a new idea shows up, promote it through the smallest layer that keeps the
+behavior honest:
+
+1. Add a simulator scenario when the bug only appears with the real master,
+   transport, and recovery loop interacting together.
+2. Add a focused master/slave/domain unit test when the integration scenario
+   already proved the bug and the core state transition should stay pinned more
+   cheaply.
+3. Add a hardware variant only when the value is physical validation,
+   capture generation, or simulator-drift detection.
+
+That keeps this folder centered on the hardest class of failures:
+
+- real runtime interaction bugs
+- deterministic fault/recovery choreography
+- cases that are too expensive or too unsafe to induce repeatedly on a bench
+
+## Scenario Authoring Checklist
+
+Before adding a new simulator scenario, check these in order:
+
+1. Is the ring shape the smallest one that can still reproduce the bug?
+2. Is the fault on the right boundary?
+   Use `EtherCAT.Simulator` for datagram/runtime behavior and
+   `EtherCAT.Simulator.Udp` for raw reply corruption.
+3. Is the trigger modeled deterministically?
+   Prefer `next`, milestones, or telemetry-triggered helpers over sleeps.
+4. Is the assertion about the public runtime behavior?
+   Prefer master/domain/slave state, retained faults, signals, and queue drain
+   over helper-local implementation details.
+5. If the scenario proves a product bug, did the fix also get a focused unit
+   regression where that is cheaper to maintain?
+
+For failure diagnostics, keep these by default:
+
+- a short `.md` note that names the fault story in one sentence
+- `Trace` capture for timeline context
+- `Expect.simulator_queue_empty/0` when the scenario arms queued or scheduled
+  faults
+
+If a scenario still needs bespoke sleeps after that checklist, the API is
+probably missing a better trigger or observation point.
+
+## Common Anti-Patterns
+
+Avoid these when extending the simulator suite:
+
+- waiting with `Process.sleep/1` for a state change that already has a better
+  trigger, milestone, or `Expect.eventually/2` assertion
+- asserting exact trace lengths when the behavior under test is really a state
+  transition or retained-fault outcome
+- combining unrelated transport, mailbox, and slave-local faults into one test
+  just because the ring setup is expensive
+- reaching into simulator internals when the same behavior is visible through
+  public master/domain/slave info or the signal API
+- using a captured real-device fixture for a pure protocol-shape matrix where a
+  smaller synthetic mailbox fixture would isolate the failure better
+- using a synthetic fixture to claim realistic device-semantic coverage
+
+When one of those feels tempting, it usually means one of three things:
+
+- the simulator needs a narrower fault shape
+- the helper layer needs a clearer assertion surface
+- the scenario should be split into two regressions instead of forced into one
 
 ## Current Rule Of Thumb
 

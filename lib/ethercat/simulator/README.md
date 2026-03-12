@@ -611,6 +611,39 @@ That boundary matters:
 - `EtherCAT.Simulator.Udp` owns malformed, stale, or mismatched raw replies
 - both builder modules expose `describe/1` for widget-facing labels
 
+## Delay Semantics
+
+The simulator currently supports delayed fault scheduling, not general transport
+latency simulation.
+
+What exists today:
+
+- `Fault.after_ms(fault, delay_ms)` delays when a fault becomes active
+- `Fault.after_milestone(fault, milestone)` delays fault activation until a
+  deterministic simulator milestone is observed
+- the DC register model carries `system_time_delay_ns` so DC reads can expose
+  realistic-looking delay values during clock setup and diagnostics
+
+What does **not** exist today:
+
+- no built-in "reply after N ms" transport fault
+- no random jitter model
+- no per-port or per-hop wire propagation model
+
+Normal UDP reply handling is otherwise immediate: `EtherCAT.Simulator.Udp`
+decodes the payload, runs the datagrams, encodes the reply, and sends it back
+in the same request/response path. Timeout-style coverage is therefore modeled
+by dropping replies or corrupting them, not by intentionally sending them late.
+
+That is deliberate. Most master regressions in this repo are about missing
+replies, wrong WKCs, malformed mailbox exchanges, reconnect sequencing, and
+fault retention. Those benefit from deterministic fault windows more than from
+approximate latency modeling.
+
+If late-but-valid replies ever become important, add them as a narrow UDP-edge
+fault with explicit timing, not as a broad jitter or physics model across the
+whole simulator.
+
 ## Remaining Intentional Limits
 
 The simulator still does **not** try to model everything.
@@ -619,6 +652,7 @@ Current intentional limits:
 
 - no raw-socket simulator endpoint yet
 - no carrier/link-loss simulation below the protocol layer
+- no generic transport-latency or jitter model
 - no full motion physics for drives
 - no complete SDO Info service surface
 - no attempt to mirror SOES internal control flow one-to-one
