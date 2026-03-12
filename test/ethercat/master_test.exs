@@ -79,6 +79,43 @@ defmodule EtherCAT.MasterTest do
       {:keep_state_and_data, [{:reply, from, :ok}]}
     end
 
+    def handle_event({:call, from}, :retry_preop_configuration, _state, _data) do
+      {:keep_state_and_data, [{:reply, from, :ok}]}
+    end
+
+    def handle_event(_type, _event, _state, data), do: {:keep_state, data}
+  end
+
+  defmodule RejectingRequestSlave do
+    @behaviour :gen_statem
+
+    @failure {:preop_configuration_failed,
+              {:mailbox_config_failed, 0x2003, 0x01, :response_timeout}}
+
+    def start_link(name) do
+      :gen_statem.start_link(
+        {:via, Registry, {EtherCAT.Registry, {:slave, name}}},
+        __MODULE__,
+        nil,
+        []
+      )
+    end
+
+    @impl true
+    def callback_mode, do: :handle_event_function
+
+    @impl true
+    def init(_arg), do: {:ok, :preop, nil}
+
+    @impl true
+    def handle_event({:call, from}, {:request, :op}, _state, data) do
+      {:keep_state, data, [{:reply, from, {:error, @failure}}]}
+    end
+
+    def handle_event({:call, from}, {:request, _target}, _state, data) do
+      {:keep_state, data, [{:reply, from, :ok}]}
+    end
+
     def handle_event(_type, _event, _state, data), do: {:keep_state, data}
   end
 
@@ -447,6 +484,34 @@ defmodule EtherCAT.MasterTest do
 
     assert {:keep_state_and_data, [{:reply, ^from, {:error, {:runtime_degraded, _faults}}}]} =
              EtherCAT.Master.handle_event({:call, from}, :await_operational, :recovering, updated)
+  end
+
+  test "reconnect-time OP request failures replace stale critical disconnect faults in recovering" do
+    start_supervised!(%{
+      id: make_ref(),
+      start: {RejectingRequestSlave, :start_link, [:sensor]}
+    })
+
+    failure =
+      {:preop_configuration_failed, {:mailbox_config_failed, 0x2003, 0x01, :response_timeout}}
+
+    data = %EtherCAT.Master{
+      runtime_faults: %{{:slave, :sensor} => {:down, :disconnected}},
+      slave_faults: %{sensor: {:reconnecting, :authorized}},
+      slave_configs: [%SlaveConfig{name: :sensor, process_data: {:all, :main}}],
+      slaves: [{:sensor, 0x1001}]
+    }
+
+    assert {:keep_state, %EtherCAT.Master{} = updated} =
+             EtherCAT.Master.handle_event(
+               :info,
+               {:slave_ready, :sensor, :preop},
+               :recovering,
+               data
+             )
+
+    assert updated.runtime_faults == %{{:slave, :sensor} => {:preop, failure}}
+    assert updated.slave_faults == %{sensor: {:preop, failure}}
   end
 
   test "slave retreat in operational keeps the master operational and is exposed through slaves/0" do

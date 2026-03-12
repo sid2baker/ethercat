@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Master recovery now replaces stale critical disconnect faults with reconnect-time PREOP configuration failures for PDO-participating slaves, allowing later recovery retries to return the master to `:operational`
+
 ## [0.3.0] - 2026-03-12
 
 ### Changed

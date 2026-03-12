@@ -186,7 +186,14 @@ defmodule EtherCAT.Master.Recovery do
             "[Master] slave #{name} :#{target} request failed after reconnect: #{inspect(reason)}"
           )
 
-          {:keep, put_slave_fault(data, name, {:preop, reason})}
+          next_data =
+            if Map.has_key?(data.runtime_faults, {:slave, name}) do
+              put_tracked_runtime_slave_fault(data, name, {:preop, reason})
+            else
+              put_slave_fault(data, name, {:preop, reason})
+            end
+
+          {:keep, next_data}
       end
     end
   end
@@ -324,26 +331,23 @@ defmodule EtherCAT.Master.Recovery do
   defp retry_recovering_slaves(%{runtime_faults: runtime_faults} = data) do
     target = transition_request_target(data)
 
-    next_faults =
-      Enum.reduce(runtime_faults, runtime_faults, fn
-        {{:slave, name}, {:retreated, _target_state}}, acc ->
-          retry_runtime_slave_request(acc, name, target)
+    Enum.reduce(runtime_faults, data, fn
+      {{:slave, name}, {:retreated, _target_state}}, acc ->
+        retry_recovering_slave_request(acc, name, target)
 
-        {{:slave, name}, {:preop, {:preop_configuration_failed, _reason}}}, acc ->
-          retry_runtime_slave_preop_configuration(acc, name, target)
+      {{:slave, name}, {:preop, {:preop_configuration_failed, _reason}}}, acc ->
+        retry_recovering_slave_preop_configuration(acc, name, target)
 
-        {{:slave, name}, {:preop, reason}}, acc ->
-          if retryable_runtime_slave_fault?(reason) do
-            retry_runtime_slave_request(acc, name, target)
-          else
-            acc
-          end
-
-        _other, acc ->
+      {{:slave, name}, {:preop, reason}}, acc ->
+        if retryable_runtime_slave_fault?(reason) do
+          retry_recovering_slave_request(acc, name, target)
+        else
           acc
-      end)
+        end
 
-    %{data | runtime_faults: next_faults}
+      _other, acc ->
+        acc
+    end)
   end
 
   @spec retry_slave_faults(%EtherCAT.Master{}) :: %EtherCAT.Master{}
@@ -352,24 +356,31 @@ defmodule EtherCAT.Master.Recovery do
 
     next_faults =
       Enum.reduce(slave_faults, slave_faults, fn
-        {name, {:retreated, _target_state}}, acc ->
-          retry_slave_request(acc, name, target)
-
-        {name, {:preop, {:preop_configuration_failed, _reason}}}, acc ->
-          retry_slave_preop_configuration(acc, name, target)
-
-        {name, {:preop, reason}}, acc ->
-          if retryable_runtime_slave_fault?(reason) do
-            retry_slave_request(acc, name, target)
-          else
+        {name, reason}, acc ->
+          if Map.has_key?(data.runtime_faults, {:slave, name}) do
             acc
+          else
+            case reason do
+              {:retreated, _target_state} ->
+                retry_slave_request(acc, name, target)
+
+              {:preop, {:preop_configuration_failed, _reason}} ->
+                retry_slave_preop_configuration(acc, name, target)
+
+              {:preop, retry_reason} ->
+                if retryable_runtime_slave_fault?(retry_reason) do
+                  retry_slave_request(acc, name, target)
+                else
+                  acc
+                end
+
+              {:reconnect_failed, _reason} ->
+                retry_slave_reconnect_authorization(acc, name)
+
+              _other ->
+                acc
+            end
           end
-
-        {name, {:reconnect_failed, _reason}}, acc ->
-          retry_slave_reconnect_authorization(acc, name)
-
-        _other, acc ->
-          acc
       end)
 
     %{data | slave_faults: next_faults}
@@ -386,17 +397,17 @@ defmodule EtherCAT.Master.Recovery do
     end)
   end
 
-  defp retry_runtime_slave_request(runtime_faults, name, target) do
+  defp retry_recovering_slave_request(data, name, target) do
     case SlaveAPI.request(name, target) do
       :ok ->
-        Map.delete(runtime_faults, {:slave, name})
+        clear_tracked_slave_fault(data, name)
 
       {:error, reason} ->
         Logger.warning(
           "[Master] recovery retry: #{inspect(name)} still not in :#{target}: #{inspect(reason)}"
         )
 
-        Map.put(runtime_faults, {:slave, name}, {:preop, reason})
+        put_tracked_runtime_slave_fault(data, name, {:preop, reason})
     end
   end
 
@@ -414,17 +425,21 @@ defmodule EtherCAT.Master.Recovery do
     end
   end
 
-  defp retry_runtime_slave_preop_configuration(runtime_faults, name, target) do
+  defp retry_recovering_slave_preop_configuration(data, name, target) do
     case SlaveAPI.retry_preop_configuration(name) do
       :ok ->
-        maybe_finish_runtime_preop_retry(runtime_faults, name, target)
+        maybe_finish_runtime_preop_retry(data, name, target)
 
       {:error, reason} ->
         Logger.warning(
           "[Master] recovery retry: #{inspect(name)} PREOP configuration still failing: #{inspect(reason)}"
         )
 
-        Map.put(runtime_faults, {:slave, name}, {:preop, {:preop_configuration_failed, reason}})
+        put_tracked_runtime_slave_fault(
+          data,
+          name,
+          {:preop, {:preop_configuration_failed, reason}}
+        )
     end
   end
 
@@ -518,12 +533,18 @@ defmodule EtherCAT.Master.Recovery do
     |> clear_runtime_fault({:slave, name})
   end
 
-  defp maybe_finish_runtime_preop_retry(runtime_faults, name, :preop) do
-    Map.delete(runtime_faults, {:slave, name})
+  defp put_tracked_runtime_slave_fault(data, name, reason) do
+    data
+    |> put_slave_fault(name, reason)
+    |> put_runtime_fault({:slave, name}, reason)
   end
 
-  defp maybe_finish_runtime_preop_retry(runtime_faults, name, target) do
-    retry_runtime_slave_request(runtime_faults, name, target)
+  defp maybe_finish_runtime_preop_retry(data, name, :preop) do
+    clear_tracked_slave_fault(data, name)
+  end
+
+  defp maybe_finish_runtime_preop_retry(data, name, target) do
+    retry_recovering_slave_request(data, name, target)
   end
 
   defp maybe_finish_slave_preop_retry(slave_faults, name, :preop) do
