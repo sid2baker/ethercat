@@ -383,6 +383,10 @@ now covers:
   during PREOP rebuild, including committed-write semantics
 - `28` reconnect-time PREOP fault scripts that fail once and self-heal on a
   later retry without manual simulator cleanup
+- `29` reconnect-time PREOP fault scripts that retain different mailbox
+  failures on successive retries before eventual recovery
+- `30` reconnect-time mailbox PREOP degradation plus a later slave-local
+  `SAFEOP` retreat during the same operational window
 
 ## Widget-Facing Signal API
 
