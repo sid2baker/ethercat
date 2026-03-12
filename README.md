@@ -33,12 +33,19 @@ Latest Hex release:
 
 ```elixir
 def deps do
-  [{:ethercat, "~> 0.2.0"}]
+  [{:ethercat, "~> 0.3.0"}]
 end
 ```
 
-The current `main` branch tracks `0.3.0-dev`; see [CHANGELOG.md](CHANGELOG.md)
-for the unreleased work heading toward `0.3.0`.
+For release notes and post-`0.3.0` work, see [CHANGELOG.md](CHANGELOG.md).
+
+If you want the current `main` branch instead of the latest Hex cut:
+
+```elixir
+def deps do
+  [{:ethercat, github: "sid2baker/ethercat", branch: "main"}]
+end
+```
 
 Raw Ethernet socket access requires `CAP_NET_RAW` or root:
 
@@ -79,10 +86,15 @@ exploration, diagnostics, and dynamic configuration.
 defmodule MyApp.EL1809 do
   @behaviour EtherCAT.Slave.Driver
 
-  def signal_model(_), do: [ch1: 0x1A00]
-  def encode_signal(_, _, _), do: <<>>
-  def decode_signal(_, _, <<_::7, bit::1>>), do: bit
-  def decode_signal(_, _, _), do: 0
+  @impl true
+  def signal_model(_config), do: [ch1: 0x1A00]
+
+  @impl true
+  def encode_signal(_signal, _config, _value), do: <<>>
+
+  @impl true
+  def decode_signal(_signal, _config, <<_::7, bit::1>>), do: bit
+  def decode_signal(_signal, _config, _), do: 0
 end
 
 EtherCAT.start(
@@ -101,8 +113,10 @@ EtherCAT.start(
 
 :ok = EtherCAT.await_operational()
 
-EtherCAT.subscribe(:inputs, :ch1)
 {:ok, {bit, updated_at_us}} = EtherCAT.read_input(:inputs, :ch1)
+
+EtherCAT.subscribe(:inputs, :ch1)
+#=> receive {:ethercat, :signal, :inputs, :ch1, value}
 ```
 
 For PREOP-first workflows, configure discovered slaves dynamically:
@@ -146,15 +160,18 @@ EtherCAT model, read the state-machine modules first and the helpers second.
 
 Public startup and runtime health are exposed through `EtherCAT.state/0`:
 
-- `:idle`
-- `:discovering`
-- `:awaiting_preop`
-- `:preop_ready`
-- `:operational`
-- `:activation_blocked`
-- `:recovering`
+- `:idle` — no live session
+- `:discovering` — bus scan and startup are still in progress
+- `:awaiting_preop` — configured slaves are still converging on PREOP
+- `:preop_ready` — the session is usable and held in PREOP
+- `:deactivated` — the session is live but intentionally settled below OP
+- `:operational` — cyclic OP is running
+- `:activation_blocked` — requested transitions could not be completed
+- `:recovering` — a critical runtime fault is being healed
 
-`await_running/1` waits for a usable session. `await_operational/1` waits for cyclic OP. Inspect `EtherCAT.slaves/0` for non-critical per-slave fault state.
+`await_running/1` waits for a usable session and returns activation/configuration
+errors directly if startup cannot reach one. `await_operational/1` waits for
+cyclic OP. Inspect `EtherCAT.slaves/0` for non-critical per-slave fault state.
 
 For detailed state diagrams and sequencing, see the moduledocs:
 - `EtherCAT.Master` — startup, activation, and recovery orchestration
@@ -180,6 +197,12 @@ script in the repo.
 
 [`kino_ethercat`](https://github.com/sid2baker/kino_ethercat) gives you an
 interactive UI for ring discovery, I/O control, and diagnostics.
+
+### No hardware yet
+
+Use `EtherCAT.Simulator` to drive the real master against a simulated ring.
+That is the fastest way to exercise startup, mailbox, recovery, and fault
+handling without a physical EtherCAT stack on your desk.
 
 ### Maintained hardware examples
 
