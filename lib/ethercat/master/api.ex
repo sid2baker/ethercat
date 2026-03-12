@@ -11,6 +11,11 @@ defmodule EtherCAT.Master.API do
   alias EtherCAT.DC.API, as: DCAPI
 
   @call_timeout_ms 5_000
+  # Wait-style calls are satisfied by later state transitions. Give the local
+  # call a small grace window so near-boundary replies do not surface as a
+  # caller timeout instead of the terminal runtime result.
+  @wait_call_grace_floor_ms 10
+  @wait_call_grace_cap_ms 100
 
   @spec start(keyword()) :: :ok | {:error, term()}
   def start(opts \\ []), do: safe_call({:start, opts})
@@ -63,10 +68,11 @@ defmodule EtherCAT.Master.API do
   end
 
   @spec await_running(pos_integer()) :: :ok | {:error, term()}
-  def await_running(timeout_ms \\ 10_000), do: safe_call(:await_running, timeout_ms)
+  def await_running(timeout_ms \\ 10_000), do: safe_wait_call(:await_running, timeout_ms)
 
   @spec await_operational(pos_integer()) :: :ok | {:error, term()}
-  def await_operational(timeout_ms \\ 10_000), do: safe_call(:await_operational, timeout_ms)
+  def await_operational(timeout_ms \\ 10_000),
+    do: safe_wait_call(:await_operational, timeout_ms)
 
   @spec dc_status() :: EtherCAT.DC.Status.t() | {:error, :not_started | :timeout}
   def dc_status, do: safe_call(:dc_status)
@@ -99,5 +105,17 @@ defmodule EtherCAT.Master.API do
       :exit, {:noproc, _} -> {:error, :not_started}
       :exit, {:timeout, _} -> {:error, :timeout}
     end
+  end
+
+  defp safe_wait_call(msg, timeout_ms)
+       when is_integer(timeout_ms) and timeout_ms > 0 do
+    safe_call(msg, timeout_ms + wait_call_grace_ms(timeout_ms))
+  end
+
+  defp wait_call_grace_ms(timeout_ms) do
+    timeout_ms
+    |> div(20)
+    |> max(@wait_call_grace_floor_ms)
+    |> min(@wait_call_grace_cap_ms)
   end
 end

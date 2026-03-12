@@ -13,11 +13,19 @@ This branch currently tracks `0.3.0-dev`.
 - Bus link monitoring now uses the internal netlink/sysfs implementation instead of an external interface-management dependency
 - Master recovery now gates stopped-domain restart on live carrier state and logs explicit carrier loss/restore events
 - Runtime state-machine modules (`Master`, `Slave`, `Domain`, `DC`) were further reduced to state-machine boundaries with helper facades
+- `EtherCAT.Slave.Driver` now uses `signal_model/1,2`, and simulator-specific authoring moved out of the real driver behaviour into optional `MyDriver.Simulator` companions via `EtherCAT.Simulator.DriverAdapter`
+- `EtherCAT.Simulator` now exposes builder-style runtime fault injection with queued, delayed, and milestone-triggered scripts plus richer signal/snapshot surfaces for tooling
 
 ### Fixed
 - Public `Master` API calls now return `{:error, :timeout}` when the local master call itself times out instead of exiting the caller
 - Real carrier loss now stops domains immediately on confirmed `:down`, without domain restart churn while the cable is still unplugged
 - Maintained hardware examples were refreshed for the current runtime and bus/link-monitor implementation
+- `await_running/1` and `await_operational/1` now tolerate a small local reply grace window so terminal startup results do not get masked by near-boundary call timeouts
+- Activation now blocks immediately on PREOP configuration failures instead of starting OP activation work for unrelated slaves
+
+### Docs
+- The README driver example now matches the current `signal_model/1` callback, and the project landing page uses the Kino smart-cell setup screenshot
+- Simulator docs and integration scenario notes now cover the current fault builder API, mailbox protocol fault coverage, and delayed/milestone scheduling
 
 ## [0.2.0] - 2026-03-09
 

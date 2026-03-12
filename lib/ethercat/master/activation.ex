@@ -41,30 +41,40 @@ defmodule EtherCAT.Master.Activation do
   end
 
   defp do_activate_network(data) do
-    case start_dc_runtime(data) do
-      {:ok, dc_data} ->
-        with :ok <- start_domain_cycles(dc_data),
-             :ok <- await_dc_lock_if_requested(dc_data) do
-          activation_failures = activate_required_slaves(dc_data.activatable_slaves)
+    case preop_activation_failures(data.activatable_slaves) do
+      activation_failures when map_size(activation_failures) > 0 ->
+        Logger.warning(
+          "[Master] activation incomplete; blocked for #{inspect(Map.keys(activation_failures))}"
+        )
 
-          activated_data = %{dc_data | activation_failures: activation_failures}
+        {:activation_blocked, %{data | activation_failures: activation_failures}}
 
-          if map_size(activation_failures) == 0 do
-            {:ok, :operational, activated_data}
-          else
-            Logger.warning(
-              "[Master] activation incomplete; blocked for #{inspect(Map.keys(activation_failures))}"
-            )
+      _none ->
+        case start_dc_runtime(data) do
+          {:ok, dc_data} ->
+            with :ok <- start_domain_cycles(dc_data),
+                 :ok <- await_dc_lock_if_requested(dc_data) do
+              activation_failures = activate_required_slaves(dc_data.activatable_slaves)
 
-            {:activation_blocked, activated_data}
-          end
-        else
+              activated_data = %{dc_data | activation_failures: activation_failures}
+
+              if map_size(activation_failures) == 0 do
+                {:ok, :operational, activated_data}
+              else
+                Logger.warning(
+                  "[Master] activation incomplete; blocked for #{inspect(Map.keys(activation_failures))}"
+                )
+
+                {:activation_blocked, activated_data}
+              end
+            else
+              {:error, reason} ->
+                {:error, reason, data}
+            end
+
           {:error, reason} ->
             {:error, reason, data}
         end
-
-      {:error, reason} ->
-        {:error, reason, data}
     end
   end
 
@@ -147,6 +157,19 @@ defmodule EtherCAT.Master.Activation do
         {:error, reason} ->
           Logger.warning("[Master] slave #{inspect(name)} → op failed: #{inspect(reason)}")
           Map.put(failures, name, {:op, reason})
+      end
+    end)
+  end
+
+  defp preop_activation_failures(slave_names) do
+    Enum.reduce(slave_names, %{}, fn name, failures ->
+      case SlaveAPI.info(name) do
+        {:ok, %{al_state: :preop, configuration_error: reason}} when not is_nil(reason) ->
+          Logger.warning("[Master] slave #{inspect(name)} blocked in PREOP: #{inspect(reason)}")
+          Map.put(failures, name, {:safeop, {:preop_configuration_failed, reason}})
+
+        _other ->
+          failures
       end
     end)
   end

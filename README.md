@@ -9,7 +9,7 @@
 > into a bachelor’s thesis. If you know a professor, or someone who could help
 > me pursue that, feel free to reach out! :)
 
-![Kino EtherCAT smart cell setup](docs/images/kino-smart-cell-setup.png)
+![Kino EtherCAT smart cell setup](https://raw.githubusercontent.com/sid2baker/ethercat/main/docs/images/kino-smart-cell-setup.png)
 
 Pure-Elixir EtherCAT master built on OTP.
 
@@ -79,7 +79,7 @@ exploration, diagnostics, and dynamic configuration.
 defmodule MyApp.EL1809 do
   @behaviour EtherCAT.Slave.Driver
 
-  def process_data_model(_), do: [ch1: 0x1A00]
+  def signal_model(_), do: [ch1: 0x1A00]
   def encode_signal(_, _, _), do: <<>>
   def decode_signal(_, _, <<_::7, bit::1>>), do: bit
   def decode_signal(_, _, _), do: 0
