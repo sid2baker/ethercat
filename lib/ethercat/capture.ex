@@ -154,7 +154,8 @@ defmodule EtherCAT.Capture do
   end
 
   @doc """
-  Generate a self-contained best-effort driver scaffold for `slave_name`.
+  Generate a self-contained best-effort driver scaffold for `slave_name`
+  or a previously loaded capture map.
 
   Supported options:
 
@@ -166,22 +167,28 @@ defmodule EtherCAT.Capture do
   Use `write_capture/2` separately if you also want to persist the raw
   captured snapshot alongside the generated file.
   """
-  @spec gen_driver(atom(), keyword()) ::
+  @spec gen_driver(atom() | capture(), keyword()) ::
           {:ok, %{driver_path: String.t()}} | {:error, term()}
   def gen_driver(slave_name, opts) when is_atom(slave_name) and is_list(opts) do
     with {:ok, module} <- fetch_module_option(opts),
          {:ok, capture} <- capture(slave_name, opts) do
-      driver_path = driver_path(module, opts)
-      overwrite? = Keyword.get(opts, :force, false)
+      gen_driver(capture, Keyword.put_new(opts, :module, module))
+    end
+  end
 
-      with :ok <-
-             write_generated_file(
-               driver_path,
-               render_driver_module(module, capture),
-               overwrite?
-             ) do
-        {:ok, %{driver_path: driver_path}}
-      end
+  def gen_driver(%{} = capture, opts) when is_list(opts) do
+    normalized_capture = normalize_capture!(capture)
+    overwrite? = Keyword.get(opts, :force, false)
+
+    with {:ok, module} <- fetch_module_option(opts),
+         driver_path = driver_path(module, opts),
+         :ok <-
+           write_generated_file(
+             driver_path,
+             render_driver_module(module, normalized_capture),
+             overwrite?
+           ) do
+      {:ok, %{driver_path: driver_path}}
     end
   end
 
@@ -678,6 +685,8 @@ defmodule EtherCAT.Capture do
       "",
       render_driver_signal_model_block(scaffold.signal_model),
       "",
+      render_driver_mailbox_block(scaffold.mailbox_steps),
+      "",
       render_driver_codec_block(scaffold),
       "end",
       "",
@@ -715,7 +724,29 @@ defmodule EtherCAT.Capture do
     |> Enum.join("\n")
   end
 
+  defp render_driver_mailbox_block([]), do: ""
+
+  defp render_driver_mailbox_block(mailbox_steps) do
+    """
+      @impl true
+      def mailbox_config(_config) do
+    #{indent_block(format_literal(mailbox_steps, 88), 4)}
+      end
+    """
+    |> String.trim_trailing()
+  end
+
   defp render_driver_codec_block(scaffold) do
+    case scaffold.codec_template do
+      :beckhoff_el3202 ->
+        render_el3202_codec_block(scaffold)
+
+      nil ->
+        render_generic_driver_codec_block(scaffold)
+    end
+  end
+
+  defp render_generic_driver_codec_block(scaffold) do
     input_signals = scaffold.input_signals
     output_signals = scaffold.output_signals
     input_entries = scaffold.input_entries
@@ -825,6 +856,66 @@ defmodule EtherCAT.Capture do
     |> String.trim_trailing()
   end
 
+  defp render_el3202_codec_block(scaffold) do
+    [channel1, channel2] =
+      scaffold.input_entries
+      |> Enum.sort_by(& &1.pdo_index)
+      |> Enum.map(& &1.name)
+
+    [
+      "  @impl true",
+      "  def encode_signal(_signal, _config, _value), do: <<>>",
+      "",
+      "  @impl true",
+      "  def decode_signal(#{inspect(channel1)}, _config, <<",
+      "        _::1,",
+      "        error::1,",
+      "        _::2,",
+      "        _::2,",
+      "        overrange::1,",
+      "        underrange::1,",
+      "        toggle::1,",
+      "        state::1,",
+      "        _::6,",
+      "        value::16-little",
+      "      >>) do",
+      "    %{",
+      "      ohms: value / 16.0,",
+      "      overrange: overrange == 1,",
+      "      underrange: underrange == 1,",
+      "      error: error == 1,",
+      "      invalid: state == 1,",
+      "      toggle: toggle",
+      "    }",
+      "  end",
+      "",
+      "  def decode_signal(#{inspect(channel2)}, _config, <<",
+      "        _::1,",
+      "        error::1,",
+      "        _::2,",
+      "        _::2,",
+      "        overrange::1,",
+      "        underrange::1,",
+      "        toggle::1,",
+      "        state::1,",
+      "        _::6,",
+      "        value::16-little",
+      "      >>) do",
+      "    %{",
+      "      ohms: value / 16.0,",
+      "      overrange: overrange == 1,",
+      "      underrange: underrange == 1,",
+      "      error: error == 1,",
+      "      invalid: state == 1,",
+      "      toggle: toggle",
+      "    }",
+      "  end",
+      "",
+      "  def decode_signal(_signal, _config, _raw), do: nil"
+    ]
+    |> Enum.join("\n")
+  end
+
   defp render_driver_simulator_block(definition_options) do
     """
       @impl true
@@ -837,8 +928,9 @@ defmodule EtherCAT.Capture do
 
   defp driver_scaffold(capture) do
     pdo_configs = get_in(capture, [:sii, :pdo_configs]) || []
+    template = driver_template(capture)
     identity = driver_identity(get_in(capture, [:sii, :identity]) || %{})
-    signal_entries = build_driver_signal_entries(pdo_configs)
+    signal_entries = build_driver_signal_entries(pdo_configs, template)
 
     %{
       identity: identity,
@@ -853,7 +945,10 @@ defmodule EtherCAT.Capture do
         signal_entries
         |> Enum.filter(&(&1.direction == :output))
         |> Enum.map(& &1.name),
-      simulator_definition_options: driver_simulator_definition_options(capture, signal_entries)
+      mailbox_steps: driver_mailbox_steps(capture),
+      codec_template: template_codec(template),
+      simulator_definition_options:
+        driver_simulator_definition_options(capture, signal_entries, template)
     }
   end
 
@@ -872,16 +967,16 @@ defmodule EtherCAT.Capture do
 
   defp maybe_put_driver_revision(identity, _revision), do: identity
 
-  defp build_driver_signal_entries([]), do: []
+  defp build_driver_signal_entries([], _template), do: []
 
-  defp build_driver_signal_entries(pdo_configs) do
+  defp build_driver_signal_entries(pdo_configs, template) do
     input_pdos = Enum.filter(pdo_configs, &(&1.direction == :input))
     output_pdos = Enum.filter(pdo_configs, &(&1.direction == :output))
     mixed? = input_pdos != [] and output_pdos != []
 
     name_lookup =
-      name_direction_pdos(input_pdos, :input, mixed?)
-      |> Map.merge(name_direction_pdos(output_pdos, :output, mixed?))
+      name_direction_pdos(input_pdos, :input, mixed?, template)
+      |> Map.merge(name_direction_pdos(output_pdos, :output, mixed?, template))
 
     Enum.map(pdo_configs, fn pdo ->
       %{
@@ -893,9 +988,9 @@ defmodule EtherCAT.Capture do
     end)
   end
 
-  defp name_direction_pdos([], _direction, _mixed?), do: %{}
+  defp name_direction_pdos([], _direction, _mixed?, _template), do: %{}
 
-  defp name_direction_pdos(pdos, direction, mixed?) do
+  defp name_direction_pdos(pdos, direction, mixed?, template) do
     naming_mode =
       cond do
         digital_group?(Enum.map(pdos, &signal_entry_from_pdo/1)) ->
@@ -913,10 +1008,11 @@ defmodule EtherCAT.Capture do
     |> Enum.into(%{}, fn {pdo, index} ->
       {
         pdo_signature(pdo),
-        case naming_mode do
-          {:numbered, prefix} -> String.to_atom("#{prefix}#{index}")
-          :pdo -> generated_driver_signal_name(direction, pdo.index, mixed?)
-        end
+        template_signal_name(template, pdo) ||
+          case naming_mode do
+            {:numbered, prefix} -> String.to_atom("#{prefix}#{index}")
+            :pdo -> generated_driver_signal_name(direction, pdo.index, mixed?)
+          end
       }
     end)
   end
@@ -925,7 +1021,7 @@ defmodule EtherCAT.Capture do
     %{direction: pdo.direction, pdo_index: pdo.index, bit_size: pdo.bit_size}
   end
 
-  defp driver_simulator_definition_options(capture, signal_entries) do
+  defp driver_simulator_definition_options(capture, signal_entries, template) do
     mailbox_config = get_in(capture, [:sii, :mailbox_config]) || zero_mailbox_config()
     identity = get_in(capture, [:sii, :identity]) || %{}
     input_entries = Enum.filter(signal_entries, &(&1.direction == :input))
@@ -945,9 +1041,73 @@ defmodule EtherCAT.Capture do
         digital_simulator_options(identity, input_entries, output_entries)
 
       true ->
-        definition_options(capture)
+        capture
+        |> definition_options()
+        |> maybe_apply_template_signal_specs(signal_entries, template)
     end
   end
+
+  defp driver_mailbox_steps(capture) do
+    capture
+    |> Map.get(:sdos, [])
+    |> Enum.map(fn %{index: index, subindex: subindex, data: data} ->
+      {:sdo_download, index, subindex, data}
+    end)
+  end
+
+  defp driver_template(capture) do
+    case get_in(capture, [:sii, :identity]) do
+      %{vendor_id: 0x0000_0002, product_code: 0x0C82_3052} ->
+        %{
+          id: :beckhoff_el3202,
+          signal_names: %{
+            {:input, 0x1A00} => :channel1,
+            {:input, 0x1A01} => :channel2
+          }
+        }
+
+      _other ->
+        nil
+    end
+  end
+
+  defp template_signal_name(nil, _pdo), do: nil
+
+  defp template_signal_name(template, pdo) do
+    get_in(template, [:signal_names, {pdo.direction, pdo.index}])
+  end
+
+  defp template_codec(%{id: :beckhoff_el3202}), do: :beckhoff_el3202
+  defp template_codec(_template), do: nil
+
+  defp maybe_apply_template_signal_specs(definition_options, signal_entries, template) do
+    definition_options
+    |> maybe_rename_signal_specs(signal_entries)
+    |> maybe_template_profile_override(template)
+  end
+
+  defp maybe_rename_signal_specs(definition_options, []) do
+    definition_options
+  end
+
+  defp maybe_rename_signal_specs(definition_options, signal_entries) do
+    signals = Keyword.get(definition_options, :signals, %{})
+    signals_by_pdo = Map.new(signals, fn {_name, spec} -> {spec.pdo_index, spec} end)
+
+    renamed_signals =
+      Enum.into(signal_entries, %{}, fn entry ->
+        {entry.name, Map.fetch!(signals_by_pdo, entry.pdo_index)}
+      end)
+
+    Keyword.put(definition_options, :signals, renamed_signals)
+  end
+
+  defp maybe_template_profile_override(definition_options, %{id: :beckhoff_el3202}) do
+    definition_options
+    |> Keyword.put(:profile, :mailbox_device)
+  end
+
+  defp maybe_template_profile_override(definition_options, _template), do: definition_options
 
   defp digital_direction?(input_entries, output_entries) do
     (input_entries != [] or output_entries != []) and

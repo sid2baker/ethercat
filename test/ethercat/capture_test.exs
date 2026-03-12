@@ -187,6 +187,7 @@ defmodule EtherCAT.CaptureTest do
                :slave_3,
                module: module,
                driver_path: driver_path,
+               sdos: [{0x2000, 0x02}],
                force: true
              )
 
@@ -203,12 +204,77 @@ defmodule EtherCAT.CaptureTest do
     assert simulator_module in compiled_modules
     assert %{vendor_id: 0x0000_0ACE, product_code: 0x0000_1602} = module.identity()
     assert module.signal_model(%{}) == []
+    assert module.mailbox_config(%{}) == [{:sdo_download, 0x2000, 0x02, <<0>>}]
     assert module.encode_signal(:blob, %{}, :ignored) == <<>>
     assert module.decode_signal(:blob, %{}, <<1, 2>>) == nil
 
     opts = simulator_module.definition_options(%{})
     assert Keyword.fetch!(opts, :profile) == :mailbox_device
     assert Keyword.fetch!(opts, :mailbox_config).recv_size > 0
+  end
+
+  test "applies the EL3202 template and emits mailbox startup steps from capture data" do
+    tmp_dir = tmp_dir!()
+    driver_path = Path.join([tmp_dir, "drivers", "generated_el3202_driver.ex"])
+
+    module =
+      Module.concat([
+        EtherCAT,
+        IntegrationSupport,
+        Drivers,
+        "GeneratedEL3202#{System.unique_integer([:positive])}"
+      ])
+
+    simulator_module = Module.concat(module, "Simulator")
+
+    assert {:ok, %{driver_path: written_driver}} =
+             Capture.gen_driver(
+               el3202_capture(),
+               module: module,
+               driver_path: driver_path,
+               force: true
+             )
+
+    assert written_driver == Path.expand(driver_path)
+    assert File.exists?(written_driver)
+    refute File.read!(written_driver) =~ "EtherCAT.Capture.load_capture!"
+
+    compiled_modules =
+      written_driver
+      |> Code.compile_file()
+      |> Enum.map(&elem(&1, 0))
+
+    assert module in compiled_modules
+    assert simulator_module in compiled_modules
+
+    assert %{vendor_id: 0x0000_0002, product_code: 0x0C82_3052, revision: 0x0016_0000} =
+             module.identity()
+
+    assert module.signal_model(%{}) == [channel1: 0x1A00, channel2: 0x1A01]
+
+    assert module.mailbox_config(%{}) == [
+             {:sdo_download, 0x8000, 0x19, <<8::16-little>>},
+             {:sdo_download, 0x8010, 0x19, <<8::16-little>>}
+           ]
+
+    assert %{
+             ohms: 100.0,
+             overrange: false,
+             underrange: false,
+             error: false,
+             invalid: false,
+             toggle: 1
+           } =
+             module.decode_signal(
+               :channel1,
+               %{},
+               <<0::1, 0::1, 0::2, 0::2, 0::1, 0::1, 1::1, 0::1, 0::6, 1600::16-little>>
+             )
+
+    opts = simulator_module.definition_options(%{})
+    assert Keyword.fetch!(opts, :profile) == :mailbox_device
+    assert Map.has_key?(Keyword.fetch!(opts, :signals), :channel1)
+    assert Map.has_key?(Keyword.fetch!(opts, :signals), :channel2)
   end
 
   defp boot_dynamic_capture_ring! do
@@ -245,5 +311,57 @@ defmodule EtherCAT.CaptureTest do
 
     File.mkdir_p!(dir)
     dir
+  end
+
+  defp el3202_capture do
+    %{
+      format: 1,
+      captured_at: "2026-03-12T00:00:00Z",
+      source: %{
+        master_state: :preop_ready,
+        bus: %{transport: :test},
+        slave_name: :slave_3,
+        station: 0x1003
+      },
+      slave: %{
+        name: :slave_3,
+        station: 0x1003,
+        al_state: :preop,
+        identity: %{
+          vendor_id: 0x0000_0002,
+          product_code: 0x0C82_3052,
+          revision: 0x0016_0000,
+          serial_number: 0
+        },
+        esc: %{fmmu_count: 4, sm_count: 4},
+        driver: EtherCAT.Slave.Driver.Default,
+        coe: true,
+        configuration_error: nil
+      },
+      sii: %{
+        identity: %{
+          vendor_id: 0x0000_0002,
+          product_code: 0x0C82_3052,
+          revision: 0x0016_0000,
+          serial_number: 0
+        },
+        mailbox_config: %{
+          recv_offset: 0x1000,
+          recv_size: 128,
+          send_offset: 0x1080,
+          send_size: 128
+        },
+        sm_configs: [],
+        pdo_configs: [
+          %{index: 0x1A00, direction: :input, sm_index: 3, bit_size: 32, bit_offset: 0},
+          %{index: 0x1A01, direction: :input, sm_index: 3, bit_size: 32, bit_offset: 32}
+        ]
+      },
+      sdos: [
+        %{index: 0x8000, subindex: 0x19, data: <<8::16-little>>},
+        %{index: 0x8010, subindex: 0x19, data: <<8::16-little>>}
+      ],
+      warnings: []
+    }
   end
 end
