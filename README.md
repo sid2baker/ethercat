@@ -141,6 +141,24 @@ EtherCAT.start(
 :ok = EtherCAT.await_operational()
 ```
 
+### Capture a real slave into a simulator scaffold
+
+```bash
+iex -S mix ethercat.capture --interface eth0
+```
+
+Then, from IEx:
+
+```elixir
+EtherCAT.Capture.list_slaves()
+EtherCAT.Capture.write_capture(:slave_1, sdos: [{0x1008, 0x00}])
+EtherCAT.Capture.gen_simulator(:slave_1, module: MyApp.EL1809.Simulator)
+```
+
+This capture flow preserves static structure: identity, mailbox layout, PDO
+shape, and any explicit SDO snapshots you request. It does not infer dynamic
+behavior or a complete object dictionary automatically.
+
 ## Mental Model
 
 - The master owns startup, activation-blocked startup, and runtime recovery decisions.

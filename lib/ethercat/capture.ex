@@ -1,0 +1,664 @@
+defmodule EtherCAT.Capture do
+  @moduledoc """
+  Helpers for interactive slave-capture sessions.
+
+  Use this module from `iex -S mix ethercat.capture --interface eth0` to:
+
+  - inspect the discovered ring while it is held in PREOP
+  - capture static slave identity and SII layout from a live device
+  - optionally snapshot specific SDO entries
+  - write a readable capture file
+  - generate a simulator companion scaffold from that capture
+
+  The generated scaffold preserves static structure only. It does not infer
+  dynamic behavior, timing, or a complete object dictionary.
+
+  ## Examples
+
+      {:ok, slaves} = EtherCAT.Capture.list_slaves()
+
+      {:ok, capture} =
+        EtherCAT.Capture.capture(:slave_1, sdos: [{0x1008, 0x00}, {0x1009, 0x00}])
+
+      {:ok, capture_path} =
+        EtherCAT.Capture.write_capture(:slave_1, sdos: [{0x1008, 0x00}])
+
+      {:ok, %{module_path: module_path}} =
+        EtherCAT.Capture.gen_simulator(
+          :slave_1,
+          module: MyApp.EL1809.Simulator,
+          sdos: [{0x1008, 0x00}]
+        )
+  """
+
+  alias EtherCAT.Bus
+  alias EtherCAT.Simulator.Slave.Object
+  alias EtherCAT.Slave.Driver.Default, as: DefaultDriver
+  alias EtherCAT.Slave.ESC.SII
+
+  @capture_format 1
+  @default_capture_dir Path.join(["priv", "ethercat", "captures"])
+  @default_output_phys 0x1100
+  @default_input_phys 0x1180
+  @phys_alignment 0x20
+
+  @type sdo_ref :: {non_neg_integer(), non_neg_integer()}
+  @type capture :: map()
+
+  @doc """
+  Print a short interactive command summary.
+  """
+  @spec help() :: :ok
+  def help do
+    IO.puts("""
+    EtherCAT.Capture helper commands:
+
+      EtherCAT.Capture.list_slaves()
+      EtherCAT.Capture.capture(:slave_1)
+      EtherCAT.Capture.capture(:slave_1, sdos: [{0x1008, 0x00}])
+      EtherCAT.Capture.write_capture(:slave_1)
+      EtherCAT.Capture.gen_simulator(:slave_1, module: MyApp.EL1809.Simulator)
+    """)
+
+    :ok
+  end
+
+  @doc """
+  Return a compact snapshot of the currently discovered slaves.
+  """
+  @spec list_slaves() :: {:ok, [map()]} | {:error, term()}
+  def list_slaves do
+    with {:ok, slaves} <- fetch_slaves() do
+      {:ok, Enum.map(slaves, &summarize_slave/1)}
+    end
+  end
+
+  @doc """
+  Capture a live slave into a structural snapshot.
+
+  Supported options:
+
+  - `:sdos` — list of `{index, subindex}` tuples to upload and include
+  """
+  @spec capture(atom(), keyword()) :: {:ok, capture()} | {:error, term()}
+  def capture(slave_name, opts \\ []) when is_atom(slave_name) and is_list(opts) do
+    with {:ok, bus} <- fetch_bus(),
+         {:ok, info} <- EtherCAT.slave_info(slave_name),
+         {:ok, sdos} <- normalize_sdo_refs(opts),
+         {:ok, sii_identity} <- SII.read_identity(bus, info.station),
+         {:ok, mailbox_config} <- SII.read_mailbox_config(bus, info.station),
+         {:ok, sm_configs} <- SII.read_sm_configs(bus, info.station),
+         {:ok, pdo_configs} <- SII.read_pdo_configs(bus, info.station),
+         {:ok, sdo_snapshots} <- read_sdo_snapshots(slave_name, sdos) do
+      bus_info =
+        case Bus.info(bus) do
+          {:ok, snapshot} -> snapshot
+          {:error, reason} -> %{error: reason}
+        end
+
+      normalized_mailbox = normalize_mailbox_config(mailbox_config)
+      normalized_pdos = normalize_pdo_configs(pdo_configs)
+
+      {:ok,
+       %{
+         format: @capture_format,
+         captured_at: captured_at(),
+         source: %{
+           master_state: EtherCAT.state(),
+           bus: bus_info,
+           slave_name: slave_name,
+           station: info.station
+         },
+         slave: %{
+           name: info.name,
+           station: info.station,
+           al_state: info.al_state,
+           identity: sii_identity,
+           esc: info.esc,
+           driver: info.driver,
+           coe: info.coe,
+           configuration_error: info.configuration_error
+         },
+         sii: %{
+           identity: sii_identity,
+           mailbox_config: normalized_mailbox,
+           sm_configs: normalize_sm_configs(sm_configs),
+           pdo_configs: normalized_pdos
+         },
+         sdos: sdo_snapshots,
+         warnings: capture_warnings(normalized_mailbox, normalized_pdos, sdo_snapshots)
+       }}
+    end
+  end
+
+  @doc """
+  Write a capture file for `slave_name`.
+
+  Supported options:
+
+  - `:path` — output path; defaults to `priv/ethercat/captures/...`
+  - `:force?` — overwrite an existing file when `true`
+  - `:sdos` — list of `{index, subindex}` tuples to upload and include
+  """
+  @spec write_capture(atom(), keyword()) :: {:ok, String.t()} | {:error, term()}
+  def write_capture(slave_name, opts \\ []) when is_atom(slave_name) and is_list(opts) do
+    with {:ok, capture} <- capture(slave_name, opts),
+         path <- capture_path(capture, opts),
+         :ok <-
+           write_generated_file(path, render_capture(capture), Keyword.get(opts, :force?, false)) do
+      {:ok, path}
+    end
+  end
+
+  @doc """
+  Generate a simulator companion scaffold for `slave_name`.
+
+  Supported options:
+
+  - `:module` (required) — simulator companion module name
+  - `:module_path` — output path for the generated module
+  - `:capture_path` — output path for the generated capture file
+  - `:force?` — overwrite existing files when `true`
+  - `:sdos` — list of `{index, subindex}` tuples to upload and include
+  """
+  @spec gen_simulator(atom(), keyword()) ::
+          {:ok, %{capture_path: String.t(), module_path: String.t()}} | {:error, term()}
+  def gen_simulator(slave_name, opts) when is_atom(slave_name) and is_list(opts) do
+    with {:ok, module} <- fetch_module_option(opts),
+         {:ok, capture} <- capture(slave_name, opts) do
+      capture_path = capture_path(capture, path_option(opts, :capture_path))
+      module_path = module_path(module, opts)
+      force? = Keyword.get(opts, :force?, false)
+
+      with :ok <- write_generated_file(capture_path, render_capture(capture), force?),
+           :ok <-
+             write_generated_file(
+               module_path,
+               render_simulator_module(module, module_path, capture_path),
+               force?
+             ) do
+        {:ok, %{capture_path: capture_path, module_path: module_path}}
+      end
+    end
+  end
+
+  @doc """
+  Load a capture file written by `write_capture/2`.
+  """
+  @spec load_capture(Path.t()) :: {:ok, capture()} | {:error, term()}
+  def load_capture(path) when is_binary(path) do
+    expanded_path = Path.expand(path)
+
+    try do
+      case Code.eval_file(expanded_path) do
+        {%{format: @capture_format} = capture, _binding} ->
+          {:ok, capture}
+
+        {other, _binding} ->
+          {:error, {:invalid_capture, {:unexpected_term, other}}}
+      end
+    rescue
+      error ->
+        {:error, {:invalid_capture, Exception.message(error)}}
+    end
+  end
+
+  @doc """
+  Load a capture file and raise on failure.
+  """
+  @spec load_capture!(Path.t()) :: capture()
+  def load_capture!(path) when is_binary(path) do
+    case load_capture(path) do
+      {:ok, capture} ->
+        capture
+
+      {:error, reason} ->
+        raise ArgumentError, "failed to load capture #{path}: #{inspect(reason)}"
+    end
+  end
+
+  @doc """
+  Convert a capture map into simulator definition options.
+
+  The generated options normalize PDO data onto the simulator's simpler
+  process-data model: one output window and one input window with canonical
+  physical offsets.
+  """
+  @spec definition_options(capture()) :: keyword()
+  def definition_options(%{} = capture) do
+    capture = normalize_capture!(capture)
+    mailbox_config = get_in(capture, [:sii, :mailbox_config]) || zero_mailbox_config()
+    pdo_configs = get_in(capture, [:sii, :pdo_configs]) || []
+    identity = get_in(capture, [:sii, :identity]) || %{}
+    esc = get_in(capture, [:slave, :esc]) || %{}
+    sdos = Map.get(capture, :sdos, [])
+
+    %{
+      pdo_entries: pdo_entries,
+      signals: signals,
+      output_size: output_size,
+      input_size: input_size
+    } =
+      normalize_pdo_layout(pdo_configs)
+
+    {output_phys, input_phys} = canonical_process_phys(mailbox_config, output_size, input_size)
+
+    [
+      profile: scaffold_profile(mailbox_config),
+      vendor_id: Map.get(identity, :vendor_id, 0),
+      product_code: Map.get(identity, :product_code, 0),
+      revision: Map.get(identity, :revision, 0),
+      serial_number: Map.get(identity, :serial_number, 0),
+      esc_type: 0x11,
+      fmmu_count: max(Map.get(esc, :fmmu_count, 4), 4),
+      sm_count: max(Map.get(esc, :sm_count, 4), 4),
+      output_phys: output_phys,
+      output_size: output_size,
+      input_phys: input_phys,
+      input_size: input_size,
+      mirror_output_to_input?: false,
+      mailbox_config: mailbox_config,
+      pdo_entries: pdo_entries,
+      signals: signals,
+      objects: captured_objects(sdos),
+      dc_capable?: false
+    ]
+  end
+
+  defp summarize_slave(%{name: name, station: station, fault: fault}) do
+    case EtherCAT.slave_info(name) do
+      {:ok, info} ->
+        %{
+          name: name,
+          station: station,
+          al_state: info.al_state,
+          vendor_id: get_in(info, [:identity, :vendor_id]),
+          product_code: get_in(info, [:identity, :product_code]),
+          revision: get_in(info, [:identity, :revision]),
+          coe: info.coe,
+          fault: fault
+        }
+
+      {:error, reason} ->
+        %{name: name, station: station, fault: fault, error: reason}
+    end
+  end
+
+  defp fetch_slaves do
+    case EtherCAT.slaves() do
+      slaves when is_list(slaves) -> {:ok, slaves}
+      {:error, _} = err -> err
+    end
+  end
+
+  defp fetch_bus do
+    case EtherCAT.bus() do
+      {:error, _} = err -> err
+      nil -> {:error, :not_started}
+      bus -> {:ok, bus}
+    end
+  end
+
+  defp fetch_module_option(opts) do
+    case Keyword.get(opts, :module) do
+      module when is_atom(module) -> {:ok, module}
+      nil -> {:error, :missing_module}
+      other -> {:error, {:invalid_module, other}}
+    end
+  end
+
+  defp normalize_sdo_refs(opts) do
+    sdos = Keyword.get(opts, :sdos, [])
+
+    cond do
+      is_list(sdos) and Enum.all?(sdos, &valid_sdo_ref?/1) ->
+        {:ok, Enum.uniq(sdos)}
+
+      true ->
+        {:error, {:invalid_sdos, sdos}}
+    end
+  end
+
+  defp valid_sdo_ref?({index, subindex})
+       when is_integer(index) and index >= 0 and is_integer(subindex) and subindex >= 0,
+       do: true
+
+  defp valid_sdo_ref?(_other), do: false
+
+  defp read_sdo_snapshots(_slave_name, []), do: {:ok, []}
+
+  defp read_sdo_snapshots(slave_name, sdos) do
+    Enum.reduce_while(sdos, {:ok, []}, fn {index, subindex}, {:ok, acc} ->
+      case EtherCAT.upload_sdo(slave_name, index, subindex) do
+        {:ok, data} ->
+          {:cont, {:ok, acc ++ [%{index: index, subindex: subindex, data: data}]}}
+
+        {:error, reason} ->
+          {:halt, {:error, {:sdo_upload_failed, index, subindex, reason}}}
+      end
+    end)
+  end
+
+  defp normalize_sm_configs(sm_configs) do
+    Enum.map(sm_configs, fn {index, phys_start, length, ctrl} ->
+      %{index: index, phys_start: phys_start, length: length, ctrl: ctrl}
+    end)
+  end
+
+  defp normalize_mailbox_config(mailbox_config) do
+    %{
+      recv_offset: mailbox_config.recv_offset,
+      recv_size: mailbox_config.recv_size,
+      send_offset: mailbox_config.send_offset,
+      send_size: mailbox_config.send_size
+    }
+  end
+
+  defp normalize_pdo_configs(pdo_configs) do
+    Enum.map(pdo_configs, fn pdo ->
+      %{
+        index: pdo.index,
+        direction: pdo.direction,
+        sm_index: pdo.sm_index,
+        bit_size: pdo.bit_size,
+        bit_offset: pdo.bit_offset
+      }
+    end)
+  end
+
+  defp capture_warnings(mailbox_config, pdo_configs, sdo_snapshots) do
+    []
+    |> maybe_add_warning(
+      pdo_configs != [],
+      "Generated simulator scaffolds normalize process data onto simulator SM2/SM3 with canonical process-image offsets."
+    )
+    |> maybe_add_warning(
+      multiple_direction_sms?(pdo_configs, :output),
+      "Output PDOs span multiple SyncManagers on the captured device; generated simulator scaffolds collapse them onto one output window."
+    )
+    |> maybe_add_warning(
+      multiple_direction_sms?(pdo_configs, :input),
+      "Input PDOs span multiple SyncManagers on the captured device; generated simulator scaffolds collapse them onto one input window."
+    )
+    |> maybe_add_warning(
+      Enum.any?(pdo_configs, &(rem(&1.bit_size, 8) != 0)),
+      "Sub-byte PDO entries are scaffolded as raw booleans or integers; typed device semantics still need manual authoring."
+    )
+    |> maybe_add_warning(
+      mailbox_enabled?(mailbox_config) and sdo_snapshots == [],
+      "No SDOs were captured; generated mailbox-capable simulator scaffolds start with an empty object dictionary."
+    )
+    |> maybe_add_warning(
+      true,
+      "DC capability is not inferred from this capture; generated simulator scaffolds default to dc_capable?: false."
+    )
+  end
+
+  defp multiple_direction_sms?(pdo_configs, direction) do
+    pdo_configs
+    |> Enum.filter(&(&1.direction == direction))
+    |> Enum.map(& &1.sm_index)
+    |> Enum.uniq()
+    |> length()
+    |> Kernel.>(1)
+  end
+
+  defp normalize_capture!(%{format: @capture_format} = capture), do: capture
+
+  defp normalize_capture!(other) do
+    raise ArgumentError,
+          "expected capture map with format #{@capture_format}, got: #{inspect(other)}"
+  end
+
+  defp normalize_pdo_layout(pdo_configs) do
+    signal_names = DefaultDriver.signal_model(%{}, pdo_configs) |> Map.new()
+
+    layout =
+      Enum.reduce(
+        pdo_configs,
+        %{offsets: %{output: 0, input: 0}, pdo_entries: [], signals: %{}},
+        fn pdo, acc ->
+          direction = pdo.direction
+          bit_offset = Map.fetch!(acc.offsets, direction)
+
+          signal_name =
+            Map.get(signal_names, pdo.index, generated_signal_name(pdo.index))
+
+          signal =
+            %{
+              direction: direction,
+              pdo_index: pdo.index,
+              bit_offset: bit_offset,
+              bit_size: pdo.bit_size,
+              type: signal_type(pdo.bit_size),
+              label: pdo_label(pdo.index),
+              group: signal_group(direction)
+            }
+
+          %{
+            acc
+            | offsets: Map.put(acc.offsets, direction, bit_offset + pdo.bit_size),
+              pdo_entries:
+                acc.pdo_entries ++
+                  [
+                    %{
+                      index: pdo.index,
+                      direction: direction,
+                      sm_index: simulator_sm_index(direction),
+                      bit_size: pdo.bit_size
+                    }
+                  ],
+              signals: Map.put(acc.signals, signal_name, signal)
+          }
+        end
+      )
+
+    %{
+      pdo_entries: layout.pdo_entries,
+      signals: layout.signals,
+      output_size: bit_bytes(layout.offsets.output),
+      input_size: bit_bytes(layout.offsets.input)
+    }
+  end
+
+  defp captured_objects(sdos) do
+    Enum.into(sdos, %{}, fn %{index: index, subindex: subindex, data: data} ->
+      size = max(byte_size(data), 1)
+
+      {{index, subindex},
+       Object.new(
+         index: index,
+         subindex: subindex,
+         type: {:binary, size},
+         value: data,
+         access: :rw,
+         group: :captured
+       )}
+    end)
+  end
+
+  defp scaffold_profile(mailbox_config) do
+    if mailbox_enabled?(mailbox_config), do: :mailbox_device, else: :coupler
+  end
+
+  defp mailbox_enabled?(%{recv_size: recv_size, send_size: send_size}) do
+    recv_size > 0 or send_size > 0
+  end
+
+  defp canonical_process_phys(mailbox_config, output_size, _input_size) do
+    mailbox_end =
+      Enum.max([
+        0,
+        mailbox_config.recv_offset + mailbox_config.recv_size,
+        mailbox_config.send_offset + mailbox_config.send_size
+      ])
+
+    output_phys = max(@default_output_phys, align_up(mailbox_end, @phys_alignment))
+    input_floor = max(@default_input_phys, output_phys + output_size)
+    input_phys = align_up(input_floor, @phys_alignment)
+
+    {output_phys, input_phys}
+  end
+
+  defp align_up(value, alignment) when rem(value, alignment) == 0, do: value
+
+  defp align_up(value, alignment) do
+    value + alignment - rem(value, alignment)
+  end
+
+  defp bit_bytes(0), do: 0
+  defp bit_bytes(bit_count), do: div(bit_count + 7, 8)
+
+  defp simulator_sm_index(:output), do: 2
+  defp simulator_sm_index(:input), do: 3
+
+  defp signal_type(1), do: :bool
+  defp signal_type(bits) when rem(bits, 8) == 0, do: {:binary, div(bits, 8)}
+  defp signal_type(bits), do: {:uint, bits}
+
+  defp signal_group(:output), do: :outputs
+  defp signal_group(:input), do: :inputs
+
+  defp pdo_label(index), do: "PDO " <> hex(index, 4)
+
+  defp generated_signal_name(index), do: :"pdo_0x#{String.downcase(Integer.to_string(index, 16))}"
+
+  defp zero_mailbox_config do
+    %{recv_offset: 0, recv_size: 0, send_offset: 0, send_size: 0}
+  end
+
+  defp capture_path(capture, opts_or_path) when is_list(opts_or_path) do
+    capture_path(capture, path_option(opts_or_path, :path))
+  end
+
+  defp capture_path(capture, nil) do
+    filename =
+      [
+        hex(get_in(capture, [:slave, :identity, :vendor_id]) || 0, 8),
+        hex(get_in(capture, [:slave, :identity, :product_code]) || 0, 8),
+        hex(get_in(capture, [:slave, :identity, :revision]) || 0, 8),
+        safe_slug(get_in(capture, [:slave, :name]) || :slave)
+      ]
+      |> Enum.join("_")
+      |> Kernel.<>(".exs")
+
+    Path.expand(Path.join(@default_capture_dir, filename))
+  end
+
+  defp capture_path(_capture, path) when is_binary(path), do: Path.expand(path)
+
+  defp module_path(module, opts) do
+    case Keyword.get(opts, :module_path) do
+      path when is_binary(path) ->
+        Path.expand(path)
+
+      nil ->
+        module
+        |> Module.split()
+        |> Enum.map(&Macro.underscore/1)
+        |> then(&Path.join(["lib" | &1]))
+        |> Kernel.<>(".ex")
+        |> Path.expand()
+    end
+  end
+
+  defp path_option(opts, key) do
+    case Keyword.get(opts, key) do
+      nil ->
+        nil
+
+      path when is_binary(path) ->
+        path
+
+      other ->
+        raise ArgumentError, "expected #{inspect(key)} to be a path, got: #{inspect(other)}"
+    end
+  end
+
+  defp render_capture(capture) do
+    header = "# Generated by EtherCAT.Capture at #{capture.captured_at}\n\n"
+
+    header <>
+      inspect(
+        capture,
+        pretty: true,
+        limit: :infinity,
+        printable_limit: :infinity,
+        width: 100
+      ) <>
+      "\n"
+  end
+
+  defp render_simulator_module(module, module_path, capture_path) do
+    relative_capture_path =
+      capture_path
+      |> Path.relative_to(Path.dirname(module_path))
+
+    """
+    defmodule #{inspect(module)} do
+      @moduledoc \"\"\"
+      Simulator scaffold generated from a captured EtherCAT slave.
+
+      This preserves static identity, mailbox layout, and PDO shape from the
+      capture file. Dynamic behavior, timing, and richer mailbox semantics
+      still need manual authoring.
+      \"\"\"
+
+      @behaviour EtherCAT.Simulator.DriverAdapter
+
+      @capture_path Path.expand(#{inspect(relative_capture_path)}, __DIR__)
+
+      @impl true
+      def definition_options(config) when is_map(config) do
+        _ = config
+
+        @capture_path
+        |> EtherCAT.Capture.load_capture!()
+        |> EtherCAT.Capture.definition_options()
+      end
+    end
+    """
+  end
+
+  defp write_generated_file(path, contents, force?) do
+    cond do
+      File.exists?(path) and not force? ->
+        {:error, {:already_exists, path}}
+
+      true ->
+        with :ok <- File.mkdir_p(Path.dirname(path)),
+             :ok <- File.write(path, contents) do
+          :ok
+        end
+    end
+  end
+
+  defp maybe_add_warning(warnings, true, warning), do: warnings ++ [warning]
+  defp maybe_add_warning(warnings, false, _warning), do: warnings
+
+  defp safe_slug(name) when is_atom(name), do: safe_slug(Atom.to_string(name))
+
+  defp safe_slug(name) when is_binary(name) do
+    name
+    |> String.downcase()
+    |> String.replace(~r/[^a-z0-9]+/u, "_")
+    |> String.trim("_")
+    |> case do
+      "" -> "slave"
+      slug -> slug
+    end
+  end
+
+  defp captured_at do
+    DateTime.utc_now()
+    |> DateTime.truncate(:second)
+    |> DateTime.to_iso8601()
+  end
+
+  defp hex(value, width) when is_integer(value) and value >= 0 do
+    value
+    |> Integer.to_string(16)
+    |> String.downcase()
+    |> String.pad_leading(width, "0")
+  end
+end
