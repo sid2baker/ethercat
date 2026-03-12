@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-This branch currently tracks `0.3.0-dev`.
+## [0.3.0] - 2026-03-12
 
 ### Changed
 - Bus link monitoring now uses the internal netlink/sysfs implementation instead of an external interface-management dependency
