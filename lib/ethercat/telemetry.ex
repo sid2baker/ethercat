@@ -108,6 +108,10 @@ defmodule EtherCAT.Telemetry do
         measurements: %{}
         metadata:     %{from: atom(), to: atom(), public_state: atom()}
 
+      [:ethercat, :master, :slave_fault, :changed]
+        measurements: %{}
+        metadata:     %{slave: atom(), from: term() | nil, to: term() | nil}
+
   ### Slave fault events
 
       [:ethercat, :slave, :crashed]
@@ -298,6 +302,15 @@ defmodule EtherCAT.Telemetry do
   end
 
   @doc false
+  def master_slave_fault_changed(slave_name, from_fault, to_fault) do
+    execute(
+      [:ethercat, :master, :slave_fault, :changed],
+      %{},
+      %{slave: slave_name, from: from_fault, to: to_fault}
+    )
+  end
+
+  @doc false
   def slave_crashed(slave_name, reason) do
     execute([:ethercat, :slave, :crashed], %{}, %{slave: slave_name, reason: reason})
   end
@@ -343,6 +356,7 @@ defmodule EtherCAT.Telemetry do
     [:ethercat, :domain, :stopped],
     [:ethercat, :domain, :crashed],
     [:ethercat, :master, :state, :changed],
+    [:ethercat, :master, :slave_fault, :changed],
     [:ethercat, :slave, :crashed],
     [:ethercat, :slave, :health, :fault],
     [:ethercat, :slave, :down]

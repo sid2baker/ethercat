@@ -58,6 +58,7 @@ letting the loop invent arbitrary refactors.
 - `26`: reconnect-time malformed segmented-download acknowledgements during PREOP rebuild without full-session restart
 - `27`: reconnect-time malformed final segmented-download acknowledgements during PREOP rebuild, including committed-write semantics
 - `28`: reconnect-time PREOP fault script that fails once and self-heals on a later retry without manual fault clearing
+- `29`: reconnect-time PREOP fault script that retains different mailbox failures on successive retries before eventual recovery
 
 These are the current regression scenarios, not just backlog items. Each one
 should keep its `.md` note and matching `_test.exs` file aligned.
@@ -156,9 +157,9 @@ Prefer the new test helpers for new scenarios:
 
 ## Next Directions
 
-The next useful scenarios after the scripted reconnect self-heal case are:
+The next useful scenarios after the multi-retry reconnect case are:
 
-- reconnect PREOP rebuild scripts where different mailbox fault classes hit successive retries before eventual recovery
+- reconnect PREOP rebuild scripts that mix mailbox faults with a later slave-local retreat or disconnect during the same degraded window
 
 ## Current Rule Of Thumb
 

@@ -8,6 +8,7 @@ defmodule EtherCAT.Master.Recovery do
   alias EtherCAT.Master.Activation
   alias EtherCAT.Master.Status
   alias EtherCAT.Slave.API, as: SlaveAPI
+  alias EtherCAT.Telemetry
 
   @spec retry_activation_blocked_state(%EtherCAT.Master{}) ::
           {:ok, :deactivated | :operational | :preop_ready, %EtherCAT.Master{}}
@@ -238,11 +239,23 @@ defmodule EtherCAT.Master.Recovery do
 
   @spec put_slave_fault(%EtherCAT.Master{}, atom(), term()) :: %EtherCAT.Master{}
   def put_slave_fault(data, name, reason) do
+    previous = Map.get(data.slave_faults, name)
+
+    if previous != reason do
+      Telemetry.master_slave_fault_changed(name, previous, reason)
+    end
+
     %{data | slave_faults: Map.put(data.slave_faults, name, reason)}
   end
 
   @spec clear_slave_fault(%EtherCAT.Master{}, atom()) :: %EtherCAT.Master{}
   def clear_slave_fault(data, name) do
+    previous = Map.get(data.slave_faults, name)
+
+    if not is_nil(previous) do
+      Telemetry.master_slave_fault_changed(name, previous, nil)
+    end
+
     %{data | slave_faults: Map.delete(data.slave_faults, name)}
   end
 
@@ -390,14 +403,14 @@ defmodule EtherCAT.Master.Recovery do
   defp retry_slave_request(slave_faults, name, target) do
     case SlaveAPI.request(name, target) do
       :ok ->
-        Map.delete(slave_faults, name)
+        delete_slave_fault_entry(slave_faults, name)
 
       {:error, reason} ->
         Logger.warning(
           "[Master] slave retry: #{inspect(name)} still not in :#{target}: #{inspect(reason)}"
         )
 
-        Map.put(slave_faults, name, {:preop, reason})
+        put_slave_fault_entry(slave_faults, name, {:preop, reason})
     end
   end
 
@@ -425,21 +438,21 @@ defmodule EtherCAT.Master.Recovery do
           "[Master] slave retry: #{inspect(name)} PREOP configuration still failing: #{inspect(reason)}"
         )
 
-        Map.put(slave_faults, name, {:preop, {:preop_configuration_failed, reason}})
+        put_slave_fault_entry(slave_faults, name, {:preop, {:preop_configuration_failed, reason}})
     end
   end
 
   defp retry_slave_reconnect_authorization(slave_faults, name) do
     case SlaveAPI.authorize_reconnect(name) do
       :ok ->
-        Map.put(slave_faults, name, {:reconnecting, :authorized})
+        put_slave_fault_entry(slave_faults, name, {:reconnecting, :authorized})
 
       {:error, reason} ->
         Logger.warning(
           "[Master] slave reconnect authorization retry failed for #{inspect(name)}: #{inspect(reason)}"
         )
 
-        Map.put(slave_faults, name, {:reconnect_failed, reason})
+        put_slave_fault_entry(slave_faults, name, {:reconnect_failed, reason})
     end
   end
 
@@ -514,11 +527,31 @@ defmodule EtherCAT.Master.Recovery do
   end
 
   defp maybe_finish_slave_preop_retry(slave_faults, name, :preop) do
-    Map.delete(slave_faults, name)
+    delete_slave_fault_entry(slave_faults, name)
   end
 
   defp maybe_finish_slave_preop_retry(slave_faults, name, target) do
     retry_slave_request(slave_faults, name, target)
+  end
+
+  defp put_slave_fault_entry(slave_faults, name, reason) do
+    previous = Map.get(slave_faults, name)
+
+    if previous != reason do
+      Telemetry.master_slave_fault_changed(name, previous, reason)
+    end
+
+    Map.put(slave_faults, name, reason)
+  end
+
+  defp delete_slave_fault_entry(slave_faults, name) do
+    previous = Map.get(slave_faults, name)
+
+    if not is_nil(previous) do
+      Telemetry.master_slave_fault_changed(name, previous, nil)
+    end
+
+    Map.delete(slave_faults, name)
   end
 
   defp transition_request_target(data), do: Status.desired_runtime_target(data)

@@ -107,6 +107,16 @@ defmodule EtherCAT.TelemetryTest do
                     %{from: :awaiting_preop, to: :preop_ready, public_state: :preop_ready}}
   end
 
+  test "master_slave_fault_changed/3 emits the master slave fault lifecycle event" do
+    event_name = [:ethercat, :master, :slave_fault, :changed]
+    attach_event(event_name, self())
+
+    Telemetry.master_slave_fault_changed(:mailbox, {:preop, :failed}, nil)
+
+    assert_receive {:telemetry_event, ^event_name, %{},
+                    %{slave: :mailbox, from: {:preop, :failed}, to: nil}}
+  end
+
   test "events/0 exposes the canonical attach_many event list" do
     handler_id = "ethercat-telemetry-many-#{System.unique_integer([:positive, :monotonic])}"
 
