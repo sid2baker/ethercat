@@ -121,6 +121,36 @@ defmodule EtherCAT.SimulatorSlaveDeviceTest do
     assert cleared.mailbox_abort_rules == []
   end
 
+  test "mailbox protocol faults can be sticky or consumed once" do
+    sticky =
+      Device.new(Definition.build(:mailbox_device), 0)
+      |> Device.inject_mailbox_protocol_fault(0x2000, 0x01, :upload_init, :invalid_coe_payload)
+
+    once =
+      Device.new(Definition.build(:mailbox_device), 0)
+      |> Device.inject_mailbox_protocol_fault_once(
+        0x2000,
+        0x01,
+        :upload_init,
+        :invalid_coe_payload
+      )
+
+    {sticky, sticky_first} = mailbox_upload(sticky, 0x2000, 0x01)
+    {_sticky, sticky_second} = mailbox_upload(sticky, 0x2000, 0x01)
+
+    {once, once_first} = mailbox_upload(once, 0x2000, 0x01)
+    {_once, once_second} = mailbox_upload(once, 0x2000, 0x01)
+
+    assert sticky_first == sticky_second
+    assert once_first != once_second
+    assert sticky.mailbox_protocol_fault_rules != []
+    assert once.mailbox_protocol_fault_rules == []
+    assert <<1::16-little, _::binary>> = once_first
+
+    assert <<10::16-little, _::16, _::8, 0x13::8, 0x3000::16-little, 0x4B, 0x00, 0x20, 0x01, 0x34,
+             0x12, 0x00, 0x00, _::binary>> = once_second
+  end
+
   test "signal access can get and set named input and output values" do
     slave = Device.new(Definition.build(:mailbox_device), 0)
 
@@ -141,6 +171,21 @@ defmodule EtherCAT.SimulatorSlaveDeviceTest do
 
   defp pad_mailbox(frame, size) do
     frame <> :binary.copy(<<0>>, size - byte_size(frame))
+  end
+
+  defp mailbox_upload(slave, index, subindex) do
+    upload_request =
+      <<10::16-little, 0::16-little, 0::8, 0x13::8, 0x2000::16-little, 0x40, index::16-little,
+        subindex::8, 0::32-little>>
+      |> pad_mailbox(slave.mailbox_config.recv_size)
+
+    slave = Device.write_datagram(slave, slave.mailbox_config.recv_offset, upload_request)
+
+    Device.read_datagram(
+      slave,
+      slave.mailbox_config.send_offset,
+      slave.mailbox_config.send_size
+    )
   end
 
   defp configure_operational_layout(slave) do

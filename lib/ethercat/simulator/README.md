@@ -102,6 +102,12 @@ Mailbox-local response faults now include:
 - `{:mailbox_abort, slave_name, index, subindex, abort_code, stage}`
 - `{:mailbox_protocol_fault, slave_name, index, subindex, stage, fault_kind}`
 
+Direct mailbox-local injections stay active until
+`EtherCAT.Simulator.clear_faults/0`. The same mailbox protocol fault injected
+as a step inside `Fault.script/1` is consumed on first match, which makes
+scripted reconnect/retry scenarios able to fail once and self-heal on a later
+master retry.
+
 Current mailbox protocol fault kinds:
 
 - `:drop_response`
@@ -375,6 +381,8 @@ now covers:
   PREOP rebuild without full-session restart
 - `27` reconnect-time malformed final segmented-download acknowledgements
   during PREOP rebuild, including committed-write semantics
+- `28` reconnect-time PREOP fault scripts that fail once and self-heal on a
+  later retry without manual simulator cleanup
 
 ## Widget-Facing Signal API
 

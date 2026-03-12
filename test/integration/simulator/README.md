@@ -57,6 +57,7 @@ letting the loop invent arbitrary refactors.
 - `25`: reconnect-time mailbox response timeouts during PREOP rebuild without full-session restart
 - `26`: reconnect-time malformed segmented-download acknowledgements during PREOP rebuild without full-session restart
 - `27`: reconnect-time malformed final segmented-download acknowledgements during PREOP rebuild, including committed-write semantics
+- `28`: reconnect-time PREOP fault script that fails once and self-heals on a later retry without manual fault clearing
 
 These are the current regression scenarios, not just backlog items. Each one
 should keep its `.md` note and matching `_test.exs` file aligned.
@@ -126,6 +127,11 @@ Current mailbox protocol fault kinds:
 - `:invalid_segment_padding`
 - `{:segment_command, command}`
 
+Direct mailbox fault injections remain sticky until `Simulator.clear_faults/0`.
+The same mailbox protocol fault used as a step inside `Fault.script/1` is
+consumed on first match, which is the preferred way to model "first retry
+fails, later retry self-heals" reconnect scenarios.
+
 ## Integration Helper API
 
 Prefer the new test helpers for new scenarios:
@@ -150,10 +156,9 @@ Prefer the new test helpers for new scenarios:
 
 ## Next Directions
 
-The next useful scenarios are the narrower ones beyond the new reconnect
-final-ack coverage:
+The next useful scenarios after the scripted reconnect self-heal case are:
 
-- mixed reconnect PREOP rebuild scripts where the first retry hits a mailbox fault and a later retry self-heals without manual fault clearing
+- reconnect PREOP rebuild scripts where different mailbox fault classes hit successive retries before eventual recovery
 
 ## Current Rule Of Thumb
 

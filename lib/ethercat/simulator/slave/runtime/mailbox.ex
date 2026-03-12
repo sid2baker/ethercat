@@ -55,12 +55,20 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
           non_neg_integer(),
           non_neg_integer(),
           protocol_fault_stage(),
-          protocol_fault_kind()
+          protocol_fault_kind(),
+          keyword()
         ) :: map()
-  def inject_protocol_fault(slave, index, subindex, stage, fault_kind)
+  def inject_protocol_fault(slave, index, subindex, stage, fault_kind, opts \\ [])
       when stage in [:request, :upload_init, :upload_segment, :download_init, :download_segment] do
     if valid_protocol_fault?(stage, fault_kind) do
-      rule = %{index: index, subindex: subindex, stage: stage, fault_kind: fault_kind}
+      rule = %{
+        index: index,
+        subindex: subindex,
+        stage: stage,
+        fault_kind: fault_kind,
+        once?: Keyword.get(opts, :once?, false)
+      }
+
       %{slave | mailbox_protocol_fault_rules: upsert_protocol_fault_rule(slave, rule)}
     else
       slave
@@ -378,34 +386,37 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
          slave
        ) do
     case protocol_fault(slave, index, subindex, stage) do
-      {:ok, :drop_response} ->
-        {:drop_response, slave}
+      {:ok, :drop_response, updated_slave} ->
+        {:drop_response, updated_slave}
 
-      {:ok, :counter_mismatch} ->
-        {:ok, next_mailbox_counter(request_counter), response, slave}
+      {:ok, :counter_mismatch, updated_slave} ->
+        {:ok, next_mailbox_counter(request_counter), response, updated_slave}
 
-      {:ok, :toggle_mismatch} ->
-        {:ok, request_counter, %{response | body: maybe_flip_toggle(response.body, stage)}, slave}
+      {:ok, :toggle_mismatch, updated_slave} ->
+        {:ok, request_counter, %{response | body: maybe_flip_toggle(response.body, stage)},
+         updated_slave}
 
-      {:ok, {:mailbox_type, mailbox_type}} ->
-        {:ok, request_counter, %{response | mailbox_type: mailbox_type}, slave}
+      {:ok, {:mailbox_type, mailbox_type}, updated_slave} ->
+        {:ok, request_counter, %{response | mailbox_type: mailbox_type}, updated_slave}
 
-      {:ok, {:coe_service, service}} ->
-        {:ok, request_counter, %{response | service: service}, slave}
+      {:ok, {:coe_service, service}, updated_slave} ->
+        {:ok, request_counter, %{response | service: service}, updated_slave}
 
-      {:ok, :invalid_coe_payload} ->
-        {:ok, request_counter, %{response | payload_override: <<@service_sdo_response>>}, slave}
+      {:ok, :invalid_coe_payload, updated_slave} ->
+        {:ok, request_counter, %{response | payload_override: <<@service_sdo_response>>},
+         updated_slave}
 
-      {:ok, {:sdo_command, command}} ->
+      {:ok, {:sdo_command, command}, updated_slave} ->
         {:ok, request_counter, %{response | body: replace_sdo_command(response.body, command)},
-         slave}
+         updated_slave}
 
-      {:ok, :invalid_segment_padding} ->
+      {:ok, :invalid_segment_padding, updated_slave} ->
         {:ok, request_counter,
-         %{response | body: invalid_segment_padding_body(response.body, stage)}, slave}
+         %{response | body: invalid_segment_padding_body(response.body, stage)}, updated_slave}
 
-      {:ok, {:segment_command, command}} ->
-        {:ok, request_counter, %{response | body: replace_segment_command(command)}, slave}
+      {:ok, {:segment_command, command}, updated_slave} ->
+        {:ok, request_counter, %{response | body: replace_segment_command(command)},
+         updated_slave}
 
       :error ->
         {:ok, request_counter, response, slave}
@@ -472,12 +483,12 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
   end
 
   defp protocol_fault(slave, index, subindex, stage) do
-    case Enum.find(
-           slave.mailbox_protocol_fault_rules,
-           &matches_protocol_fault_rule?(&1, index, subindex, stage)
-         ) do
-      %{fault_kind: fault_kind} -> {:ok, fault_kind}
-      nil -> :error
+    case pop_protocol_fault_rule(slave.mailbox_protocol_fault_rules, index, subindex, stage) do
+      {:ok, %{fault_kind: fault_kind}, mailbox_protocol_fault_rules} ->
+        {:ok, fault_kind, %{slave | mailbox_protocol_fault_rules: mailbox_protocol_fault_rules}}
+
+      nil ->
+        :error
     end
   end
 
@@ -619,5 +630,24 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
 
   defp matches_protocol_fault_rule?(rule, index, subindex, stage) do
     rule.index == index and rule.subindex == subindex and rule.stage == stage
+  end
+
+  defp pop_protocol_fault_rule(rules, index, subindex, stage) do
+    case Enum.find_index(rules, &matches_protocol_fault_rule?(&1, index, subindex, stage)) do
+      nil ->
+        nil
+
+      idx ->
+        rule = Enum.at(rules, idx)
+
+        mailbox_protocol_fault_rules =
+          if Map.get(rule, :once?, false) do
+            List.delete_at(rules, idx)
+          else
+            rules
+          end
+
+        {:ok, rule, mailbox_protocol_fault_rules}
+    end
   end
 end

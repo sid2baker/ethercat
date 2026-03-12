@@ -127,6 +127,11 @@ The simulator supports deterministic runtime faults for integration coverage:
 This allows deep recovery tests against the real master/runtime without
 physical hardware.
 
+Direct mailbox-local faults stay armed until `clear_faults/0`. When the same
+mailbox protocol fault is injected as a non-wait step inside `Fault.script/1`,
+the script treats it as a one-shot step and consumes it on first match so
+later master retries can self-heal without extra simulator cleanup.
+
 For datagram/runtime faults, prefer `EtherCAT.Simulator.Fault` with
 `EtherCAT.Simulator.inject_fault/1`.
 

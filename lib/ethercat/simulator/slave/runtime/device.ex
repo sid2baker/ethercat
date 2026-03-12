@@ -217,6 +217,24 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Device do
     Mailbox.inject_protocol_fault(slave, index, subindex, stage, fault_kind)
   end
 
+  @spec inject_mailbox_protocol_fault_once(
+          t(),
+          non_neg_integer(),
+          non_neg_integer(),
+          Mailbox.protocol_fault_stage(),
+          Mailbox.protocol_fault_kind()
+        ) :: t()
+  def inject_mailbox_protocol_fault_once(
+        %__MODULE__{} = slave,
+        index,
+        subindex,
+        stage,
+        fault_kind
+      )
+      when is_integer(index) and index >= 0 and is_integer(subindex) and subindex >= 0 do
+    Mailbox.inject_protocol_fault(slave, index, subindex, stage, fault_kind, once?: true)
+  end
+
   @spec clear_faults(t()) :: t()
   def clear_faults(%__MODULE__{} = slave) do
     slave

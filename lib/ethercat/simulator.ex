@@ -703,11 +703,29 @@ defmodule EtherCAT.Simulator do
   end
 
   defp advance_non_exchange_script_step(state, script_id, [step | rest_steps]) do
-    case apply_immediate_fault(state, step) do
+    case apply_script_step(state, step) do
       {:ok, next_state} -> resume_fault_script(next_state, script_id, rest_steps)
       {:error, reason} -> {:error, reason}
     end
   end
+
+  defp apply_script_step(
+         state,
+         {:mailbox_protocol_fault, slave_name, index, subindex, stage, fault_kind}
+       )
+       when is_integer(index) and index >= 0 and is_integer(subindex) and subindex >= 0 do
+    if valid_mailbox_protocol_fault?(stage, fault_kind) do
+      apply_slave_update(
+        state,
+        slave_name,
+        &Device.inject_mailbox_protocol_fault_once(&1, index, subindex, stage, fault_kind)
+      )
+    else
+      {:error, :invalid_fault}
+    end
+  end
+
+  defp apply_script_step(state, step), do: apply_immediate_fault(state, step)
 
   defp maybe_store_script_resume(state, _script_id, _count, []), do: state
 
