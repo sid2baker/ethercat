@@ -369,6 +369,12 @@ now covers:
 - `22` startup mailbox response timeouts during PREOP configuration
 - `23` public mailbox response timeouts during segmented SDO upload/download
 - `24` reconnect-time mailbox abort during PREOP rebuild without full-session restart
+- `25` reconnect-time mailbox response timeouts during PREOP rebuild without
+  full-session restart
+- `26` reconnect-time malformed segmented-download acknowledgements during
+  PREOP rebuild without full-session restart
+- `27` reconnect-time malformed final segmented-download acknowledgements
+  during PREOP rebuild, including committed-write semantics
 
 ## Widget-Facing Signal API
 
@@ -441,7 +447,7 @@ Widget-oriented features that are now implemented:
   - `info/0`
   - `device_snapshot/1`
   - `signal_snapshot/2`
-  - `connection_snapshot/0`
+  - `connections/0`
 - profile-aware value validation through typed signal definitions
 - easy composition of multiple devices into one virtual ring
 - one-call simulator + UDP endpoint setup via `EtherCAT.Simulator.start/1`

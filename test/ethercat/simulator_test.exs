@@ -41,6 +41,17 @@ defmodule EtherCAT.SimulatorTest do
     assert {:error, :not_found} = Simulator.info()
   end
 
+  test "public simulator api returns not_found instead of exiting when no simulator is running" do
+    assert {:error, :not_found} = Simulator.process_datagrams([])
+    assert {:error, :not_found} = Simulator.clear_faults()
+    assert {:error, :not_found} = Simulator.signals(:coupler)
+    assert {:error, :not_found} = Simulator.get_value(:coupler, :missing)
+    assert {:error, :not_found} = Simulator.output_image(:coupler)
+    assert {:error, :not_found} = Simulator.connections()
+    assert {:error, :not_found} = Simulator.connect({:a, :out}, {:b, :in})
+    assert {:error, :not_found} = Simulator.subscribe(:coupler)
+  end
+
   test "setup cleanup can stop the supervised simulator runtime" do
     assert {:ok, _supervisor} =
              Simulator.start(devices: [], udp: [ip: @loopback, port: 0])

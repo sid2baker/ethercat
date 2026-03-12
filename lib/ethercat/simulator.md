@@ -53,11 +53,12 @@ Main entry points:
 - `start_link/1` — low-level in-memory simulator core only
 - `stop/0` — stop the singleton simulator runtime
 - `process_datagrams/1` — execute EtherCAT datagrams directly
+  and return `{:error, :no_response}` when an injected runtime fault consumes
+  the reply
 - `inject_fault/1` / `clear_faults/0` — deterministic fault injection through
   `EtherCAT.Simulator.Fault`
-- `info/0`, `device_snapshot/1`, `signal_snapshot/2`, `connection_snapshot/0`
+- `info/0`, `device_snapshot/1`, `signal_snapshot/2`, `connections/0`
   — stable runtime snapshots for tooling
-- `slave_info/1` — compatibility-oriented per-device diagnostic lookup
 - `signals/1`, `signal_definitions/1`, `get_value/2`, `set_value/3`
 - `connect/2`, `disconnect/2`, `connections/0` — cross-slave signal wiring
 - `subscribe/3` / `unsubscribe/3` — widget-friendly signal observation
@@ -211,6 +212,11 @@ EtherCAT.Simulator.inject_fault(
     List.duplicate(Fault.disconnect(:mailbox), 30) ++
       [Fault.mailbox_abort(:mailbox, 0x2000, 0x02, 0x0601_0002)]
   )
+)
+
+EtherCAT.Simulator.inject_fault(
+  Fault.mailbox_protocol_fault(:mailbox, 0x2003, 0x01, :download_segment, :drop_response)
+  |> Fault.after_milestone(Fault.mailbox_step(:mailbox, :download_segment, 1))
 )
 ```
 

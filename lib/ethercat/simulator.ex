@@ -112,113 +112,82 @@ defmodule EtherCAT.Simulator do
     end
   end
 
-  @spec process_datagrams([Datagram.t()]) :: {:ok, [Datagram.t()]}
+  @spec process_datagrams([Datagram.t()]) ::
+          {:ok, [Datagram.t()]} | {:error, :no_response | :not_found | :timeout}
   def process_datagrams(datagrams),
-    do: GenServer.call(@default_name, {:process_datagrams, datagrams})
+    do: safe_call({:process_datagrams, datagrams}, 5_000)
 
   @spec info() :: {:ok, map()} | {:error, :not_found | :timeout}
   def info do
     with {:ok, info} <- safe_call(:info, 5_000) do
       {:ok, maybe_put_default_udp_info(info)}
     end
-  catch
-    :exit, {:noproc, _} -> {:error, :not_found}
-    :exit, {:timeout, _} -> {:error, :timeout}
-  end
-
-  @spec slave_info(atom()) :: {:ok, map()} | {:error, :not_found | :timeout}
-  def slave_info(slave_name) do
-    safe_call({:slave_info, slave_name}, 5_000)
-  catch
-    :exit, {:noproc, _} -> {:error, :not_found}
-    :exit, {:timeout, _} -> {:error, :timeout}
   end
 
   @spec device_snapshot(atom()) :: {:ok, map()} | {:error, :not_found | :timeout}
-  def device_snapshot(slave_name) do
-    safe_call({:device_snapshot, slave_name}, 5_000)
-  catch
-    :exit, {:noproc, _} -> {:error, :not_found}
-    :exit, {:timeout, _} -> {:error, :timeout}
-  end
+  def device_snapshot(slave_name), do: safe_call({:device_snapshot, slave_name}, 5_000)
 
   @spec signal_snapshot(atom(), atom()) ::
           {:ok, map()} | {:error, :not_found | :unknown_signal | :timeout}
-  def signal_snapshot(slave_name, signal_name) do
-    safe_call({:signal_snapshot, slave_name, signal_name}, 5_000)
-  catch
-    :exit, {:noproc, _} -> {:error, :not_found}
-    :exit, {:timeout, _} -> {:error, :timeout}
-  end
+  def signal_snapshot(slave_name, signal_name),
+    do: safe_call({:signal_snapshot, slave_name, signal_name}, 5_000)
 
-  @spec connection_snapshot() :: {:ok, [connection()]} | {:error, :not_found | :timeout}
-  def connection_snapshot do
-    safe_call(:connection_snapshot, 5_000)
-  catch
-    :exit, {:noproc, _} -> {:error, :not_found}
-    :exit, {:timeout, _} -> {:error, :timeout}
-  end
-
-  @spec inject_fault(Fault.t() | fault()) :: :ok | {:error, :invalid_fault | :not_found}
+  @spec inject_fault(Fault.t() | fault()) ::
+          :ok | {:error, :invalid_fault | :not_found | :timeout}
   def inject_fault(fault) do
     case Fault.normalize(fault) do
-      {:ok, normalized_fault} -> GenServer.call(@default_name, {:inject_fault, normalized_fault})
+      {:ok, normalized_fault} -> safe_call({:inject_fault, normalized_fault}, 5_000)
       :error -> {:error, :invalid_fault}
     end
   end
 
-  @spec clear_faults() :: :ok
-  def clear_faults, do: GenServer.call(@default_name, :clear_faults)
+  @spec clear_faults() :: :ok | {:error, :not_found | :timeout}
+  def clear_faults, do: safe_call(:clear_faults, 5_000)
 
-  @spec output_value(atom()) :: {:ok, non_neg_integer()} | {:error, :not_found}
-  def output_value(slave_name), do: GenServer.call(@default_name, {:output_value, slave_name})
+  @spec output_value(atom()) :: {:ok, non_neg_integer()} | {:error, :not_found | :timeout}
+  def output_value(slave_name), do: safe_call({:output_value, slave_name}, 5_000)
 
-  @spec signals(atom()) :: {:ok, [atom()]} | {:error, :not_found}
-  def signals(slave_name), do: GenServer.call(@default_name, {:signals, slave_name})
+  @spec signals(atom()) :: {:ok, [atom()]} | {:error, :not_found | :timeout}
+  def signals(slave_name), do: safe_call({:signals, slave_name}, 5_000)
 
   @spec signal_definitions(atom()) ::
-          {:ok, %{optional(atom()) => map()}} | {:error, :not_found}
+          {:ok, %{optional(atom()) => map()}} | {:error, :not_found | :timeout}
   def signal_definitions(slave_name),
-    do: GenServer.call(@default_name, {:signal_definitions, slave_name})
+    do: safe_call({:signal_definitions, slave_name}, 5_000)
 
   @spec get_value(atom(), atom()) ::
-          {:ok, term()} | {:error, :not_found | :unknown_signal}
+          {:ok, term()} | {:error, :not_found | :unknown_signal | :timeout}
   def get_value(slave_name, signal_name),
-    do: GenServer.call(@default_name, {:get_value, slave_name, signal_name})
+    do: safe_call({:get_value, slave_name, signal_name}, 5_000)
 
   @spec set_value(atom(), atom(), term()) ::
-          :ok | {:error, :not_found | :unknown_signal | :invalid_value}
+          :ok | {:error, :not_found | :unknown_signal | :invalid_value | :timeout}
   def set_value(slave_name, signal_name, value),
-    do: GenServer.call(@default_name, {:set_value, slave_name, signal_name, value})
+    do: safe_call({:set_value, slave_name, signal_name, value}, 5_000)
 
   @spec connections() :: {:ok, [connection()]} | {:error, :not_found | :timeout}
-  def connections do
-    safe_call(:connections, 5_000)
-  catch
-    :exit, {:noproc, _} -> {:error, :not_found}
-    :exit, {:timeout, _} -> {:error, :timeout}
-  end
+  def connections, do: safe_call(:connections, 5_000)
 
   @spec connect(signal_ref(), signal_ref()) ::
-          :ok | {:error, :not_found | :unknown_signal | :invalid_value}
-  def connect(source, target), do: GenServer.call(@default_name, {:connect, source, target})
+          :ok | {:error, :not_found | :unknown_signal | :invalid_value | :timeout}
+  def connect(source, target), do: safe_call({:connect, source, target}, 5_000)
 
-  @spec disconnect(signal_ref(), signal_ref()) :: :ok | {:error, :not_found}
+  @spec disconnect(signal_ref(), signal_ref()) :: :ok | {:error, :not_found | :timeout}
   def disconnect(source, target),
-    do: GenServer.call(@default_name, {:disconnect, source, target})
+    do: safe_call({:disconnect, source, target}, 5_000)
 
-  @spec subscribe(atom(), atom() | :all, pid()) :: :ok | {:error, :not_found}
+  @spec subscribe(atom(), atom() | :all, pid()) :: :ok | {:error, :not_found | :timeout}
   def subscribe(slave_name, signal_name \\ :all, subscriber \\ self()) do
-    GenServer.call(@default_name, {:subscribe, slave_name, signal_name, subscriber})
+    safe_call({:subscribe, slave_name, signal_name, subscriber}, 5_000)
   end
 
-  @spec unsubscribe(atom(), atom() | :all, pid()) :: :ok | {:error, :not_found}
+  @spec unsubscribe(atom(), atom() | :all, pid()) :: :ok | {:error, :not_found | :timeout}
   def unsubscribe(slave_name, signal_name \\ :all, subscriber \\ self()) do
-    GenServer.call(@default_name, {:unsubscribe, slave_name, signal_name, subscriber})
+    safe_call({:unsubscribe, slave_name, signal_name, subscriber}, 5_000)
   end
 
-  @spec output_image(atom()) :: {:ok, binary()} | {:error, :not_found}
-  def output_image(slave_name), do: GenServer.call(@default_name, {:output_image, slave_name})
+  @spec output_image(atom()) :: {:ok, binary()} | {:error, :not_found | :timeout}
+  def output_image(slave_name), do: safe_call({:output_image, slave_name}, 5_000)
 
   @impl true
   def init(opts) do
@@ -248,6 +217,9 @@ defmodule EtherCAT.Simulator do
 
   defp safe_call(message, timeout) do
     GenServer.call(@default_name, message, timeout)
+  catch
+    :exit, {:noproc, _} -> {:error, :not_found}
+    :exit, {:timeout, _} -> {:error, :timeout}
   end
 
   defp maybe_put_default_udp_info(info) do
@@ -362,10 +334,6 @@ defmodule EtherCAT.Simulator do
     {:reply, reply, state}
   end
 
-  def handle_call({:slave_info, slave_name}, _from, %{slaves: slaves} = state) do
-    {:reply, Snapshot.device(%{state | slaves: slaves}, slave_name), state}
-  end
-
   def handle_call({:device_snapshot, slave_name}, _from, state) do
     {:reply, Snapshot.device(state, slave_name), state}
   end
@@ -409,10 +377,6 @@ defmodule EtherCAT.Simulator do
   end
 
   def handle_call(:connections, _from, state) do
-    {:reply, {:ok, Snapshot.connections(state)}, state}
-  end
-
-  def handle_call(:connection_snapshot, _from, state) do
     {:reply, {:ok, Snapshot.connections(state)}, state}
   end
 
