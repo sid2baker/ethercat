@@ -4,6 +4,7 @@ defmodule EtherCAT.Integration.Simulator.MalformedCoEPayloadSDOTest do
   alias EtherCAT.IntegrationSupport.Drivers.{EK1100, MailboxDevice}
   alias EtherCAT.IntegrationSupport.SimulatorRing
   alias EtherCAT.Simulator
+  alias EtherCAT.Simulator.Fault
   alias EtherCAT.Simulator.Slave
   alias EtherCAT.Slave.Config, as: SlaveConfig
 
@@ -46,8 +47,13 @@ defmodule EtherCAT.Integration.Simulator.MalformedCoEPayloadSDOTest do
 
     assert :ok =
              Simulator.inject_fault(
-               {:mailbox_protocol_fault, :mailbox, 0x2001, 0x01, :upload_init,
-                :invalid_coe_payload}
+               Fault.mailbox_protocol_fault(
+                 :mailbox,
+                 0x2001,
+                 0x01,
+                 :upload_init,
+                 :invalid_coe_payload
+               )
              )
 
     assert {:error, :invalid_coe_response} =
@@ -68,8 +74,13 @@ defmodule EtherCAT.Integration.Simulator.MalformedCoEPayloadSDOTest do
 
     assert :ok =
              Simulator.inject_fault(
-               {:mailbox_protocol_fault, :mailbox, 0x2001, 0x01, :upload_init,
-                {:sdo_command, 0x60}}
+               Fault.mailbox_protocol_fault(
+                 :mailbox,
+                 0x2001,
+                 0x01,
+                 :upload_init,
+                 {:sdo_command, 0x60}
+               )
              )
 
     assert {:error, {:unexpected_sdo_command, 0x60}} =

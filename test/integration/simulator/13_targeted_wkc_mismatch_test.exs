@@ -3,6 +3,7 @@ defmodule EtherCAT.Integration.Simulator.TargetedWKCMismatchTest do
 
   alias EtherCAT.IntegrationSupport.SimulatorRing
   alias EtherCAT.Simulator
+  alias EtherCAT.Simulator.Fault
 
   import EtherCAT.Integration.Assertions
 
@@ -14,7 +15,7 @@ defmodule EtherCAT.Integration.Simulator.TargetedWKCMismatchTest do
   end
 
   test "targeted logical wkc skew degrades the domain without inventing a slave-local fault" do
-    assert :ok = Simulator.inject_fault({:next_exchanges, 6, {:logical_wkc_offset, :outputs, -1}})
+    assert :ok = Simulator.inject_fault(Fault.logical_wkc_offset(:outputs, -1) |> Fault.next(6))
 
     assert_eventually(fn ->
       assert :recovering = EtherCAT.state()

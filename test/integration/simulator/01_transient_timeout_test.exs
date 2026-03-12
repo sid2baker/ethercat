@@ -3,6 +3,7 @@ defmodule EtherCAT.Integration.Simulator.TransientTimeoutTest do
 
   alias EtherCAT.IntegrationSupport.SimulatorRing
   alias EtherCAT.Simulator
+  alias EtherCAT.Simulator.Fault
 
   import EtherCAT.Integration.Assertions
 
@@ -13,7 +14,7 @@ defmodule EtherCAT.Integration.Simulator.TransientTimeoutTest do
   end
 
   test "domain timeout is recorded and clears when replies return" do
-    assert :ok = Simulator.inject_fault({:next_exchanges, 30, :drop_responses})
+    assert :ok = Simulator.inject_fault(Fault.drop_responses() |> Fault.next(30))
 
     assert_eventually(fn ->
       assert {:ok,

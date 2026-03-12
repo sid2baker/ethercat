@@ -3,6 +3,7 @@ defmodule EtherCAT.Integration.Simulator.CorruptedFrameTest do
 
   alias EtherCAT.IntegrationSupport.SimulatorRing
   alias EtherCAT.Simulator.Udp
+  alias EtherCAT.Simulator.Udp.Fault, as: UdpFault
 
   import EtherCAT.Integration.Assertions
 
@@ -38,7 +39,7 @@ defmodule EtherCAT.Integration.Simulator.CorruptedFrameTest do
   test "counted corruption windows apply the same UDP reply mutation more than once" do
     {:ok, %{total_miss_count: before_miss_count}} = EtherCAT.domain_info(:main)
 
-    assert :ok = Udp.inject_fault({:corrupt_next_responses, 2, :truncate})
+    assert :ok = Udp.inject_fault(UdpFault.truncate() |> UdpFault.next(2))
 
     assert_receive_frame_dropped(:decode_error)
     assert_receive_frame_dropped(:decode_error)
@@ -71,7 +72,9 @@ defmodule EtherCAT.Integration.Simulator.CorruptedFrameTest do
 
   test "scripted corruption windows apply successive UDP reply mutations in order" do
     assert :ok =
-             Udp.inject_fault({:corrupt_response_script, [:unsupported_type, :replay_previous]})
+             Udp.inject_fault(
+               UdpFault.script([UdpFault.unsupported_type(), UdpFault.replay_previous()])
+             )
 
     assert_receive_frame_dropped(:decode_error)
     assert_receive_frame_dropped(:idx_mismatch)
@@ -93,7 +96,15 @@ defmodule EtherCAT.Integration.Simulator.CorruptedFrameTest do
   defp assert_corrupted_reply_recovery(mode, telemetry_reason) do
     {:ok, %{total_miss_count: before_miss_count}} = EtherCAT.domain_info(:main)
 
-    assert :ok = Udp.inject_fault({:corrupt_next_response, mode})
+    fault =
+      case mode do
+        :truncate -> UdpFault.truncate()
+        :unsupported_type -> UdpFault.unsupported_type()
+        :wrong_idx -> UdpFault.wrong_idx()
+        :replay_previous -> UdpFault.replay_previous()
+      end
+
+    assert :ok = Udp.inject_fault(fault)
 
     assert_receive_frame_dropped(telemetry_reason)
 

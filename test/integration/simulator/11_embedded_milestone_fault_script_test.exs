@@ -3,6 +3,7 @@ defmodule EtherCAT.Integration.Simulator.EmbeddedMilestoneFaultScriptTest do
 
   alias EtherCAT.IntegrationSupport.SimulatorRing
   alias EtherCAT.Simulator
+  alias EtherCAT.Simulator.Fault
 
   import EtherCAT.Integration.Assertions
 
@@ -20,11 +21,11 @@ defmodule EtherCAT.Integration.Simulator.EmbeddedMilestoneFaultScriptTest do
 
   test "fault scripts can embed milestone waits between exchange and slave-local steps" do
     fault_script =
-      List.duplicate(:drop_responses, 6) ++
-        List.duplicate({:wkc_offset, -1}, 4) ++
-        [{:wait_for_milestone, {:healthy_polls, :outputs, 12}}, {:retreat_to_safeop, :outputs}]
+      List.duplicate(Fault.drop_responses(), 6) ++
+        List.duplicate(Fault.wkc_offset(-1), 4) ++
+        [Fault.wait_for(Fault.healthy_polls(:outputs, 12)), Fault.retreat_to_safeop(:outputs)]
 
-    assert :ok = Simulator.inject_fault({:fault_script, fault_script})
+    assert :ok = Simulator.inject_fault(Fault.script(fault_script))
 
     assert_eventually(
       fn ->

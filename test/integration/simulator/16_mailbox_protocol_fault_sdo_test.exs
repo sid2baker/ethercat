@@ -4,6 +4,7 @@ defmodule EtherCAT.Integration.Simulator.MailboxProtocolFaultSDOTest do
   alias EtherCAT.IntegrationSupport.Drivers.{EK1100, MailboxDevice}
   alias EtherCAT.IntegrationSupport.SimulatorRing
   alias EtherCAT.Simulator
+  alias EtherCAT.Simulator.Fault
   alias EtherCAT.Simulator.Slave
   alias EtherCAT.Slave.Config, as: SlaveConfig
 
@@ -46,7 +47,13 @@ defmodule EtherCAT.Integration.Simulator.MailboxProtocolFaultSDOTest do
 
     assert :ok =
              Simulator.inject_fault(
-               {:mailbox_protocol_fault, :mailbox, 0x2001, 0x01, :upload_init, :counter_mismatch}
+               Fault.mailbox_protocol_fault(
+                 :mailbox,
+                 0x2001,
+                 0x01,
+                 :upload_init,
+                 :counter_mismatch
+               )
              )
 
     assert {:error, {:unexpected_mailbox_counter, 1, 2}} =
@@ -67,8 +74,13 @@ defmodule EtherCAT.Integration.Simulator.MailboxProtocolFaultSDOTest do
 
     assert :ok =
              Simulator.inject_fault(
-               {:mailbox_protocol_fault, :mailbox, 0x2003, 0x01, :upload_segment,
-                :toggle_mismatch}
+               Fault.mailbox_protocol_fault(
+                 :mailbox,
+                 0x2003,
+                 0x01,
+                 :upload_segment,
+                 :toggle_mismatch
+               )
              )
 
     assert {:error, {:toggle_mismatch, 0, 1}} =

@@ -36,6 +36,7 @@ defmodule EtherCAT.Bus do
     :link_monitor,
     :idx,
     :in_flight,
+    settle_callers: [],
     frame_timeout_ms: 25,
     link_monitor_mode: :disabled,
     timeout_count: 0,
@@ -49,6 +50,7 @@ defmodule EtherCAT.Bus do
             link_monitor: pid() | nil,
             idx: non_neg_integer(),
             in_flight: term() | nil,
+            settle_callers: [term()],
             frame_timeout_ms: pos_integer(),
             link_monitor_mode: :disabled | LinkMonitor.mode(),
             timeout_count: non_neg_integer(),
@@ -168,6 +170,38 @@ defmodule EtherCAT.Bus do
     end
   end
 
+  @doc """
+  Wait until the bus is idle, then drain any buffered receive traffic.
+
+  This is useful after startup/configuration phases where callers want the next
+  transaction to begin from a quiescent transport state.
+  """
+  @spec settle(server()) :: :ok | {:error, term()}
+  def settle(bus) do
+    try do
+      :gen_statem.call(bus, :settle, @call_timeout_ms)
+    catch
+      :exit, {:timeout, _} -> {:error, :timeout}
+      :exit, reason -> {:error, reason}
+    end
+  end
+
+  @doc """
+  Drain the bus, wait through a short quiet window, then drain once more.
+
+  This is useful when late transport traffic can still land just after the bus
+  first reports idle, for example after startup/configuration exchanges.
+  """
+  @spec quiesce(server(), non_neg_integer()) :: :ok | {:error, term()}
+  def quiesce(bus, quiet_ms \\ 0)
+      when is_integer(quiet_ms) and quiet_ms >= 0 do
+    with :ok <- settle(bus),
+         :ok <- wait_quiet_window(quiet_ms),
+         :ok <- settle(bus) do
+      :ok
+    end
+  end
+
   @impl true
   def handle_event(:enter, _old, :idle, _data), do: :keep_state_and_data
 
@@ -282,6 +316,18 @@ defmodule EtherCAT.Bus do
 
   def handle_event({:call, from}, {:set_frame_timeout, _timeout_ms}, _state, _data) do
     {:keep_state_and_data, [{:reply, from, {:error, :invalid_timeout}}]}
+  end
+
+  def handle_event({:call, from}, :settle, :down, _data) do
+    {:keep_state_and_data, [{:reply, from, {:error, :down}}]}
+  end
+
+  def handle_event({:call, from}, :settle, :idle, data) do
+    {:keep_state, settle_idle(data), [{:reply, from, :ok}]}
+  end
+
+  def handle_event({:call, from}, :settle, :awaiting, data) do
+    {:keep_state, %{data | settle_callers: [from | data.settle_callers]}}
   end
 
   def handle_event({:call, from}, :info, state, data) do
@@ -441,7 +487,7 @@ defmodule EtherCAT.Bus do
   defp dispatch_reliable(%{reliable: reliable} = data) do
     case :queue.is_empty(reliable) do
       true ->
-        {:next_state, :idle, data}
+        idle_after_settle(data)
 
       false ->
         {batch, rest} = take_reliable_batch(reliable)
@@ -638,6 +684,7 @@ defmodule EtherCAT.Bus do
   defp transition_down(data, state, _reason, extra_submissions \\ []) do
     reply_in_flight(data.in_flight, {:error, :down})
     reply_submissions(extra_submissions, {:error, :down})
+    reply_settle_callers(data.settle_callers, {:error, :down})
     reply_queue(data.realtime, {:error, :down})
     reply_queue(data.reliable, {:error, :down})
 
@@ -646,6 +693,7 @@ defmodule EtherCAT.Bus do
        data
        | in_flight: nil,
          link: data.link_mod.clear_awaiting(data.link),
+         settle_callers: [],
          realtime: :queue.new(),
          reliable: :queue.new()
      }}
@@ -661,10 +709,26 @@ defmodule EtherCAT.Bus do
     Enum.each(submissions, fn %Submission{from: from} -> :gen_statem.reply(from, reply) end)
   end
 
+  defp reply_settle_callers(callers, reply) do
+    Enum.each(callers, &:gen_statem.reply(&1, reply))
+  end
+
   defp reply_queue(queue, reply) do
     queue
     |> :queue.to_list()
     |> reply_submissions(reply)
+  end
+
+  defp idle_after_settle(%{settle_callers: []} = data), do: {:next_state, :idle, data}
+
+  defp idle_after_settle(%{settle_callers: callers} = data) do
+    data = settle_idle(data)
+    reply_settle_callers(callers, :ok)
+    {:next_state, :idle, data}
+  end
+
+  defp settle_idle(data) do
+    %{data | link: data.link_mod.drain(data.link), settle_callers: []}
   end
 
   defp stamp_indices(datagrams, start_idx) do
@@ -691,6 +755,13 @@ defmodule EtherCAT.Bus do
 
   defp submission_age_us(%Submission{enqueued_at_us: enqueued_at_us}, now_us),
     do: now_us - enqueued_at_us
+
+  defp wait_quiet_window(0), do: :ok
+
+  defp wait_quiet_window(quiet_ms) do
+    Process.sleep(quiet_ms)
+    :ok
+  end
 
   defp start_link_monitor(_owner, []), do: {:ok, nil, :disabled}
 

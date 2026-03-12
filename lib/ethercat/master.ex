@@ -24,6 +24,10 @@ defmodule EtherCAT.Master do
   # Awaiting PREOP: 30 s to receive :preop notifications from all slaves
   @awaiting_preop_timeout_ms 30_000
 
+  # Final startup mailbox replies can still arrive just after the
+  # bus first reports idle. `await_running/1` waits through a short quiet window
+  # and drains once more so the first public mailbox call starts from quiescence.
+  @await_running_quiet_ms 2
   @retry_ms 1_000
   @operational :operational
 
@@ -348,14 +352,12 @@ defmodule EtherCAT.Master do
 
   def handle_event(:enter, _old, :preop_ready, data) do
     Logger.info("[Master] running — slaves ready in PREOP, waiting for explicit activate/0")
-    reply_await_callers(data.await_callers, :ok)
-    {:keep_state, %{data | await_callers: []}}
+    {:keep_state, reply_running_waiters(data)}
   end
 
   def handle_event(:enter, _old, :deactivated, data) do
     Logger.info("[Master] deactivated — runtime settled below OP, waiting for activate/0")
-    reply_await_callers(data.await_callers, :ok)
-    {:keep_state, %{data | await_callers: []}}
+    {:keep_state, reply_running_waiters(data)}
   end
 
   def handle_event(:enter, _old, :operational, data) do
@@ -375,7 +377,7 @@ defmodule EtherCAT.Master do
 
   def handle_event({:call, from}, :await_running, state, _data)
       when state in [:preop_ready, :deactivated, :operational] do
-    {:keep_state_and_data, [{:reply, from, :ok}]}
+    {:keep_state_and_data, [{:reply, from, await_running_reply(state)}]}
   end
 
   def handle_event({:call, from}, :await_operational, :operational, _data) do
@@ -979,6 +981,26 @@ defmodule EtherCAT.Master do
   defp deactivated_target_settled?(state, _data, :safeop) when state == :deactivated, do: true
   defp deactivated_target_settled?(state, _data, :preop) when state == :preop_ready, do: true
   defp deactivated_target_settled?(_state, _data, _target), do: false
+
+  defp reply_running_waiters(%{await_callers: []} = data), do: data
+
+  defp reply_running_waiters(data) do
+    reply = await_running_reply(Status.desired_public_state(data))
+    reply_await_callers(data.await_callers, reply)
+    %{data | await_callers: []}
+  end
+
+  defp await_running_reply(state) when state in [:preop_ready, :deactivated],
+    do: quiesced_running_reply()
+
+  defp await_running_reply(:operational), do: :ok
+
+  defp quiesced_running_reply do
+    case Bus.quiesce(Bus, @await_running_quiet_ms) do
+      :ok -> :ok
+      {:error, reason} -> {:error, {:bus_not_ready, reason}}
+    end
+  end
 
   defp track_slave_fault(state, data, name, reason) do
     updated = Recovery.put_slave_fault(data, name, reason)

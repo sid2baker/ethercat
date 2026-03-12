@@ -25,7 +25,7 @@ Observed with:
 
 - a mailbox-capable driver whose `mailbox_config/1` performs a segmented
   `{:sdo_download, 0x2003, 0x01, binary}`
-- `Simulator.inject_fault({:after_milestone, {:mailbox_step, :mailbox, :download_segment, 1}, {:mailbox_protocol_fault, :mailbox, 0x2003, 0x01, :download_segment, :invalid_coe_payload}})`
+- `Simulator.inject_fault(Fault.mailbox_protocol_fault(:mailbox, 0x2003, 0x01, :download_segment, :invalid_coe_payload) |> Fault.after_milestone(Fault.mailbox_step(:mailbox, :download_segment, 1)))`
 
 - the master enters `:activation_blocked`
 - `EtherCAT.await_running/1` reports
@@ -47,9 +47,8 @@ Observed with:
 ## Simulator API Notes
 
 Current API is now enough for startup-time segmented-download-ack coverage
-through milestone scheduling plus mailbox protocol faults.
+through `Fault.after_milestone/2` plus `Fault.mailbox_protocol_fault/5`.
 
 Still worth adding later:
 
-- mailbox-local response timeouts during public SDO helpers, not just PREOP
-  configuration
+- mailbox aborts during PREOP retry paths, not just direct public SDO calls

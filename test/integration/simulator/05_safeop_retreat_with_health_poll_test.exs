@@ -3,6 +3,7 @@ defmodule EtherCAT.Integration.Simulator.SafeOpRetreatWithHealthPollTest do
 
   alias EtherCAT.IntegrationSupport.SimulatorRing
   alias EtherCAT.Simulator
+  alias EtherCAT.Simulator.Fault
 
   import EtherCAT.Integration.Assertions
 
@@ -21,7 +22,7 @@ defmodule EtherCAT.Integration.Simulator.SafeOpRetreatWithHealthPollTest do
   end
 
   test "safeop retreat stays slave-local and is retried back to op" do
-    assert :ok = Simulator.inject_fault({:retreat_to_safeop, :outputs})
+    assert :ok = Simulator.inject_fault(Fault.retreat_to_safeop(:outputs))
 
     assert_receive {:telemetry_event, [:ethercat, :slave, :health, :fault],
                     %{al_state: 4, error_code: 0}, %{slave: :outputs, station: 0x1002}},

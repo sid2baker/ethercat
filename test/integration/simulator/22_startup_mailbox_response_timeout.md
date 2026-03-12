@@ -25,7 +25,7 @@ Observed with:
 
 - a mailbox-capable driver whose `mailbox_config/1` performs a segmented
   `{:sdo_download, 0x2003, 0x01, binary}`
-- `Simulator.inject_fault({:after_milestone, {:mailbox_step, :mailbox, :download_segment, 1}, {:mailbox_protocol_fault, :mailbox, 0x2003, 0x01, :download_segment, :drop_response}})`
+- `Simulator.inject_fault(Fault.mailbox_protocol_fault(:mailbox, 0x2003, 0x01, :download_segment, :drop_response) |> Fault.after_milestone(Fault.mailbox_step(:mailbox, :download_segment, 1)))`
 
 - the master enters `:activation_blocked`
 - `EtherCAT.await_running/1` reports
@@ -48,9 +48,8 @@ Observed with:
 
 Current API is now enough for mailbox-local response timeouts through:
 
-- `{:mailbox_protocol_fault, slave_name, index, subindex, stage, :drop_response}`
+- `Fault.mailbox_protocol_fault(slave_name, index, subindex, stage, :drop_response)`
 
 Still worth adding later:
 
-- mailbox-local response timeouts during public SDO helpers, not just PREOP
-  configuration
+- mailbox aborts during PREOP retry paths, not just direct public SDO calls

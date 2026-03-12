@@ -4,6 +4,7 @@ defmodule EtherCAT.Integration.Simulator.StartupMailboxAbortTest do
   alias EtherCAT.IntegrationSupport.Drivers.{ConfiguredMailboxDevice, EK1100}
   alias EtherCAT.IntegrationSupport.SimulatorRing
   alias EtherCAT.Simulator
+  alias EtherCAT.Simulator.Fault
   alias EtherCAT.Simulator.Slave
   alias EtherCAT.Slave.Config, as: SlaveConfig
 
@@ -38,7 +39,7 @@ defmodule EtherCAT.Integration.Simulator.StartupMailboxAbortTest do
 
     simulator = SimulatorRing.start_simulator!(devices: devices, connections: [])
 
-    assert :ok = Simulator.inject_fault({:mailbox_abort, :mailbox, 0x2000, 0x02, @abort_code})
+    assert :ok = Simulator.inject_fault(Fault.mailbox_abort(:mailbox, 0x2000, 0x02, @abort_code))
 
     SimulatorRing.start_master!(simulator.port,
       start_opts: [domains: [], slaves: slaves, frame_timeout_ms: 20]

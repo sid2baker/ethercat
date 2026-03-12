@@ -52,19 +52,21 @@ letting the loop invent arbitrary refactors.
 - `20`: malformed segmented CoE download acknowledgements
 - `21`: startup segmented-download acknowledgement faults during PREOP configuration
 - `22`: startup mailbox response timeouts during PREOP configuration
+- `23`: public mailbox response timeouts during segmented SDO upload/download
 
 These are the current regression scenarios, not just backlog items. Each one
 should keep its `.md` note and matching `_test.exs` file aligned.
 
 ## Current Fault Shapes
 
-For datagram/runtime faults, prefer the queued simulator API:
+For datagram/runtime faults, prefer the builder surface on
+`EtherCAT.Simulator.Fault`:
 
-- `EtherCAT.Simulator.inject_fault({:next_exchange, fault})`
-- `EtherCAT.Simulator.inject_fault({:next_exchanges, count, fault})`
-- `EtherCAT.Simulator.inject_fault({:fault_script, [step, ...]})`
-- `EtherCAT.Simulator.inject_fault({:after_ms, delay_ms, fault})`
-- `EtherCAT.Simulator.inject_fault({:after_milestone, milestone, fault})`
+- `EtherCAT.Simulator.inject_fault(Fault.next(fault))`
+- `EtherCAT.Simulator.inject_fault(Fault.next(fault, count))`
+- `EtherCAT.Simulator.inject_fault(Fault.script([step, ...]))`
+- `EtherCAT.Simulator.inject_fault(Fault.after_ms(fault, delay_ms))`
+- `EtherCAT.Simulator.inject_fault(Fault.after_milestone(fault, milestone))`
 
 Current exchange-scoped faults:
 
@@ -82,15 +84,15 @@ Current milestones:
 
 Current in-script wait steps:
 
-- `{:wait_for_milestone, {:healthy_exchanges, count}}`
-- `{:wait_for_milestone, {:healthy_polls, slave_name, count}}`
-- `{:wait_for_milestone, {:mailbox_step, slave_name, step, count}}`
+- `Fault.wait_for(Fault.healthy_exchanges(count))`
+- `Fault.wait_for(Fault.healthy_polls(slave_name, count))`
+- `Fault.wait_for(Fault.mailbox_step(slave_name, step, count))`
 
 For raw transport corruption, use the UDP-edge API instead:
 
-- `EtherCAT.Simulator.Udp.inject_fault({:corrupt_next_response, mode})`
-- `EtherCAT.Simulator.Udp.inject_fault({:corrupt_next_responses, count, mode})`
-- `EtherCAT.Simulator.Udp.inject_fault({:corrupt_response_script, [mode, ...]})`
+- `EtherCAT.Simulator.Udp.inject_fault(UdpFault.truncate())`
+- `EtherCAT.Simulator.Udp.inject_fault(UdpFault.wrong_idx() |> UdpFault.next(count))`
+- `EtherCAT.Simulator.Udp.inject_fault(UdpFault.script([UdpFault.unsupported_type(), ...]))`
 
 Current UDP corruption modes:
 
@@ -98,6 +100,9 @@ Current UDP corruption modes:
 - `:unsupported_type`
 - `:wrong_idx`
 - `:replay_previous`
+
+For tooling and scenario output, prefer `Fault.describe/1` and
+`UdpFault.describe/1` instead of rebuilding labels from tuple shapes.
 
 `EtherCAT.Simulator.info/0` and `EtherCAT.Simulator.Udp.info/0` expose
 queued and delayed fault state through `next_fault`, `pending_faults`,
@@ -122,8 +127,7 @@ Current mailbox protocol fault kinds:
 The next useful scenarios are the narrower ones the existing notes still call
 out:
 
-- mailbox-local response timeouts during public SDO helpers, not just PREOP
-  configuration
+- mailbox aborts during PREOP retry paths, not just direct public SDO calls
 
 ## Current Rule Of Thumb
 

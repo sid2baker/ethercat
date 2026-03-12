@@ -10,18 +10,37 @@ defmodule EtherCAT.Master.Activation do
   alias EtherCAT.Master.Status
   alias EtherCAT.Slave.API, as: SlaveAPI
 
+  @activation_quiet_ms 2
+
   @spec activate_network(%EtherCAT.Master{}) ::
           {:ok, :preop_ready | :operational, %EtherCAT.Master{}}
           | {:activation_blocked, %EtherCAT.Master{}}
           | {:error, term(), %EtherCAT.Master{}}
   def activate_network(%{activatable_slaves: []} = data) do
     Logger.info("[Master] dynamic startup: slaves held in :preop for runtime configuration")
-    {:ok, :preop_ready, %{data | activation_failures: %{}}}
+
+    case quiesce_bus() do
+      :ok ->
+        {:ok, :preop_ready, %{data | activation_failures: %{}}}
+
+      {:error, reason} ->
+        {:error, {:bus_not_ready, reason}, data}
+    end
   end
 
   def activate_network(data) do
     Logger.info("[Master] activating — starting DC, cyclic domains, and advancing slaves to :op")
 
+    case quiesce_bus() do
+      :ok ->
+        do_activate_network(data)
+
+      {:error, reason} ->
+        {:error, {:bus_not_ready, reason}, data}
+    end
+  end
+
+  defp do_activate_network(data) do
     case start_dc_runtime(data) do
       {:ok, dc_data} ->
         with :ok <- start_domain_cycles(dc_data),
@@ -134,5 +153,9 @@ defmodule EtherCAT.Master.Activation do
 
   defp dc_running? do
     is_pid(Process.whereis(DC))
+  end
+
+  defp quiesce_bus do
+    Bus.quiesce(Bus, @activation_quiet_ms)
   end
 end

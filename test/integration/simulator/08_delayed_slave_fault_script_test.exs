@@ -3,6 +3,7 @@ defmodule EtherCAT.Integration.Simulator.DelayedSlaveFaultScriptTest do
 
   alias EtherCAT.IntegrationSupport.SimulatorRing
   alias EtherCAT.Simulator
+  alias EtherCAT.Simulator.Fault
 
   import EtherCAT.Integration.Assertions
 
@@ -20,10 +21,10 @@ defmodule EtherCAT.Integration.Simulator.DelayedSlaveFaultScriptTest do
 
   test "delayed slave-local faults can follow exchange-fault recovery without manual cleanup" do
     fault_script =
-      List.duplicate(:drop_responses, 6) ++ List.duplicate({:wkc_offset, -1}, 4)
+      List.duplicate(Fault.drop_responses(), 6) ++ List.duplicate(Fault.wkc_offset(-1), 4)
 
-    assert :ok = Simulator.inject_fault({:fault_script, fault_script})
-    assert :ok = Simulator.inject_fault({:after_ms, 600, {:retreat_to_safeop, :outputs}})
+    assert :ok = Simulator.inject_fault(Fault.script(fault_script))
+    assert :ok = Simulator.inject_fault(Fault.retreat_to_safeop(:outputs) |> Fault.after_ms(600))
 
     assert_eventually(
       fn ->

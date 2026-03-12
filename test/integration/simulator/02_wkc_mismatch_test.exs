@@ -3,6 +3,7 @@ defmodule EtherCAT.Integration.Simulator.WKCMismatchTest do
 
   alias EtherCAT.IntegrationSupport.SimulatorRing
   alias EtherCAT.Simulator
+  alias EtherCAT.Simulator.Fault
 
   import EtherCAT.Integration.Assertions
 
@@ -13,7 +14,7 @@ defmodule EtherCAT.Integration.Simulator.WKCMismatchTest do
   end
 
   test "wkc mismatch degrades the domain without inventing a slave-local fault" do
-    assert :ok = Simulator.inject_fault({:next_exchanges, 6, {:wkc_offset, -1}})
+    assert :ok = Simulator.inject_fault(Fault.wkc_offset(-1) |> Fault.next(6))
 
     assert_eventually(fn ->
       assert :recovering = EtherCAT.state()

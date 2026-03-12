@@ -126,6 +126,7 @@ defmodule EtherCAT.Simulator.Slave.Definition do
       |> EtherCAT.Simulator.DriverAdapter.definition_options(config)
       |> normalize_definition_options!(adapter)
       |> merge_driver_identity(driver)
+      |> maybe_strip_process_data(driver, config)
 
     profile = Keyword.fetch!(opts, :profile)
     opts = Keyword.delete(opts, :profile)
@@ -158,4 +159,19 @@ defmodule EtherCAT.Simulator.Slave.Definition do
   end
 
   defp maybe_put_identity_revision(opts, _revision), do: opts
+
+  defp maybe_strip_process_data(opts, driver, config) do
+    case SlaveDriver.signal_model(driver, config) do
+      [] ->
+        opts
+        |> Keyword.put(:signals, %{})
+        |> Keyword.put(:pdo_entries, [])
+        |> Keyword.put(:output_size, 0)
+        |> Keyword.put(:input_size, 0)
+        |> Keyword.put(:mirror_output_to_input?, false)
+
+      _signals ->
+        opts
+    end
+  end
 end

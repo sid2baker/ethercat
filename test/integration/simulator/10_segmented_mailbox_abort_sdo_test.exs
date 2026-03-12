@@ -4,6 +4,7 @@ defmodule EtherCAT.Integration.Simulator.SegmentedMailboxAbortSDOTest do
   alias EtherCAT.IntegrationSupport.Drivers.{EK1100, MailboxDevice}
   alias EtherCAT.IntegrationSupport.SimulatorRing
   alias EtherCAT.Simulator
+  alias EtherCAT.Simulator.Fault
   alias EtherCAT.Simulator.Slave
   alias EtherCAT.Slave.Config, as: SlaveConfig
 
@@ -49,7 +50,7 @@ defmodule EtherCAT.Integration.Simulator.SegmentedMailboxAbortSDOTest do
 
     assert :ok =
              Simulator.inject_fault(
-               {:mailbox_abort, :mailbox, 0x2002, 0x01, @abort_code, :upload_segment}
+               Fault.mailbox_abort(:mailbox, 0x2002, 0x01, @abort_code, stage: :upload_segment)
              )
 
     assert {:error, {:sdo_abort, 0x2002, 0x01, @abort_code}} =
@@ -72,7 +73,7 @@ defmodule EtherCAT.Integration.Simulator.SegmentedMailboxAbortSDOTest do
 
     assert :ok =
              Simulator.inject_fault(
-               {:mailbox_abort, :mailbox, 0x2002, 0x01, @abort_code, :download_segment}
+               Fault.mailbox_abort(:mailbox, 0x2002, 0x01, @abort_code, stage: :download_segment)
              )
 
     assert {:error, {:sdo_abort, 0x2002, 0x01, @abort_code}} =

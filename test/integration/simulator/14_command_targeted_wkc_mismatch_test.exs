@@ -3,6 +3,7 @@ defmodule EtherCAT.Integration.Simulator.CommandTargetedWKCMismatchTest do
 
   alias EtherCAT.IntegrationSupport.SimulatorRing
   alias EtherCAT.Simulator
+  alias EtherCAT.Simulator.Fault
 
   import EtherCAT.Integration.Assertions
 
@@ -20,7 +21,7 @@ defmodule EtherCAT.Integration.Simulator.CommandTargetedWKCMismatchTest do
   end
 
   test "command-targeted fprd skew drives slave-down recovery while logical PDO traffic stays healthy" do
-    assert :ok = Simulator.inject_fault({:next_exchanges, 100, {:command_wkc_offset, :fprd, -1}})
+    assert :ok = Simulator.inject_fault(Fault.command_wkc_offset(:fprd, -1) |> Fault.next(100))
 
     assert_receive {:telemetry_event, [:ethercat, :slave, :down], %{},
                     %{slave: :outputs, station: 0x1002}},

@@ -3,6 +3,7 @@ defmodule EtherCAT.Integration.Simulator.CombinedFaultScriptTest do
 
   alias EtherCAT.IntegrationSupport.SimulatorRing
   alias EtherCAT.Simulator
+  alias EtherCAT.Simulator.Fault
 
   import EtherCAT.Integration.Assertions
 
@@ -20,11 +21,11 @@ defmodule EtherCAT.Integration.Simulator.CombinedFaultScriptTest do
 
   test "combined exchange scripts drive recovery and heal without manual fault clearing" do
     script =
-      List.duplicate(:drop_responses, 6) ++
-        List.duplicate({:wkc_offset, -1}, 4) ++
-        List.duplicate({:disconnect, :outputs}, 30)
+      List.duplicate(Fault.drop_responses(), 6) ++
+        List.duplicate(Fault.wkc_offset(-1), 4) ++
+        List.duplicate(Fault.disconnect(:outputs), 30)
 
-    assert :ok = Simulator.inject_fault({:fault_script, script})
+    assert :ok = Simulator.inject_fault(Fault.script(script))
 
     assert_eventually(
       fn ->

@@ -4,6 +4,7 @@ defmodule EtherCAT.Integration.Simulator.StartupSegmentedDownloadAckFaultTest do
   alias EtherCAT.IntegrationSupport.Drivers.{EK1100, SegmentedConfiguredMailboxDevice}
   alias EtherCAT.IntegrationSupport.SimulatorRing
   alias EtherCAT.Simulator
+  alias EtherCAT.Simulator.Fault
   alias EtherCAT.Simulator.Slave
   alias EtherCAT.Slave.Config, as: SlaveConfig
 
@@ -41,9 +42,14 @@ defmodule EtherCAT.Integration.Simulator.StartupSegmentedDownloadAckFaultTest do
 
     assert :ok =
              Simulator.inject_fault(
-               {:after_milestone, {:mailbox_step, :mailbox, :download_segment, 1},
-                {:mailbox_protocol_fault, :mailbox, 0x2003, 0x01, :download_segment,
-                 :invalid_coe_payload}}
+               Fault.mailbox_protocol_fault(
+                 :mailbox,
+                 0x2003,
+                 0x01,
+                 :download_segment,
+                 :invalid_coe_payload
+               )
+               |> Fault.after_milestone(Fault.mailbox_step(:mailbox, :download_segment, 1))
              )
 
     SimulatorRing.start_master!(simulator.port,

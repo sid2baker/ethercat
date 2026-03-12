@@ -5,6 +5,7 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Device do
   alias EtherCAT.Simulator.Slave.Runtime.AL
   alias EtherCAT.Simulator.Slave.Behaviour
   alias EtherCAT.Simulator.Slave.Runtime.CoE
+  alias EtherCAT.Simulator.Slave.Runtime.DC
   alias EtherCAT.Simulator.Slave.Definition
   alias EtherCAT.Simulator.Slave.Runtime.ESCImage
   alias EtherCAT.Simulator.Slave.Runtime.Logical
@@ -45,7 +46,8 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Device do
           mailbox_download: map() | nil,
           behavior: module(),
           behavior_state: term(),
-          dc_capable?: boolean()
+          dc_capable?: boolean(),
+          dc_state: DC.t() | nil
         }
 
   @enforce_keys [
@@ -71,7 +73,8 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Device do
     :mailbox_protocol_fault_rules,
     :behavior,
     :behavior_state,
-    :dc_capable?
+    :dc_capable?,
+    :dc_state
   ]
   defstruct [
     :name,
@@ -97,6 +100,7 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Device do
     :behavior,
     :behavior_state,
     :dc_capable?,
+    :dc_state,
     mailbox_upload: nil,
     mailbox_download: nil
   ]
@@ -135,8 +139,10 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Device do
       mailbox_protocol_fault_rules: [],
       behavior: definition.behavior,
       behavior_state: behavior_state,
-      dc_capable?: definition.dc_capable?
+      dc_capable?: definition.dc_capable?,
+      dc_state: if(definition.dc_capable?, do: DC.new(position), else: nil)
     }
+    |> DC.refresh_memory()
     |> ProcessImage.refresh_inputs()
   end
 
@@ -241,6 +247,14 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Device do
     do: Map.fetch(signals, signal_name)
 
   @spec read_register(t(), non_neg_integer(), non_neg_integer()) :: binary()
+  def read_register(%__MODULE__{dc_capable?: true} = slave, offset, length) do
+    if DC.handles_range?(offset, length) do
+      DC.read_register(slave, offset, length)
+    else
+      binary_part(slave.memory, offset, length)
+    end
+  end
+
   def read_register(%__MODULE__{memory: memory}, offset, length) do
     binary_part(memory, offset, length)
   end
@@ -286,10 +300,12 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Device do
     write_memory(slave, @eeprom_control, <<max(low, 1)::8, high::8>>)
   end
 
-  def write_register(%__MODULE__{dc_capable?: true} = slave, 0x0900, <<_::32>>) do
-    slave
-    |> write_memory(0x0900, <<110::32-little, 120::32-little, 130::32-little, 140::32-little>>)
-    |> write_memory(0x0918, <<1_001_000::64-little>>)
+  def write_register(%__MODULE__{dc_capable?: true} = slave, offset, data) do
+    if DC.handles_range?(offset, byte_size(data)) do
+      DC.write_register(slave, offset, data)
+    else
+      ProcessImage.write_register(slave, offset, data)
+    end
   end
 
   def write_register(%__MODULE__{} = slave, offset, data) do

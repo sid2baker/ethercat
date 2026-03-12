@@ -22,9 +22,9 @@ Corrupted, truncated, stale, or duplicate frame at the transport boundary.
 
 Observed with the UDP transport fault API:
 
-- `EtherCAT.Simulator.Udp.inject_fault({:corrupt_next_response, :truncate})`
+- `EtherCAT.Simulator.Udp.inject_fault(UdpFault.truncate())`
   produces a bus `frame_dropped` telemetry event with `reason: :decode_error`
-- `EtherCAT.Simulator.Udp.inject_fault({:corrupt_next_response, :wrong_idx})`
+- `EtherCAT.Simulator.Udp.inject_fault(UdpFault.wrong_idx())`
   produces a bus `frame_dropped` telemetry event with `reason: :idx_mismatch`
 - in both cases the domain then sees the exchange as a `:timeout`, the master
   degrades briefly, and the next healthy reply returns the system to
@@ -50,9 +50,9 @@ Current API now covers one-shot, counted, and scripted UDP-edge corruption.
 The chosen API lives at the UDP/raw-frame transport edge, not inside datagram
 execution:
 
-- `EtherCAT.Simulator.Udp.inject_fault({:corrupt_next_response, :truncate})`
-- `EtherCAT.Simulator.Udp.inject_fault({:corrupt_next_response, :unsupported_type})`
-- `EtherCAT.Simulator.Udp.inject_fault({:corrupt_next_response, :wrong_idx})`
-- `EtherCAT.Simulator.Udp.inject_fault({:corrupt_next_response, :replay_previous})`
-- `EtherCAT.Simulator.Udp.inject_fault({:corrupt_next_responses, 2, :truncate})`
-- `EtherCAT.Simulator.Udp.inject_fault({:corrupt_response_script, [:unsupported_type, :replay_previous]})`
+- `EtherCAT.Simulator.Udp.inject_fault(UdpFault.truncate())`
+- `EtherCAT.Simulator.Udp.inject_fault(UdpFault.unsupported_type())`
+- `EtherCAT.Simulator.Udp.inject_fault(UdpFault.wrong_idx())`
+- `EtherCAT.Simulator.Udp.inject_fault(UdpFault.replay_previous())`
+- `EtherCAT.Simulator.Udp.inject_fault(UdpFault.truncate() |> UdpFault.next(2))`
+- `EtherCAT.Simulator.Udp.inject_fault(UdpFault.script([UdpFault.unsupported_type(), UdpFault.replay_previous()]))`

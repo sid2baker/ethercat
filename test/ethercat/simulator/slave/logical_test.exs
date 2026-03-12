@@ -37,12 +37,41 @@ defmodule EtherCAT.Simulator.Slave.LogicalTest do
     assert wkc == 3
   end
 
+  test "LRW honors non-byte-aligned FMMU start and stop bits" do
+    slave =
+      Definition.build(:digital_io, mirror_output_to_input?: false)
+      |> Device.new(0)
+      |> Device.write_register(0x1180, <<0x0D>>)
+      |> configure_fmmu_bits(0, 0x1000, 1, 4, 7, 0x1100, 0, 0x02)
+      |> configure_fmmu_bits(1, 0x1001, 1, 0, 3, 0x1180, 0, 0x01)
+
+    {updated_slave, response, wkc} = Logical.read_write(slave, 12, 0x1000, <<0xB0, 0x00>>)
+
+    assert Device.output_image(updated_slave) == <<0x0B>>
+    assert response == <<0xB0, 0x0D>>
+    assert wkc == 3
+  end
+
   defp configure_fmmu(slave, index, logical_start, length, phys_start, type) do
+    configure_fmmu_bits(slave, index, logical_start, length, 0, 7, phys_start, 0, type)
+  end
+
+  defp configure_fmmu_bits(
+         slave,
+         index,
+         logical_start,
+         length,
+         logical_start_bit,
+         logical_stop_bit,
+         phys_start,
+         phys_start_bit,
+         type
+       ) do
     base = Registers.fmmu(index)
 
     entry =
-      <<logical_start::32-little, length::16-little, 0::8, 7::8, phys_start::16-little, 0::8,
-        type::8, 0x01::8, 0::24>>
+      <<logical_start::32-little, length::16-little, logical_start_bit::8, logical_stop_bit::8,
+        phys_start::16-little, phys_start_bit::8, type::8, 0x01::8, 0::24>>
 
     Device.write_register(slave, base, entry)
   end

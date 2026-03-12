@@ -12,9 +12,9 @@ defmodule EtherCAT.Simulator.Udp do
 
   Supported reply-fault injection forms:
 
-  - `{:corrupt_next_response, mode}` for a one-shot mutation
-  - `{:corrupt_next_responses, count, mode}` for a counted corruption window
-  - `{:corrupt_response_script, [mode, ...]}` for scripted successive mutations
+  - `EtherCAT.Simulator.Udp.Fault.truncate()`
+  - `EtherCAT.Simulator.Udp.Fault.wrong_idx() |> EtherCAT.Simulator.Udp.Fault.next(count)`
+  - `EtherCAT.Simulator.Udp.Fault.script([mode, ...])`
 
   Supported modes:
 
@@ -30,6 +30,7 @@ defmodule EtherCAT.Simulator.Udp do
 
   alias EtherCAT.Bus.Frame
   alias EtherCAT.Simulator
+  alias EtherCAT.Simulator.Udp.Fault
 
   @type frame_fault_mode :: :truncate | :unsupported_type | :wrong_idx | :replay_previous
   @type fault ::
@@ -65,11 +66,19 @@ defmodule EtherCAT.Simulator.Udp do
     :exit, {:noproc, _} -> {:error, :not_found}
   end
 
-  @spec inject_fault(fault()) :: :ok | {:error, :invalid_fault | :not_found}
+  @spec inject_fault(Fault.t() | fault()) :: :ok | {:error, :invalid_fault | :not_found}
   def inject_fault(fault) do
-    GenServer.call(__MODULE__, {:inject_fault, fault})
-  catch
-    :exit, {:noproc, _} -> {:error, :not_found}
+    case Fault.normalize(fault) do
+      {:ok, normalized_fault} ->
+        try do
+          GenServer.call(__MODULE__, {:inject_fault, normalized_fault})
+        catch
+          :exit, {:noproc, _} -> {:error, :not_found}
+        end
+
+      :error ->
+        {:error, :invalid_fault}
+    end
   end
 
   @spec clear_faults() :: :ok | {:error, :not_found}

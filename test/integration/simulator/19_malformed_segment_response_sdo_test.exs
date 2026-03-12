@@ -4,6 +4,7 @@ defmodule EtherCAT.Integration.Simulator.MalformedSegmentResponseSDOTest do
   alias EtherCAT.IntegrationSupport.Drivers.{EK1100, MailboxDevice}
   alias EtherCAT.IntegrationSupport.SimulatorRing
   alias EtherCAT.Simulator
+  alias EtherCAT.Simulator.Fault
   alias EtherCAT.Simulator.Slave
   alias EtherCAT.Slave.Config, as: SlaveConfig
 
@@ -46,8 +47,13 @@ defmodule EtherCAT.Integration.Simulator.MalformedSegmentResponseSDOTest do
 
     assert :ok =
              Simulator.inject_fault(
-               {:mailbox_protocol_fault, :mailbox, 0x2003, 0x01, :upload_segment,
-                :invalid_segment_padding}
+               Fault.mailbox_protocol_fault(
+                 :mailbox,
+                 0x2003,
+                 0x01,
+                 :upload_segment,
+                 :invalid_segment_padding
+               )
              )
 
     assert {:error, {:invalid_segment_padding, 7}} =
@@ -68,8 +74,13 @@ defmodule EtherCAT.Integration.Simulator.MalformedSegmentResponseSDOTest do
 
     assert :ok =
              Simulator.inject_fault(
-               {:mailbox_protocol_fault, :mailbox, 0x2003, 0x01, :upload_segment,
-                {:segment_command, 0x20}}
+               Fault.mailbox_protocol_fault(
+                 :mailbox,
+                 0x2003,
+                 0x01,
+                 :upload_segment,
+                 {:segment_command, 0x20}
+               )
              )
 
     assert {:error, {:unexpected_sdo_segment_command, 0x20}} =

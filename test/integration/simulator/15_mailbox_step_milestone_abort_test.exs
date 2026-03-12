@@ -4,6 +4,7 @@ defmodule EtherCAT.Integration.Simulator.MailboxStepMilestoneAbortTest do
   alias EtherCAT.IntegrationSupport.Drivers.{EK1100, MailboxDevice}
   alias EtherCAT.IntegrationSupport.SimulatorRing
   alias EtherCAT.Simulator
+  alias EtherCAT.Simulator.Fault
   alias EtherCAT.Simulator.Slave
   alias EtherCAT.Slave.Config, as: SlaveConfig
 
@@ -48,8 +49,8 @@ defmodule EtherCAT.Integration.Simulator.MailboxStepMilestoneAbortTest do
 
     assert :ok =
              Simulator.inject_fault(
-               {:after_milestone, {:mailbox_step, :mailbox, :upload_segment, 2},
-                {:mailbox_abort, :mailbox, 0x2003, 0x01, @abort_code, :upload_segment}}
+               Fault.mailbox_abort(:mailbox, 0x2003, 0x01, @abort_code, stage: :upload_segment)
+               |> Fault.after_milestone(Fault.mailbox_step(:mailbox, :upload_segment, 2))
              )
 
     assert {:ok,
@@ -84,8 +85,8 @@ defmodule EtherCAT.Integration.Simulator.MailboxStepMilestoneAbortTest do
 
     assert :ok =
              Simulator.inject_fault(
-               {:after_milestone, {:mailbox_step, :mailbox, :download_segment, 2},
-                {:mailbox_abort, :mailbox, 0x2003, 0x01, @abort_code, :download_segment}}
+               Fault.mailbox_abort(:mailbox, 0x2003, 0x01, @abort_code, stage: :download_segment)
+               |> Fault.after_milestone(Fault.mailbox_step(:mailbox, :download_segment, 2))
              )
 
     assert {:ok,

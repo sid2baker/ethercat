@@ -25,7 +25,9 @@ defmodule EtherCAT do
   - `:activation_blocked`
   - `:recovering`
 
-  `await_running/1` waits for a usable session. `await_operational/1` waits for
+  `await_running/1` waits for a usable session. Startup/activation paths drain
+  startup bus traffic before reporting ready, so the first mailbox or OP
+  exchange starts from a clean transport state. `await_operational/1` waits for
   cyclic OP. Per-slave health is exposed through `slaves/0`.
 
   ## Runtime Lifecycle

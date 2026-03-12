@@ -17,6 +17,7 @@ defmodule EtherCAT.SimulatorSlaveDeviceTest do
     assert Device.read_register(invalid, 0x0134, 2) == <<0x11, 0x00>>
 
     preop = Device.write_register(invalid, 0x0120, <<0x02, 0x00>>)
+    preop = configure_operational_layout(preop)
     safeop = Device.write_register(preop, 0x0120, <<0x04, 0x00>>)
     op = Device.write_register(safeop, 0x0120, <<0x08, 0x00>>)
 
@@ -140,5 +141,41 @@ defmodule EtherCAT.SimulatorSlaveDeviceTest do
 
   defp pad_mailbox(frame, size) do
     frame <> :binary.copy(<<0>>, size - byte_size(frame))
+  end
+
+  defp configure_operational_layout(slave) do
+    slave
+    |> maybe_configure_sm(2, slave.output_phys, slave.output_size, 0x24)
+    |> maybe_configure_sm(3, slave.input_phys, slave.input_size, 0x20)
+    |> maybe_configure_fmmu(0, 0x1000, slave.output_size, slave.output_phys, 0x02)
+    |> maybe_configure_fmmu(
+      1,
+      0x1000 + slave.output_size,
+      slave.input_size,
+      slave.input_phys,
+      0x01
+    )
+  end
+
+  defp maybe_configure_sm(slave, _index, _start, 0, _control), do: slave
+
+  defp maybe_configure_sm(slave, index, start, size, control) do
+    base = 0x0800 + index * 8
+
+    slave
+    |> Device.write_register(base, <<start::16-little, size::16-little, control, 0, 0, 0>>)
+    |> Device.write_register(base + 6, <<1>>)
+  end
+
+  defp maybe_configure_fmmu(slave, _index, _logical_start, 0, _phys_start, _type), do: slave
+
+  defp maybe_configure_fmmu(slave, index, logical_start, size, phys_start, type) do
+    base = 0x0600 + index * 16
+
+    entry =
+      <<logical_start::32-little, size::16-little, 0::8, 7::8, phys_start::16-little, 0::8,
+        type::8, 0x01::8, 0::24>>
+
+    Device.write_register(slave, base, entry)
   end
 end

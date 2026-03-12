@@ -4,6 +4,7 @@ defmodule EtherCAT.Integration.Simulator.MailboxAbortSDOTest do
   alias EtherCAT.IntegrationSupport.Drivers.{EK1100, MailboxDevice}
   alias EtherCAT.IntegrationSupport.SimulatorRing
   alias EtherCAT.Simulator
+  alias EtherCAT.Simulator.Fault
   alias EtherCAT.Simulator.Slave
   alias EtherCAT.Slave.Config, as: SlaveConfig
 
@@ -44,7 +45,7 @@ defmodule EtherCAT.Integration.Simulator.MailboxAbortSDOTest do
     assert {:ok, <<0x34, 0x12>>} = EtherCAT.upload_sdo(:mailbox, 0x2000, 0x01)
 
     assert :ok =
-             Simulator.inject_fault({:mailbox_abort, :mailbox, 0x2000, 0x01, 0x0601_0002})
+             Simulator.inject_fault(Fault.mailbox_abort(:mailbox, 0x2000, 0x01, 0x0601_0002))
 
     assert {:error, {:sdo_abort, 0x2000, 0x01, 0x0601_0002}} =
              EtherCAT.upload_sdo(:mailbox, 0x2000, 0x01)

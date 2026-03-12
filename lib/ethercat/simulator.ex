@@ -4,6 +4,7 @@ defmodule EtherCAT.Simulator do
   use GenServer
 
   alias EtherCAT.Bus.Datagram
+  alias EtherCAT.Simulator.Fault
   alias EtherCAT.Simulator.Runtime.Faults
   alias EtherCAT.Simulator.Runtime.Milestones
   alias EtherCAT.Simulator.Runtime.Router
@@ -136,8 +137,13 @@ defmodule EtherCAT.Simulator do
     :exit, {:timeout, _} -> {:error, :timeout}
   end
 
-  @spec inject_fault(fault()) :: :ok | {:error, :invalid_fault | :not_found}
-  def inject_fault(fault), do: GenServer.call(@default_name, {:inject_fault, fault})
+  @spec inject_fault(Fault.t() | fault()) :: :ok | {:error, :invalid_fault | :not_found}
+  def inject_fault(fault) do
+    case Fault.normalize(fault) do
+      {:ok, normalized_fault} -> GenServer.call(@default_name, {:inject_fault, normalized_fault})
+      :error -> {:error, :invalid_fault}
+    end
+  end
 
   @spec clear_faults() :: :ok
   def clear_faults, do: GenServer.call(@default_name, :clear_faults)

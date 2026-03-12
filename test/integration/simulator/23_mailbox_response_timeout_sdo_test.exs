@@ -1,4 +1,4 @@
-defmodule EtherCAT.Integration.Simulator.MalformedDownloadSegmentAckSDOTest do
+defmodule EtherCAT.Integration.Simulator.MailboxResponseTimeoutSDOTest do
   use ExUnit.Case, async: false
 
   alias EtherCAT.IntegrationSupport.Drivers.{EK1100, MailboxDevice}
@@ -40,7 +40,48 @@ defmodule EtherCAT.Integration.Simulator.MalformedDownloadSegmentAckSDOTest do
     :ok
   end
 
-  test "malformed later download acknowledgements surface exact parser errors without mutating the object" do
+  test "public segmented sdo upload returns response_timeout without degrading the master" do
+    blob = multi_segment_blob()
+
+    assert :preop_ready = EtherCAT.state()
+
+    assert :ok =
+             Simulator.inject_fault(
+               Fault.mailbox_protocol_fault(
+                 :mailbox,
+                 0x2003,
+                 0x01,
+                 :upload_segment,
+                 :drop_response
+               )
+               |> Fault.after_milestone(Fault.mailbox_step(:mailbox, :upload_segment, 2))
+             )
+
+    assert {:ok,
+            %{
+              scheduled_faults: [
+                %{
+                  fault:
+                    {:mailbox_protocol_fault, :mailbox, 0x2003, 0x01, :upload_segment,
+                     :drop_response},
+                  waiting_on: {:mailbox_step, :mailbox, :upload_segment, 2},
+                  remaining: 2
+                }
+              ]
+            }} = Simulator.info()
+
+    assert {:error, :response_timeout} = EtherCAT.upload_sdo(:mailbox, 0x2003, 0x01)
+
+    assert :preop_ready = EtherCAT.state()
+    assert {:ok, %{scheduled_faults: [], pending_faults: []}} = Simulator.info()
+
+    assert :ok = Simulator.clear_faults()
+
+    assert {:ok, ^blob} = EtherCAT.upload_sdo(:mailbox, 0x2003, 0x01)
+    assert :preop_ready = EtherCAT.state()
+  end
+
+  test "public segmented sdo download returns response_timeout without mutating the object" do
     original = multi_segment_blob()
     updated = updated_multi_segment_blob()
 
@@ -54,7 +95,7 @@ defmodule EtherCAT.Integration.Simulator.MalformedDownloadSegmentAckSDOTest do
                  0x2003,
                  0x01,
                  :download_segment,
-                 :invalid_coe_payload
+                 :drop_response
                )
                |> Fault.after_milestone(Fault.mailbox_step(:mailbox, :download_segment, 1))
              )
@@ -65,14 +106,14 @@ defmodule EtherCAT.Integration.Simulator.MalformedDownloadSegmentAckSDOTest do
                 %{
                   fault:
                     {:mailbox_protocol_fault, :mailbox, 0x2003, 0x01, :download_segment,
-                     :invalid_coe_payload},
+                     :drop_response},
                   waiting_on: {:mailbox_step, :mailbox, :download_segment, 1},
                   remaining: 1
                 }
               ]
             }} = Simulator.info()
 
-    assert {:error, :invalid_coe_response} =
+    assert {:error, :response_timeout} =
              EtherCAT.download_sdo(:mailbox, 0x2003, 0x01, updated)
 
     assert {:ok, ^original} = EtherCAT.upload_sdo(:mailbox, 0x2003, 0x01)
@@ -86,39 +127,6 @@ defmodule EtherCAT.Integration.Simulator.MalformedDownloadSegmentAckSDOTest do
     assert :preop_ready = EtherCAT.state()
   end
 
-  test "malformed final download acknowledgements still reflect the committed object" do
-    original = multi_segment_blob()
-    updated = updated_multi_segment_blob()
-
-    assert :preop_ready = EtherCAT.state()
-    assert {:ok, ^original} = EtherCAT.upload_sdo(:mailbox, 0x2003, 0x01)
-
-    assert :ok =
-             Simulator.inject_fault(
-               Fault.mailbox_protocol_fault(
-                 :mailbox,
-                 0x2003,
-                 0x01,
-                 :download_segment,
-                 {:segment_command, 0x60}
-               )
-               |> Fault.after_milestone(Fault.mailbox_step(:mailbox, :download_segment, 2))
-             )
-
-    assert {:error, {:unexpected_sdo_segment_command, 0x60}} =
-             EtherCAT.download_sdo(:mailbox, 0x2003, 0x01, updated)
-
-    assert {:ok, ^updated} = EtherCAT.upload_sdo(:mailbox, 0x2003, 0x01)
-    assert :preop_ready = EtherCAT.state()
-    assert {:ok, %{scheduled_faults: [], pending_faults: []}} = Simulator.info()
-
-    assert :ok = Simulator.clear_faults()
-
-    assert :ok = EtherCAT.download_sdo(:mailbox, 0x2003, 0x01, original)
-    assert {:ok, ^original} = EtherCAT.upload_sdo(:mailbox, 0x2003, 0x01)
-    assert :preop_ready = EtherCAT.state()
-  end
-
   defp multi_segment_blob do
     0..191
     |> Enum.to_list()
@@ -127,7 +135,7 @@ defmodule EtherCAT.Integration.Simulator.MalformedDownloadSegmentAckSDOTest do
 
   defp updated_multi_segment_blob do
     0..191
-    |> Enum.map(fn value -> rem(value * 11 + 5, 256) end)
+    |> Enum.map(fn value -> rem(value * 17 + 9, 256) end)
     |> :erlang.list_to_binary()
   end
 end

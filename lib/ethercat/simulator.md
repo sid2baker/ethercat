@@ -54,7 +54,8 @@ Main entry points:
 - `start_link/1` — low-level in-memory simulator core only
 - `stop/0` — stop the singleton simulator runtime
 - `process_datagrams/1` — execute EtherCAT datagrams directly
-- `inject_fault/1` / `clear_faults/0` — deterministic fault injection
+- `inject_fault/1` / `clear_faults/0` — deterministic fault injection through
+  `EtherCAT.Simulator.Fault`
 - `info/0`, `device_snapshot/1`, `signal_snapshot/2`, `connection_snapshot/0`
   — stable runtime snapshots for tooling
 - `slave_info/1` — compatibility-oriented per-device diagnostic lookup
@@ -96,13 +97,16 @@ The simulator supports deterministic runtime faults for integration coverage:
 This allows deep recovery tests against the real master/runtime without
 physical hardware.
 
-For datagram/runtime faults, `EtherCAT.Simulator.inject_fault/1` supports both:
+For datagram/runtime faults, prefer `EtherCAT.Simulator.Fault` with
+`EtherCAT.Simulator.inject_fault/1`.
+
+The builder covers both:
 
 - sticky faults such as `:drop_responses` or `{:disconnect, :outputs}`
-- exchange-scoped wrappers such as `{:next_exchange, fault}`,
-  `{:next_exchanges, count, fault}`, and `{:fault_script, [step, ...]}`
-- delayed scheduling through `{:after_ms, delay_ms, fault}`
-- milestone scheduling through `{:after_milestone, milestone, fault}`
+- exchange-scoped wrappers such as `Fault.next(fault)` and
+  `Fault.script([step, ...])`
+- delayed scheduling through `Fault.after_ms(fault, delay_ms)`
+- milestone scheduling through `Fault.after_milestone(fault, milestone)`
 
 The current exchange-scoped fault set is:
 
@@ -137,62 +141,70 @@ state changes without relying on brittle sleeps alone.
 Typical queued runtime examples:
 
 ```elixir
-EtherCAT.Simulator.inject_fault({:next_exchanges, 10, :drop_responses})
+alias EtherCAT.Simulator.Fault
 
-EtherCAT.Simulator.inject_fault({:next_exchanges, 6, {:wkc_offset, -1}})
+EtherCAT.Simulator.inject_fault(Fault.drop_responses() |> Fault.next(10))
 
 EtherCAT.Simulator.inject_fault(
-  {:next_exchanges, 30, {:command_wkc_offset, :fprd, -1}}
+  Fault.wkc_offset(-1)
+  |> Fault.next(6)
 )
 
 EtherCAT.Simulator.inject_fault(
-  {:next_exchanges, 6, {:logical_wkc_offset, :outputs, -1}}
+  Fault.command_wkc_offset(:fprd, -1)
+  |> Fault.next(30)
 )
 
 EtherCAT.Simulator.inject_fault(
-  {:fault_script, [:drop_responses, {:wkc_offset, -1}]}
+  Fault.logical_wkc_offset(:outputs, -1)
+  |> Fault.next(6)
 )
 
 EtherCAT.Simulator.inject_fault(
-  {:after_ms, 250, {:retreat_to_safeop, :outputs}}
+  Fault.script([Fault.drop_responses(), Fault.wkc_offset(-1)])
 )
 
 EtherCAT.Simulator.inject_fault(
-  {:after_milestone, {:healthy_polls, :outputs, 10}, {:retreat_to_safeop, :outputs}}
+  Fault.retreat_to_safeop(:outputs)
+  |> Fault.after_ms(250)
 )
 
 EtherCAT.Simulator.inject_fault(
-  {:after_milestone, {:mailbox_step, :mailbox, :upload_segment, 2},
-   {:mailbox_abort, :mailbox, 0x2003, 0x01, 0x0800_0000, :upload_segment}}
+  Fault.retreat_to_safeop(:outputs)
+  |> Fault.after_milestone(Fault.healthy_polls(:outputs, 10))
 )
 
 EtherCAT.Simulator.inject_fault(
-  {:mailbox_protocol_fault, :mailbox, 0x2003, 0x01, :upload_segment, :toggle_mismatch}
+  Fault.mailbox_abort(:mailbox, 0x2003, 0x01, 0x0800_0000, stage: :upload_segment)
+  |> Fault.after_milestone(Fault.mailbox_step(:mailbox, :upload_segment, 2))
 )
 
 EtherCAT.Simulator.inject_fault(
-  {:mailbox_protocol_fault, :mailbox, 0x2003, 0x01, :download_segment, :drop_response}
+  Fault.mailbox_protocol_fault(:mailbox, 0x2003, 0x01, :upload_segment, :toggle_mismatch)
 )
 
 EtherCAT.Simulator.inject_fault(
-  {:mailbox_protocol_fault, :mailbox, 0x2001, 0x01, :upload_init, {:mailbox_type, 0x04}}
+  Fault.mailbox_protocol_fault(:mailbox, 0x2003, 0x01, :download_segment, :drop_response)
 )
 
 EtherCAT.Simulator.inject_fault(
-  {:mailbox_protocol_fault, :mailbox, 0x2001, 0x01, :upload_init, {:sdo_command, 0x60}}
+  Fault.mailbox_protocol_fault(:mailbox, 0x2001, 0x01, :upload_init, {:mailbox_type, 0x04})
 )
 
 EtherCAT.Simulator.inject_fault(
-  {:mailbox_protocol_fault, :mailbox, 0x2003, 0x01, :upload_segment, {:segment_command, 0x20}}
+  Fault.mailbox_protocol_fault(:mailbox, 0x2001, 0x01, :upload_init, {:sdo_command, 0x60})
 )
 
 EtherCAT.Simulator.inject_fault(
-  {:fault_script,
-   [
-     :drop_responses,
-     {:wait_for_milestone, {:healthy_polls, :outputs, 10}},
-     {:retreat_to_safeop, :outputs}
-   ]}
+  Fault.mailbox_protocol_fault(:mailbox, 0x2003, 0x01, :upload_segment, {:segment_command, 0x20})
+)
+
+EtherCAT.Simulator.inject_fault(
+  Fault.script([
+    Fault.drop_responses(),
+    Fault.wait_for(Fault.healthy_polls(:outputs, 10)),
+    Fault.retreat_to_safeop(:outputs)
+  ])
 )
 ```
 
@@ -200,8 +212,10 @@ Transport-edge reply corruption is intentionally separate from those runtime
 faults.
 
 - Use `EtherCAT.Simulator` fault injection for datagram/runtime behavior.
-- Use `EtherCAT.Simulator.Udp` fault injection for malformed or mismatched raw
-  EtherCAT UDP replies.
+- Use `EtherCAT.Simulator.Udp` with `EtherCAT.Simulator.Udp.Fault` for
+  malformed or mismatched raw EtherCAT UDP replies.
+- Use `Fault.describe/1` and `EtherCAT.Simulator.Udp.Fault.describe/1` in
+  external tooling instead of rebuilding labels from tuple shapes.
 
 ## Transport Split
 

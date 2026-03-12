@@ -40,7 +40,10 @@ defmodule EtherCAT.BusTest do
     def clear_awaiting(%__MODULE__{} = link), do: link
 
     @impl true
-    def drain(%__MODULE__{} = link), do: link
+    def drain(%__MODULE__{test_pid: test_pid} = link) do
+      Kernel.send(test_pid, :fake_link_drained)
+      link
+    end
 
     @impl true
     def close(%__MODULE__{} = link), do: link
@@ -332,6 +335,39 @@ defmodule EtherCAT.BusTest do
     reply_with(bus, restored_frame, fn dg -> %{dg | data: <<0x12, 0x34>>, wkc: 1} end)
 
     assert {:ok, [%{data: <<0x12, 0x34>>, wkc: 1}]} = Task.await(after_restore)
+  end
+
+  test "settle drains buffered receive traffic while idle" do
+    {:ok, bus} = start_bus()
+
+    assert :ok = Bus.settle(bus)
+    assert_receive :fake_link_drained
+  end
+
+  test "settle waits for the current in-flight transaction before draining" do
+    {:ok, bus} = start_bus()
+
+    read = Task.async(fn -> Bus.transaction(bus, Transaction.fprd(0x1000, {0x0130, 2})) end)
+    sent = assert_sent_frame()
+
+    settle = Task.async(fn -> Bus.settle(bus) end)
+
+    refute Task.yield(settle, 10)
+    refute_receive :fake_link_drained, 10
+
+    reply_with(bus, sent, fn dg -> %{dg | data: <<0x12, 0x34>>, wkc: 1} end)
+
+    assert {:ok, [%{data: <<0x12, 0x34>>, wkc: 1}]} = Task.await(read)
+    assert :ok = Task.await(settle)
+    assert_receive :fake_link_drained
+  end
+
+  test "quiesce drains before and after the quiet window" do
+    {:ok, bus} = start_bus()
+
+    assert :ok = Bus.quiesce(bus, 1)
+    assert_receive :fake_link_drained
+    assert_receive :fake_link_drained
   end
 
   defp start_bus do

@@ -9,6 +9,11 @@ also wading through all implementation details inline.
 The master owns the public lifecycle exposed via `EtherCAT.state/0`. Each state
 maps 1:1 to an actual `EtherCAT.Master` `gen_statem` state.
 
+Before the master reports `:preop_ready` or starts OP activation, it quiesces
+the bus. That extra drain window keeps late startup traffic from leaking into
+the first public mailbox/configuration exchange or the first OP transition
+datagrams.
+
 ## State-Machine Boundary
 
 `EtherCAT.Master` should mention domains, slaves, and DC as session concepts:

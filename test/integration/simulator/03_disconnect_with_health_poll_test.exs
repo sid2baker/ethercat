@@ -3,6 +3,7 @@ defmodule EtherCAT.Integration.Simulator.DisconnectWithHealthPollTest do
 
   alias EtherCAT.IntegrationSupport.SimulatorRing
   alias EtherCAT.Simulator
+  alias EtherCAT.Simulator.Fault
 
   import EtherCAT.Integration.Assertions
 
@@ -18,7 +19,7 @@ defmodule EtherCAT.Integration.Simulator.DisconnectWithHealthPollTest do
   end
 
   test "disconnecting a PDO slave trips slave-down recovery when health polling is enabled" do
-    assert :ok = Simulator.inject_fault({:next_exchanges, 30, {:disconnect, :outputs}})
+    assert :ok = Simulator.inject_fault(Fault.disconnect(:outputs) |> Fault.next(30))
 
     assert_eventually(
       fn ->

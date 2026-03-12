@@ -67,6 +67,22 @@ defmodule EtherCAT.Simulator.Slave.Runtime.ProcessImage do
     |> maybe_apply_output_side_effects(old_output)
   end
 
+  @spec read_bits(map(), non_neg_integer(), pos_integer()) :: [0 | 1]
+  def read_bits(%{memory: memory}, bit_offset, bit_size)
+      when is_integer(bit_offset) and bit_offset >= 0 and is_integer(bit_size) and bit_size > 0 do
+    Enum.map(bit_offset..(bit_offset + bit_size - 1), &read_lsb_bit(memory, &1))
+  end
+
+  @spec write_bits(map(), non_neg_integer(), [0 | 1]) :: map()
+  def write_bits(slave, bit_offset, bits)
+      when is_integer(bit_offset) and bit_offset >= 0 and is_list(bits) and bits != [] do
+    old_output = output_image(slave)
+
+    slave
+    |> write_memory_bits(bit_offset, bits)
+    |> maybe_apply_output_side_effects(old_output)
+  end
+
   defp set_signal_value(slave, _signal_name, %{direction: :output} = definition, value) do
     with {:ok, binary} <- Value.encode_binary(definition, value) do
       image = signal_image(slave, :output)
@@ -243,10 +259,44 @@ defmodule EtherCAT.Simulator.Slave.Runtime.ProcessImage do
     %{slave | memory: replace_binary(memory, offset, data)}
   end
 
+  defp write_memory_bits(%{memory: memory} = slave, bit_offset, bits) do
+    updated_memory =
+      bits
+      |> Enum.with_index(bit_offset)
+      |> Enum.reduce(memory, fn {bit, current_offset}, current_memory ->
+        write_lsb_bit(current_memory, current_offset, bit)
+      end)
+
+    %{slave | memory: updated_memory}
+  end
+
   defp replace_binary(binary, offset, value) do
     prefix = binary_part(binary, 0, offset)
     suffix_offset = offset + byte_size(value)
     suffix = binary_part(binary, suffix_offset, byte_size(binary) - suffix_offset)
     prefix <> value <> suffix
+  end
+
+  defp read_lsb_bit(binary, bit_offset) do
+    byte_offset = div(bit_offset, 8)
+    bit_in_byte = rem(bit_offset, 8)
+    <<byte::8>> = binary_part(binary, byte_offset, 1)
+
+    <<_prefix::bitstring-size(7 - bit_in_byte), bit::1, _suffix::bitstring-size(bit_in_byte)>> =
+      <<byte::8>>
+
+    bit
+  end
+
+  defp write_lsb_bit(binary, bit_offset, bit) when bit in [0, 1] do
+    byte_offset = div(bit_offset, 8)
+    bit_in_byte = rem(bit_offset, 8)
+    <<byte::8>> = binary_part(binary, byte_offset, 1)
+
+    <<prefix::bitstring-size(7 - bit_in_byte), _current::1, suffix::bitstring-size(bit_in_byte)>> =
+      <<byte::8>>
+
+    <<updated_byte::8>> = <<prefix::bitstring, bit::1, suffix::bitstring>>
+    replace_binary(binary, byte_offset, <<updated_byte::8>>)
   end
 end

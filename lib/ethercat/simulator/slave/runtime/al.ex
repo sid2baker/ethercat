@@ -3,10 +3,13 @@ defmodule EtherCAT.Simulator.Slave.Runtime.AL do
 
   alias EtherCAT.Slave.ESC.Registers
   alias EtherCAT.Simulator.Slave.Behaviour
+  alias EtherCAT.Simulator.Slave.Runtime.Logical
 
   @alerr_none 0x0000
   @alerr_invalid_state_change 0x0011
   @alerr_unknown_state 0x0012
+  @alerr_invalid_mailbox_config 0x0016
+  @alerr_invalid_output_config 0x001D
   @al_status elem(Registers.al_status(), 0)
   @al_status_code elem(Registers.al_status_code(), 0)
 
@@ -53,31 +56,118 @@ defmodule EtherCAT.Simulator.Slave.Runtime.AL do
 
   defp apply_transition(slave, target_state) do
     if valid_transition?(slave.state, target_state) do
-      case Behaviour.transition(
-             slave.behavior,
-             slave.state,
-             target_state,
-             slave,
-             slave.behavior_state
-           ) do
-        {:ok, behavior_state} ->
-          updated_slave =
-            slave
-            |> Map.put(:behavior_state, behavior_state)
-            |> commit_state(target_state, false, @alerr_none)
+      with :ok <- validate_transition_configuration(slave, target_state) do
+        case Behaviour.transition(
+               slave.behavior,
+               slave.state,
+               target_state,
+               slave,
+               slave.behavior_state
+             ) do
+          {:ok, behavior_state} ->
+            updated_slave =
+              slave
+              |> Map.put(:behavior_state, behavior_state)
+              |> commit_state(target_state, false, @alerr_none)
 
-          {:ok, updated_slave}
+            {:ok, updated_slave}
 
-        {:error, status_code, behavior_state} ->
-          updated_slave =
-            slave
-            |> Map.put(:behavior_state, behavior_state)
-            |> commit_state(slave.state, true, status_code)
+          {:error, status_code, behavior_state} ->
+            updated_slave =
+              slave
+              |> Map.put(:behavior_state, behavior_state)
+              |> commit_state(slave.state, true, status_code)
 
-          {:error, updated_slave}
+            {:error, updated_slave}
+        end
+      else
+        {:error, status_code} ->
+          {:error, commit_state(slave, slave.state, true, status_code)}
       end
     else
       {:error, commit_state(slave, slave.state, true, @alerr_invalid_state_change)}
+    end
+  end
+
+  defp validate_transition_configuration(slave, :preop), do: validate_mailbox_config(slave)
+
+  defp validate_transition_configuration(slave, state) when state in [:safeop, :op] do
+    with :ok <- validate_mailbox_config(slave),
+         :ok <- validate_process_data_config(slave) do
+      :ok
+    end
+  end
+
+  defp validate_transition_configuration(_slave, _target_state), do: :ok
+
+  defp validate_mailbox_config(%{mailbox_config: %{recv_size: 0, send_size: 0}}), do: :ok
+
+  defp validate_mailbox_config(%{mailbox_config: mailbox_config, memory: memory}) do
+    with :ok <-
+           validate_sync_manager(
+             memory,
+             0,
+             mailbox_config.recv_offset,
+             mailbox_config.recv_size,
+             0x26
+           ),
+         :ok <-
+           validate_sync_manager(
+             memory,
+             1,
+             mailbox_config.send_offset,
+             mailbox_config.send_size,
+             0x22
+           ) do
+      :ok
+    else
+      :error -> {:error, @alerr_invalid_mailbox_config}
+    end
+  end
+
+  defp validate_process_data_config(%{output_size: output_size, input_size: input_size} = slave) do
+    with :ok <-
+           validate_process_data_sync_manager(
+             slave.memory,
+             2,
+             slave.output_phys,
+             output_size,
+             0x24
+           ),
+         :ok <-
+           validate_process_data_sync_manager(slave.memory, 3, slave.input_phys, input_size, 0x20),
+         :ok <- validate_process_data_fmmu(slave, 0x02, slave.output_phys, output_size),
+         :ok <- validate_process_data_fmmu(slave, 0x01, slave.input_phys, input_size) do
+      :ok
+    else
+      :error -> {:error, @alerr_invalid_output_config}
+    end
+  end
+
+  defp validate_process_data_sync_manager(_memory, _index, _start, 0, _control), do: :ok
+
+  defp validate_process_data_sync_manager(memory, index, start, size, control) do
+    validate_sync_manager(memory, index, start, size, control)
+  end
+
+  defp validate_process_data_fmmu(_slave, _type, _phys_start, 0), do: :ok
+
+  defp validate_process_data_fmmu(slave, type, phys_start, size) do
+    if Logical.maps_physical_region?(slave, type, phys_start, size) do
+      :ok
+    else
+      :error
+    end
+  end
+
+  defp validate_sync_manager(memory, index, start, size, control) do
+    if read_u16(memory, offset(Registers.sm_start(index))) == start and
+         read_u16(memory, offset(Registers.sm_length(index))) == size and
+         read_u8(memory, offset(Registers.sm_control(index))) == control and
+         read_u8(memory, offset(Registers.sm_activate(index))) == 0x01 do
+      :ok
+    else
+      :error
     end
   end
 
@@ -120,5 +210,17 @@ defmodule EtherCAT.Simulator.Slave.Runtime.AL do
     suffix_offset = offset + byte_size(value)
     suffix = binary_part(binary, suffix_offset, byte_size(binary) - suffix_offset)
     prefix <> value <> suffix
+  end
+
+  defp offset({offset, _length}), do: offset
+
+  defp read_u8(memory, offset) do
+    <<value::8>> = binary_part(memory, offset, 1)
+    value
+  end
+
+  defp read_u16(memory, offset) do
+    <<value::16-little>> = binary_part(memory, offset, 2)
+    value
   end
 end
