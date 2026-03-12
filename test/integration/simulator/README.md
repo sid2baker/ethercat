@@ -138,10 +138,12 @@ Prefer the new test helpers for new scenarios:
   - `Expect.slave/2`
   - `Expect.slave_fault/2`
   - `Expect.signal/3`
+  - `Expect.trace_event/3`
   - `Expect.simulator_queue_empty/0`
 - `EtherCAT.Integration.Trace`
   - telemetry-backed timeline capture for failure diagnostics
   - uses `EtherCAT.Telemetry.events/0`, including master state transitions
+  - prefer this over bespoke `:telemetry.attach` code in scenario tests
 - `EtherCAT.Integration.Scenario`
   - optional multi-phase runner for longer recovery cases
   - keep `ctx` for scenario-owned assigns only; prefer `Expect` for live queries

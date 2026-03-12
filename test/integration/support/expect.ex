@@ -74,6 +74,29 @@ defmodule EtherCAT.Integration.Expect do
     :ok
   end
 
+  @spec trace_event(Trace.t(), [atom()], keyword()) :: :ok
+  def trace_event(%Trace{} = trace, event_name, opts \\ []) when is_list(event_name) do
+    measurements = Keyword.get(opts, :measurements, %{})
+    metadata = Keyword.get(opts, :metadata, %{})
+
+    case Enum.find(
+           Trace.snapshot(trace),
+           &trace_event_match?(&1, event_name, measurements, metadata)
+         ) do
+      nil ->
+        flunk("""
+        expected trace to contain #{inspect(event_name)}
+        measurements: #{inspect(Map.new(measurements))}
+        metadata: #{inspect(Map.new(metadata))}
+
+        #{Trace.format(trace)}
+        """)
+
+      _entry ->
+        :ok
+    end
+  end
+
   defp eventually_attempt(fun, 0, trace, label) do
     fun.()
   rescue
@@ -121,5 +144,28 @@ defmodule EtherCAT.Integration.Expect do
 
   defp maybe_dump_trace(trace, label) do
     IO.puts(:stderr, Trace.format(trace, title: "Trace for #{label}"))
+  end
+
+  defp trace_event_match?(
+         %{
+           kind: :telemetry,
+           event: event,
+           measurements: actual_measurements,
+           metadata: actual_metadata
+         },
+         event_name,
+         measurements,
+         metadata
+       )
+       when event == event_name do
+    map_matches?(actual_measurements, measurements) and map_matches?(actual_metadata, metadata)
+  end
+
+  defp trace_event_match?(_entry, _event_name, _measurements, _metadata), do: false
+
+  defp map_matches?(actual, expectations) do
+    Enum.all?(Map.new(expectations), fn {key, expected} ->
+      Map.has_key?(actual, key) and match_expected?(Map.fetch!(actual, key), expected)
+    end)
   end
 end
