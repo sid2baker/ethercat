@@ -14,8 +14,32 @@ defmodule EtherCAT.Simulator do
   alias EtherCAT.Simulator.Runtime.Subscriptions
   alias EtherCAT.Simulator.Runtime.Wiring
 
-  @type exchange_fault :: Faults.exchange_fault()
-  @type milestone :: Milestones.milestone()
+  @type exchange_fault ::
+          :drop_responses
+          | {:wkc_offset, integer()}
+          | {:command_wkc_offset,
+             :aprd
+             | :apwr
+             | :aprw
+             | :fprd
+             | :fpwr
+             | :fprw
+             | :brd
+             | :bwr
+             | :brw
+             | :lrd
+             | :lwr
+             | :lrw
+             | :armw
+             | :frmw, integer()}
+          | {:logical_wkc_offset, atom(), integer()}
+          | {:disconnect, atom()}
+
+  @type milestone ::
+          {:healthy_exchanges, pos_integer()}
+          | {:healthy_polls, atom(), pos_integer()}
+          | {:mailbox_step, atom(),
+             :upload_init | :upload_segment | :download_init | :download_segment, pos_integer()}
   @type slave_fault ::
           {:retreat_to_safeop, atom()}
           | {:latch_al_error, atom(), non_neg_integer()}
@@ -56,8 +80,6 @@ defmodule EtherCAT.Simulator do
           source: signal_ref(),
           target: signal_ref()
         }
-
-  @type state :: State.t()
 
   @default_name __MODULE__
   @supervisor EtherCAT.Simulator.Supervisor

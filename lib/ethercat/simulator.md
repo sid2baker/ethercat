@@ -49,8 +49,7 @@ private slave runtime and profile modules under `lib/ethercat/simulator/slave/`.
 
 Main entry points:
 
-- `start/1` — start the public simulator runtime under
-  `EtherCAT.Simulator.Supervisor`
+- `start/1` — start the public supervised simulator runtime
 - `start_link/1` — low-level in-memory simulator core only
 - `stop/0` — stop the singleton simulator runtime
 - `process_datagrams/1` — execute EtherCAT datagrams directly
