@@ -8,9 +8,16 @@ defmodule EtherCAT.Integration.Scenario do
   alias EtherCAT.Simulator
   alias EtherCAT.Simulator.Fault
 
+  @trigger_timeout_ms 5_000
+
   defstruct steps: [], trace?: false
 
-  @type context :: %{assigns: map(), trace: Trace.t() | nil, teardowns: pid()}
+  @type context :: %{
+          assigns: map(),
+          trace: Trace.t() | nil,
+          teardowns: pid(),
+          trigger_supervisor: pid()
+        }
   @type t :: %__MODULE__{steps: [step()], trace?: boolean()}
   @type step :: {:act, String.t(), (context() -> term())}
 
@@ -52,9 +59,15 @@ defmodule EtherCAT.Integration.Scenario do
     event_label = Enum.join(event_name, ".")
     label = "arm fault on #{event_label}: #{Fault.describe(fault)}"
 
-    act(scenario, label, fn %{teardowns: teardowns, trace: trace} = ctx ->
+    act(scenario, label, fn %{
+                              teardowns: teardowns,
+                              trace: trace,
+                              trigger_supervisor: trigger_supervisor
+                            } = ctx ->
       metadata = Keyword.get(opts, :metadata, %{})
       measurements = Keyword.get(opts, :measurements, %{})
+      inject_fun = Keyword.get(opts, :inject_fun, &Simulator.inject_fault/1)
+      timeout_ms = Keyword.get(opts, :timeout_ms, @trigger_timeout_ms)
       handler_id = "ethercat-scenario-trigger-#{System.unique_integer([:positive, :monotonic])}"
 
       :ok =
@@ -68,7 +81,10 @@ defmodule EtherCAT.Integration.Scenario do
             metadata: Map.new(metadata),
             fault: fault,
             trace: trace,
-            handler_id: handler_id
+            handler_id: handler_id,
+            inject_fun: inject_fun,
+            timeout_ms: timeout_ms,
+            trigger_supervisor: trigger_supervisor
           }
         )
 
@@ -97,7 +113,14 @@ defmodule EtherCAT.Integration.Scenario do
   def run(%__MODULE__{} = scenario) do
     trace = if scenario.trace?, do: Trace.start_capture(), else: nil
     {:ok, teardowns} = Agent.start_link(fn -> [] end)
-    ctx = %{assigns: %{}, trace: trace, teardowns: teardowns}
+    {:ok, trigger_supervisor} = Task.Supervisor.start_link()
+
+    ctx = %{
+      assigns: %{},
+      trace: trace,
+      teardowns: teardowns,
+      trigger_supervisor: trigger_supervisor
+    }
 
     try do
       Enum.reduce(scenario.steps, ctx, &run_step/2)
@@ -108,6 +131,7 @@ defmodule EtherCAT.Integration.Scenario do
         reraise error, __STACKTRACE__
     after
       run_teardowns(teardowns)
+      stop_trigger_supervisor(trigger_supervisor)
       Agent.stop(teardowns)
       if trace, do: Trace.stop(trace)
     end
@@ -118,29 +142,27 @@ defmodule EtherCAT.Integration.Scenario do
     if telemetry_match?(event, measurements, metadata, config) do
       :telemetry.detach(config.handler_id)
 
-      spawn(fn ->
-        maybe_note_trace(
-          config.trace,
-          "telemetry trigger matched",
-          %{event: event, metadata: metadata, fault: Fault.describe(config.fault)}
-        )
+      maybe_note_trace(
+        config.trace,
+        "telemetry trigger matched",
+        %{event: event, metadata: metadata, fault: Fault.describe(config.fault)}
+      )
 
-        case Simulator.inject_fault(config.fault) do
-          :ok ->
-            maybe_note_trace(
-              config.trace,
-              "telemetry-triggered fault injected",
-              %{event: event, fault: Fault.describe(config.fault)}
-            )
+      case inject_triggered_fault(config) do
+        :ok ->
+          maybe_note_trace(
+            config.trace,
+            "telemetry-triggered fault injected",
+            %{event: event, fault: Fault.describe(config.fault)}
+          )
 
-          {:error, reason} ->
-            maybe_note_trace(
-              config.trace,
-              "telemetry-triggered fault injection failed",
-              %{event: event, fault: Fault.describe(config.fault), reason: reason}
-            )
-        end
-      end)
+        {:error, reason} ->
+          maybe_note_trace(
+            config.trace,
+            "telemetry-triggered fault injection failed",
+            %{event: event, fault: Fault.describe(config.fault), reason: reason}
+          )
+      end
     end
 
     :ok
@@ -171,10 +193,32 @@ defmodule EtherCAT.Integration.Scenario do
     |> Enum.each(fn fun -> fun.() end)
   end
 
+  defp stop_trigger_supervisor(trigger_supervisor) when is_pid(trigger_supervisor) do
+    if Process.alive?(trigger_supervisor) do
+      Supervisor.stop(trigger_supervisor)
+    else
+      :ok
+    end
+  end
+
   defp telemetry_match?(event, measurements, metadata, config) do
     event == config.event_name and
       map_matches?(measurements, config.measurements) and
       map_matches?(metadata, config.metadata)
+  end
+
+  defp inject_triggered_fault(config) do
+    task =
+      Task.Supervisor.async_nolink(config.trigger_supervisor, fn ->
+        config.inject_fun.(config.fault)
+      end)
+
+    case Task.yield(task, config.timeout_ms) || Task.shutdown(task) do
+      {:ok, :ok} -> :ok
+      {:ok, {:error, reason}} -> {:error, reason}
+      {:exit, reason} -> {:error, {:task_exit, reason}}
+      nil -> {:error, :timeout}
+    end
   end
 
   defp map_matches?(actual, expectations) do

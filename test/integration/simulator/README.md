@@ -163,6 +163,8 @@ Prefer the new test helpers for new scenarios:
   - keep `ctx` for scenario-owned assigns only; prefer `Expect` for live queries
   - `Scenario.inject_fault_on_event/4` arms telemetry-triggered follow-up faults
     without pushing master-observed milestones into simulator core
+  - telemetry-triggered injections complete before the matching callback returns,
+    so follow-up assertions do not depend on spawned-process races
 
 ## Next Directions
 
