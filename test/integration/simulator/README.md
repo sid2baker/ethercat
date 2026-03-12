@@ -60,6 +60,7 @@ letting the loop invent arbitrary refactors.
 - `28`: reconnect-time PREOP fault script that fails once and self-heals on a later retry without manual fault clearing
 - `29`: reconnect-time PREOP fault script that retains different mailbox failures on successive retries before eventual recovery
 - `30`: reconnect-time PREOP mailbox degradation plus a later slave-local `SAFEOP` retreat during the same operational window
+- `31`: reconnect-time PREOP mailbox degradation plus a later counted PDO-slave disconnect that forces a temporary master `:recovering` interval
 
 These are the current regression scenarios, not just backlog items. Each one
 should keep its `.md` note and matching `_test.exs` file aligned.
@@ -158,9 +159,9 @@ Prefer the new test helpers for new scenarios:
 
 ## Next Directions
 
-The next useful scenarios after the mixed mailbox-plus-`SAFEOP` case are:
+The next useful scenarios after the mixed mailbox-plus-disconnect case are:
 
-- reconnect PREOP rebuild scripts that mix mailbox faults with a later slave-local disconnect during the same degraded window
+- a fully scripted variant of the mixed reconnect case, where the later slave-local or disconnect fault is driven from simulator scheduling rather than a separate scenario step
 
 ## Current Rule Of Thumb
 

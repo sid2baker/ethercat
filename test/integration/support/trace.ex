@@ -111,6 +111,10 @@ defmodule EtherCAT.Integration.Trace do
     "master #{inspect(metadata.from)} -> #{inspect(metadata.to)}"
   end
 
+  defp describe_event([:ethercat, :master, :slave_fault, :changed], _measurements, metadata) do
+    "master slave fault #{metadata.slave} #{inspect(metadata.from)} -> #{inspect(metadata.to)}"
+  end
+
   defp describe_event([:ethercat, :slave, :down], _measurements, metadata) do
     "slave #{metadata.slave} down"
   end

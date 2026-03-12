@@ -387,6 +387,8 @@ now covers:
   failures on successive retries before eventual recovery
 - `30` reconnect-time mailbox PREOP degradation plus a later slave-local
   `SAFEOP` retreat during the same operational window
+- `31` reconnect-time mailbox PREOP degradation plus a later counted PDO
+  disconnect that forces a temporary master recovery interval
 
 ## Widget-Facing Signal API
 
