@@ -8,7 +8,7 @@ defmodule EtherCAT.Capture do
   - capture static slave identity and SII layout from a live device
   - optionally snapshot specific SDO entries
   - write a readable capture file
-  - generate a best-effort real driver scaffold for integration tests
+  - generate a self-contained best-effort driver scaffold for integration tests
   - generate a simulator companion scaffold from that capture
 
   The generated scaffold preserves static structure only. It does not infer
@@ -154,33 +154,33 @@ defmodule EtherCAT.Capture do
   end
 
   @doc """
-  Generate a best-effort driver scaffold for `slave_name`.
+  Generate a self-contained best-effort driver scaffold for `slave_name`.
 
   Supported options:
 
   - `:module` (required) — driver module name
   - `:driver_path` — output path for the generated driver file
-  - `:capture_path` — output path for the generated capture file
   - `:force` — overwrite existing files when `true`
   - `:sdos` — list of `{index, subindex}` tuples to upload and include
+
+  Use `write_capture/2` separately if you also want to persist the raw
+  captured snapshot alongside the generated file.
   """
   @spec gen_driver(atom(), keyword()) ::
-          {:ok, %{driver_path: String.t(), capture_path: String.t()}} | {:error, term()}
+          {:ok, %{driver_path: String.t()}} | {:error, term()}
   def gen_driver(slave_name, opts) when is_atom(slave_name) and is_list(opts) do
     with {:ok, module} <- fetch_module_option(opts),
          {:ok, capture} <- capture(slave_name, opts) do
       driver_path = driver_path(module, opts)
-      capture_path = capture_path(capture, path_option(opts, :capture_path))
       overwrite? = Keyword.get(opts, :force, false)
 
-      with :ok <- write_generated_file(capture_path, render_capture(capture), overwrite?),
-           :ok <-
+      with :ok <-
              write_generated_file(
                driver_path,
-               render_driver_module(module, driver_path, capture_path, capture),
+               render_driver_module(module, capture),
                overwrite?
              ) do
-        {:ok, %{driver_path: driver_path, capture_path: capture_path}}
+        {:ok, %{driver_path: driver_path}}
       end
     end
   end
@@ -664,7 +664,7 @@ defmodule EtherCAT.Capture do
     end
   end
 
-  defp render_driver_module(module, driver_path, capture_path, capture) do
+  defp render_driver_module(module, capture) do
     scaffold = driver_scaffold(capture)
     simulator_module = Module.concat(module, Simulator)
 
@@ -686,7 +686,7 @@ defmodule EtherCAT.Capture do
       "",
       "  @behaviour EtherCAT.Simulator.DriverAdapter",
       "",
-      render_driver_simulator_block(scaffold, driver_path, capture_path),
+      render_driver_simulator_block(scaffold.simulator_definition_options),
       "end",
       ""
     ]
@@ -825,30 +825,13 @@ defmodule EtherCAT.Capture do
     |> String.trim_trailing()
   end
 
-  defp render_driver_simulator_block(scaffold, driver_path, capture_path) do
-    case scaffold.simulator do
-      {:profile, opts} ->
-        """
-          @impl true
-          def definition_options(_config) do
-        #{indent_block(format_literal(opts, 88), 4)}
-          end
-        """
-
-      :capture ->
-        relative_capture_path = relative_path_from(Path.dirname(driver_path), capture_path)
-
-        """
-          @capture_path Path.expand(#{inspect(relative_capture_path)}, __DIR__)
-
-          @impl true
-          def definition_options(_config) do
-            @capture_path
-            |> EtherCAT.Capture.load_capture!()
-            |> EtherCAT.Capture.definition_options()
-          end
-        """
-    end
+  defp render_driver_simulator_block(definition_options) do
+    """
+      @impl true
+      def definition_options(_config) do
+    #{indent_block(format_literal(definition_options, 88), 4)}
+      end
+    """
     |> String.trim_trailing()
   end
 
@@ -870,7 +853,7 @@ defmodule EtherCAT.Capture do
         signal_entries
         |> Enum.filter(&(&1.direction == :output))
         |> Enum.map(& &1.name),
-      simulator: driver_simulator_scaffold(capture, signal_entries)
+      simulator_definition_options: driver_simulator_definition_options(capture, signal_entries)
     }
   end
 
@@ -942,7 +925,7 @@ defmodule EtherCAT.Capture do
     %{direction: pdo.direction, pdo_index: pdo.index, bit_size: pdo.bit_size}
   end
 
-  defp driver_simulator_scaffold(capture, signal_entries) do
+  defp driver_simulator_definition_options(capture, signal_entries) do
     mailbox_config = get_in(capture, [:sii, :mailbox_config]) || zero_mailbox_config()
     identity = get_in(capture, [:sii, :identity]) || %{}
     input_entries = Enum.filter(signal_entries, &(&1.direction == :input))
@@ -950,20 +933,19 @@ defmodule EtherCAT.Capture do
 
     cond do
       signal_entries == [] and not mailbox_enabled?(mailbox_config) ->
-        {:profile,
-         [
-           profile: :coupler,
-           vendor_id: Map.get(identity, :vendor_id, 0),
-           product_code: Map.get(identity, :product_code, 0),
-           revision: Map.get(identity, :revision, 0),
-           serial_number: Map.get(identity, :serial_number, 0)
-         ]}
+        [
+          profile: :coupler,
+          vendor_id: Map.get(identity, :vendor_id, 0),
+          product_code: Map.get(identity, :product_code, 0),
+          revision: Map.get(identity, :revision, 0),
+          serial_number: Map.get(identity, :serial_number, 0)
+        ]
 
       not mailbox_enabled?(mailbox_config) and digital_direction?(input_entries, output_entries) ->
-        {:profile, digital_simulator_options(identity, input_entries, output_entries)}
+        digital_simulator_options(identity, input_entries, output_entries)
 
       true ->
-        :capture
+        definition_options(capture)
     end
   end
 

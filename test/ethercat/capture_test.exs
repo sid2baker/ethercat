@@ -122,7 +122,6 @@ defmodule EtherCAT.CaptureTest do
   test "generates a best-effort integration driver scaffold for a digital input slave" do
     boot_dynamic_capture_ring!()
     tmp_dir = tmp_dir!()
-    capture_path = Path.join([tmp_dir, "captures", "captured_driver_inputs.exs"])
     driver_path = Path.join(tmp_dir, "generated_inputs_driver.ex")
 
     module =
@@ -135,19 +134,17 @@ defmodule EtherCAT.CaptureTest do
 
     simulator_module = Module.concat(module, "Simulator")
 
-    assert {:ok, %{capture_path: written_capture, driver_path: written_driver}} =
+    assert {:ok, %{driver_path: written_driver}} =
              Capture.gen_driver(
                :slave_1,
                module: module,
-               capture_path: capture_path,
                driver_path: driver_path,
                force: true
              )
 
-    assert written_capture == Path.expand(capture_path)
     assert written_driver == Path.expand(driver_path)
-    assert File.exists?(written_capture)
     assert File.exists?(written_driver)
+    refute File.read!(written_driver) =~ "EtherCAT.Capture.load_capture!"
 
     compiled_modules =
       written_driver
@@ -173,7 +170,6 @@ defmodule EtherCAT.CaptureTest do
   test "generates a capture-backed integration driver scaffold for a mailbox slave" do
     boot_dynamic_capture_ring!()
     tmp_dir = tmp_dir!()
-    capture_path = Path.join([tmp_dir, "captures", "captured_driver_mailbox.exs"])
     driver_path = Path.join([tmp_dir, "drivers", "generated_mailbox_driver.ex"])
 
     module =
@@ -186,20 +182,17 @@ defmodule EtherCAT.CaptureTest do
 
     simulator_module = Module.concat(module, "Simulator")
 
-    assert {:ok, %{capture_path: written_capture, driver_path: written_driver}} =
+    assert {:ok, %{driver_path: written_driver}} =
              Capture.gen_driver(
                :slave_3,
                module: module,
-               capture_path: capture_path,
                driver_path: driver_path,
                force: true
              )
 
-    assert written_capture == Path.expand(capture_path)
     assert written_driver == Path.expand(driver_path)
-    assert File.exists?(written_capture)
     assert File.exists?(written_driver)
-    refute File.read!(written_driver) =~ written_capture
+    refute File.read!(written_driver) =~ "EtherCAT.Capture.load_capture!"
 
     compiled_modules =
       written_driver
