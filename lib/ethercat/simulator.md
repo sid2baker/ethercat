@@ -29,6 +29,35 @@ The intended runtime path stays realistic:
 - real `EtherCAT.Bus.Transport.UdpSocket`
 - simulated slaves behind a real UDP endpoint
 
+## Runtime Flow
+
+The simplified exchange path looks like this:
+
+```mermaid
+flowchart TD
+  A[Real master sends EtherCAT UDP frame] --> B[Simulator.Udp receives frame]
+  B --> C[Decode UDP payload into EtherCAT datagrams]
+  C --> D[EtherCAT.Simulator checks queued faults]
+
+  D --> E{Drop response fault active?}
+  E -- Yes --> F[Return no reply]
+  F --> G[Master sees timeout]
+
+  E -- No --> H[Router processes datagrams]
+  H --> I[Walk datagrams across in-memory simulated slave structs]
+  I --> J[Each slave updates its ESC memory and behavior state]
+  J --> K[Handle register effects: AL state, mailbox, PDO image, DC]
+  K --> L[Build response datagrams and WKC]
+  L --> M[Settle signal wiring and notify subscribers]
+  M --> N[Encode reply frame]
+
+  N --> O{UDP reply fault active?}
+  O -- Yes --> P[Corrupt reply at UDP edge]
+  O -- No --> Q[Send normal reply]
+  P --> Q
+  Q --> R[Master receives simulated slave response]
+```
+
 ## State-Machine Boundary
 
 `EtherCAT.Simulator` is intentionally a small process boundary over the
@@ -50,6 +79,7 @@ private slave runtime and profile modules under `lib/ethercat/simulator/slave/`.
 Main entry points:
 
 - `start/1` — start the public supervised simulator runtime
+- `child_spec/1` — supervisor-friendly form of `start/1`, including `udp: [...]`
 - `start_link/1` — low-level in-memory simulator core only
 - `stop/0` — stop the singleton simulator runtime
 - `process_datagrams/1` — execute EtherCAT datagrams directly

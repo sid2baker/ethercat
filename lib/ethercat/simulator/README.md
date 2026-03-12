@@ -412,6 +412,8 @@ EtherCAT.Simulator.Slave.signals(:io)
 Use `start_link/1` directly only when you need the in-memory simulator core.
 Use `start/1` for the common case where a real `UdpSocket` transport should
 talk to the simulator end to end.
+If you supervise `EtherCAT.Simulator` as a child, `child_spec/1` now follows
+the same supervised path as `start/1`, including `udp: [...]`.
 Stop the simulator runtime with `stop/0`.
 
 `EtherCAT.Simulator.info/0` now exposes queued fault state through:

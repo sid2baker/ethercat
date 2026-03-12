@@ -60,23 +60,19 @@ The chart below documents `EtherCAT.DC.Status.lock_state`, not a separate
 stateDiagram-v2
     state "disabled" as disabled
     state "inactive" as inactive
-    state "running / lock unavailable" as running_unavailable
-    state "running / locking" as running_locking
-    state "running / locked" as running_locked
+    state "unavailable" as unavailable
+    state "locking" as locking
+    state "locked" as locked
 
     [*] --> disabled: no DC config
     [*] --> inactive: DC configured, runtime not started
-    inactive --> running_unavailable: runtime starts with no monitored stations
-    inactive --> running_locking: runtime starts with monitored stations
-    running_unavailable --> running_unavailable: FRMW maintenance only
-    running_unavailable --> running_locking: monitorable stations become available
-    running_locking --> running_locked: after warmup, sync diff stays within threshold
-    running_locking --> running_unavailable: no monitorable stations remain
-    running_locking --> running_locking: FRMW tick, warmup, retry, or diagnostics fail
-    running_locked --> running_locking: sync diff rises above threshold
-    running_locked --> running_locking: diagnostics fail
-    running_locked --> running_unavailable: no monitorable stations remain
-    running_unavailable --> inactive: runtime stops
-    running_locking --> inactive: runtime stops
-    running_locked --> inactive: runtime stops
+    inactive --> unavailable: runtime starts with no monitored stations
+    inactive --> locking: runtime starts with monitored stations
+    unavailable --> unavailable: FRMW maintenance with no monitorable stations
+    locking --> locked: after warmup, sync diff stays within threshold
+    locking --> locking: sync diff above threshold or diagnostics fail
+    locked --> locking: sync diff rises above threshold or diagnostics fail
+    unavailable --> inactive: runtime stops
+    locking --> inactive: runtime stops
+    locked --> inactive: runtime stops
 ```

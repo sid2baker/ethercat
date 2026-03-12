@@ -21,23 +21,22 @@ defmodule EtherCAT.Simulator.Supervisor do
 
   @impl true
   def init(opts) do
-    children =
-      [
-        {Simulator, opts_without_udp(opts)}
-      ] ++ udp_children(opts)
-
-    Supervisor.init(children, strategy: :one_for_one)
+    Supervisor.init(children(opts), strategy: :one_for_one)
   end
 
-  defp udp_children(opts) do
+  defp children(opts) do
+    simulator_opts = Keyword.drop(opts, [:udp])
+
     case Keyword.get(opts, :udp) do
       nil ->
-        []
+        [simulator_child(simulator_opts)]
 
       udp_opts when is_list(udp_opts) ->
-        [{Udp, udp_opts}]
+        [simulator_child(simulator_opts), {Udp, udp_opts}]
     end
   end
 
-  defp opts_without_udp(opts), do: Keyword.drop(opts, [:udp])
+  defp simulator_child(opts) do
+    Supervisor.child_spec({Simulator, opts}, start: {Simulator, :start_link, [opts]})
+  end
 end

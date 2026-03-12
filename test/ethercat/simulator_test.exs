@@ -41,6 +41,21 @@ defmodule EtherCAT.SimulatorTest do
     assert {:error, :not_found} = Simulator.info()
   end
 
+  test "child_spec/1 uses the supervised runtime and honors udp opts" do
+    assert {:ok, supervisor} =
+             Supervisor.start_link(
+               [{Simulator, devices: [], udp: [ip: @loopback, port: 0]}],
+               strategy: :one_for_one
+             )
+
+    assert {:ok, %{udp: %{port: port}}} = Simulator.info()
+    assert is_integer(port)
+    assert port > 0
+
+    assert :ok = Supervisor.stop(supervisor)
+    assert {:error, :not_found} = Simulator.info()
+  end
+
   test "public simulator api returns not_found instead of exiting when no simulator is running" do
     assert {:error, :not_found} = Simulator.process_datagrams([])
     assert {:error, :not_found} = Simulator.clear_faults()

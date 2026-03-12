@@ -14,6 +14,31 @@ defmodule EtherCAT.Simulator do
   alias EtherCAT.Simulator.Runtime.Subscriptions
   alias EtherCAT.Simulator.Runtime.Wiring
 
+  @exchange_commands [
+    :aprd,
+    :apwr,
+    :aprw,
+    :fprd,
+    :fpwr,
+    :fprw,
+    :brd,
+    :bwr,
+    :brw,
+    :lrd,
+    :lwr,
+    :lrw,
+    :armw,
+    :frmw
+  ]
+  @mailbox_abort_stages [:request, :upload_segment, :download_segment]
+  @mailbox_protocol_stages [
+    :request,
+    :upload_init,
+    :upload_segment,
+    :download_init,
+    :download_segment
+  ]
+
   @type exchange_fault ::
           :drop_responses
           | {:wkc_offset, integer()}
@@ -88,7 +113,7 @@ defmodule EtherCAT.Simulator do
   def child_spec(opts) do
     %{
       id: @default_name,
-      start: {__MODULE__, :start_link, [opts]}
+      start: {__MODULE__, :start, [opts]}
     }
   end
 
@@ -143,9 +168,6 @@ defmodule EtherCAT.Simulator do
 
   @spec clear_faults() :: :ok | {:error, :not_found | :timeout}
   def clear_faults, do: safe_call(:clear_faults, 5_000)
-
-  @spec output_value(atom()) :: {:ok, non_neg_integer()} | {:error, :not_found | :timeout}
-  def output_value(slave_name), do: safe_call({:output_value, slave_name}, 5_000)
 
   @spec signals(atom()) :: {:ok, [atom()]} | {:error, :not_found | :timeout}
   def signals(slave_name), do: safe_call({:signals, slave_name}, 5_000)
@@ -218,9 +240,11 @@ defmodule EtherCAT.Simulator do
   defp safe_call(message, timeout) do
     GenServer.call(@default_name, message, timeout)
   catch
-    :exit, {:noproc, _} -> {:error, :not_found}
-    :exit, {:timeout, _} -> {:error, :timeout}
+    :exit, reason -> classify_call_exit(reason)
   end
+
+  defp classify_call_exit({:timeout, _}), do: {:error, :timeout}
+  defp classify_call_exit(_reason), do: {:error, :not_found}
 
   defp maybe_put_default_udp_info(info) do
     case EtherCAT.Simulator.Udp.info() do
@@ -310,25 +334,11 @@ defmodule EtherCAT.Simulator do
     {:reply, :ok, state}
   end
 
-  def handle_call({:output_value, slave_name}, _from, %{slaves: slaves} = state) do
-    reply =
-      case Enum.find(slaves, &(&1.name == slave_name)) do
-        nil ->
-          {:error, :not_found}
-
-        slave ->
-          <<value::8, _rest::binary>> = Device.output_image(slave) <> <<0>>
-          {:ok, value}
-      end
-
-    {:reply, reply, state}
-  end
-
   def handle_call({:signals, slave_name}, _from, %{slaves: slaves} = state) do
     reply =
-      case Enum.find(slaves, &(&1.name == slave_name)) do
-        nil -> {:error, :not_found}
-        slave -> {:ok, slave |> Device.signals() |> Map.keys()}
+      case fetch_named_slave(slaves, slave_name) do
+        {:ok, slave} -> {:ok, slave |> Device.signals() |> Map.keys()}
+        {:error, :not_found} -> {:error, :not_found}
       end
 
     {:reply, reply, state}
@@ -344,9 +354,9 @@ defmodule EtherCAT.Simulator do
 
   def handle_call({:signal_definitions, slave_name}, _from, %{slaves: slaves} = state) do
     reply =
-      case Enum.find(slaves, &(&1.name == slave_name)) do
-        nil -> {:error, :not_found}
-        slave -> {:ok, Device.signals(slave)}
+      case fetch_named_slave(slaves, slave_name) do
+        {:ok, slave} -> {:ok, Device.signals(slave)}
+        {:error, :not_found} -> {:error, :not_found}
       end
 
     {:reply, reply, state}
@@ -354,9 +364,9 @@ defmodule EtherCAT.Simulator do
 
   def handle_call({:get_value, slave_name, signal_name}, _from, %{slaves: slaves} = state) do
     reply =
-      case Enum.find(slaves, &(&1.name == slave_name)) do
-        nil -> {:error, :not_found}
-        slave -> Device.get_value(slave, signal_name)
+      case fetch_named_slave(slaves, slave_name) do
+        {:ok, slave} -> Device.get_value(slave, signal_name)
+        {:error, :not_found} -> {:error, :not_found}
       end
 
     {:reply, reply, state}
@@ -448,9 +458,9 @@ defmodule EtherCAT.Simulator do
 
   def handle_call({:output_image, slave_name}, _from, %{slaves: slaves} = state) do
     reply =
-      case Enum.find(slaves, &(&1.name == slave_name)) do
-        nil -> {:error, :not_found}
-        slave -> {:ok, Device.output_image(slave)}
+      case fetch_named_slave(slaves, slave_name) do
+        {:ok, slave} -> {:ok, Device.output_image(slave)}
+        {:error, :not_found} -> {:error, :not_found}
       end
 
     {:reply, reply, state}
@@ -505,6 +515,13 @@ defmodule EtherCAT.Simulator do
     end
   end
 
+  defp fetch_named_slave(slaves, slave_name) do
+    case Enum.find(slaves, &(&1.name == slave_name)) do
+      nil -> {:error, :not_found}
+      slave -> {:ok, slave}
+    end
+  end
+
   defp finalize_signal_changes(
          %{slaves: slaves, connections: connections, subscriptions: subscriptions} = state,
          before_signals
@@ -536,22 +553,7 @@ defmodule EtherCAT.Simulator do
   end
 
   defp apply_immediate_fault(state, {:command_wkc_offset, command_name, delta})
-       when command_name in [
-              :aprd,
-              :apwr,
-              :aprw,
-              :fprd,
-              :fpwr,
-              :fprw,
-              :brd,
-              :bwr,
-              :brw,
-              :lrd,
-              :lwr,
-              :lrw,
-              :armw,
-              :frmw
-            ] and is_integer(delta) do
+       when command_name in @exchange_commands and is_integer(delta) do
     {:ok,
      %{state | faults: Faults.inject(state.faults, {:command_wkc_offset, command_name, delta})}}
   end
@@ -603,7 +605,7 @@ defmodule EtherCAT.Simulator do
        )
        when is_integer(index) and index >= 0 and is_integer(subindex) and subindex >= 0 and
               is_integer(abort_code) and abort_code >= 0 and
-              stage in [:request, :upload_segment, :download_segment] do
+              stage in @mailbox_abort_stages do
     apply_slave_update(
       state,
       slave_name,
@@ -776,75 +778,20 @@ defmodule EtherCAT.Simulator do
     end
   end
 
-  defp valid_schedulable_fault?(:drop_responses), do: true
-  defp valid_schedulable_fault?({:wkc_offset, delta}) when is_integer(delta), do: true
-
-  defp valid_schedulable_fault?({:command_wkc_offset, command_name, delta})
-       when command_name in [
-              :aprd,
-              :apwr,
-              :aprw,
-              :fprd,
-              :fpwr,
-              :fprw,
-              :brd,
-              :bwr,
-              :brw,
-              :lrd,
-              :lwr,
-              :lrw,
-              :armw,
-              :frmw
-            ] and is_integer(delta),
-       do: true
-
-  defp valid_schedulable_fault?({:logical_wkc_offset, slave_name, delta})
-       when is_atom(slave_name) and is_integer(delta),
-       do: true
-
-  defp valid_schedulable_fault?({:disconnect, slave_name}) when is_atom(slave_name), do: true
-
   defp valid_schedulable_fault?({:next_exchange, fault}),
-    do: Faults.enqueue(Faults.new(), {:next_exchange, fault}) != :error
+    do: valid_exchange_fault?(fault)
 
   defp valid_schedulable_fault?({:next_exchanges, count, fault})
        when is_integer(count) and count > 0 do
-    Faults.enqueue(Faults.new(), {:next_exchanges, count, fault}) != :error
+    valid_exchange_fault?(fault)
   end
 
   defp valid_schedulable_fault?({:fault_script, steps}) when is_list(steps) do
     valid_fault_script_steps?(steps)
   end
 
-  defp valid_schedulable_fault?({:retreat_to_safeop, slave_name}) when is_atom(slave_name),
-    do: true
-
-  defp valid_schedulable_fault?({:latch_al_error, slave_name, code})
-       when is_atom(slave_name) and is_integer(code) and code >= 0,
-       do: true
-
-  defp valid_schedulable_fault?({:mailbox_abort, slave_name, index, subindex, abort_code})
-       when is_atom(slave_name) and is_integer(index) and index >= 0 and is_integer(subindex) and
-              subindex >= 0 and is_integer(abort_code) and abort_code >= 0,
-       do: true
-
-  defp valid_schedulable_fault?({:mailbox_abort, slave_name, index, subindex, abort_code, stage})
-       when is_atom(slave_name) and is_integer(index) and index >= 0 and is_integer(subindex) and
-              subindex >= 0 and is_integer(abort_code) and abort_code >= 0 and
-              stage in [:request, :upload_segment, :download_segment],
-       do: true
-
-  defp valid_schedulable_fault?(
-         {:mailbox_protocol_fault, slave_name, index, subindex, stage, fault_kind}
-       )
-       when is_atom(slave_name) and is_integer(index) and index >= 0 and is_integer(subindex) and
-              subindex >= 0 do
-    valid_mailbox_protocol_fault?(stage, fault_kind)
-  end
-
-  defp valid_schedulable_fault?({:after_ms, _delay_ms, _fault}), do: false
-  defp valid_schedulable_fault?({:after_milestone, _milestone, _fault}), do: false
-  defp valid_schedulable_fault?(_fault), do: false
+  defp valid_schedulable_fault?(fault),
+    do: valid_exchange_fault?(fault) or valid_slave_fault?(fault)
 
   defp maybe_trigger_milestone_faults(state, datagrams, responses, faults, planned_fault) do
     observations = Milestones.observe(datagrams, responses, state.slaves, faults, planned_fault)
@@ -945,99 +892,19 @@ defmodule EtherCAT.Simulator do
   defp valid_fault_script_step?({:wait_for_milestone, milestone}),
     do: Milestones.valid?(milestone)
 
-  defp valid_fault_script_step?(:drop_responses), do: true
-  defp valid_fault_script_step?({:wkc_offset, delta}) when is_integer(delta), do: true
+  defp valid_fault_script_step?(step), do: valid_exchange_fault?(step) or valid_slave_fault?(step)
 
-  defp valid_fault_script_step?({:command_wkc_offset, command_name, delta})
-       when command_name in [
-              :aprd,
-              :apwr,
-              :aprw,
-              :fprd,
-              :fpwr,
-              :fprw,
-              :brd,
-              :bwr,
-              :brw,
-              :lrd,
-              :lwr,
-              :lrw,
-              :armw,
-              :frmw
-            ] and is_integer(delta),
-       do: true
-
-  defp valid_fault_script_step?({:logical_wkc_offset, slave_name, delta})
-       when is_atom(slave_name) and is_integer(delta),
-       do: true
-
-  defp valid_fault_script_step?({:disconnect, slave_name}) when is_atom(slave_name), do: true
-
-  defp valid_fault_script_step?({:retreat_to_safeop, slave_name}) when is_atom(slave_name),
-    do: true
-
-  defp valid_fault_script_step?({:latch_al_error, slave_name, code})
-       when is_atom(slave_name) and is_integer(code) and code >= 0,
-       do: true
-
-  defp valid_fault_script_step?({:mailbox_abort, slave_name, index, subindex, abort_code})
-       when is_atom(slave_name) and is_integer(index) and index >= 0 and is_integer(subindex) and
-              subindex >= 0 and is_integer(abort_code) and abort_code >= 0,
-       do: true
-
-  defp valid_fault_script_step?({:mailbox_abort, slave_name, index, subindex, abort_code, stage})
-       when is_atom(slave_name) and is_integer(index) and index >= 0 and is_integer(subindex) and
-              subindex >= 0 and is_integer(abort_code) and abort_code >= 0 and
-              stage in [:request, :upload_segment, :download_segment],
-       do: true
-
-  defp valid_fault_script_step?(
-         {:mailbox_protocol_fault, slave_name, index, subindex, stage, fault_kind}
-       )
-       when is_atom(slave_name) and is_integer(index) and index >= 0 and is_integer(subindex) and
-              subindex >= 0,
-       do: valid_mailbox_protocol_fault?(stage, fault_kind)
-
-  defp valid_fault_script_step?(_step), do: false
-
-  defp fault_script_exchange_step?(:drop_responses), do: true
-  defp fault_script_exchange_step?({:wkc_offset, delta}) when is_integer(delta), do: true
-
-  defp fault_script_exchange_step?({:command_wkc_offset, command_name, delta})
-       when command_name in [
-              :aprd,
-              :apwr,
-              :aprw,
-              :fprd,
-              :fpwr,
-              :fprw,
-              :brd,
-              :bwr,
-              :brw,
-              :lrd,
-              :lwr,
-              :lrw,
-              :armw,
-              :frmw
-            ] and is_integer(delta),
-       do: true
-
-  defp fault_script_exchange_step?({:logical_wkc_offset, slave_name, delta})
-       when is_atom(slave_name) and is_integer(delta),
-       do: true
-
-  defp fault_script_exchange_step?({:disconnect, slave_name}) when is_atom(slave_name), do: true
-  defp fault_script_exchange_step?(_step), do: false
+  defp fault_script_exchange_step?(step), do: valid_exchange_fault?(step)
 
   defp fault_entry_fault(nil), do: nil
   defp fault_entry_fault(%{fault: fault}), do: fault
 
   defp valid_mailbox_protocol_fault?(stage, :counter_mismatch)
-       when stage in [:request, :upload_init, :upload_segment, :download_init, :download_segment],
+       when stage in @mailbox_protocol_stages,
        do: true
 
   defp valid_mailbox_protocol_fault?(stage, :drop_response)
-       when stage in [:request, :upload_init, :upload_segment, :download_init, :download_segment],
+       when stage in @mailbox_protocol_stages,
        do: true
 
   defp valid_mailbox_protocol_fault?(stage, :toggle_mismatch)
@@ -1045,17 +912,17 @@ defmodule EtherCAT.Simulator do
        do: true
 
   defp valid_mailbox_protocol_fault?(stage, {:mailbox_type, mailbox_type})
-       when stage in [:request, :upload_init, :upload_segment, :download_init, :download_segment] and
+       when stage in @mailbox_protocol_stages and
               is_integer(mailbox_type) and mailbox_type >= 0 and mailbox_type <= 15,
        do: true
 
   defp valid_mailbox_protocol_fault?(stage, {:coe_service, service})
-       when stage in [:request, :upload_init, :upload_segment, :download_init, :download_segment] and
+       when stage in @mailbox_protocol_stages and
               is_integer(service) and service >= 0 and service <= 15,
        do: true
 
   defp valid_mailbox_protocol_fault?(stage, :invalid_coe_payload)
-       when stage in [:request, :upload_init, :upload_segment, :download_init, :download_segment],
+       when stage in @mailbox_protocol_stages,
        do: true
 
   defp valid_mailbox_protocol_fault?(stage, {:sdo_command, command})
@@ -1072,4 +939,44 @@ defmodule EtherCAT.Simulator do
        do: true
 
   defp valid_mailbox_protocol_fault?(_stage, _fault_kind), do: false
+
+  defp valid_exchange_fault?(:drop_responses), do: true
+  defp valid_exchange_fault?({:wkc_offset, delta}) when is_integer(delta), do: true
+
+  defp valid_exchange_fault?({:command_wkc_offset, command_name, delta})
+       when command_name in @exchange_commands and is_integer(delta),
+       do: true
+
+  defp valid_exchange_fault?({:logical_wkc_offset, slave_name, delta})
+       when is_atom(slave_name) and is_integer(delta),
+       do: true
+
+  defp valid_exchange_fault?({:disconnect, slave_name}) when is_atom(slave_name), do: true
+  defp valid_exchange_fault?(_fault), do: false
+
+  defp valid_slave_fault?({:retreat_to_safeop, slave_name}) when is_atom(slave_name), do: true
+
+  defp valid_slave_fault?({:latch_al_error, slave_name, code})
+       when is_atom(slave_name) and is_integer(code) and code >= 0,
+       do: true
+
+  defp valid_slave_fault?({:mailbox_abort, slave_name, index, subindex, abort_code})
+       when is_atom(slave_name) and is_integer(index) and index >= 0 and is_integer(subindex) and
+              subindex >= 0 and is_integer(abort_code) and abort_code >= 0,
+       do: true
+
+  defp valid_slave_fault?({:mailbox_abort, slave_name, index, subindex, abort_code, stage})
+       when is_atom(slave_name) and is_integer(index) and index >= 0 and is_integer(subindex) and
+              subindex >= 0 and is_integer(abort_code) and abort_code >= 0 and
+              stage in @mailbox_abort_stages,
+       do: true
+
+  defp valid_slave_fault?(
+         {:mailbox_protocol_fault, slave_name, index, subindex, stage, fault_kind}
+       )
+       when is_atom(slave_name) and is_integer(index) and index >= 0 and is_integer(subindex) and
+              subindex >= 0,
+       do: valid_mailbox_protocol_fault?(stage, fault_kind)
+
+  defp valid_slave_fault?(_fault), do: false
 end

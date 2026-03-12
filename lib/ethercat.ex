@@ -40,21 +40,17 @@ defmodule EtherCAT do
       [*] --> idle
       idle --> discovering: start/1
       discovering --> awaiting_preop: configured slaves are still pending
-      discovering --> preop_ready: startup completes without activation
-      discovering --> operational: startup completes and activation succeeds
-      discovering --> activation_blocked: startup completes but activation is incomplete
       discovering --> idle: startup fails or stop/0
       awaiting_preop --> preop_ready: all slaves reached PREOP, no activation requested
       awaiting_preop --> operational: all slaves reached PREOP and activation succeeds
       awaiting_preop --> activation_blocked: all slaves reached PREOP but activation is incomplete
       awaiting_preop --> idle: timeout, fatal activation failure, or stop/0
       preop_ready --> operational: activate/0 succeeds
-      preop_ready --> deactivated: deactivate/0 settles in SAFEOP
       preop_ready --> activation_blocked: activate/0 is incomplete
       preop_ready --> recovering: critical runtime fault
       preop_ready --> idle: stop/0 or fatal subsystem exit
       deactivated --> operational: activate/0 succeeds
-      deactivated --> preop_ready: deactivate(:preop)
+      deactivated --> preop_ready: deactivate to PREOP
       deactivated --> activation_blocked: target transition is incomplete
       deactivated --> recovering: critical runtime fault
       deactivated --> idle: stop/0 or fatal subsystem exit
@@ -64,8 +60,8 @@ defmodule EtherCAT do
       activation_blocked --> recovering: activation failures clear but runtime faults remain
       activation_blocked --> idle: stop/0 or fatal subsystem exit
       operational --> deactivated: deactivate/0 settles in SAFEOP
-      operational --> preop_ready: deactivate(:preop)
-      operational --> recovering: runtime fault in domain or DC
+      operational --> preop_ready: deactivate to PREOP
+      operational --> recovering: critical runtime fault
       operational --> idle: stop/0 or fatal subsystem exit
       recovering --> operational: critical runtime faults are cleared and target is OP
       recovering --> deactivated: critical runtime faults are cleared and target is SAFEOP

@@ -103,12 +103,14 @@ sequenceDiagram
         Master->>Slave: authorize reconnect
         Slave->>Bus: rebuild to PREOP through INIT,\\nSII, and mailbox setup
         Slave-->>Master: report ready at PREOP
-        Master->>Slave: request OP
+        opt desired runtime target is above PREOP
+            Master->>Slave: request desired target
+        end
     end
     opt a DC fault is part of the runtime fault set
         DC-->>Master: runtime recovers or lock returns
     end
-    Master-->>App: state becomes operational
+    Master-->>App: state returns to preop_ready, deactivated, or operational
 ```
 
 ## State Transitions
@@ -118,27 +120,23 @@ stateDiagram-v2
     [*] --> idle
     idle --> discovering: start/1
     discovering --> awaiting_preop: configured slaves are still pending
-    discovering --> preop_ready: startup completes without activation
-    discovering --> operational: startup completes and activation succeeds
-    discovering --> activation_blocked: startup completes but activation is incomplete
     discovering --> idle: startup fails or stop/0
     awaiting_preop --> preop_ready: all slaves reached PREOP, no activation requested
     awaiting_preop --> operational: all slaves reached PREOP and activation succeeds
     awaiting_preop --> activation_blocked: all slaves reached PREOP but activation is incomplete
     awaiting_preop --> idle: timeout, fatal activation failure, or stop/0
     preop_ready --> operational: activate/0 succeeds
-    preop_ready --> deactivated: deactivate/0 settles in SAFEOP
     preop_ready --> activation_blocked: activate/0 is incomplete
     preop_ready --> recovering: critical runtime fault
     preop_ready --> idle: stop/0 or fatal subsystem exit
     deactivated --> operational: activate/0 succeeds
-    deactivated --> preop_ready: deactivate(:preop)
+    deactivated --> preop_ready: deactivate to PREOP
     deactivated --> activation_blocked: target transition remains incomplete
-    deactivated --> recovering: runtime fault in retained session structure
+    deactivated --> recovering: critical runtime fault
     deactivated --> idle: stop/0 or fatal subsystem exit
-    operational --> recovering: runtime fault in domain or DC
+    operational --> recovering: critical runtime fault
     operational --> deactivated: deactivate/0 settles in SAFEOP
-    operational --> preop_ready: deactivate(:preop)
+    operational --> preop_ready: deactivate to PREOP
     operational --> idle: stop/0 or fatal subsystem exit
     activation_blocked --> operational: activation failures clear and target is OP
     activation_blocked --> deactivated: transition failures clear and target is SAFEOP
