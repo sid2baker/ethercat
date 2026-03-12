@@ -1,6 +1,6 @@
-# EtherCAT Examples
+# EtherCAT Hardware Integration
 
-Runnable scripts for testing the library against real hardware.
+Runnable scripts and tests for exercising the library against real hardware.
 
 All scripts assume the 4-slave test ring unless noted:
 
@@ -18,10 +18,13 @@ Each EL2809 output channel is wired to the matching EL1809 input channel (loopba
 ## Running a script
 
 ```bash
-mix run examples/<script>.exs --interface <eth-iface> [flags]
+MIX_ENV=test mix run test/integration/hardware/scripts/<script>.exs --interface <eth-iface> [flags]
 ```
 
-Raw Ethernet socket access requires `CAP_NET_RAW` or root.
+`MIX_ENV=test` is required because the scripts reuse support drivers and helpers
+from `test/integration/support/`.
+
+Raw Ethernet socket access still requires `CAP_NET_RAW` or root.
 
 ---
 
@@ -34,8 +37,9 @@ Start with the maintained scripts below. Recommended order:
 3. `fault_tolerance.exs` — validate crash/disconnect recovery behavior
 4. `dc_sync.exs` — inspect DC lock and runtime sync behavior
 
-Some older low-level scripts in `examples/` are historical maintainer probes
-and may lag the current public API.
+Some lower-level scripts under `test/integration/hardware/scripts/` are still
+maintainer probes and intentionally sit closer to the transport/runtime internals
+than the public API.
 
 ## Maintained Scripts
 
@@ -79,7 +83,7 @@ and may lag the current public API.
 The following historical examples were removed because they targeted obsolete
 APIs and were superseded by the maintained scripts above:
 
-- `io_quick.exs` (removed; superseded by current examples)
+- `io_quick.exs` (removed; superseded by current hardware scripts)
 - `hardware_test.exs` (removed; superseded by maintained hardware scripts)
 
 ---

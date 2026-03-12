@@ -16,9 +16,9 @@
 #      count responding slaves, compared against BRD wkc.
 #
 # Usage:
-#   mix run examples/udp_test.exs --interface eth0
-#   mix run examples/udp_test.exs --interface eth0 --host 192.168.1.1
-#   mix run examples/udp_test.exs --interface eth0 --count 200
+#   MIX_ENV=test mix run test/integration/hardware/scripts/udp_test.exs --interface eth0
+#   MIX_ENV=test mix run test/integration/hardware/scripts/udp_test.exs --interface eth0 --host 192.168.1.1
+#   MIX_ENV=test mix run test/integration/hardware/scripts/udp_test.exs --interface eth0 --count 200
 #
 # Flags:
 #   --interface NIC  bind socket to this interface (required for correct NIC selection)
@@ -72,27 +72,31 @@ fmt_us = fn us -> "#{us} µs" end
   )
 
 iface = opts[:interface]
-host  = if opts[:host], do: parse_ip.(opts[:host]), else: {255, 255, 255, 255}
-port  = opts[:port] || 34980
+host = if opts[:host], do: parse_ip.(opts[:host]), else: {255, 255, 255, 255}
+port = opts[:port] || 34980
 count = opts[:count] || 50
 
 # Resolve bind address: NIC's IPv4 if --interface given, otherwise wildcard
 bind_ip =
   case iface do
-    nil -> {0, 0, 0, 0}
-    _   ->
+    nil ->
+      {0, 0, 0, 0}
+
+    _ ->
       case interface_ipv4.(iface) do
         nil ->
           IO.puts("warning: #{iface} has no IPv4 address — binding to 0.0.0.0")
           {0, 0, 0, 0}
-        ip -> ip
+
+        ip ->
+          ip
       end
   end
 
 IO.puts("""
 EtherCAT UDP transport test
   interface : #{iface || "(any)"}
-  bind ip   : #{:inet.ntoa(bind_ip)}#{if bind_ip == {0,0,0,0}, do: "  (all interfaces)", else: ""}
+  bind ip   : #{:inet.ntoa(bind_ip)}#{if bind_ip == {0, 0, 0, 0}, do: "  (all interfaces)", else: ""}
   host      : #{:inet.ntoa(host)}#{if host == {255, 255, 255, 255}, do: "  (broadcast)", else: ""}
   port      : #{port} (0x#{Integer.to_string(port, 16)})
   count     : #{count} BRD transactions
@@ -116,8 +120,12 @@ raw_ok =
     {:ok, sock} ->
       IO.puts("  ✓ bound #{:inet.ntoa(bind_ip)}:#{port}")
 
-      {:ok, ecat_payload} = Transaction.brd({0x0000, 1}) |> Transaction.datagrams() |> Frame.encode()
-      IO.puts("  ✓ frame built: #{byte_size(ecat_payload)} bytes  (EtherCAT header + BRD datagram)")
+      {:ok, ecat_payload} =
+        Transaction.brd({0x0000, 1}) |> Transaction.datagrams() |> Frame.encode()
+
+      IO.puts(
+        "  ✓ frame built: #{byte_size(ecat_payload)} bytes  (EtherCAT header + BRD datagram)"
+      )
 
       t0 = System.monotonic_time(:nanosecond)
       :ok = :gen_udp.send(sock, host, port, ecat_payload)
@@ -127,8 +135,11 @@ raw_ok =
         case :gen_udp.recv(sock, 0, 100) do
           {:ok, {src_ip, src_port, data}} ->
             rtt_us = div(System.monotonic_time(:nanosecond) - t0, 1000)
-            IO.puts("  ✓ response from #{:inet.ntoa(src_ip)}:#{src_port}  " <>
-                    "#{byte_size(data)} bytes  rtt=#{fmt_us.(rtt_us)}")
+
+            IO.puts(
+              "  ✓ response from #{:inet.ntoa(src_ip)}:#{src_port}  " <>
+                "#{byte_size(data)} bytes  rtt=#{fmt_us.(rtt_us)}"
+            )
 
             case Frame.decode(data) do
               {:ok, dgs} ->
@@ -171,6 +182,7 @@ if raw_ok == :timeout do
     • Packets went out the wrong NIC  →  pass --interface #{iface || "eth0"} to bind to the right one
     • Broadcast blocked on this subnet  →  try --host <esc_unicast_ip>
   """)
+
   System.halt(0)
 end
 
@@ -180,8 +192,9 @@ end
 
 banner.("2. BRD stress (#{count}×) via Bus.start_link")
 
-bus_opts = [transport: :udp, host: host, port: port] ++
-           if(bind_ip != {0, 0, 0, 0}, do: [bind_ip: bind_ip], else: [])
+bus_opts =
+  [transport: :udp, host: host, port: port] ++
+    if(bind_ip != {0, 0, 0, 0}, do: [bind_ip: bind_ip], else: [])
 
 {:ok, bus} = Bus.start_link(bus_opts)
 IO.puts("  ✓ bus open")
@@ -198,16 +211,18 @@ print_every = max(1, div(count, 10))
       summary =
         case result do
           {:ok, [%{wkc: n}]} -> "wkc=#{n}  rtt=#{fmt_us.(rtt_us)}"
-          {:error, r}        -> "#{inspect(r)}  rtt=#{fmt_us.(rtt_us)}"
+          {:error, r} -> "#{inspect(r)}  rtt=#{fmt_us.(rtt_us)}"
         end
 
-      IO.puts("  [#{String.pad_leading(to_string(i), String.length(to_string(count)))}] #{summary}")
+      IO.puts(
+        "  [#{String.pad_leading(to_string(i), String.length(to_string(count)))}] #{summary}"
+      )
     end
 
     case result do
       {:ok, [%{wkc: _}]} -> {ok + 1, to, errs, [rtt_us | rtts]}
-      {:error, :timeout}  -> {ok, to + 1, errs, rtts}
-      {:error, r}         -> {ok, to, Map.update(errs, r, 1, &(&1 + 1)), rtts}
+      {:error, :timeout} -> {ok, to + 1, errs, rtts}
+      {:error, r} -> {ok, to, Map.update(errs, r, 1, &(&1 + 1)), rtts}
     end
   end)
 
@@ -283,8 +298,8 @@ IO.puts("")
 verdict =
   cond do
     ok_count == count -> "PASS ✓  (#{count}/#{count})"
-    ok_count > 0      -> "PARTIAL  (#{ok_count}/#{count} succeeded)"
-    true              -> "FAIL ✗   (0/#{count})"
+    ok_count > 0 -> "PARTIAL  (#{ok_count}/#{count} succeeded)"
+    true -> "FAIL ✗   (0/#{count})"
   end
 
 IO.puts("Verdict: #{verdict}")

@@ -32,8 +32,8 @@
 #   position 3  EL3202 2-ch PT100       (:rtd)
 #
 # Usage:
-#   mix run examples/fault_tolerance.exs --interface enp0s31f6
-#   mix run examples/fault_tolerance.exs --interface enp0s31f6 --split-sm
+#   MIX_ENV=test mix run test/integration/hardware/scripts/fault_tolerance.exs --interface enp0s31f6
+#   MIX_ENV=test mix run test/integration/hardware/scripts/fault_tolerance.exs --interface enp0s31f6 --split-sm
 #
 # Optional flags:
 #   --poll-ms N           health poll interval (default 500)
@@ -42,38 +42,7 @@
 #   --skip-hardware       run only scenario A (no cable pulls required)
 #   --no-rtd              skip EL3202 slave
 
-# ---------------------------------------------------------------------------
-# Drivers
-# ---------------------------------------------------------------------------
-
-defmodule FT.EL1809 do
-  @behaviour EtherCAT.Slave.Driver
-  def process_data_model(_), do: Enum.map(1..16, &{:"ch#{&1}", 0x1A00 + &1 - 1})
-  def encode_signal(_, _, _), do: <<>>
-  def decode_signal(_, _, <<_::7, bit::1>>), do: bit
-  def decode_signal(_, _, _), do: 0
-end
-
-defmodule FT.EL2809 do
-  @behaviour EtherCAT.Slave.Driver
-  def process_data_model(_), do: Enum.map(1..16, &{:"ch#{&1}", 0x1600 + &1 - 1})
-  def encode_signal(_, _, value), do: <<value::8>>
-  def decode_signal(_, _, _), do: nil
-end
-
-defmodule FT.EL3202 do
-  @behaviour EtherCAT.Slave.Driver
-  def process_data_model(_), do: [channel1: 0x1A00, channel2: 0x1A01]
-
-  def mailbox_config(_),
-    do: [
-      {:sdo_download, 0x8000, 0x19, <<8::16-little>>},
-      {:sdo_download, 0x8010, 0x19, <<8::16-little>>}
-    ]
-
-  def encode_signal(_, _, _), do: <<>>
-  def decode_signal(_, _, _), do: nil
-end
+alias EtherCAT.IntegrationSupport.Hardware
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -256,34 +225,26 @@ start_bus = fn health_poll_ms_opt ->
   domains =
     if split_sm do
       [
-        %EtherCAT.Domain.Config{
-          id: :fast,
-          cycle_time_us: 10_000,
-          miss_threshold: miss_threshold
-        },
-        %EtherCAT.Domain.Config{
+        Hardware.main_domain(id: :fast, cycle_time_us: 10_000, miss_threshold: miss_threshold),
+        Hardware.main_domain(
           id: :slow,
           cycle_time_us: split_slow_cycle_us,
           miss_threshold: miss_threshold
-        }
+        )
       ] ++
         if(include_rtd,
           do: [
-            %EtherCAT.Domain.Config{
+            Hardware.main_domain(
               id: :rtd,
               cycle_time_us: split_rtd_cycle_us,
               miss_threshold: miss_threshold
-            }
+            )
           ],
           else: []
         )
     else
       [
-        %EtherCAT.Domain.Config{
-          id: :main,
-          cycle_time_us: 10_000,
-          miss_threshold: miss_threshold
-        }
+        Hardware.main_domain(id: :main, cycle_time_us: 10_000, miss_threshold: miss_threshold)
       ]
     end
 
@@ -302,11 +263,7 @@ start_bus = fn health_poll_ms_opt ->
     end
 
   rtd_config =
-    %EtherCAT.Slave.Config{
-      name: :rtd,
-      driver: FT.EL3202,
-      process_data: if(split_sm, do: {:all, :rtd}, else: {:all, :main})
-    }
+    Hardware.rtd(process_data: if(split_sm, do: {:all, :rtd}, else: {:all, :main}))
 
   :ok =
     EtherCAT.start(
@@ -314,18 +271,9 @@ start_bus = fn health_poll_ms_opt ->
       domains: domains,
       slaves:
         [
-          %EtherCAT.Slave.Config{name: :coupler},
-          %EtherCAT.Slave.Config{
-            name: :inputs,
-            driver: FT.EL1809,
-            process_data: input_process_data
-          },
-          %EtherCAT.Slave.Config{
-            name: :outputs,
-            driver: FT.EL2809,
-            process_data: output_process_data,
-            health_poll_ms: health_poll_ms_opt
-          }
+          Hardware.coupler(),
+          Hardware.inputs(process_data: input_process_data),
+          Hardware.outputs(process_data: output_process_data, health_poll_ms: health_poll_ms_opt)
         ] ++ if(include_rtd, do: [rtd_config], else: [])
     )
 

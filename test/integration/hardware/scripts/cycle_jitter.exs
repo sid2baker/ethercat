@@ -22,55 +22,14 @@
 #   EL2809 ch1 → EL1809 ch1 (loopback wire required)
 #
 # Usage:
-#   mix run examples/cycle_jitter.exs --interface enp0s31f6
+#   MIX_ENV=test mix run test/integration/hardware/scripts/cycle_jitter.exs --interface enp0s31f6
 #
 # Optional flags:
 #   --period-ms N    domain cycle period ms     (default 10)
 #   --samples N      number of half-cycles      (default 2000)
 #   --bucket-us N    histogram bucket width µs  (default 100)
 
-# ---------------------------------------------------------------------------
-# Drivers
-# ---------------------------------------------------------------------------
-
-defmodule CycleJitter.EL1809 do
-  @behaviour EtherCAT.Slave.Driver
-  @impl true
-  def process_data_model(_config), do: Enum.map(1..16, fn i -> {:"ch#{i}", 0x1A00 + i - 1} end)
-  @impl true
-  def encode_signal(_pdo, _config, _), do: <<>>
-  @impl true
-  def decode_signal(_ch, _config, <<_::7, bit::1>>), do: bit
-  def decode_signal(_pdo, _config, _), do: 0
-end
-
-defmodule CycleJitter.EL2809 do
-  @behaviour EtherCAT.Slave.Driver
-  @impl true
-  def process_data_model(_config), do: Enum.map(1..16, fn i -> {:"ch#{i}", 0x1600 + i - 1} end)
-  @impl true
-  def encode_signal(_ch, _config, value), do: <<value::8>>
-  @impl true
-  def decode_signal(_pdo, _config, _), do: nil
-end
-
-defmodule CycleJitter.EL3202 do
-  @behaviour EtherCAT.Slave.Driver
-  @impl true
-  def process_data_model(_config), do: [channel1: 0x1A00, channel2: 0x1A01]
-  @impl true
-  def mailbox_config(_config) do
-    [
-      {:sdo_download, 0x8000, 0x19, <<8::16-little>>},
-      {:sdo_download, 0x8010, 0x19, <<8::16-little>>}
-    ]
-  end
-
-  @impl true
-  def encode_signal(_pdo, _config, _value), do: <<>>
-  @impl true
-  def decode_signal(_pdo, _config, _), do: nil
-end
+alias EtherCAT.IntegrationSupport.Hardware
 
 # ---------------------------------------------------------------------------
 # Self-clocking loopback collector
@@ -164,23 +123,8 @@ Process.sleep(300)
 :ok =
   EtherCAT.start(
     interface: interface,
-    domains: [
-      %EtherCAT.Domain.Config{id: :main, cycle_time_us: period_us, miss_threshold: 500}
-    ],
-    slaves: [
-      %EtherCAT.Slave.Config{name: :coupler},
-      %EtherCAT.Slave.Config{
-        name: :inputs,
-        driver: CycleJitter.EL1809,
-        process_data: {:all, :main}
-      },
-      %EtherCAT.Slave.Config{
-        name: :outputs,
-        driver: CycleJitter.EL2809,
-        process_data: {:all, :main}
-      },
-      %EtherCAT.Slave.Config{name: :rtd, driver: CycleJitter.EL3202, process_data: {:all, :main}}
-    ]
+    domains: [Hardware.main_domain(cycle_time_us: period_us, miss_threshold: 500)],
+    slaves: Hardware.full_ring()
   )
 
 IO.puts("Waiting for bus to reach OP...")

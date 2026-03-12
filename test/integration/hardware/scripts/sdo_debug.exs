@@ -6,11 +6,11 @@
 # (i.e., the slave actually processed the request and put a response in SM1).
 #
 # Usage:
-#   mix run examples/sdo_debug.exs --interface enp0s31f6
+#   MIX_ENV=test mix run test/integration/hardware/scripts/sdo_debug.exs --interface enp0s31f6
 
 alias EtherCAT.Bus
 alias EtherCAT.Bus.Transaction
-alias EtherCAT.Slave.Config
+alias EtherCAT.IntegrationSupport.Hardware
 alias EtherCAT.Slave.ESC.{Registers, SII}
 
 {opts, _, _} = OptionParser.parse(System.argv(), switches: [interface: :string])
@@ -25,10 +25,10 @@ EtherCAT.start(
   dc: nil,
   domains: [],
   slaves: [
-    %Config{name: :coupler, target_state: :preop},
-    %Config{name: :bridge_1, target_state: :preop},
-    %Config{name: :bridge_2, target_state: :preop},
-    %Config{name: :thermo, process_data: :none, target_state: :preop}
+    Hardware.coupler(target_state: :preop),
+    Hardware.inputs(process_data: :none, target_state: :preop),
+    Hardware.outputs(process_data: :none, target_state: :preop),
+    Hardware.rtd(process_data: :none, target_state: :preop)
   ]
 )
 
@@ -39,7 +39,7 @@ bus = EtherCAT.bus()
 
 %{station: station} =
   EtherCAT.slaves()
-  |> Enum.find(fn %{name: name} -> name == :thermo end)
+  |> Enum.find(fn %{name: name} -> name == :rtd end)
 
 IO.puts("station: 0x#{Integer.to_string(station, 16)}\n")
 

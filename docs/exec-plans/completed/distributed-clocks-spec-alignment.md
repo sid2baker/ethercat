@@ -362,7 +362,7 @@ Drivers should own device-specific CoE mapping, not the generic public sync mode
 - `lib/ethercat/slave/sync/config.ex`
 - `lib/ethercat/slave/driver.ex`
 - `lib/ethercat/slave.ex`
-- examples/tests/docs
+- hardware scripts/tests/docs
 
 ### Acceptance
 

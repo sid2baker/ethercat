@@ -24,7 +24,7 @@
 #   position 3  EL3202 2-ch PT100           (slave name :rtd)
 #
 # Usage:
-#   mix run examples/dc_sync.exs --interface enp0s31f6
+#   MIX_ENV=test mix run test/integration/hardware/scripts/dc_sync.exs --interface enp0s31f6
 #
 # Optional flags:
 #   --period-ms N        domain cycle period ms          (default 10)
@@ -34,54 +34,7 @@
 #   --lock-threshold N   ns sync_diff convergence gate   (default 1000)
 #   --no-rtd             skip EL3202
 
-# ---------------------------------------------------------------------------
-# Drivers
-# ---------------------------------------------------------------------------
-
-defmodule DcSync.EL1809 do
-  @behaviour EtherCAT.Slave.Driver
-  @impl true
-  def process_data_model(_config) do
-    Enum.map(1..16, fn i -> {String.to_atom("ch#{i}"), 0x1A00 + i - 1} end)
-  end
-
-  @impl true
-  def encode_signal(_pdo, _config, _), do: <<>>
-  @impl true
-  def decode_signal(_ch, _config, <<_::7, bit::1>>), do: bit
-  def decode_signal(_pdo, _config, _), do: 0
-end
-
-defmodule DcSync.EL2809 do
-  @behaviour EtherCAT.Slave.Driver
-  @impl true
-  def process_data_model(_config) do
-    Enum.map(1..16, fn i -> {String.to_atom("ch#{i}"), 0x1600 + i - 1} end)
-  end
-
-  @impl true
-  def encode_signal(_ch, _config, value), do: <<value::8>>
-  @impl true
-  def decode_signal(_pdo, _config, _), do: nil
-end
-
-defmodule DcSync.EL3202 do
-  @behaviour EtherCAT.Slave.Driver
-  @impl true
-  def process_data_model(_config), do: [channel1: 0x1A00, channel2: 0x1A01]
-  @impl true
-  def mailbox_config(_config) do
-    [
-      {:sdo_download, 0x8000, 0x19, <<8::16-little>>},
-      {:sdo_download, 0x8010, 0x19, <<8::16-little>>}
-    ]
-  end
-
-  @impl true
-  def encode_signal(_pdo, _config, _value), do: <<>>
-  @impl true
-  def decode_signal(_pdo, _config, _), do: nil
-end
+alias EtherCAT.IntegrationSupport.Hardware
 
 # ---------------------------------------------------------------------------
 # Parse args
@@ -127,27 +80,17 @@ IO.puts("── 1. Start with DC enabled ─────────────
 EtherCAT.stop()
 Process.sleep(300)
 
-rtd_slave = %EtherCAT.Slave.Config{
-  name: :rtd,
-  driver: DcSync.EL3202,
-  process_data: {:all, :main}
-}
+rtd_slave = Hardware.rtd()
 
 :ok =
   EtherCAT.start(
     interface: interface,
-    domains: [
-      %EtherCAT.Domain.Config{
-        id: :main,
-        cycle_time_us: period_ms * 1_000,
-        miss_threshold: 500
-      }
-    ],
+    domains: [Hardware.main_domain(cycle_time_us: period_ms * 1_000, miss_threshold: 500)],
     slaves:
       [
-        %EtherCAT.Slave.Config{name: :coupler},
-        %EtherCAT.Slave.Config{name: :inputs, driver: DcSync.EL1809, process_data: {:all, :main}},
-        %EtherCAT.Slave.Config{name: :outputs, driver: DcSync.EL2809, process_data: {:all, :main}}
+        Hardware.coupler(),
+        Hardware.inputs(),
+        Hardware.outputs()
       ] ++ if(include_rtd, do: [rtd_slave], else: []),
     dc: %EtherCAT.DC.Config{
       cycle_ns: period_ms * 1_000_000,

@@ -5,7 +5,7 @@
 # see exactly where frames are lost.
 #
 # Usage in IEx:
-#   import_file("examples/probe.exs")
+#   import_file("test/integration/hardware/scripts/probe.exs")
 #   Probe.run("eth0")
 #   Probe.run("eth0", frames: 20, timeout_ms: 500)
 

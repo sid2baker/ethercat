@@ -206,8 +206,8 @@ For detailed state diagrams and sequencing, see the moduledocs:
 - Total bus loss can stop domains after the configured miss threshold; recovery can restart them.
 - Slave reconnect is PREOP-first: the slave rebuilds its local state, then the master decides when to return it to OP.
 
-The maintained end-to-end hardware walkthrough is the `examples/fault_tolerance.exs`
-script in the repo.
+The maintained end-to-end hardware walkthrough is
+`test/integration/hardware/scripts/fault_tolerance.exs`.
 
 ## Where To Start
 
@@ -222,16 +222,16 @@ Use `EtherCAT.Simulator` to drive the real master against a simulated ring.
 That is the fastest way to exercise startup, mailbox, recovery, and fault
 handling without a physical EtherCAT stack on your desk.
 
-### Maintained hardware examples
+### Maintained hardware scripts
 
-The repo ships maintained hardware scripts under `examples/`.
+The repo ships maintained hardware scripts under `test/integration/hardware/`.
 Recommended first stops:
 
-- `examples/scan.exs`
-- `examples/diag.exs`
-- `examples/wiring_map.exs`
-- `examples/dc_sync.exs`
-- `examples/fault_tolerance.exs`
+- `test/integration/hardware/scripts/scan.exs`
+- `test/integration/hardware/scripts/diag.exs`
+- `test/integration/hardware/scripts/wiring_map.exs`
+- `test/integration/hardware/scripts/dc_sync.exs`
+- `test/integration/hardware/scripts/fault_tolerance.exs`
 
 ### Deeper architecture
 

@@ -22,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Public `Master` API calls now return `{:error, :timeout}` when the local master call itself times out instead of exiting the caller
 - Real carrier loss now stops domains immediately on confirmed `:down`, without domain restart churn while the cable is still unplugged
-- Maintained hardware examples were refreshed for the current runtime and bus/link-monitor implementation
+- Maintained hardware scripts were refreshed for the current runtime and bus/link-monitor implementation
 - `await_running/1` and `await_operational/1` now tolerate a small local reply grace window so terminal startup results do not get masked by near-boundary call timeouts
 - Activation now blocks immediately on PREOP configuration failures instead of starting OP activation work for unrelated slaves
 
@@ -50,7 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Reconnect and recovery paths now preserve split attachment semantics and restart stopped domains
-- `examples/el3202.exs` and `examples/sdo_debug.exs` now work against the current driver/runtime contract
+- `test/integration/hardware/scripts/el3202.exs` and `test/integration/hardware/scripts/sdo_debug.exs` now work against the current driver/runtime contract
 - Hardware fault-tolerance examples now match the current recovery model
 - Polling callers regain access to cached PDO freshness metadata
 

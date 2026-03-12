@@ -14,7 +14,7 @@ adds design history, execution plans, and external references around that code.
   System map, boundaries, and subsystem responsibilities.
 - [README.md](/home/n0gg1n/Development/Work/opencode/ethercat/README.md)
   User-facing startup, examples, and public API overview.
-- [examples/README.md](/home/n0gg1n/Development/Work/opencode/ethercat/examples/README.md)
+- [test/integration/hardware/README.md](/home/n0gg1n/Development/Work/opencode/ethercat/test/integration/hardware/README.md)
   Maintained hardware scripts and validation entry points.
 
 ## System Of Record

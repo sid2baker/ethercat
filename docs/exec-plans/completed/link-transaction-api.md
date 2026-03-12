@@ -116,8 +116,8 @@ Pure unit tests for Transaction builder -- no hardware/socket needed.
 - `lib/ethercat/telemetry.ex` — API unchanged
 - `lib/ethercat/application.ex` — unrelated
 - `lib/ethercat.ex` — delegates to Master, unaffected
-- `examples/diag.exs` — uses internal modules directly
-- `examples/io_quick.exs` — goes through Master
+- `test/integration/hardware/scripts/diag.exs` — uses internal modules directly
+- former `examples/io_quick.exs` — went through Master
 
 ## Execution Order
 

@@ -9,7 +9,7 @@
 #   [4] BRD send/recv (5 frames)        — standard EtherCAT exchange
 #
 # Usage in IEx:
-#   import_file("examples/diag.exs")
+#   import_file("test/integration/hardware/scripts/diag.exs")
 #   EtherDiag.run("eth0")
 #   EtherDiag.run("eth0", timeout_ms: 2000)
 

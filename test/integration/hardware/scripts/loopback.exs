@@ -4,16 +4,8 @@
 alias EtherCAT.{Bus, Domain}
 alias EtherCAT.Domain.API, as: DomainAPI
 alias EtherCAT.Bus.Transaction
-alias EtherCAT.Slave.Config
 alias EtherCAT.Slave.ESC.{Registers, SII}
-alias EtherCAT.Domain.Config, as: DomainConfig
-
-defmodule DigitalOut do
-  @behaviour EtherCAT.Slave.Driver
-  def process_data_model(_), do: [ch1: 0x1600]
-  def encode_signal(_, _, v), do: <<v::8>>
-  def decode_signal(_, _, _), do: nil
-end
+alias EtherCAT.IntegrationSupport.Hardware
 
 {opts, _, _} = OptionParser.parse(System.argv(), switches: [interface: :string])
 interface = opts[:interface] || raise "pass --interface"
@@ -53,12 +45,12 @@ Process.sleep(300)
 :ok =
   EtherCAT.start(
     interface: interface,
-    domains: [%DomainConfig{id: :main, cycle_time_us: 4_000}],
+    domains: [Hardware.main_domain(cycle_time_us: 4_000)],
     slaves: [
-      %Config{name: :coupler},
-      %Config{name: :bridge_1},
-      %Config{name: :out, driver: DigitalOut, process_data: [ch1: :main]},
-      %Config{name: :bridge_3, target_state: :preop}
+      Hardware.coupler(),
+      Hardware.inputs(process_data: :none),
+      Hardware.outputs(name: :out, process_data: [ch1: :main]),
+      Hardware.rtd(process_data: :none, target_state: :preop)
     ]
   )
 

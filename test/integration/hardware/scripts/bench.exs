@@ -1,10 +1,11 @@
 # EtherCAT link latency benchmark.
 #
 # Sends N BRD frames and reports RTT statistics.
-# Paste into IEx on the target, or run via: mix run examples/bench.exs
+# Paste into IEx on the target, or run via:
+#   MIX_ENV=test mix run test/integration/hardware/scripts/bench.exs --interface eth0
 #
 # Usage in IEx:
-#   import_file("examples/bench.exs")
+#   import_file("test/integration/hardware/scripts/bench.exs")
 #   Bench.run("eth0")
 #   Bench.run("eth0", frames: 200)
 
@@ -33,7 +34,9 @@ defmodule Bench do
         rtt_us = t1 - t0
 
         case result do
-          {:ok, [%{wkc: wkc}]} -> {rtt_us, wkc, :ok}
+          {:ok, [%{wkc: wkc}]} ->
+            {rtt_us, wkc, :ok}
+
           {:error, reason} ->
             IO.puts("  frame #{i}: #{inspect(reason)}")
             {rtt_us, 0, :error}
@@ -70,10 +73,13 @@ defmodule Bench do
       cond do
         avg_us < 1_000 ->
           IO.puts("  EXCELLENT — well within EtherCAT timing budget.")
+
         avg_us < 10_000 ->
           IO.puts("  OK — usable, but check for jitter if using DC sync.")
+
         avg_us < 90_000 ->
           IO.puts("  SLOW — link timeouts may need tuning (current limit: 150ms).")
+
         true ->
           IO.puts("  TOO SLOW — at #{fmt(avg_us)} avg, DC and slave init will timeout.")
           IO.puts("             Check: NIC driver, kernel AF_PACKET config, USB path.")
@@ -90,7 +96,9 @@ end
 
 # Auto-run if invoked via mix run
 if System.get_env("MIX_ENV") != nil or match?([_ | _], System.argv()) do
-  {opts, _, _} = OptionParser.parse(System.argv(), switches: [interface: :string, frames: :integer])
+  {opts, _, _} =
+    OptionParser.parse(System.argv(), switches: [interface: :string, frames: :integer])
+
   interface = opts[:interface] || "eth0"
   frames = opts[:frames] || 100
   Bench.run(interface, frames: frames)

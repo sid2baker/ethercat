@@ -216,8 +216,8 @@ the refactor on real hardware.
 
 ### Changes
 
-1. update `examples/multi_domain.exs`
-2. update `examples/README.md`
+1. update `test/integration/hardware/scripts/multi_domain.exs`
+2. update `test/integration/hardware/README.md`
 3. update README language after the behavior lands
 4. add a maintained hardware scenario that splits one SM across domains
 
@@ -235,14 +235,14 @@ Suggested validation scenarios:
 ### Result
 
 1. docs no longer claim one SM maps to exactly one domain
-2. hardware examples show split-SM domains working
+2. hardware scripts show split-SM domains working
 3. fault-tolerance paths still recover attachment caches correctly
 
 Status: DONE
 Completed:
-- `examples/multi_domain.exs` now uses a real split-SM layout
-- `examples/README.md` documents split-domain behavior
-- `examples/fault_tolerance.exs --split-sm` provides a maintained split-SM
+- `test/integration/hardware/scripts/multi_domain.exs` now uses a real split-SM layout
+- `test/integration/hardware/README.md` documents split-domain behavior
+- `test/integration/hardware/scripts/fault_tolerance.exs --split-sm` provides a maintained split-SM
   reconnect scenario under the master-owned recovery model
 - live hardware validation exists for split input/output attachments
 

@@ -41,61 +41,14 @@
 #   position 3  EL3202 2-ch PT100           (slave name :rtd, optional)
 #
 # Usage:
-#   mix run examples/multi_domain.exs --interface enp0s31f6
+#   MIX_ENV=test mix run test/integration/hardware/scripts/multi_domain.exs --interface enp0s31f6
 #
 # Optional flags:
 #   --run-s N           multi-domain run duration in seconds  (default 10)
 #   --cross-samples N   loopback latency samples              (default 50)
 #   --no-rtd            skip EL3202 (runs 2 domains only)
 
-# ---------------------------------------------------------------------------
-# Drivers
-# ---------------------------------------------------------------------------
-
-defmodule MultiDomain.EL1809 do
-  @behaviour EtherCAT.Slave.Driver
-  @impl true
-  def process_data_model(_config) do
-    Enum.map(1..16, fn i -> {String.to_atom("ch#{i}"), 0x1A00 + i - 1} end)
-  end
-
-  @impl true
-  def encode_signal(_pdo, _config, _), do: <<>>
-  @impl true
-  def decode_signal(_ch, _config, <<_::7, bit::1>>), do: bit
-  def decode_signal(_pdo, _config, _), do: 0
-end
-
-defmodule MultiDomain.EL2809 do
-  @behaviour EtherCAT.Slave.Driver
-  @impl true
-  def process_data_model(_config) do
-    Enum.map(1..16, fn i -> {String.to_atom("ch#{i}"), 0x1600 + i - 1} end)
-  end
-
-  @impl true
-  def encode_signal(_ch, _config, value), do: <<value::8>>
-  @impl true
-  def decode_signal(_pdo, _config, _), do: nil
-end
-
-defmodule MultiDomain.EL3202 do
-  @behaviour EtherCAT.Slave.Driver
-  @impl true
-  def process_data_model(_config), do: [channel1: 0x1A00, channel2: 0x1A01]
-  @impl true
-  def mailbox_config(_config) do
-    [
-      {:sdo_download, 0x8000, 0x19, <<8::16-little>>},
-      {:sdo_download, 0x8010, 0x19, <<8::16-little>>}
-    ]
-  end
-
-  @impl true
-  def encode_signal(_pdo, _config, _value), do: <<>>
-  @impl true
-  def decode_signal(_pdo, _config, _), do: nil
-end
+alias EtherCAT.IntegrationSupport.Hardware
 
 defmodule MultiDomain.Telemetry do
   def handle(
@@ -154,32 +107,16 @@ Process.sleep(300)
 
 domain_configs =
   [
-    %EtherCAT.Domain.Config{
-      id: :fast,
-      cycle_time_us: fast_period_ms * 1_000,
-      miss_threshold: 500
-    },
-    %EtherCAT.Domain.Config{
-      id: :slow,
-      cycle_time_us: slow_period_ms * 1_000,
-      miss_threshold: 500
-    }
+    Hardware.main_domain(id: :fast, cycle_time_us: fast_period_ms * 1_000, miss_threshold: 500),
+    Hardware.main_domain(id: :slow, cycle_time_us: slow_period_ms * 1_000, miss_threshold: 500)
   ] ++
     if include_rtd,
       do: [
-        %EtherCAT.Domain.Config{
-          id: :rtd,
-          cycle_time_us: rtd_period_ms * 1_000,
-          miss_threshold: 500
-        }
+        Hardware.main_domain(id: :rtd, cycle_time_us: rtd_period_ms * 1_000, miss_threshold: 500)
       ],
       else: []
 
-rtd_slave = %EtherCAT.Slave.Config{
-  name: :rtd,
-  driver: MultiDomain.EL3202,
-  process_data: {:all, :rtd}
-}
+rtd_slave = Hardware.rtd(process_data: {:all, :rtd})
 
 :ok =
   EtherCAT.start(
@@ -187,17 +124,9 @@ rtd_slave = %EtherCAT.Slave.Config{
     domains: domain_configs,
     slaves:
       [
-        %EtherCAT.Slave.Config{name: :coupler},
-        %EtherCAT.Slave.Config{
-          name: :inputs,
-          driver: MultiDomain.EL1809,
-          process_data: [ch1: :fast, ch2: :slow]
-        },
-        %EtherCAT.Slave.Config{
-          name: :outputs,
-          driver: MultiDomain.EL2809,
-          process_data: [ch1: :fast, ch2: :slow]
-        }
+        Hardware.coupler(),
+        Hardware.inputs(process_data: [ch1: :fast, ch2: :slow]),
+        Hardware.outputs(process_data: [ch1: :fast, ch2: :slow])
       ] ++ if(include_rtd, do: [rtd_slave], else: [])
   )
 

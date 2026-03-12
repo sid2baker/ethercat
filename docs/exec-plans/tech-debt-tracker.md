@@ -42,6 +42,6 @@ Known gaps and deferred work. Add entries when identified; move to `completed/` 
 | Gap | Location | Impact | Notes |
 |-----|----------|--------|-------|
 | No hardware-in-the-loop CI | `test/` | Hardware bugs only caught manually | Requires physical EK1100 + NIC in CI environment |
-| No maintained local hardware smoke runner | `examples/README.md`, `docs/` | Hardware validation still depends on manual command selection and operator workflow | Maintained example scripts exist, but there is no single supported runner that executes the smoke matrix |
+| No maintained local hardware smoke runner | `test/integration/hardware/README.md`, `docs/` | Hardware validation still depends on manual command selection and operator workflow | Maintained hardware scripts exist, but there is no single supported runner that executes the smoke matrix |
 | SDO send/receive untested | `sii.ex`, `slave.ex` | CoE mailbox path has no automated coverage | |
 | No DC timing accuracy test | `dc.ex` | PLL convergence not verified under load | |

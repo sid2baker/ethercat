@@ -1,10 +1,7 @@
 defmodule EtherCAT.Integration.Hardware.RingTest do
   use ExUnit.Case, async: false
 
-  alias EtherCAT.Domain.Config, as: DomainConfig
-  alias EtherCAT.IntegrationSupport.Drivers.{EK1100, EL1809, EL2809}
   alias EtherCAT.IntegrationSupport.Hardware
-  alias EtherCAT.Slave.Config, as: SlaveConfig
 
   import EtherCAT.Integration.Assertions
 
@@ -31,7 +28,7 @@ defmodule EtherCAT.Integration.Hardware.RingTest do
                scan_stable_ms: 50,
                scan_poll_ms: 20,
                frame_timeout_ms: 2,
-               domains: [%DomainConfig{id: :main, cycle_time_us: 10_000}],
+               domains: [Hardware.main_domain()],
                slaves: ring_slave_configs()
              )
 
@@ -51,7 +48,7 @@ defmodule EtherCAT.Integration.Hardware.RingTest do
                scan_stable_ms: 50,
                scan_poll_ms: 20,
                frame_timeout_ms: 2,
-               domains: [%DomainConfig{id: :main, cycle_time_us: 10_000}],
+               domains: [Hardware.main_domain()],
                slaves: ring_slave_configs()
              )
 
@@ -68,26 +65,7 @@ defmodule EtherCAT.Integration.Hardware.RingTest do
   end
 
   defp ring_slave_configs do
-    [
-      %SlaveConfig{
-        name: :coupler,
-        driver: EK1100,
-        process_data: :none,
-        target_state: :op
-      },
-      %SlaveConfig{
-        name: :inputs,
-        driver: EL1809,
-        process_data: {:all, :main},
-        target_state: :op
-      },
-      %SlaveConfig{
-        name: :outputs,
-        driver: EL2809,
-        process_data: {:all, :main},
-        target_state: :op
-      }
-    ]
+    Hardware.full_ring(include_rtd: false)
   end
 
   defp interface_or_skip do

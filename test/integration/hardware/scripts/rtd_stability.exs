@@ -21,7 +21,7 @@
 #   position 3  EL3202 2-ch PT100           (slave name :rtd)
 #
 # Usage:
-#   mix run examples/rtd_stability.exs --interface enp0s31f6
+#   MIX_ENV=test mix run test/integration/hardware/scripts/rtd_stability.exs --interface enp0s31f6
 #
 # Optional flags:
 #   --period-ms N    EtherCAT cycle period in ms      (default 10)
@@ -44,6 +44,7 @@ defmodule Welford do
     delta = x - mean
     new_mean = mean + delta / n1
     delta2 = x - new_mean
+
     %__MODULE__{
       n: n1,
       mean: new_mean,
@@ -59,73 +60,7 @@ defmodule Welford do
   def stddev(acc), do: :math.sqrt(variance(acc))
 end
 
-# ---------------------------------------------------------------------------
-# Drivers
-# ---------------------------------------------------------------------------
-
-defmodule RTDStability.EL1809 do
-  @behaviour EtherCAT.Slave.Driver
-  @impl true
-  def process_data_model(_config), do: Enum.map(1..16, fn i -> {:"ch#{i}", 0x1A00 + i - 1} end)
-  @impl true
-  def encode_signal(_pdo, _config, _), do: <<>>
-  @impl true
-  def decode_signal(_ch, _config, <<_::7, bit::1>>), do: bit
-  def decode_signal(_pdo, _config, _), do: 0
-end
-
-defmodule RTDStability.EL2809 do
-  @behaviour EtherCAT.Slave.Driver
-  @impl true
-  def process_data_model(_config), do: Enum.map(1..16, fn i -> {:"ch#{i}", 0x1600 + i - 1} end)
-  @impl true
-  def encode_signal(_ch, _config, value), do: <<value::8>>
-  @impl true
-  def decode_signal(_pdo, _config, _), do: nil
-end
-
-defmodule RTDStability.EL3202 do
-  @behaviour EtherCAT.Slave.Driver
-
-  @impl true
-  def process_data_model(_config), do: [channel1: 0x1A00, channel2: 0x1A01]
-
-  @impl true
-  def mailbox_config(_config) do
-    [
-      {:sdo_download, 0x8000, 0x19, <<8::16-little>>},
-      {:sdo_download, 0x8010, 0x19, <<8::16-little>>}
-    ]
-  end
-
-  @impl true
-  def encode_signal(_pdo, _config, _value), do: <<>>
-
-  @impl true
-  def decode_signal(ch, _config, <<
-        _::1,
-        error::1,
-        _::4,
-        overrange::1,
-        underrange::1,
-        toggle::1,
-        invalid::1,
-        _::6,
-        value::16-little
-      >>)
-      when ch in [:channel1, :channel2] do
-    %{
-      ohms: value / 16.0,
-      overrange: overrange == 1,
-      underrange: underrange == 1,
-      error: error == 1,
-      invalid: invalid == 1,
-      toggle: toggle
-    }
-  end
-
-  def decode_signal(_pdo, _config, _), do: nil
-end
+alias EtherCAT.IntegrationSupport.Hardware
 
 # ---------------------------------------------------------------------------
 # Parse args
@@ -142,11 +77,11 @@ end
     ]
   )
 
-interface  = opts[:interface]  || raise "pass --interface, e.g. --interface enp0s31f6"
-period_ms  = Keyword.get(opts, :period_ms, 10)
+interface = opts[:interface] || raise "pass --interface, e.g. --interface enp0s31f6"
+period_ms = Keyword.get(opts, :period_ms, 10)
 duration_s = Keyword.get(opts, :duration_s, 60)
-report_s   = Keyword.get(opts, :report_s, 10)
-sigma      = Keyword.get(opts, :sigma, 4)
+report_s = Keyword.get(opts, :report_s, 10)
+sigma = Keyword.get(opts, :sigma, 4)
 
 IO.puts("""
 EL3202 RTD long-duration stability analysis
@@ -167,15 +102,8 @@ Process.sleep(300)
 :ok =
   EtherCAT.start(
     interface: interface,
-    domains: [
-      %EtherCAT.Domain.Config{id: :main, cycle_time_us: period_ms * 1_000, miss_threshold: 500}
-    ],
-    slaves: [
-      %EtherCAT.Slave.Config{name: :coupler},
-      %EtherCAT.Slave.Config{name: :inputs,  driver: RTDStability.EL1809, process_data: {:all, :main}},
-      %EtherCAT.Slave.Config{name: :outputs, driver: RTDStability.EL2809, process_data: {:all, :main}},
-      %EtherCAT.Slave.Config{name: :rtd,     driver: RTDStability.EL3202, process_data: {:all, :main}}
-    ]
+    domains: [Hardware.main_domain(cycle_time_us: period_ms * 1_000, miss_threshold: 500)],
+    slaves: Hardware.full_ring()
   )
 
 IO.puts("Waiting for bus to reach OP...")
@@ -197,10 +125,12 @@ initial_state = fn ->
     underranges: 0,
     invalids: 0,
     outliers: 0,
-    stale_runs: 0,          # times toggle bit didn't change across consecutive samples
+    # times toggle bit didn't change across consecutive samples
+    stale_runs: 0,
     last_toggle: nil,
     stale_streak: 0,
-    toggle_transitions: 0   # counts actual data refreshes from slave
+    # counts actual data refreshes from slave
+    toggle_transitions: 0
   }
 end
 
@@ -292,26 +222,29 @@ end
                   new_streak = s.stale_streak + 1
 
                   # Only count as a "stale run" if we've seen 3+ consecutive unchanged toggles
-                  stale = if new_streak >= 3 and s.stale_streak < 3, do: s.stale_runs + 1, else: s.stale_runs
+                  stale =
+                    if new_streak >= 3 and s.stale_streak < 3,
+                      do: s.stale_runs + 1,
+                      else: s.stale_runs
+
                   {new_streak, stale, s.toggle_transitions}
               end
 
             %{
               st
-              | ch =>
-                  %{
-                    s
-                    | acc: acc1,
-                      errors: s.errors + if(reading.error, do: 1, else: 0),
-                      overranges: s.overranges + if(reading.overrange, do: 1, else: 0),
-                      underranges: s.underranges + if(reading.underrange, do: 1, else: 0),
-                      invalids: s.invalids + if(reading.invalid, do: 1, else: 0),
-                      outliers: s.outliers + if(is_outlier, do: 1, else: 0),
-                      stale_runs: stale_runs,
-                      stale_streak: stale_streak,
-                      toggle_transitions: toggle_transitions,
-                      last_toggle: reading.toggle
-                  }
+              | ch => %{
+                  s
+                  | acc: acc1,
+                    errors: s.errors + if(reading.error, do: 1, else: 0),
+                    overranges: s.overranges + if(reading.overrange, do: 1, else: 0),
+                    underranges: s.underranges + if(reading.underrange, do: 1, else: 0),
+                    invalids: s.invalids + if(reading.invalid, do: 1, else: 0),
+                    outliers: s.outliers + if(is_outlier, do: 1, else: 0),
+                    stale_runs: stale_runs,
+                    stale_streak: stale_streak,
+                    toggle_transitions: toggle_transitions,
+                    last_toggle: reading.toggle
+                }
             }
 
           :timeout ->
@@ -322,6 +255,7 @@ end
       # Periodic report
       now2 = System.monotonic_time(:millisecond)
       elapsed_s = div(duration_s * 1_000 - (deadline - now2), 1_000) |> max(0)
+
       {new_st2, new_nra} =
         if now2 >= nra do
           print_report.(new_st, "t=#{elapsed_s}s / #{duration_s}s")

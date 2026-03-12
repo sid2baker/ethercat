@@ -1,7 +1,7 @@
 # Scan the EtherCAT bus: count slaves, assign stations, read SII identity.
 #
 # Usage:
-#   mix run examples/scan.exs --interface enp0s31f6
+#   MIX_ENV=test mix run test/integration/hardware/scripts/scan.exs --interface enp0s31f6
 
 alias EtherCAT.Bus
 alias EtherCAT.Bus.Transaction
