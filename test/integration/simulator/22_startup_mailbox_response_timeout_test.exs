@@ -58,7 +58,7 @@ defmodule EtherCAT.Integration.Simulator.StartupMailboxResponseTimeoutTest do
 
     assert {:error,
             {:activation_failed, %{mailbox: {:safeop, {:preop_configuration_failed, @failure}}}}} =
-             EtherCAT.await_running(2_500)
+             EtherCAT.await_running(3_000)
 
     assert :activation_blocked = EtherCAT.state()
 

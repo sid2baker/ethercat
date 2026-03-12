@@ -97,6 +97,24 @@ defmodule EtherCAT.Integration.Expect do
     end
   end
 
+  @spec trace_note(Trace.t(), String.t(), keyword()) :: :ok
+  def trace_note(%Trace{} = trace, label, opts \\ []) when is_binary(label) do
+    metadata = Keyword.get(opts, :metadata, %{})
+
+    case Enum.find(Trace.snapshot(trace), &trace_note_match?(&1, label, metadata)) do
+      nil ->
+        flunk("""
+        expected trace to contain note #{inspect(label)}
+        metadata: #{inspect(Map.new(metadata))}
+
+        #{Trace.format(trace)}
+        """)
+
+      _entry ->
+        :ok
+    end
+  end
+
   defp eventually_attempt(fun, 0, trace, label) do
     fun.()
   rescue
@@ -162,6 +180,17 @@ defmodule EtherCAT.Integration.Expect do
   end
 
   defp trace_event_match?(_entry, _event_name, _measurements, _metadata), do: false
+
+  defp trace_note_match?(
+         %{kind: :note, label: actual_label, metadata: actual_metadata},
+         label,
+         metadata
+       )
+       when actual_label == label do
+    map_matches?(actual_metadata, metadata)
+  end
+
+  defp trace_note_match?(_entry, _label, _metadata), do: false
 
   defp map_matches?(actual, expectations) do
     Enum.all?(Map.new(expectations), fn {key, expected} ->

@@ -35,8 +35,8 @@ state.
 Observed with:
 
 1. a scripted reconnect mailbox timeout via `Fault.script/1`
-2. an explicit later `Fault.retreat_to_safeop(:outputs)` after the mailbox
-   fault is already retained
+2. a telemetry-armed follow-up `Fault.retreat_to_safeop(:outputs)` triggered
+   from the mailbox slave-fault transition event
 
 The runtime currently behaves as intended:
 
@@ -50,10 +50,10 @@ The runtime currently behaves as intended:
 ## Test Shape
 
 1. boot the segmented mailbox ring in `:op`
-2. inject a reconnect PREOP mailbox fault script
-3. wait until the mailbox fault is retained
-4. inject `Fault.retreat_to_safeop(:outputs)` while the mailbox fault is still
-   present
+2. arm `Fault.retreat_to_safeop(:outputs)` on the mailbox slave-fault
+   transition event
+3. inject a reconnect PREOP mailbox fault script
+4. assert the mailbox fault event triggered the follow-up `SAFEOP` retreat
 5. assert both slave faults coexist while the master stays `:operational`
 6. assert both faults later clear and both slaves return to `:op`
 7. assert the trace captured both fault lifecycles independently

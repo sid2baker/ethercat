@@ -97,6 +97,13 @@ defmodule EtherCAT.SimulatorTest do
            ) ==
              "mailbox abort 0x08000000 on mailbox for 0x2003:0x01 during upload_segment"
 
+    assert Fault.describe(
+             Fault.retreat_to_safeop(:outputs)
+             |> Fault.after_ms(250)
+             |> Fault.after_milestone(Fault.healthy_exchanges(2))
+           ) ==
+             "after 2 healthy exchanges after 250ms retreat outputs to SAFEOP"
+
     assert UdpFault.describe(UdpFault.truncate() |> UdpFault.next(2)) ==
              "next 2 UDP replies truncate"
   end
@@ -234,5 +241,59 @@ defmodule EtherCAT.SimulatorTest do
              Simulator.info()
 
     assert {:ok, %{scheduled_faults: []}} = Simulator.info()
+  end
+
+  test "nested milestone and timer scheduling is preserved until the final fault fires" do
+    device = SimSlave.from_driver(EK1100, name: :coupler)
+
+    assert {:ok, _pid} = Simulator.start_link(devices: [device])
+
+    nested_fault =
+      Fault.retreat_to_safeop(:coupler)
+      |> Fault.after_ms(20)
+      |> Fault.after_milestone(Fault.healthy_exchanges(2))
+
+    assert :ok = Simulator.inject_fault(nested_fault)
+
+    assert {:ok,
+            %{
+              scheduled_faults: [
+                %{
+                  fault: {:after_ms, 20, {:retreat_to_safeop, :coupler}},
+                  waiting_on: {:healthy_exchanges, 2},
+                  remaining: 2
+                }
+              ]
+            }} = Simulator.info()
+
+    datagram = %Datagram{
+      cmd: 1,
+      idx: 1,
+      address: <<0::little-signed-16, 0x0010::little-unsigned-16>>,
+      data: <<0, 0>>
+    }
+
+    assert {:ok, [%Datagram{wkc: 1}]} = Simulator.process_datagrams([datagram])
+
+    assert {:ok,
+            %{
+              scheduled_faults: [
+                %{
+                  fault: {:after_ms, 20, {:retreat_to_safeop, :coupler}},
+                  waiting_on: {:healthy_exchanges, 2},
+                  remaining: 1
+                }
+              ]
+            }} = Simulator.info()
+
+    assert {:ok, [%Datagram{wkc: 1}]} = Simulator.process_datagrams([datagram])
+
+    assert {:ok, %{scheduled_faults: [%{fault: {:retreat_to_safeop, :coupler}}]}} =
+             Simulator.info()
+
+    Process.sleep(40)
+
+    assert {:ok, %{scheduled_faults: []}} = Simulator.info()
+    assert {:ok, %{state: :safeop}} = Simulator.device_snapshot(:coupler)
   end
 end

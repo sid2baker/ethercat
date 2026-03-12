@@ -34,21 +34,32 @@ defmodule EtherCAT.Integration.Simulator.ReconnectPreopMailboxAndSafeopMixTest d
 
     Scenario.new()
     |> Scenario.trace()
+    |> Scenario.inject_fault_on_event(
+      [:ethercat, :master, :slave_fault, :changed],
+      Fault.retreat_to_safeop(:outputs),
+      metadata: [slave: :mailbox, to: {:preop, {:preop_configuration_failed, @mailbox_failure}}]
+    )
     |> Scenario.inject_fault(Fault.script(fault_script))
     |> Scenario.expect_eventually(
-      "mailbox reconnect PREOP rebuild retains the scripted timeout",
-      fn _ctx ->
-        Expect.master_state(:operational)
-        Expect.domain(:main, cycle_health: :healthy)
-        Expect.slave_fault(:mailbox, {:preop, {:preop_configuration_failed, @mailbox_failure}})
-        Expect.slave(:mailbox, al_state: :preop, configuration_error: @mailbox_failure)
-        Expect.simulator_queue_empty()
+      "mailbox fault retention arms the telemetry-triggered SAFEOP retreat",
+      fn %{trace: trace} ->
+        Expect.trace_event(trace, [:ethercat, :master, :slave_fault, :changed],
+          metadata: [
+            slave: :mailbox,
+            to: {:preop, {:preop_configuration_failed, @mailbox_failure}}
+          ]
+        )
+
+        Expect.trace_note(trace, "telemetry trigger matched",
+          metadata: [fault: "retreat outputs to SAFEOP"]
+        )
+
+        Expect.trace_note(trace, "telemetry-triggered fault injected",
+          metadata: [fault: "retreat outputs to SAFEOP"]
+        )
       end,
       attempts: 220
     )
-    |> Scenario.act("retreat outputs to SAFEOP while mailbox remains degraded", fn _ctx ->
-      assert :ok = EtherCAT.Simulator.inject_fault(Fault.retreat_to_safeop(:outputs))
-    end)
     |> Scenario.expect_eventually(
       "both slave-local faults coexist while the master remains operational",
       fn _ctx ->
@@ -76,6 +87,14 @@ defmodule EtherCAT.Integration.Simulator.ReconnectPreopMailboxAndSafeopMixTest d
       attempts: 360
     )
     |> Scenario.act("trace captured both slave fault lifecycles independently", fn %{trace: trace} ->
+      Expect.trace_note(trace, "telemetry trigger matched",
+        metadata: [fault: "retreat outputs to SAFEOP"]
+      )
+
+      Expect.trace_note(trace, "telemetry-triggered fault injected",
+        metadata: [fault: "retreat outputs to SAFEOP"]
+      )
+
       Expect.trace_event(trace, [:ethercat, :master, :slave_fault, :changed],
         metadata: [
           slave: :mailbox,

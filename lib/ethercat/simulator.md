@@ -173,6 +173,11 @@ That split is deliberate. Exchange-scoped wrappers model transport/runtime fault
 windows, while delayed scheduling lets tests combine them with later slave-local
 state changes without relying on brittle sleeps alone.
 
+Master-observed runtime events like `:recovering` entry and retained slave
+faults are intentionally not simulator milestones. Those belong in the
+integration helper layer, where telemetry-driven scenario triggers can model
+them without pushing master semantics into simulator core.
+
 Typical queued runtime examples:
 
 ```elixir

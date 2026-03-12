@@ -61,6 +61,8 @@ letting the loop invent arbitrary refactors.
 - `29`: reconnect-time PREOP fault script that retains different mailbox failures on successive retries before eventual recovery
 - `30`: reconnect-time PREOP mailbox degradation plus a later slave-local `SAFEOP` retreat during the same operational window
 - `31`: reconnect-time PREOP mailbox degradation plus a later counted PDO-slave disconnect that forces a temporary master `:recovering` interval
+- `32`: telemetry-triggered follow-up `SAFEOP` retreat armed on master recovery entry without an imperative mid-scenario injection
+- `33`: PDO-participating slave disconnect whose reconnect-time PREOP mailbox failure must replace the stale critical disconnect fault so recovery can later finish cleanly
 
 These are the current regression scenarios, not just backlog items. Each one
 should keep its `.md` note and matching `_test.exs` file aligned.
@@ -75,6 +77,8 @@ For datagram/runtime faults, prefer the builder surface on
 - `EtherCAT.Simulator.inject_fault(Fault.script([step, ...]))`
 - `EtherCAT.Simulator.inject_fault(Fault.after_ms(fault, delay_ms))`
 - `EtherCAT.Simulator.inject_fault(Fault.after_milestone(fault, milestone))`
+- nested scheduling such as
+  `Fault.disconnect(:outputs) |> Fault.next(30) |> Fault.after_ms(250) |> Fault.after_milestone(milestone)`
 
 Current exchange-scoped faults:
 
@@ -148,6 +152,7 @@ Prefer the new test helpers for new scenarios:
   - `Expect.slave_fault/2`
   - `Expect.signal/3`
   - `Expect.trace_event/3`
+  - `Expect.trace_note/3`
   - `Expect.simulator_queue_empty/0`
 - `EtherCAT.Integration.Trace`
   - telemetry-backed timeline capture for failure diagnostics
@@ -156,12 +161,20 @@ Prefer the new test helpers for new scenarios:
 - `EtherCAT.Integration.Scenario`
   - optional multi-phase runner for longer recovery cases
   - keep `ctx` for scenario-owned assigns only; prefer `Expect` for live queries
+  - `Scenario.inject_fault_on_event/4` arms telemetry-triggered follow-up faults
+    without pushing master-observed milestones into simulator core
 
 ## Next Directions
 
-The next useful scenarios after the mixed mailbox-plus-disconnect case are:
+The next useful scenarios after the critical PDO reconnect PREOP self-heal case are:
 
-- a fully scripted variant of the mixed reconnect case, where the later slave-local or disconnect fault is driven from simulator scheduling rather than a separate scenario step
+- the reconnect PREOP counted-disconnect mix case, rewritten so the later
+  disconnect is armed by the retained mailbox fault transition through
+  `Scenario.inject_fault_on_event/4` instead of a separate `Scenario.act/3`
+- a longer chained helper-only case where a retained mailbox fault arms the
+  counted disconnect, and the resulting master `:recovering` entry then arms a
+  follow-up `SAFEOP` retreat, proving these telemetry triggers compose without
+  promoting master-observed events into simulator milestones
 
 ## Current Rule Of Thumb
 

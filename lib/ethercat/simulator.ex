@@ -95,10 +95,12 @@ defmodule EtherCAT.Simulator do
           | {:fault_script, [fault_script_step(), ...]}
           | slave_fault()
 
-  @type fault ::
+  @type schedulable_fault ::
           immediate_fault()
-          | {:after_ms, non_neg_integer(), immediate_fault()}
-          | {:after_milestone, milestone(), immediate_fault()}
+          | {:after_ms, non_neg_integer(), schedulable_fault()}
+          | {:after_milestone, milestone(), schedulable_fault()}
+
+  @type fault :: schedulable_fault()
 
   @type signal_ref :: {atom(), atom()}
   @type connection :: %{
@@ -476,7 +478,7 @@ defmodule EtherCAT.Simulator do
       {:ok, _entry, scheduled_faults} ->
         state = %{state | scheduled_faults: scheduled_faults}
 
-        case apply_immediate_fault(state, fault) do
+        case inject_fault_into_state(state, fault) do
           {:ok, state} -> {:noreply, state}
           {:error, _reason} -> {:noreply, state}
         end
@@ -804,6 +806,15 @@ defmodule EtherCAT.Simulator do
     valid_exchange_fault?(fault)
   end
 
+  defp valid_schedulable_fault?({:after_ms, delay_ms, fault})
+       when is_integer(delay_ms) and delay_ms >= 0 do
+    valid_schedulable_fault?(fault)
+  end
+
+  defp valid_schedulable_fault?({:after_milestone, milestone, fault}) do
+    Milestones.valid?(milestone) and valid_schedulable_fault?(fault)
+  end
+
   defp valid_schedulable_fault?({:fault_script, steps}) when is_list(steps) do
     valid_fault_script_steps?(steps)
   end
@@ -845,7 +856,7 @@ defmodule EtherCAT.Simulator do
 
     Enum.reduce(ready_actions, %{state | scheduled_faults: scheduled_faults}, fn
       {:fault, fault}, current_state ->
-        case apply_immediate_fault(current_state, fault) do
+        case inject_fault_into_state(current_state, fault) do
           {:ok, next_state} -> next_state
           {:error, _reason} -> current_state
         end

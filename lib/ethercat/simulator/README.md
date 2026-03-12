@@ -96,6 +96,10 @@ Sequential fault scripts can also pause on:
 - `Fault.wait_for(Fault.healthy_polls(slave_name, count))`
 - `Fault.wait_for(Fault.mailbox_step(slave_name, step, count))`
 
+Master-observed runtime events like `:recovering` entry or a retained slave
+fault stay in the integration helper layer. They are better modeled through
+telemetry-triggered test helpers than as simulator-core milestones.
+
 Mailbox-local response faults now include:
 
 - `{:mailbox_abort, slave_name, index, subindex, abort_code}`
@@ -389,6 +393,11 @@ now covers:
   `SAFEOP` retreat during the same operational window
 - `31` reconnect-time mailbox PREOP degradation plus a later counted PDO
   disconnect that forces a temporary master recovery interval
+- `32` telemetry-triggered follow-up `SAFEOP` retreat armed on master recovery
+  entry without an imperative mid-scenario injection
+- `33` PDO-participating slave disconnect whose reconnect-time PREOP mailbox
+  failure must replace the stale critical disconnect fault so recovery can
+  later finish cleanly
 
 ## Widget-Facing Signal API
 
