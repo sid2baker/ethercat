@@ -29,6 +29,11 @@ defmodule EtherCAT.Slave.API do
     safe_call(slave_name, {:configure, opts})
   end
 
+  @spec retry_preop_configuration(atom()) :: :ok | {:error, term()}
+  def retry_preop_configuration(slave_name) do
+    safe_call(slave_name, :retry_preop_configuration)
+  end
+
   @spec state(atom()) :: atom() | {:error, :not_found | :timeout}
   def state(slave_name), do: safe_call(slave_name, :state)
 

@@ -316,6 +316,9 @@ defmodule EtherCAT.Master.Recovery do
         {{:slave, name}, {:retreated, _target_state}}, acc ->
           retry_runtime_slave_request(acc, name, target)
 
+        {{:slave, name}, {:preop, {:preop_configuration_failed, _reason}}}, acc ->
+          retry_runtime_slave_preop_configuration(acc, name, target)
+
         {{:slave, name}, {:preop, reason}}, acc ->
           if retryable_runtime_slave_fault?(reason) do
             retry_runtime_slave_request(acc, name, target)
@@ -339,6 +342,9 @@ defmodule EtherCAT.Master.Recovery do
         {name, {:retreated, _target_state}}, acc ->
           retry_slave_request(acc, name, target)
 
+        {name, {:preop, {:preop_configuration_failed, _reason}}}, acc ->
+          retry_slave_preop_configuration(acc, name, target)
+
         {name, {:preop, reason}}, acc ->
           if retryable_runtime_slave_fault?(reason) do
             retry_slave_request(acc, name, target)
@@ -360,6 +366,7 @@ defmodule EtherCAT.Master.Recovery do
   def retryable_slave_faults?(%{slave_faults: slave_faults}) do
     Enum.any?(slave_faults, fn
       {_name, {:retreated, _target_state}} -> true
+      {_name, {:preop, {:preop_configuration_failed, _reason}}} -> true
       {_name, {:preop, reason}} -> retryable_runtime_slave_fault?(reason)
       {_name, {:reconnect_failed, _reason}} -> true
       _other -> false
@@ -391,6 +398,34 @@ defmodule EtherCAT.Master.Recovery do
         )
 
         Map.put(slave_faults, name, {:preop, reason})
+    end
+  end
+
+  defp retry_runtime_slave_preop_configuration(runtime_faults, name, target) do
+    case SlaveAPI.retry_preop_configuration(name) do
+      :ok ->
+        maybe_finish_runtime_preop_retry(runtime_faults, name, target)
+
+      {:error, reason} ->
+        Logger.warning(
+          "[Master] recovery retry: #{inspect(name)} PREOP configuration still failing: #{inspect(reason)}"
+        )
+
+        Map.put(runtime_faults, {:slave, name}, {:preop, {:preop_configuration_failed, reason}})
+    end
+  end
+
+  defp retry_slave_preop_configuration(slave_faults, name, target) do
+    case SlaveAPI.retry_preop_configuration(name) do
+      :ok ->
+        maybe_finish_slave_preop_retry(slave_faults, name, target)
+
+      {:error, reason} ->
+        Logger.warning(
+          "[Master] slave retry: #{inspect(name)} PREOP configuration still failing: #{inspect(reason)}"
+        )
+
+        Map.put(slave_faults, name, {:preop, {:preop_configuration_failed, reason}})
     end
   end
 
@@ -468,6 +503,22 @@ defmodule EtherCAT.Master.Recovery do
     data
     |> clear_slave_fault(name)
     |> clear_runtime_fault({:slave, name})
+  end
+
+  defp maybe_finish_runtime_preop_retry(runtime_faults, name, :preop) do
+    Map.delete(runtime_faults, {:slave, name})
+  end
+
+  defp maybe_finish_runtime_preop_retry(runtime_faults, name, target) do
+    retry_runtime_slave_request(runtime_faults, name, target)
+  end
+
+  defp maybe_finish_slave_preop_retry(slave_faults, name, :preop) do
+    Map.delete(slave_faults, name)
+  end
+
+  defp maybe_finish_slave_preop_retry(slave_faults, name, target) do
+    retry_slave_request(slave_faults, name, target)
   end
 
   defp transition_request_target(data), do: Status.desired_runtime_target(data)

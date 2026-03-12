@@ -205,6 +205,13 @@ EtherCAT.Simulator.inject_fault(
     Fault.retreat_to_safeop(:outputs)
   ])
 )
+
+EtherCAT.Simulator.inject_fault(
+  Fault.script(
+    List.duplicate(Fault.disconnect(:mailbox), 30) ++
+      [Fault.mailbox_abort(:mailbox, 0x2000, 0x02, 0x0601_0002)]
+  )
+)
 ```
 
 Transport-edge reply corruption is intentionally separate from those runtime

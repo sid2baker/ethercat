@@ -19,6 +19,18 @@ defmodule EtherCAT.Slave.Runtime.Configuration do
   # A PREOP slave without registered signals can still run the full PREOP setup.
   def maybe_reconfigure_preop(data, opts), do: reconfigure_unregistered_preop(data, opts)
 
+  @spec retry_failed_preop(%Slave{}) :: {:ok, %Slave{}} | {:error, term(), %Slave{}}
+  def retry_failed_preop(%{configuration_error: nil} = data), do: {:ok, data}
+
+  def retry_failed_preop(data) do
+    configured = configure_preop_process_data(data)
+
+    case configured.configuration_error do
+      nil -> {:ok, configured}
+      reason -> {:error, reason, configured}
+    end
+  end
+
   @doc false
   @spec post_transition(atom(), %Slave{}) ::
           {:ok, %Slave{}} | {:error, term(), %Slave{}}

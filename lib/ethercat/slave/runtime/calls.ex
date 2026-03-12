@@ -97,6 +97,24 @@ defmodule EtherCAT.Slave.Runtime.Calls do
     {:keep_state_and_data, [{:reply, from, {:error, :not_preop}}]}
   end
 
+  def handle(from, :retry_preop_configuration, :preop, %{configuration_error: nil}, _handler_opts) do
+    {:keep_state_and_data, [{:reply, from, :ok}]}
+  end
+
+  def handle(from, :retry_preop_configuration, :preop, data, _handler_opts) do
+    case Configuration.retry_failed_preop(data) do
+      {:ok, new_data} ->
+        {:keep_state, new_data, [{:reply, from, :ok}]}
+
+      {:error, reason, new_data} ->
+        {:keep_state, new_data, [{:reply, from, {:error, reason}}]}
+    end
+  end
+
+  def handle(from, :retry_preop_configuration, _state, _data, _handler_opts) do
+    {:keep_state_and_data, [{:reply, from, {:error, :not_preop}}]}
+  end
+
   def handle(from, {:subscribe, signal_name, pid}, _state, data, _opts) do
     {:keep_state, Signals.subscribe_pid(data, signal_name, pid), [{:reply, from, :ok}]}
   end

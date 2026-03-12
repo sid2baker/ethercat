@@ -53,6 +53,7 @@ letting the loop invent arbitrary refactors.
 - `21`: startup segmented-download acknowledgement faults during PREOP configuration
 - `22`: startup mailbox response timeouts during PREOP configuration
 - `23`: public mailbox response timeouts during segmented SDO upload/download
+- `24`: reconnect-time mailbox abort during PREOP rebuild without full-session restart
 
 These are the current regression scenarios, not just backlog items. Each one
 should keep its `.md` note and matching `_test.exs` file aligned.
@@ -124,10 +125,10 @@ Current mailbox protocol fault kinds:
 
 ## Next Directions
 
-The next useful scenarios are the narrower ones the existing notes still call
-out:
+The next useful scenarios are the narrower ones beyond the new reconnect abort
+coverage:
 
-- mailbox aborts during PREOP retry paths, not just direct public SDO calls
+- reconnect-time mailbox response timeouts during PREOP rebuild, not just deterministic aborts
 
 ## Current Rule Of Thumb
 

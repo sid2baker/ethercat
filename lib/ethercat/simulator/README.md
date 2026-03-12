@@ -368,6 +368,7 @@ now covers:
 - `21` startup segmented-download acknowledgement faults during PREOP configuration
 - `22` startup mailbox response timeouts during PREOP configuration
 - `23` public mailbox response timeouts during segmented SDO upload/download
+- `24` reconnect-time mailbox abort during PREOP rebuild without full-session restart
 
 ## Widget-Facing Signal API
 
