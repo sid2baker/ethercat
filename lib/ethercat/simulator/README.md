@@ -402,6 +402,9 @@ now covers:
 - `33` PDO-participating slave disconnect whose reconnect-time PREOP mailbox
   failure must replace the stale critical disconnect fault so recovery can
   later finish cleanly
+- `34` retained reconnect PREOP mailbox failure that arms a later counted PDO
+  disconnect through `Scenario.inject_fault_on_event/4` instead of a separate
+  imperative test step
 
 ## Widget-Facing Signal API
 

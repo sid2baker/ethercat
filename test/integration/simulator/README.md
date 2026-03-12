@@ -63,6 +63,7 @@ letting the loop invent arbitrary refactors.
 - `31`: reconnect-time PREOP mailbox degradation plus a later counted PDO-slave disconnect that forces a temporary master `:recovering` interval
 - `32`: telemetry-triggered follow-up `SAFEOP` retreat armed on master recovery entry without an imperative mid-scenario injection
 - `33`: PDO-participating slave disconnect whose reconnect-time PREOP mailbox failure must replace the stale critical disconnect fault so recovery can later finish cleanly
+- `34`: retained reconnect PREOP mailbox failure that arms a later counted PDO disconnect through `Scenario.inject_fault_on_event/4` instead of an imperative mid-scenario action
 
 These are the current regression scenarios, not just backlog items. Each one
 should keep its `.md` note and matching `_test.exs` file aligned.
@@ -211,11 +212,8 @@ Prefer the new test helpers for new scenarios:
 
 ## Next Directions
 
-The next useful scenarios after the critical PDO reconnect PREOP self-heal case are:
+The next useful scenario after the event-triggered counted-disconnect mix case is:
 
-- the reconnect PREOP counted-disconnect mix case, rewritten so the later
-  disconnect is armed by the retained mailbox fault transition through
-  `Scenario.inject_fault_on_event/4` instead of a separate `Scenario.act/3`
 - a longer chained helper-only case where a retained mailbox fault arms the
   counted disconnect, and the resulting master `:recovering` entry then arms a
   follow-up `SAFEOP` retreat, proving these telemetry triggers compose without
