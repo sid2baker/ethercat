@@ -1,18 +1,18 @@
 Distributed Clocks — clock initialization and runtime maintenance.
 
-`EtherCAT.DC` is intentionally the runtime `gen_statem` state-machine module for network-wide
-Distributed Clocks maintenance. One-time clock initialization, public API
-wrappers, and runtime tick mechanics live in `EtherCAT.DC.*` helpers so the
-main module can be inspected as the DC runtime state machine.
+`EtherCAT.DC` is intentionally the runtime `gen_statem` state-machine module
+for network-wide Distributed Clocks maintenance. One-time clock
+initialization, public API wrappers, and runtime tick mechanics live in
+internal DC helpers so the main module can be inspected as the DC runtime
+state machine.
 
 ## State-Machine Boundary
 
 `EtherCAT.DC` has one actual `gen_statem` state: `:running`. It owns the DC
 runtime tick loop and the replies that expose current runtime status.
 
-Initialization, tick mechanics, and status projection live in helpers such as
-`EtherCAT.DC.Init`, `EtherCAT.DC.Runtime`, `EtherCAT.DC.State`, and
-`EtherCAT.DC.API`.
+Initialization, tick mechanics, and status projection live in internal DC
+helpers and `EtherCAT.DC.API`.
 
 ## Initialization
 

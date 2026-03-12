@@ -13,50 +13,61 @@ For the full implementation guide and the SOES-derived simulator notes, see:
 - `lib/ethercat/simulator/README.md`
 - `lib/ethercat/simulator/slave/reference/slave_spec/README.md`
 
+## What This Is Not
+
+This is not a raw-wire EtherCAT slave NIC or ESC implementation.
+
+The pure-Elixir slave runtime here is for the EtherCAT-over-UDP path
+(`EtherCAT.Bus.Transport.UdpSocket`). The master still runs its normal code,
+but the slave side is just `EtherCAT.Simulator.Udp`: a normal UDP server that
+decodes EtherCAT datagrams, executes them against in-memory slaves, and encodes
+the reply.
+
+If you need raw EtherType `0x88A4` traffic on real Ethernet, you still need
+real hardware and the raw-socket transport path.
+
 ## Purpose
 
-The simulator exists for:
+The simulator exists for deep integration tests, local virtual hardware during
+development, and higher-level tooling such as a future simulator widget in
+`kino_ethercat`.
 
-- deep integration tests without physical hardware
-- local virtual hardware during development
-- higher-level tooling such as a future simulator widget in `kino_ethercat`
+Real hardware is not required for most tests because the code under test is
+still the real master, bus, link handling, and UDP transport. What gets
+virtualized is the slave segment. That is exactly where determinism helps:
+disconnects, bad WKCs, mailbox faults, retries, and recovery timing are easier
+to reproduce and assert in the simulator than on a physical bench.
 
-The intended runtime path stays realistic:
-
-- real `EtherCAT.start/1`
-- real `EtherCAT.Bus`
-- real single-port bus link handling
-- real `EtherCAT.Bus.Transport.UdpSocket`
-- simulated slaves behind a real UDP endpoint
+Hardware runs still matter, but mainly as a complement: smoke validation on a
+real ring, capture generation, and simulator-drift checks.
 
 ## Runtime Flow
 
-The simplified exchange path looks like this:
+The exchange path is intentionally simple when the master is configured for UDP
+transport:
 
 ```mermaid
 flowchart TD
-  A[Real master sends EtherCAT UDP frame] --> B[Simulator.Udp receives frame]
-  B --> C[Decode UDP payload into EtherCAT datagrams]
-  C --> D[EtherCAT.Simulator checks queued faults]
-
-  D --> E{Drop response fault active?}
-  E -- Yes --> F[Return no reply]
-  F --> G[Master sees timeout]
-
-  E -- No --> H[Router processes datagrams]
-  H --> I[Walk datagrams across in-memory simulated slave structs]
-  I --> J[Each slave updates its ESC memory and behavior state]
-  J --> K[Handle register effects: AL state, mailbox, PDO image, DC]
-  K --> L[Build response datagrams and WKC]
-  L --> M[Settle signal wiring and notify subscribers]
-  M --> N[Encode reply frame]
-
-  N --> O{UDP reply fault active?}
-  O -- Yes --> P[Corrupt reply at UDP edge]
-  O -- No --> Q[Send normal reply]
-  P --> Q
-  Q --> R[Master receives simulated slave response]
+  A[Master uses transport :udp] --> B[Bus.Transport.UdpSocket sends UDP payload]
+  B --> C[Simulator.Udp receives UDP payload]
+  C --> D[Frame.decode converts payload into EtherCAT datagrams]
+  D --> E[EtherCAT.Simulator executes datagrams against in-memory slaves]
+  E --> F[Simulated slaves update ESC state, AL state, mailbox, and PDO images]
+  F --> G[Simulator builds reply datagrams and WKC]
+  G --> H[Frame.encode builds UDP reply payload]
+  H --> I{Reply fault armed}
+  I -- Drop --> J[No reply sent]
+  J --> K[Master sees timeout]
+  I -- Corrupt or replay --> L[Faulted UDP reply sent]
+  I -- No --> M[Normal UDP reply sent]
+  L --> N[Master receives UDP reply and continues processing]
+  M --> N
 ```
+
+This is just a UDP request/response loop. The important boundary is that only
+the master-side EtherCAT logic is "real" here. On the simulator side,
+`EtherCAT.Simulator.Udp` is a normal UDP server that speaks EtherCAT datagrams
+inside the UDP payload; it is not a raw EtherCAT slave NIC.
 
 ## State-Machine Boundary
 
@@ -274,6 +285,8 @@ faults.
 `EtherCAT.Simulator` itself is transport-agnostic.
 
 - `EtherCAT.Simulator.Udp` exposes it over a real UDP socket.
+- that UDP socket is the simulator's only network boundary; there is no virtual
+  slave ESC or special EtherCAT NIC behind it
 - `EtherCAT.Simulator.Udp.inject_fault/1` can corrupt the next UDP reply, a
   counted reply window, or a scripted sequence of replies for integration
   coverage of bus decode and reply-matching paths.

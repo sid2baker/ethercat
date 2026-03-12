@@ -1,7 +1,7 @@
 defmodule EtherCAT.MixProject do
   use Mix.Project
 
-  @version "0.4.0-dev"
+  @version "0.3.1"
   @source_url "https://github.com/sid2baker/ethercat"
 
   def project do
@@ -10,11 +10,13 @@ defmodule EtherCAT.MixProject do
       version: @version,
       elixir: "~> 1.19",
       elixirc_paths: elixirc_paths(Mix.env()),
+      test_ignore_filters: [~r|^test/integration/hardware/scripts/|],
       start_permanent: Mix.env() == :prod,
       description: description(),
       package: package(),
       deps: deps(),
       docs: docs(),
+      aliases: aliases(),
       usage_rules: usage_rules(),
       source_url: @source_url
     ]
@@ -57,6 +59,12 @@ defmodule EtherCAT.MixProject do
       source_url: @source_url,
       extras: ["README.md", "CHANGELOG.md"],
       before_closing_head_tag: &before_closing_head_tag/1
+    ]
+  end
+
+  defp aliases do
+    [
+      "docs.fresh": ["compile --force", "docs"]
     ]
   end
 

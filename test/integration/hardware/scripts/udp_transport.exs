@@ -16,9 +16,9 @@
 #      count responding slaves, compared against BRD wkc.
 #
 # Usage:
-#   MIX_ENV=test mix run test/integration/hardware/scripts/udp_test.exs --interface eth0
-#   MIX_ENV=test mix run test/integration/hardware/scripts/udp_test.exs --interface eth0 --host 192.168.1.1
-#   MIX_ENV=test mix run test/integration/hardware/scripts/udp_test.exs --interface eth0 --count 200
+#   MIX_ENV=test mix run test/integration/hardware/scripts/udp_transport.exs --interface eth0
+#   MIX_ENV=test mix run test/integration/hardware/scripts/udp_transport.exs --interface eth0 --host 192.168.1.1
+#   MIX_ENV=test mix run test/integration/hardware/scripts/udp_transport.exs --interface eth0 --count 200
 #
 # Flags:
 #   --interface NIC  bind socket to this interface (required for correct NIC selection)

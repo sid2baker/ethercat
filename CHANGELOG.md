@@ -7,8 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-03-12
+
+### Added
+- `mix docs.fresh` now forces recompilation before docs generation so external moduledoc source files are picked up reliably
+- `EtherCAT.Capture` now supports an interactive slave capture workflow and can generate richer integration support drivers from captured SDO and PDO data
+- Real-hardware scripts and helpers now live under `test/integration/hardware/`, alongside shared hardware support and a captured EL3202 support driver
+
+### Changed
+- Generated capture drivers now include mailbox startup configuration and device-specific templates such as the EL3202 typed decode path when captured data is available
+- Simulator scenario helpers now support deterministic event-triggered follow-up faults, and simulator docs now explain fixture tiers, real-vs-virtual hardware use, and the UDP transport boundary more directly
+- Hardware examples were folded into the maintained integration suite so the old `examples/` tree could be removed
+
 ### Fixed
 - Master recovery now replaces stale critical disconnect faults with reconnect-time PREOP configuration failures for PDO-participating slaves, allowing later recovery retries to return the master to `:operational`
+- Telemetry-triggered scenario faults now inject synchronously, which makes event-driven simulator scenarios deterministic instead of eventually consistent
+- Generated docs no longer warn about public moduledocs referencing hidden internal helper modules
+
+### Docs
+- Simulator moduledocs and README now explain that the UDP simulator is a virtual slave segment for testing, not a raw-wire EtherCAT NIC replacement
+- Root project guidance now points hardware-script users at `MIX_ENV=test`, and markdown guidance drift around release/dev docs was cleaned up
 
 ## [0.3.0] - 2026-03-12
 

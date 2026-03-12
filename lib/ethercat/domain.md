@@ -3,10 +3,10 @@ Cyclic process image for one logical EtherCAT domain.
 One Domain runs per configured domain ID. Slaves register their PDOs during
 PREOP, then the domain runs a self-timed LRW exchange each cycle.
 
-`EtherCAT.Domain` is intentionally the `gen_statem` state-machine module for the domain
-lifecycle. Direct ETS access and low-level control calls live in
-`EtherCAT.Domain.API`, while cycle execution and image handling live in
-`EtherCAT.Domain.*` helpers.
+`EtherCAT.Domain` is intentionally the `gen_statem` state-machine module for
+the domain lifecycle. Direct ETS access and low-level control calls live in
+`EtherCAT.Domain.API`, while cycle execution, image handling, and telemetry
+assembly live in internal domain helpers.
 
 ## State-Machine Boundary
 
@@ -14,8 +14,7 @@ lifecycle. Direct ETS access and low-level control calls live in
 open, cycling, and stopped. The state-machine module should not inline cycle execution,
 process-image reads/writes, or telemetry assembly.
 
-Those mechanics live in `EtherCAT.Domain.Cycle`, `EtherCAT.Domain.Image`,
-`EtherCAT.Domain.Calls`, and `EtherCAT.Domain.Status`. `EtherCAT.Domain.API`
+Those mechanics live in internal domain helpers. `EtherCAT.Domain.API`
 provides the direct ETS-backed low-level facade.
 
 ## States

@@ -51,7 +51,7 @@ than the public API.
 | `diag.exs` | Socket diagnostic: system info, passive sniff, BRD round-trip, multi-frame burst |
 | `scan.exs` | Scan the bus, assign station addresses, read SII identity for every slave |
 | `bench.exs` | Link-layer latency benchmark — sends N BRD frames and reports RTT statistics |
-| `udp_test.exs` | UDP/IP transport test (EtherCAT spec §2.6) |
+| `udp_transport.exs` | UDP/IP transport test (EtherCAT spec §2.6) |
 | `sdo_debug.exs` | Mailbox / SDO diagnostic for the EL3202 CoE slave |
 
 ### Hardware validation (loopback ring)
