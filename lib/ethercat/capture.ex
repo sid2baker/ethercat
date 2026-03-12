@@ -8,6 +8,7 @@ defmodule EtherCAT.Capture do
   - capture static slave identity and SII layout from a live device
   - optionally snapshot specific SDO entries
   - write a readable capture file
+  - generate a best-effort real driver scaffold for integration tests
   - generate a simulator companion scaffold from that capture
 
   The generated scaffold preserves static structure only. It does not infer
@@ -22,6 +23,12 @@ defmodule EtherCAT.Capture do
 
       {:ok, capture_path} =
         EtherCAT.Capture.write_capture(:slave_1, sdos: [{0x1008, 0x00}])
+
+      {:ok, %{driver_path: driver_path}} =
+        EtherCAT.Capture.gen_driver(
+          :slave_1,
+          module: EtherCAT.IntegrationSupport.Drivers.EL1809
+        )
 
       {:ok, %{module_path: module_path}} =
         EtherCAT.Capture.gen_simulator(
@@ -51,13 +58,9 @@ defmodule EtherCAT.Capture do
   @spec help() :: :ok
   def help do
     IO.puts("""
-    EtherCAT.Capture helper commands:
+    EtherCAT.Capture recommended command:
 
-      EtherCAT.Capture.list_slaves()
-      EtherCAT.Capture.capture(:slave_1)
-      EtherCAT.Capture.capture(:slave_1, sdos: [{0x1008, 0x00}])
-      EtherCAT.Capture.write_capture(:slave_1)
-      EtherCAT.Capture.gen_simulator(:slave_1, module: MyApp.EL1809.Simulator)
+      EtherCAT.Capture.gen_driver(:slave_1, module: EtherCAT.IntegrationSupport.Drivers.EL1809)
     """)
 
     :ok
@@ -137,7 +140,7 @@ defmodule EtherCAT.Capture do
   Supported options:
 
   - `:path` — output path; defaults to `priv/ethercat/captures/...`
-  - `:force?` — overwrite an existing file when `true`
+  - `:force` — overwrite an existing file when `true`
   - `:sdos` — list of `{index, subindex}` tuples to upload and include
   """
   @spec write_capture(atom(), keyword()) :: {:ok, String.t()} | {:error, term()}
@@ -145,8 +148,40 @@ defmodule EtherCAT.Capture do
     with {:ok, capture} <- capture(slave_name, opts),
          path <- capture_path(capture, opts),
          :ok <-
-           write_generated_file(path, render_capture(capture), Keyword.get(opts, :force?, false)) do
+           write_generated_file(path, render_capture(capture), Keyword.get(opts, :force, false)) do
       {:ok, path}
+    end
+  end
+
+  @doc """
+  Generate a best-effort driver scaffold for `slave_name`.
+
+  Supported options:
+
+  - `:module` (required) — driver module name
+  - `:driver_path` — output path for the generated driver file
+  - `:capture_path` — output path for the generated capture file
+  - `:force` — overwrite existing files when `true`
+  - `:sdos` — list of `{index, subindex}` tuples to upload and include
+  """
+  @spec gen_driver(atom(), keyword()) ::
+          {:ok, %{driver_path: String.t(), capture_path: String.t()}} | {:error, term()}
+  def gen_driver(slave_name, opts) when is_atom(slave_name) and is_list(opts) do
+    with {:ok, module} <- fetch_module_option(opts),
+         {:ok, capture} <- capture(slave_name, opts) do
+      driver_path = driver_path(module, opts)
+      capture_path = capture_path(capture, path_option(opts, :capture_path))
+      overwrite? = Keyword.get(opts, :force, false)
+
+      with :ok <- write_generated_file(capture_path, render_capture(capture), overwrite?),
+           :ok <-
+             write_generated_file(
+               driver_path,
+               render_driver_module(module, driver_path, capture_path, capture),
+               overwrite?
+             ) do
+        {:ok, %{driver_path: driver_path, capture_path: capture_path}}
+      end
     end
   end
 
@@ -158,7 +193,7 @@ defmodule EtherCAT.Capture do
   - `:module` (required) — simulator companion module name
   - `:module_path` — output path for the generated module
   - `:capture_path` — output path for the generated capture file
-  - `:force?` — overwrite existing files when `true`
+  - `:force` — overwrite existing files when `true`
   - `:sdos` — list of `{index, subindex}` tuples to upload and include
   """
   @spec gen_simulator(atom(), keyword()) ::
@@ -168,14 +203,14 @@ defmodule EtherCAT.Capture do
          {:ok, capture} <- capture(slave_name, opts) do
       capture_path = capture_path(capture, path_option(opts, :capture_path))
       module_path = module_path(module, opts)
-      force? = Keyword.get(opts, :force?, false)
+      overwrite? = Keyword.get(opts, :force, false)
 
-      with :ok <- write_generated_file(capture_path, render_capture(capture), force?),
+      with :ok <- write_generated_file(capture_path, render_capture(capture), overwrite?),
            :ok <-
              write_generated_file(
                module_path,
                render_simulator_module(module, module_path, capture_path),
-               force?
+               overwrite?
              ) do
         {:ok, %{capture_path: capture_path, module_path: module_path}}
       end
@@ -589,10 +624,506 @@ defmodule EtherCAT.Capture do
       "\n"
   end
 
+  defp driver_path(module, opts) do
+    case Keyword.get(opts, :driver_path) do
+      path when is_binary(path) ->
+        Path.expand(path)
+
+      nil ->
+        case integration_support_driver_path(module) do
+          nil ->
+            module
+            |> Module.split()
+            |> Enum.map(&Macro.underscore/1)
+            |> then(&Path.join(["lib" | &1]))
+            |> Kernel.<>(".ex")
+            |> Path.expand()
+
+          path ->
+            Path.expand(path)
+        end
+
+      other ->
+        raise ArgumentError, "expected :driver_path to be a path, got: #{inspect(other)}"
+    end
+  end
+
+  defp integration_support_driver_path(module) do
+    case Module.split(module) do
+      ["EtherCAT", "IntegrationSupport", "Drivers" | rest] when rest != [] ->
+        Path.join([
+          "test",
+          "integration",
+          "support",
+          "drivers" | Enum.map(rest, &Macro.underscore/1)
+        ]) <>
+          ".ex"
+
+      _other ->
+        nil
+    end
+  end
+
+  defp render_driver_module(module, driver_path, capture_path, capture) do
+    scaffold = driver_scaffold(capture)
+    simulator_module = Module.concat(module, Simulator)
+
+    [
+      "defmodule #{inspect(module)} do",
+      "  @moduledoc false",
+      "",
+      "  @behaviour EtherCAT.Slave.Driver",
+      "",
+      render_driver_identity_block(scaffold.identity),
+      "",
+      render_driver_signal_model_block(scaffold.signal_model),
+      "",
+      render_driver_codec_block(scaffold),
+      "end",
+      "",
+      "defmodule #{inspect(simulator_module)} do",
+      "  @moduledoc false",
+      "",
+      "  @behaviour EtherCAT.Simulator.DriverAdapter",
+      "",
+      render_driver_simulator_block(scaffold, driver_path, capture_path),
+      "end",
+      ""
+    ]
+    |> Enum.join("\n")
+  end
+
+  defp render_driver_identity_block(identity) do
+    """
+      @impl true
+      def identity do
+    #{indent_block(render_identity_literal(identity), 4)}
+      end
+    """
+    |> String.trim_trailing()
+  end
+
+  defp render_driver_signal_model_block(signal_model) do
+    signal_model_literal = render_signal_model_literal(signal_model)
+
+    [
+      inline_literal("  @signals ", signal_model_literal),
+      "",
+      "  @impl true",
+      "  def signal_model(_config), do: @signals"
+    ]
+    |> Enum.join("\n")
+  end
+
+  defp render_driver_codec_block(scaffold) do
+    input_signals = scaffold.input_signals
+    output_signals = scaffold.output_signals
+    input_entries = scaffold.input_entries
+    output_entries = scaffold.output_entries
+
+    cond do
+      output_entries == [] and input_entries == [] ->
+        """
+          @impl true
+          def encode_signal(_signal, _config, _value), do: <<>>
+
+          @impl true
+          def decode_signal(_signal, _config, _raw), do: nil
+        """
+
+      output_entries == [] and digital_group?(input_entries) ->
+        """
+          @impl true
+          def encode_signal(_signal, _config, _value), do: <<>>
+
+          @impl true
+          def decode_signal(_signal, _config, <<_::7, bit::1>>), do: bit
+
+          def decode_signal(_signal, _config, _raw), do: 0
+        """
+
+      input_entries == [] and digital_group?(output_entries) ->
+        """
+          @impl true
+          def encode_signal(_signal, _config, true), do: <<1>>
+
+          def encode_signal(_signal, _config, false), do: <<0>>
+
+          def encode_signal(_signal, _config, value) when is_integer(value), do: <<value::8>>
+
+          def encode_signal(_signal, _config, _value), do: <<>>
+
+          @impl true
+          def decode_signal(_signal, _config, _raw), do: nil
+        """
+
+      digital_group?(input_entries) and digital_group?(output_entries) ->
+        [
+          inline_literal("  @input_signals ", render_atom_list_literal(input_signals)),
+          inline_literal("  @output_signals ", render_atom_list_literal(output_signals)),
+          "",
+          "  @impl true",
+          "  def encode_signal(signal, _config, true) when signal in @output_signals, do: <<1>>",
+          "",
+          "  def encode_signal(signal, _config, false) when signal in @output_signals, do: <<0>>",
+          "",
+          "  def encode_signal(signal, _config, value) when signal in @output_signals and is_integer(value),",
+          "    do: <<value::8>>",
+          "",
+          "  def encode_signal(_signal, _config, _value), do: <<>>",
+          "",
+          "  @impl true",
+          "  def decode_signal(signal, _config, <<_::7, bit::1>>) when signal in @input_signals,",
+          "    do: bit",
+          "",
+          "  def decode_signal(signal, _config, _raw) when signal in @input_signals, do: 0",
+          "",
+          "  def decode_signal(_signal, _config, _raw), do: nil"
+        ]
+        |> Enum.join("\n")
+
+      output_entries == [] ->
+        """
+          @impl true
+          def encode_signal(_signal, _config, _value), do: <<>>
+
+          @impl true
+          def decode_signal(_signal, _config, raw), do: raw
+        """
+
+      input_entries == [] ->
+        """
+          @impl true
+          def encode_signal(_signal, _config, value) when is_binary(value), do: value
+
+          def encode_signal(_signal, _config, _value), do: <<>>
+
+          @impl true
+          def decode_signal(_signal, _config, _raw), do: nil
+        """
+
+      true ->
+        [
+          inline_literal("  @input_signals ", render_atom_list_literal(input_signals)),
+          inline_literal("  @output_signals ", render_atom_list_literal(output_signals)),
+          "",
+          "  @impl true",
+          "  def encode_signal(signal, _config, value) when signal in @output_signals and is_binary(value),",
+          "    do: value",
+          "",
+          "  def encode_signal(signal, _config, _value) when signal in @output_signals, do: <<>>",
+          "",
+          "  def encode_signal(_signal, _config, _value), do: <<>>",
+          "",
+          "  @impl true",
+          "  def decode_signal(signal, _config, raw) when signal in @input_signals, do: raw",
+          "",
+          "  def decode_signal(_signal, _config, _raw), do: nil"
+        ]
+        |> Enum.join("\n")
+    end
+    |> String.trim_trailing()
+  end
+
+  defp render_driver_simulator_block(scaffold, driver_path, capture_path) do
+    case scaffold.simulator do
+      {:profile, opts} ->
+        """
+          @impl true
+          def definition_options(_config) do
+        #{indent_block(format_literal(opts, 88), 4)}
+          end
+        """
+
+      :capture ->
+        relative_capture_path = relative_path_from(Path.dirname(driver_path), capture_path)
+
+        """
+          @capture_path Path.expand(#{inspect(relative_capture_path)}, __DIR__)
+
+          @impl true
+          def definition_options(_config) do
+            @capture_path
+            |> EtherCAT.Capture.load_capture!()
+            |> EtherCAT.Capture.definition_options()
+          end
+        """
+    end
+    |> String.trim_trailing()
+  end
+
+  defp driver_scaffold(capture) do
+    pdo_configs = get_in(capture, [:sii, :pdo_configs]) || []
+    identity = driver_identity(get_in(capture, [:sii, :identity]) || %{})
+    signal_entries = build_driver_signal_entries(pdo_configs)
+
+    %{
+      identity: identity,
+      signal_model: Enum.map(signal_entries, &{&1.name, &1.pdo_index}),
+      input_entries: Enum.filter(signal_entries, &(&1.direction == :input)),
+      output_entries: Enum.filter(signal_entries, &(&1.direction == :output)),
+      input_signals:
+        signal_entries
+        |> Enum.filter(&(&1.direction == :input))
+        |> Enum.map(& &1.name),
+      output_signals:
+        signal_entries
+        |> Enum.filter(&(&1.direction == :output))
+        |> Enum.map(& &1.name),
+      simulator: driver_simulator_scaffold(capture, signal_entries)
+    }
+  end
+
+  defp driver_identity(identity) do
+    %{
+      vendor_id: Map.get(identity, :vendor_id, 0),
+      product_code: Map.get(identity, :product_code, 0)
+    }
+    |> maybe_put_driver_revision(Map.get(identity, :revision))
+  end
+
+  defp maybe_put_driver_revision(identity, revision)
+       when is_integer(revision) and revision >= 0 do
+    Map.put(identity, :revision, revision)
+  end
+
+  defp maybe_put_driver_revision(identity, _revision), do: identity
+
+  defp build_driver_signal_entries([]), do: []
+
+  defp build_driver_signal_entries(pdo_configs) do
+    input_pdos = Enum.filter(pdo_configs, &(&1.direction == :input))
+    output_pdos = Enum.filter(pdo_configs, &(&1.direction == :output))
+    mixed? = input_pdos != [] and output_pdos != []
+
+    name_lookup =
+      name_direction_pdos(input_pdos, :input, mixed?)
+      |> Map.merge(name_direction_pdos(output_pdos, :output, mixed?))
+
+    Enum.map(pdo_configs, fn pdo ->
+      %{
+        name: Map.fetch!(name_lookup, pdo_signature(pdo)),
+        direction: pdo.direction,
+        pdo_index: pdo.index,
+        bit_size: pdo.bit_size
+      }
+    end)
+  end
+
+  defp name_direction_pdos([], _direction, _mixed?), do: %{}
+
+  defp name_direction_pdos(pdos, direction, mixed?) do
+    naming_mode =
+      cond do
+        digital_group?(Enum.map(pdos, &signal_entry_from_pdo/1)) ->
+          if mixed?, do: {:numbered, direction_prefix(direction)}, else: {:numbered, "ch"}
+
+        contiguous_indexes?(pdos) ->
+          if mixed?, do: {:numbered, Atom.to_string(direction)}, else: {:numbered, "channel"}
+
+        true ->
+          :pdo
+      end
+
+    pdos
+    |> Enum.with_index(1)
+    |> Enum.into(%{}, fn {pdo, index} ->
+      {
+        pdo_signature(pdo),
+        case naming_mode do
+          {:numbered, prefix} -> String.to_atom("#{prefix}#{index}")
+          :pdo -> generated_driver_signal_name(direction, pdo.index, mixed?)
+        end
+      }
+    end)
+  end
+
+  defp signal_entry_from_pdo(pdo) do
+    %{direction: pdo.direction, pdo_index: pdo.index, bit_size: pdo.bit_size}
+  end
+
+  defp driver_simulator_scaffold(capture, signal_entries) do
+    mailbox_config = get_in(capture, [:sii, :mailbox_config]) || zero_mailbox_config()
+    identity = get_in(capture, [:sii, :identity]) || %{}
+    input_entries = Enum.filter(signal_entries, &(&1.direction == :input))
+    output_entries = Enum.filter(signal_entries, &(&1.direction == :output))
+
+    cond do
+      signal_entries == [] and not mailbox_enabled?(mailbox_config) ->
+        {:profile,
+         [
+           profile: :coupler,
+           vendor_id: Map.get(identity, :vendor_id, 0),
+           product_code: Map.get(identity, :product_code, 0),
+           revision: Map.get(identity, :revision, 0),
+           serial_number: Map.get(identity, :serial_number, 0)
+         ]}
+
+      not mailbox_enabled?(mailbox_config) and digital_direction?(input_entries, output_entries) ->
+        {:profile, digital_simulator_options(identity, input_entries, output_entries)}
+
+      true ->
+        :capture
+    end
+  end
+
+  defp digital_direction?(input_entries, output_entries) do
+    (input_entries != [] or output_entries != []) and
+      (input_entries == [] or digital_group?(input_entries)) and
+      (output_entries == [] or digital_group?(output_entries))
+  end
+
+  defp digital_simulator_options(identity, input_entries, output_entries) do
+    direction =
+      cond do
+        input_entries != [] and output_entries != [] -> :io
+        input_entries != [] -> :input
+        true -> :output
+      end
+
+    [
+      profile: :digital_io,
+      mode: :channels,
+      direction: direction,
+      channels: max(length(input_entries), length(output_entries)),
+      vendor_id: Map.get(identity, :vendor_id, 0),
+      product_code: Map.get(identity, :product_code, 0),
+      revision: Map.get(identity, :revision, 0),
+      serial_number: Map.get(identity, :serial_number, 0)
+    ]
+    |> maybe_put_direction_names(:input_names, input_entries)
+    |> maybe_put_direction_names(:output_names, output_entries)
+    |> maybe_put_pdo_base(:input_pdo_base, input_entries)
+    |> maybe_put_pdo_base(:output_pdo_base, output_entries)
+  end
+
+  defp maybe_put_direction_names(opts, _key, []), do: opts
+
+  defp maybe_put_direction_names(opts, key, entries) do
+    Keyword.put(opts, key, Enum.map(entries, & &1.name))
+  end
+
+  defp maybe_put_pdo_base(opts, _key, []), do: opts
+
+  defp maybe_put_pdo_base(opts, key, [entry | _rest]) do
+    Keyword.put(opts, key, entry.pdo_index)
+  end
+
+  defp digital_group?([]), do: false
+
+  defp digital_group?(entries) do
+    Enum.all?(entries, &(&1.bit_size == 1)) and contiguous_signal_indexes?(entries)
+  end
+
+  defp contiguous_signal_indexes?(entries) do
+    entries
+    |> Enum.map(& &1.pdo_index)
+    |> contiguous_values?()
+  end
+
+  defp contiguous_indexes?(pdos) do
+    pdos
+    |> Enum.map(& &1.index)
+    |> contiguous_values?()
+  end
+
+  defp contiguous_values?([]), do: false
+
+  defp contiguous_values?(values) do
+    sorted = Enum.sort(values)
+    sorted == Enum.to_list(hd(sorted)..List.last(sorted))
+  end
+
+  defp pdo_signature(pdo), do: {pdo.direction, pdo.index, pdo.sm_index, pdo.bit_offset}
+
+  defp direction_prefix(:input), do: "in"
+  defp direction_prefix(:output), do: "out"
+
+  defp generated_driver_signal_name(direction, index, true),
+    do: :"#{direction}_pdo_0x#{String.downcase(Integer.to_string(index, 16))}"
+
+  defp generated_driver_signal_name(_direction, index, false),
+    do: generated_signal_name(index)
+
+  defp render_identity_literal(identity) do
+    fields =
+      [
+        {:vendor_id, Map.fetch!(identity, :vendor_id), 8},
+        {:product_code, Map.fetch!(identity, :product_code), 8}
+      ]
+      |> maybe_append_identity_revision(identity)
+
+    "%{\n" <>
+      (fields
+       |> Enum.map(fn {key, value, width} -> "  #{key}: #{hex_literal(value, width)}" end)
+       |> Enum.join(",\n")) <>
+      "\n}"
+  end
+
+  defp maybe_append_identity_revision(fields, %{revision: revision})
+       when is_integer(revision) and revision >= 0 do
+    fields ++ [{:revision, revision, 8}]
+  end
+
+  defp maybe_append_identity_revision(fields, _identity), do: fields
+
+  defp render_signal_model_literal([]), do: "[]"
+
+  defp render_signal_model_literal(signal_model) do
+    "[\n" <>
+      (signal_model
+       |> Enum.map(fn {name, index} -> "  #{name}: #{hex_literal(index, 4)}" end)
+       |> Enum.join(",\n")) <>
+      "\n]"
+  end
+
+  defp render_atom_list_literal(list), do: inspect(list, pretty: true, width: 88)
+
+  defp inline_literal(prefix, literal) do
+    case String.split(literal, "\n", parts: 2) do
+      [single_line] ->
+        prefix <> single_line
+
+      [first_line, rest] ->
+        prefix <> first_line <> "\n" <> indent_block(rest, String.length(prefix))
+    end
+  end
+
+  defp indent_block(text, spaces) do
+    padding = String.duplicate(" ", spaces)
+
+    text
+    |> String.split("\n")
+    |> Enum.map_join("\n", fn
+      "" -> ""
+      line -> padding <> line
+    end)
+  end
+
+  defp format_literal(value, width) do
+    inspect(
+      value,
+      pretty: true,
+      limit: :infinity,
+      printable_limit: :infinity,
+      width: width
+    )
+  end
+
+  defp hex_literal(value, width) when is_integer(value) and value >= 0 do
+    "0x" <> grouped_hex(value, width)
+  end
+
+  defp grouped_hex(value, width) do
+    value
+    |> hex(width)
+    |> String.graphemes()
+    |> Enum.chunk_every(4)
+    |> Enum.map_join("_", &Enum.join/1)
+  end
+
   defp render_simulator_module(module, module_path, capture_path) do
-    relative_capture_path =
-      capture_path
-      |> Path.relative_to(Path.dirname(module_path))
+    relative_capture_path = relative_path_from(Path.dirname(module_path), capture_path)
 
     """
     defmodule #{inspect(module)} do
@@ -620,9 +1151,41 @@ defmodule EtherCAT.Capture do
     """
   end
 
-  defp write_generated_file(path, contents, force?) do
+  defp relative_path_from(from_dir, to_path) do
+    from_segments = split_path_segments(Path.expand(from_dir))
+    to_segments = split_path_segments(Path.expand(to_path))
+    common_length = common_prefix_length(from_segments, to_segments)
+
+    up_segments =
+      from_segments
+      |> Enum.drop(common_length)
+      |> Enum.map(fn _segment -> ".." end)
+
+    down_segments = Enum.drop(to_segments, common_length)
+
+    case up_segments ++ down_segments do
+      [] -> "."
+      segments -> Path.join(segments)
+    end
+  end
+
+  defp split_path_segments(path) do
+    path
+    |> Path.split()
+    |> Enum.reject(&(&1 == "/"))
+  end
+
+  defp common_prefix_length(left, right), do: common_prefix_length(left, right, 0)
+
+  defp common_prefix_length([segment | left_rest], [segment | right_rest], length) do
+    common_prefix_length(left_rest, right_rest, length + 1)
+  end
+
+  defp common_prefix_length(_left, _right, length), do: length
+
+  defp write_generated_file(path, contents, overwrite?) do
     cond do
-      File.exists?(path) and not force? ->
+      File.exists?(path) and not overwrite? ->
         {:error, {:already_exists, path}}
 
       true ->

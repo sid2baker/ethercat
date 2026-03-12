@@ -58,7 +58,7 @@ defmodule EtherCAT.CaptureTest do
                :slave_3,
                path: path,
                sdos: [{0x2000, 0x02}],
-               force?: true
+               force: true
              )
 
     assert written_path == Path.expand(path)
@@ -71,8 +71,8 @@ defmodule EtherCAT.CaptureTest do
   test "generates a simulator scaffold module from an io slave capture" do
     boot_dynamic_capture_ring!()
     tmp_dir = tmp_dir!()
-    capture_path = Path.join(tmp_dir, "captured_inputs.exs")
-    module_path = Path.join(tmp_dir, "generated_inputs_simulator.ex")
+    capture_path = Path.join([tmp_dir, "captures", "captured_inputs.exs"])
+    module_path = Path.join([tmp_dir, "scaffolds", "generated_inputs_simulator.ex"])
 
     module =
       Module.concat([
@@ -88,13 +88,14 @@ defmodule EtherCAT.CaptureTest do
                module: module,
                capture_path: capture_path,
                module_path: module_path,
-               force?: true
+               force: true
              )
 
     assert written_capture == Path.expand(capture_path)
     assert written_module == Path.expand(module_path)
     assert File.exists?(written_capture)
     assert File.exists?(written_module)
+    refute File.read!(written_module) =~ written_capture
 
     assert [{^module, _bytecode}] = Code.compile_file(written_module)
 
@@ -116,6 +117,105 @@ defmodule EtherCAT.CaptureTest do
 
     assert definition.mailbox_config.recv_size == 0
     assert Map.has_key?(definition.signals, :pdo_0x1a00)
+  end
+
+  test "generates a best-effort integration driver scaffold for a digital input slave" do
+    boot_dynamic_capture_ring!()
+    tmp_dir = tmp_dir!()
+    capture_path = Path.join([tmp_dir, "captures", "captured_driver_inputs.exs"])
+    driver_path = Path.join(tmp_dir, "generated_inputs_driver.ex")
+
+    module =
+      Module.concat([
+        EtherCAT,
+        IntegrationSupport,
+        Drivers,
+        "GeneratedEL1809#{System.unique_integer([:positive])}"
+      ])
+
+    simulator_module = Module.concat(module, "Simulator")
+
+    assert {:ok, %{capture_path: written_capture, driver_path: written_driver}} =
+             Capture.gen_driver(
+               :slave_1,
+               module: module,
+               capture_path: capture_path,
+               driver_path: driver_path,
+               force: true
+             )
+
+    assert written_capture == Path.expand(capture_path)
+    assert written_driver == Path.expand(driver_path)
+    assert File.exists?(written_capture)
+    assert File.exists?(written_driver)
+
+    compiled_modules =
+      written_driver
+      |> Code.compile_file()
+      |> Enum.map(&elem(&1, 0))
+
+    assert module in compiled_modules
+    assert simulator_module in compiled_modules
+    assert %{vendor_id: 0x0000_0002, product_code: 0x0711_3052} = module.identity()
+    assert signal_model = module.signal_model(%{})
+    assert length(signal_model) == 16
+    assert hd(signal_model) == {:ch1, 0x1A00}
+    assert module.encode_signal(:ch1, %{}, :ignored) == <<>>
+    assert module.decode_signal(:ch1, %{}, <<1>>) == 1
+
+    opts = simulator_module.definition_options(%{})
+    assert Keyword.fetch!(opts, :profile) == :digital_io
+    assert Keyword.fetch!(opts, :direction) == :input
+    assert Keyword.fetch!(opts, :channels) == 16
+    assert Keyword.fetch!(opts, :input_names) |> hd() == :ch1
+  end
+
+  test "generates a capture-backed integration driver scaffold for a mailbox slave" do
+    boot_dynamic_capture_ring!()
+    tmp_dir = tmp_dir!()
+    capture_path = Path.join([tmp_dir, "captures", "captured_driver_mailbox.exs"])
+    driver_path = Path.join([tmp_dir, "drivers", "generated_mailbox_driver.ex"])
+
+    module =
+      Module.concat([
+        EtherCAT,
+        IntegrationSupport,
+        Drivers,
+        "GeneratedMailbox#{System.unique_integer([:positive])}"
+      ])
+
+    simulator_module = Module.concat(module, "Simulator")
+
+    assert {:ok, %{capture_path: written_capture, driver_path: written_driver}} =
+             Capture.gen_driver(
+               :slave_3,
+               module: module,
+               capture_path: capture_path,
+               driver_path: driver_path,
+               force: true
+             )
+
+    assert written_capture == Path.expand(capture_path)
+    assert written_driver == Path.expand(driver_path)
+    assert File.exists?(written_capture)
+    assert File.exists?(written_driver)
+    refute File.read!(written_driver) =~ written_capture
+
+    compiled_modules =
+      written_driver
+      |> Code.compile_file()
+      |> Enum.map(&elem(&1, 0))
+
+    assert module in compiled_modules
+    assert simulator_module in compiled_modules
+    assert %{vendor_id: 0x0000_0ACE, product_code: 0x0000_1602} = module.identity()
+    assert module.signal_model(%{}) == []
+    assert module.encode_signal(:blob, %{}, :ignored) == <<>>
+    assert module.decode_signal(:blob, %{}, <<1, 2>>) == nil
+
+    opts = simulator_module.definition_options(%{})
+    assert Keyword.fetch!(opts, :profile) == :mailbox_device
+    assert Keyword.fetch!(opts, :mailbox_config).recv_size > 0
   end
 
   defp boot_dynamic_capture_ring! do
