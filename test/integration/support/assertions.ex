@@ -1,30 +1,17 @@
 defmodule EtherCAT.Integration.Assertions do
   @moduledoc false
 
+  alias EtherCAT.Integration.Expect
+
   def assert_eventually(fun, attempts \\ 20)
 
-  def assert_eventually(fun, 0) do
-    fun.()
-  end
-
   def assert_eventually(fun, attempts) do
-    fun.()
-  rescue
-    _error in [ExUnit.AssertionError, MatchError] ->
-      Process.sleep(20)
-      assert_eventually(fun, attempts - 1)
-  else
-    result ->
-      result
+    Expect.eventually(fun, attempts: attempts)
   end
 
   def assert_stays(fun, attempts \\ 5)
 
-  def assert_stays(_fun, 0), do: :ok
-
   def assert_stays(fun, attempts) do
-    fun.()
-    Process.sleep(20)
-    assert_stays(fun, attempts - 1)
+    Expect.stays(fun, attempts: attempts)
   end
 end

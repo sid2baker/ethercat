@@ -98,7 +98,10 @@ defmodule EtherCAT.Master do
   # Session idle -------------------------------------------------------------
 
   @impl true
-  def handle_event(:enter, _old, :idle, _data), do: :keep_state_and_data
+  def handle_event(:enter, old, :idle, data) do
+    emit_state_change(old, :idle, data)
+    :keep_state_and_data
+  end
 
   def handle_event({:call, from}, {:start, opts}, :idle, data) do
     with {:ok, start_config} <- normalize_start_options(opts),
@@ -179,7 +182,8 @@ defmodule EtherCAT.Master do
 
   # Discovery and initialization --------------------------------------------
 
-  def handle_event(:enter, _old, :discovering, _data) do
+  def handle_event(:enter, old, :discovering, data) do
+    emit_state_change(old, :discovering, data)
     {:keep_state_and_data, [{{:timeout, :scan_poll}, 0, nil}]}
   end
 
@@ -283,7 +287,8 @@ defmodule EtherCAT.Master do
 
   # Configuration sequence (Init -> Pre-Op) ---------------------------------
 
-  def handle_event(:enter, _old, :awaiting_preop, _data) do
+  def handle_event(:enter, old, :awaiting_preop, data) do
+    emit_state_change(old, :awaiting_preop, data)
     {:keep_state_and_data, [{{:timeout, :awaiting_preop}, @awaiting_preop_timeout_ms, nil}]}
   end
 
@@ -350,17 +355,20 @@ defmodule EtherCAT.Master do
 
   # Activation and cyclic start (Pre-Op -> Safe-Op -> Op) -------------------
 
-  def handle_event(:enter, _old, :preop_ready, data) do
+  def handle_event(:enter, old, :preop_ready, data) do
+    emit_state_change(old, :preop_ready, data)
     Logger.info("[Master] running — slaves ready in PREOP, waiting for explicit activate/0")
     {:keep_state, reply_running_waiters(data)}
   end
 
-  def handle_event(:enter, _old, :deactivated, data) do
+  def handle_event(:enter, old, :deactivated, data) do
+    emit_state_change(old, :deactivated, data)
     Logger.info("[Master] deactivated — runtime settled below OP, waiting for activate/0")
     {:keep_state, reply_running_waiters(data)}
   end
 
-  def handle_event(:enter, _old, :operational, data) do
+  def handle_event(:enter, old, :operational, data) do
+    emit_state_change(old, :operational, data)
     Logger.info("[Master] running")
     reply_await_callers(data.await_callers, :ok)
     reply_await_callers(data.await_operational_callers, :ok)
@@ -494,7 +502,8 @@ defmodule EtherCAT.Master do
 
   # Activation blocked -------------------------------------------------------
 
-  def handle_event(:enter, _old, :activation_blocked, data) do
+  def handle_event(:enter, old, :activation_blocked, data) do
+    emit_state_change(old, :activation_blocked, data)
     Logger.warning("[Master] activation blocked — #{Status.activation_blocked_summary(data)}")
 
     reply_await_callers(data.await_callers, Status.activation_blocked_reply(data))
@@ -575,7 +584,8 @@ defmodule EtherCAT.Master do
 
   # Continuous loop recovery -------------------------------------------------
 
-  def handle_event(:enter, _old, :recovering, data) do
+  def handle_event(:enter, old, :recovering, data) do
+    emit_state_change(old, :recovering, data)
     Logger.warning("[Master] recovering — #{Status.recovering_summary(data)}")
 
     reply_await_callers(data.await_callers, Status.recovering_reply(data))
@@ -1053,6 +1063,11 @@ defmodule EtherCAT.Master do
       reason: reason,
       at_ms: System.system_time(:millisecond)
     }
+  end
+
+  defp emit_state_change(old_state, new_state, data)
+       when is_atom(old_state) and is_atom(new_state) do
+    Telemetry.master_state_changed(old_state, new_state, Status.desired_public_state(data))
   end
 
   # -- Session teardown ------------------------------------------------------

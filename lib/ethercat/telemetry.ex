@@ -102,6 +102,12 @@ defmodule EtherCAT.Telemetry do
         measurements: %{}
         metadata:     %{domain: atom(), reason: term()}
 
+  ### Master lifecycle events
+
+      [:ethercat, :master, :state, :changed]
+        measurements: %{}
+        metadata:     %{from: atom(), to: atom(), public_state: atom()}
+
   ### Slave fault events
 
       [:ethercat, :slave, :crashed]
@@ -283,6 +289,15 @@ defmodule EtherCAT.Telemetry do
   end
 
   @doc false
+  def master_state_changed(from_state, to_state, public_state) do
+    execute(
+      [:ethercat, :master, :state, :changed],
+      %{},
+      %{from: from_state, to: to_state, public_state: public_state}
+    )
+  end
+
+  @doc false
   def slave_crashed(slave_name, reason) do
     execute([:ethercat, :slave, :crashed], %{}, %{slave: slave_name, reason: reason})
   end
@@ -327,6 +342,7 @@ defmodule EtherCAT.Telemetry do
     [:ethercat, :domain, :cycle, :missed],
     [:ethercat, :domain, :stopped],
     [:ethercat, :domain, :crashed],
+    [:ethercat, :master, :state, :changed],
     [:ethercat, :slave, :crashed],
     [:ethercat, :slave, :health, :fault],
     [:ethercat, :slave, :down]

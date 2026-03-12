@@ -2,10 +2,9 @@ defmodule EtherCAT.Integration.Simulator.TransientTimeoutTest do
   use ExUnit.Case, async: false
 
   alias EtherCAT.IntegrationSupport.SimulatorRing
+  alias EtherCAT.Integration.Expect
   alias EtherCAT.Simulator
   alias EtherCAT.Simulator.Fault
-
-  import EtherCAT.Integration.Assertions
 
   setup do
     on_exit(fn -> SimulatorRing.stop_all!() end)
@@ -16,28 +15,20 @@ defmodule EtherCAT.Integration.Simulator.TransientTimeoutTest do
   test "domain timeout is recorded and clears when replies return" do
     assert :ok = Simulator.inject_fault(Fault.drop_responses() |> Fault.next(30))
 
-    assert_eventually(fn ->
-      assert {:ok,
-              %{
-                cycle_health: cycle_health,
-                last_invalid_reason: :timeout,
-                total_miss_count: total_miss_count
-              }} =
-               EtherCAT.domain_info(:main)
+    Expect.eventually(fn ->
+      Expect.domain(:main,
+        cycle_health: [:healthy, {:invalid, :timeout}],
+        last_invalid_reason: :timeout,
+        total_miss_count: &(&1 > 0)
+      )
 
-      assert cycle_health in [:healthy, {:invalid, :timeout}]
-      assert total_miss_count > 0
       assert Enum.all?(EtherCAT.slaves(), &is_nil(&1.fault))
     end)
 
-    assert_eventually(fn ->
-      assert {:ok, %{next_fault: nil, pending_faults: []}} = Simulator.info()
-      assert :operational = EtherCAT.state()
-
-      assert {:ok, %{cycle_health: :healthy, total_miss_count: total_miss_count}} =
-               EtherCAT.domain_info(:main)
-
-      assert total_miss_count > 0
+    Expect.eventually(fn ->
+      Expect.master_state(:operational)
+      Expect.domain(:main, cycle_health: :healthy, total_miss_count: &(&1 > 0))
+      Expect.simulator_queue_empty()
       assert Enum.all?(EtherCAT.slaves(), &is_nil(&1.fault))
     end)
   end

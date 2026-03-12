@@ -126,6 +126,26 @@ Current mailbox protocol fault kinds:
 - `:invalid_segment_padding`
 - `{:segment_command, command}`
 
+## Integration Helper API
+
+Prefer the new test helpers for new scenarios:
+
+- `EtherCAT.Integration.Expect`
+  - standalone assertion helpers for plain ExUnit tests
+  - `Expect.eventually/2`
+  - `Expect.master_state/1`
+  - `Expect.domain/2`
+  - `Expect.slave/2`
+  - `Expect.slave_fault/2`
+  - `Expect.signal/3`
+  - `Expect.simulator_queue_empty/0`
+- `EtherCAT.Integration.Trace`
+  - telemetry-backed timeline capture for failure diagnostics
+  - uses `EtherCAT.Telemetry.events/0`, including master state transitions
+- `EtherCAT.Integration.Scenario`
+  - optional multi-phase runner for longer recovery cases
+  - keep `ctx` for scenario-owned assigns only; prefer `Expect` for live queries
+
 ## Next Directions
 
 The next useful scenarios are the narrower ones beyond the new reconnect

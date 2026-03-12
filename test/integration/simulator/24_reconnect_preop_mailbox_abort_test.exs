@@ -2,14 +2,13 @@ defmodule EtherCAT.Integration.Simulator.ReconnectPreopMailboxAbortTest do
   use ExUnit.Case, async: false
 
   alias EtherCAT.Domain.Config, as: DomainConfig
+  alias EtherCAT.Integration.Expect
+  alias EtherCAT.Integration.Scenario
   alias EtherCAT.IntegrationSupport.Drivers.{ConfiguredMailboxDevice, EK1100, EL1809, EL2809}
   alias EtherCAT.IntegrationSupport.SimulatorRing
-  alias EtherCAT.Simulator
   alias EtherCAT.Simulator.Fault
   alias EtherCAT.Simulator.Slave
   alias EtherCAT.Slave.Config, as: SlaveConfig
-
-  import EtherCAT.Integration.Assertions
 
   @abort_code 0x0601_0002
   @disconnect_steps 30
@@ -29,49 +28,45 @@ defmodule EtherCAT.Integration.Simulator.ReconnectPreopMailboxAbortTest do
 
     assert :ok = EtherCAT.await_operational(2_500)
 
-    assert :ok =
-             Simulator.inject_fault(
-               Fault.script(
-                 List.duplicate(Fault.disconnect(:mailbox), @disconnect_steps) ++
-                   [Fault.mailbox_abort(:mailbox, 0x2000, 0x02, @abort_code)]
-               )
-             )
-
-    assert_eventually(
-      fn ->
-        assert :operational = EtherCAT.state()
-
-        assert {:preop, {:preop_configuration_failed, @failure}} =
-                 SimulatorRing.fault_for(:mailbox)
-
-        assert {:ok, %{al_state: :preop, configuration_error: @failure}} =
-                 EtherCAT.slave_info(:mailbox)
-
-        assert {:ok, %{cycle_health: :healthy}} = EtherCAT.domain_info(:main)
-      end,
-      220
+    Scenario.new()
+    |> Scenario.trace()
+    |> Scenario.inject_fault(
+      Fault.script(
+        List.duplicate(Fault.disconnect(:mailbox), @disconnect_steps) ++
+          [Fault.mailbox_abort(:mailbox, 0x2000, 0x02, @abort_code)]
+      )
     )
-
-    assert :ok = EtherCAT.write_output(:outputs, :ch1, 1)
-
-    assert_eventually(fn ->
+    |> Scenario.expect_eventually(
+      "mailbox falls back to PREOP while cyclic runtime stays healthy",
+      fn _ctx ->
+        Expect.master_state(:operational)
+        Expect.slave_fault(:mailbox, {:preop, {:preop_configuration_failed, @failure}})
+        Expect.slave(:mailbox, al_state: :preop, configuration_error: @failure)
+        Expect.domain(:main, cycle_health: :healthy)
+      end,
+      attempts: 220
+    )
+    |> Scenario.act("write output ch1 high", fn _ctx ->
+      assert :ok = EtherCAT.write_output(:outputs, :ch1, 1)
+    end)
+    |> Scenario.expect_eventually("pdo flow still works during mailbox fault", fn _ctx ->
       assert {:ok, {1, updated_at_us}} = EtherCAT.read_input(:inputs, :ch1)
       assert is_integer(updated_at_us)
-      assert {:ok, %{value: true}} = Simulator.signal_snapshot(:outputs, :ch1)
+      Expect.signal(:outputs, :ch1, value: true)
     end)
-
-    assert :ok = Simulator.clear_faults()
-
-    assert_eventually(
-      fn ->
-        assert :operational = EtherCAT.state()
-        assert nil == SimulatorRing.fault_for(:mailbox)
-        assert {:ok, %{al_state: :op, configuration_error: nil}} = EtherCAT.slave_info(:mailbox)
+    |> Scenario.clear_faults()
+    |> Scenario.expect_eventually(
+      "mailbox self-heals after fault clear",
+      fn _ctx ->
+        Expect.master_state(:operational)
+        Expect.slave_fault(:mailbox, nil)
+        Expect.slave(:mailbox, al_state: :op, configuration_error: nil)
         assert {:ok, <<1>>} = EtherCAT.upload_sdo(:mailbox, 0x2000, 0x02)
-        assert {:ok, %{pending_faults: [], scheduled_faults: []}} = Simulator.info()
+        Expect.simulator_queue_empty()
       end,
-      220
+      attempts: 220
     )
+    |> Scenario.run()
   end
 
   defp devices do

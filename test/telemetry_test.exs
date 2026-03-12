@@ -97,6 +97,16 @@ defmodule EtherCAT.TelemetryTest do
                     %{domain: :main, reason: :no_response}}
   end
 
+  test "master_state_changed/3 emits the master lifecycle event" do
+    event_name = [:ethercat, :master, :state, :changed]
+    attach_event(event_name, self())
+
+    Telemetry.master_state_changed(:awaiting_preop, :preop_ready, :preop_ready)
+
+    assert_receive {:telemetry_event, ^event_name, %{},
+                    %{from: :awaiting_preop, to: :preop_ready, public_state: :preop_ready}}
+  end
+
   test "events/0 exposes the canonical attach_many event list" do
     handler_id = "ethercat-telemetry-many-#{System.unique_integer([:positive, :monotonic])}"
 
