@@ -58,4 +58,19 @@ defmodule EtherCAT.Master.StartupTest do
     assert {:error, {:unsupported_topology, {:station_address_overflow, 0xFFFF, 2, 0xFFFF}}} =
              Startup.validate_topology_addressing(data, 2)
   end
+
+  test "classify_dc_init_result preserves a successful init" do
+    assert {:ok, 0x1001, [0x1001, 0x1002]} =
+             Startup.classify_dc_init_result({:ok, 0x1001, [0x1001, 0x1002]})
+  end
+
+  test "classify_dc_init_result allows no DC-capable slave as a DC-disabled startup" do
+    assert {:ok, nil, []} =
+             Startup.classify_dc_init_result({:error, :no_dc_capable_slave})
+  end
+
+  test "classify_dc_init_result fails startup for real DC initialization errors" do
+    assert {:error, {:dc_init_failed, {:dc_snapshot_failed, 0x1000, :timeout}}} =
+             Startup.classify_dc_init_result({:error, {:dc_snapshot_failed, 0x1000, :timeout}})
+  end
 end

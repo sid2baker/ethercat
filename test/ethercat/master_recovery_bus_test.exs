@@ -1,6 +1,7 @@
 defmodule EtherCAT.MasterRecoveryBusTest do
   use ExUnit.Case, async: false
 
+  alias EtherCAT.DC.Config, as: DCConfig
   alias EtherCAT.Domain
   alias EtherCAT.Domain.API, as: DomainAPI
 
@@ -67,5 +68,41 @@ defmodule EtherCAT.MasterRecoveryBusTest do
 
     assert recovering_data.runtime_faults == %{{:domain, domain_id} => {:stopped, :down}}
     assert {:ok, %{state: :stopped}} = DomainAPI.info(domain_id)
+  end
+
+  test "recovering retry keeps the DC runtime fault until the restarted worker proves success" do
+    bus =
+      start_supervised!(
+        {FakeBus,
+         {List.duplicate({:ok, [%{wkc: 1}]}, 8),
+          %{state: :idle, carrier_up: true, link_monitor_mode: :disabled}}}
+      )
+
+    data = %EtherCAT.Master{
+      dc_config: %DCConfig{cycle_ns: 1_000_000},
+      dc_ref_station: 0x1000,
+      desired_runtime_target: :op,
+      runtime_faults: %{{:dc, :runtime} => {:failed, :timeout}}
+    }
+
+    on_exit(fn ->
+      case Process.whereis(EtherCAT.DC) do
+        pid when is_pid(pid) ->
+          DynamicSupervisor.terminate_child(EtherCAT.SessionSupervisor, pid)
+
+        nil ->
+          :ok
+      end
+
+      if Process.alive?(bus) do
+        Process.exit(bus, :shutdown)
+      end
+    end)
+
+    assert {:keep_state, %EtherCAT.Master{} = recovering_data, _actions} =
+             EtherCAT.Master.handle_event({:timeout, :retry}, nil, :recovering, data)
+
+    assert recovering_data.runtime_faults == %{{:dc, :runtime} => {:failed, :timeout}}
+    assert is_pid(Process.whereis(EtherCAT.DC))
   end
 end

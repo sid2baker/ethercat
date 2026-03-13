@@ -20,8 +20,15 @@ defmodule EtherCAT.Master.Config.Domain do
       end
     end)
     |> case do
-      {:ok, domains} -> {:ok, Enum.reverse(domains)}
-      {:error, _} = err -> err
+      {:ok, domains} ->
+        domains = Enum.reverse(domains)
+
+        with :ok <- ensure_unique_ids(domains) do
+          {:ok, domains}
+        end
+
+      {:error, _} = err ->
+        err
     end
   end
 
@@ -99,4 +106,20 @@ defmodule EtherCAT.Master.Config.Domain do
   end
 
   defp validate_config(_cfg), do: {:error, :invalid_fields}
+
+  defp ensure_unique_ids(domain_configs) do
+    domain_configs
+    |> Enum.with_index()
+    |> Enum.reduce_while(%{}, fn {%DomainConfig{id: id}, idx}, seen ->
+      if Map.has_key?(seen, id) do
+        {:halt, {:error, {:invalid_domain_config, {:duplicate_id, idx, id}}}}
+      else
+        {:cont, Map.put(seen, id, idx)}
+      end
+    end)
+    |> case do
+      %{} -> :ok
+      {:error, _} = err -> err
+    end
+  end
 end

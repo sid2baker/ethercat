@@ -28,6 +28,7 @@ defmodule EtherCAT.DC do
     :lock_state,
     :max_sync_diff_ns,
     :last_sync_check_at_ms,
+    notify_recovered_on_success?: false,
     cycle_count: 0,
     fail_count: 0
   ]
@@ -43,7 +44,8 @@ defmodule EtherCAT.DC do
           fail_count: non_neg_integer(),
           lock_state: EtherCAT.DC.Status.lock_state(),
           max_sync_diff_ns: non_neg_integer() | nil,
-          last_sync_check_at_ms: integer() | nil
+          last_sync_check_at_ms: integer() | nil,
+          notify_recovered_on_success?: boolean()
         }
 
   @doc false

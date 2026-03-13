@@ -78,17 +78,21 @@ defmodule EtherCAT.Master.Activation do
     end
   end
 
-  @spec start_dc_runtime(%EtherCAT.Master{}) :: {:ok, %EtherCAT.Master{}} | {:error, term()}
-  def start_dc_runtime(%{dc_ref_station: nil} = data), do: {:ok, %{data | dc_ref: nil}}
+  @spec start_dc_runtime(%EtherCAT.Master{}, keyword()) ::
+          {:ok, %EtherCAT.Master{}} | {:error, term()}
+  def start_dc_runtime(data, opts \\ [])
 
-  def start_dc_runtime(data) do
+  def start_dc_runtime(%{dc_ref_station: nil} = data, _opts), do: {:ok, %{data | dc_ref: nil}}
+
+  def start_dc_runtime(data, opts) do
     case DynamicSupervisor.start_child(
            EtherCAT.SessionSupervisor,
            {DC,
             bus: Bus,
             ref_station: data.dc_ref_station,
             monitored_stations: data.dc_stations,
-            config: data.dc_config}
+            config: data.dc_config,
+            notify_recovered_on_success?: Keyword.get(opts, :notify_recovered_on_success?, false)}
          ) do
       {:ok, pid} ->
         {:ok, %{data | dc_ref: Process.monitor(pid)}}

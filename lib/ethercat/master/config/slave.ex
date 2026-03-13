@@ -26,8 +26,15 @@ defmodule EtherCAT.Master.Config.Slave do
           end
         end)
         |> case do
-          {:ok, slaves} -> {:ok, Enum.reverse(slaves)}
-          {:error, _} = err -> err
+          {:ok, slaves} ->
+            slaves = Enum.reverse(slaves)
+
+            with :ok <- ensure_unique_names(slaves) do
+              {:ok, slaves}
+            end
+
+          {:error, _} = err ->
+            err
         end
     end
   end
@@ -273,4 +280,20 @@ defmodule EtherCAT.Master.Config.Slave do
 
   defp dynamic_name(0), do: :coupler
   defp dynamic_name(pos), do: :"slave_#{pos}"
+
+  defp ensure_unique_names(slave_configs) do
+    slave_configs
+    |> Enum.with_index()
+    |> Enum.reduce_while(%{}, fn {%SlaveConfig{name: name}, idx}, seen ->
+      if Map.has_key?(seen, name) do
+        {:halt, {:error, {:invalid_slave_config, {:duplicate_name, idx, name}}}}
+      else
+        {:cont, Map.put(seen, name, idx)}
+      end
+    end)
+    |> case do
+      %{} -> :ok
+      {:error, _} = err -> err
+    end
+  end
 end

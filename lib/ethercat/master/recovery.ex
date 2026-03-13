@@ -314,10 +314,10 @@ defmodule EtherCAT.Master.Recovery do
     if Status.desired_runtime_target(data) == :op and
          Map.has_key?(runtime_faults, {:dc, :runtime}) and not dc_running?() and
          is_integer(data.dc_ref_station) do
-      case Activation.start_dc_runtime(data) do
+      case Activation.start_dc_runtime(data, notify_recovered_on_success?: true) do
         {:ok, restarted_data} ->
           Logger.info("[Master] restarted DC runtime")
-          clear_runtime_fault(restarted_data, {:dc, :runtime})
+          restarted_data
 
         {:error, reason} ->
           Logger.warning("[Master] failed to restart DC runtime: #{inspect(reason)}")

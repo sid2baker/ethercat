@@ -352,19 +352,33 @@ defmodule EtherCAT.Master.Startup do
   end
 
   defp initialize_distributed_clocks(_data, slave_topology) do
-    case DCAPI.initialize_clocks(Bus, slave_topology) do
+    case classify_dc_init_result(DCAPI.initialize_clocks(Bus, slave_topology)) do
+      {:ok, nil, []} ->
+        Logger.debug("[Master] no DC-capable slaves found - running without DC")
+        {:ok, nil, []}
+
       {:ok, ref_station, dc_stations} ->
         Logger.info("[Master] DC initialized, ref=0x#{Integer.to_string(ref_station, 16)}")
         {:ok, ref_station, dc_stations}
 
-      {:error, :no_dc_capable_slave} ->
-        Logger.debug("[Master] no DC-capable slaves found — running without DC")
-        {:ok, nil, []}
-
       {:error, reason} ->
-        Logger.warning("[Master] DC init failed (#{inspect(reason)}) — running without DC")
-        {:ok, nil, []}
+        {:error, reason}
     end
+  end
+
+  @doc false
+  @spec classify_dc_init_result({:ok, non_neg_integer(), [non_neg_integer()]} | {:error, term()}) ::
+          {:ok, non_neg_integer() | nil, [non_neg_integer()]} | {:error, term()}
+  def classify_dc_init_result({:ok, ref_station, dc_stations}) do
+    {:ok, ref_station, dc_stations}
+  end
+
+  def classify_dc_init_result({:error, :no_dc_capable_slave}) do
+    {:ok, nil, []}
+  end
+
+  def classify_dc_init_result({:error, reason}) do
+    {:error, {:dc_init_failed, reason}}
   end
 
   defp start_domains(data) do

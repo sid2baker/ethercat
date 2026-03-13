@@ -107,6 +107,22 @@ defmodule EtherCAT.Master.ConfigTest do
              Config.effective_slave_config([], 2)
   end
 
+  test "normalize_start_options rejects duplicate slave names" do
+    assert {:error, {:invalid_slave_config, {:duplicate_name, 1, :sensor}}} =
+             Config.normalize_start_options(
+               interface: "eth0",
+               slaves: [[name: :sensor], [name: :sensor]]
+             )
+  end
+
+  test "normalize_start_options rejects duplicate domain ids" do
+    assert {:error, {:invalid_domain_config, {:duplicate_id, 1, :main}}} =
+             Config.normalize_start_options(
+               interface: "eth0",
+               domains: [[id: :main, cycle_time_us: 1_000], [id: :main, cycle_time_us: 1_000]]
+             )
+  end
+
   test "normalize_start_options validates scalar master options" do
     assert {:error, {:invalid_start_options, :invalid_base_station}} =
              Config.normalize_start_options(interface: "eth0", base_station: -1)

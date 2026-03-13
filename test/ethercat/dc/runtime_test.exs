@@ -8,6 +8,22 @@ defmodule EtherCAT.DC.RuntimeTest do
   alias EtherCAT.DC.Config, as: DCConfig
   alias EtherCAT.DC.Runtime, as: DCRuntime
 
+  defmodule FakeBus do
+    use GenServer
+
+    def start_link(replies) do
+      GenServer.start_link(__MODULE__, replies)
+    end
+
+    @impl true
+    def init(replies), do: {:ok, replies}
+
+    @impl true
+    def handle_call({:transact, _tx, _deadline_us, _enqueued_at_us}, _from, [reply | rest]) do
+      {:reply, reply, rest}
+    end
+  end
+
   test "maintenance_transaction uses configured-address FRMW for dc system time" do
     station = 0x1002
 
@@ -107,5 +123,30 @@ defmodule EtherCAT.DC.RuntimeTest do
              reference_station: 0x1000,
              lock_state: :locking
            } = DCAPI.status(pid)
+  end
+
+  test "successful tick clears pending restart notification state" do
+    {:ok, bus} =
+      start_supervised(
+        {FakeBus, [{:ok, [%Datagram{data: <<0::64>>, wkc: 1, circular: false, irq: 0}]}]}
+      )
+
+    data = %DC{
+      bus: bus,
+      ref_station: 0x1000,
+      config: %DCConfig{cycle_ns: 1_000_000},
+      monitored_stations: [0x1000],
+      tick_interval_ms: 1,
+      diagnostic_interval_cycles: 10,
+      lock_state: :locking,
+      notify_recovered_on_success?: true,
+      cycle_count: 0,
+      fail_count: 0
+    }
+
+    assert {:keep_state, %DC{} = updated, _actions} = DCRuntime.handle_tick(data)
+    refute updated.notify_recovered_on_success?
+    assert updated.fail_count == 0
+    assert updated.cycle_count == 1
   end
 end

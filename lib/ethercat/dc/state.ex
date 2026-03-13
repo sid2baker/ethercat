@@ -26,7 +26,8 @@ defmodule EtherCAT.DC.State do
         ),
       lock_state: Runtime.initial_lock_state(monitored_stations),
       max_sync_diff_ns: nil,
-      last_sync_check_at_ms: nil
+      last_sync_check_at_ms: nil,
+      notify_recovered_on_success?: Keyword.get(opts, :notify_recovered_on_success?, false)
     }
   end
 end

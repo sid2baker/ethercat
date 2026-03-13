@@ -122,9 +122,9 @@ defmodule EtherCAT.DC.Runtime do
 
   defp process_runtime_replies(data, %{diagnostics?: false}, [%{wkc: wkc}]) when wkc > 0 do
     maybe_log_runtime_recovered(data.fail_count)
-    maybe_notify_runtime_recovered(data.fail_count)
+    maybe_notify_runtime_recovered(data)
     Telemetry.dc_tick(data.ref_station, wkc)
-    %{data | fail_count: 0}
+    %{data | fail_count: 0, notify_recovered_on_success?: false}
   end
 
   defp process_runtime_replies(data, %{diagnostics?: true}, [%{wkc: wkc} | diag_replies])
@@ -132,7 +132,7 @@ defmodule EtherCAT.DC.Runtime do
     case decode_sync_diffs(data.monitored_stations, diag_replies, []) do
       {:ok, sync_diffs} ->
         maybe_log_runtime_recovered(data.fail_count)
-        maybe_notify_runtime_recovered(data.fail_count)
+        maybe_notify_runtime_recovered(data)
         Telemetry.dc_tick(data.ref_station, wkc)
 
         now_ms = System.system_time(:millisecond)
@@ -148,7 +148,8 @@ defmodule EtherCAT.DC.Runtime do
           | fail_count: 0,
             lock_state: lock_state,
             max_sync_diff_ns: max_sync_diff_ns,
-            last_sync_check_at_ms: now_ms
+            last_sync_check_at_ms: now_ms,
+            notify_recovered_on_success?: false
         }
 
         emit_monitor_telemetry(data, updated)
@@ -201,11 +202,15 @@ defmodule EtherCAT.DC.Runtime do
     Logger.info("[DC] runtime recovered after #{fail_count} failure(s)")
   end
 
-  defp maybe_notify_runtime_recovered(fail_count) when fail_count >= 3 do
+  defp maybe_notify_runtime_recovered(%{notify_recovered_on_success?: true}) do
     send(EtherCAT.Master, {:dc_runtime_recovered})
   end
 
-  defp maybe_notify_runtime_recovered(_fail_count), do: :ok
+  defp maybe_notify_runtime_recovered(%{fail_count: fail_count}) when fail_count >= 3 do
+    send(EtherCAT.Master, {:dc_runtime_recovered})
+  end
+
+  defp maybe_notify_runtime_recovered(_data), do: :ok
 
   defp emit_monitor_telemetry(old_data, new_data) do
     maybe_emit_sync_diff(new_data)
