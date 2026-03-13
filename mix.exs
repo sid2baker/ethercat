@@ -108,15 +108,10 @@ defmodule EtherCAT.MixProject do
   defp usage_rules do
     [
       file: "AGENTS.md",
-      usage_rules: [:elixir, :otp],
-      skills: [
-        build: [
-          "elixir-otp": [
-            description:
-              "Use this skill when working with standard Elixir and OTP — GenServer, supervisors, processes, streams, pattern matching, etc.",
-            usage_rules: [:usage_rules]
-          ]
-        ]
+      # The built-in :elixir / :otp aliases also inline usage_rules.md.
+      # Use explicit sub-rules here so AGENTS.md only gets the Elixir and OTP sections.
+      usage_rules: [
+        {:usage_rules, main: false, sub_rules: ["elixir", "otp"]}
       ]
     ]
   end
