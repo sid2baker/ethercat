@@ -4,6 +4,7 @@ defmodule EtherCAT.Simulator.Supervisor do
   use Supervisor
 
   alias EtherCAT.Simulator
+  alias EtherCAT.Simulator.RawSocket
   alias EtherCAT.Simulator.Udp
 
   @name __MODULE__
@@ -25,18 +26,20 @@ defmodule EtherCAT.Simulator.Supervisor do
   end
 
   defp children(opts) do
-    simulator_opts = Keyword.drop(opts, [:udp])
+    simulator_opts = Keyword.drop(opts, [:udp, :raw])
 
-    case Keyword.get(opts, :udp) do
-      nil ->
-        [simulator_child(simulator_opts)]
-
-      udp_opts when is_list(udp_opts) ->
-        [simulator_child(simulator_opts), {Udp, udp_opts}]
-    end
+    [simulator_child(simulator_opts)] ++
+      maybe_udp_child(Keyword.get(opts, :udp)) ++
+      maybe_raw_child(Keyword.get(opts, :raw))
   end
 
   defp simulator_child(opts) do
     Supervisor.child_spec({Simulator, opts}, start: {Simulator, :start_link, [opts]})
   end
+
+  defp maybe_udp_child(nil), do: []
+  defp maybe_udp_child(udp_opts) when is_list(udp_opts), do: [{Udp, udp_opts}]
+
+  defp maybe_raw_child(nil), do: []
+  defp maybe_raw_child(raw_opts) when is_list(raw_opts), do: [{RawSocket, raw_opts}]
 end

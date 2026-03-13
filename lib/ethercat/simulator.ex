@@ -5,6 +5,7 @@ defmodule EtherCAT.Simulator do
 
   alias EtherCAT.Bus.Datagram
   alias EtherCAT.Simulator.Fault
+  alias EtherCAT.Simulator.RawSocket
   alias EtherCAT.Simulator.Runtime.Faults
   alias EtherCAT.Simulator.Runtime.Milestones
   alias EtherCAT.Simulator.Runtime.Router
@@ -147,7 +148,7 @@ defmodule EtherCAT.Simulator do
   @spec info() :: {:ok, map()} | {:error, :not_found | :timeout}
   def info do
     with {:ok, info} <- safe_call(:info, 5_000) do
-      {:ok, maybe_put_default_udp_info(info)}
+      {:ok, info |> maybe_put_default_udp_info() |> maybe_put_default_raw_info()}
     end
   end
 
@@ -230,9 +231,16 @@ defmodule EtherCAT.Simulator do
       Keyword.has_key?(opts, :udp) ->
         {:ok, opts}
 
+      Keyword.has_key?(opts, :raw) ->
+        {:ok, opts}
+
       Keyword.has_key?(opts, :ip) or Keyword.has_key?(opts, :port) ->
         {:error,
          {:invalid_options, "use udp: [ip: ..., port: ...] when starting UDP simulator runtime"}}
+
+      Keyword.has_key?(opts, :interface) ->
+        {:error,
+         {:invalid_options, "use raw: [interface: ...] when starting raw simulator runtime"}}
 
       true ->
         {:ok, opts}
@@ -251,6 +259,13 @@ defmodule EtherCAT.Simulator do
   defp maybe_put_default_udp_info(info) do
     case EtherCAT.Simulator.Udp.info() do
       {:ok, udp_info} -> Map.put(info, :udp, udp_info)
+      {:error, _reason} -> info
+    end
+  end
+
+  defp maybe_put_default_raw_info(info) do
+    case RawSocket.info() do
+      {:ok, raw_info} -> Map.put(info, :raw, raw_info)
       {:error, _reason} -> info
     end
   end

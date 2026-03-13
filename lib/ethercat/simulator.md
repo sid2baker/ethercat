@@ -5,20 +5,22 @@ and simulator-backed tooling.
 slaves with protocol-faithful ESC register, AL-state, mailbox, and logical
 process-data behavior. It is the public process boundary for the simulator
 runtime; device authorship lives in `EtherCAT.Simulator.Slave`, and the real
-UDP endpoint lives in `EtherCAT.Simulator.Udp`.
+transport endpoints live in `EtherCAT.Simulator.Udp` and
+`EtherCAT.Simulator.RawSocket`.
 
 ## What This Is Not
 
-This is not a raw-wire EtherCAT slave NIC or ESC implementation.
+This is not a hardware EtherCAT slave controller or a kernel-bypass slave NIC.
 
-The pure-Elixir slave runtime here is for the EtherCAT-over-UDP transport path
-(`EtherCAT.Bus.Transport.UdpSocket`). The master still runs its normal code,
-but the simulator side is just `EtherCAT.Simulator.Udp`: a normal UDP server
-that decodes EtherCAT datagrams, executes them against in-memory slaves, and
-encodes the reply.
+The simulator can now expose two host-side ingress styles:
 
-If you need raw EtherType `0x88A4` traffic on real Ethernet, you still need
-real hardware and the raw-socket transport path.
+- `udp: [...]` through `EtherCAT.Simulator.Udp`
+- `raw: [interface: ...]` through `EtherCAT.Simulator.RawSocket`
+
+In both cases, the slave segment is still userspace Elixir code that decodes
+EtherCAT datagrams, executes them against in-memory slaves, and encodes the
+reply. The raw mode is a host raw-socket endpoint, not a claim that the
+simulator is acting like a physical ESC.
 
 ## Purpose
 
@@ -42,31 +44,31 @@ Hardware runs still matter, but mainly as a complement:
 
 ## Runtime Flow
 
-The exchange path is intentionally simple when the master is configured for UDP
-transport:
+The exchange path is intentionally simple. The simulator core is the same in
+both modes; only the outer transport wrapper changes.
 
 ```mermaid
 flowchart TD
-  A[Master uses transport :udp] --> B[Bus.Transport.UdpSocket sends UDP payload]
-  B --> C[Simulator.Udp receives UDP payload]
-  C --> D[Frame.decode converts payload into EtherCAT datagrams]
-  D --> E[EtherCAT.Simulator executes datagrams against in-memory slaves]
-  E --> F[Simulated slaves update ESC state, AL state, mailbox, and PDO images]
-  F --> G[Simulator builds reply datagrams and WKC]
-  G --> H[Frame.encode builds UDP reply payload]
-  H --> I{Reply fault armed}
-  I -- Drop --> J[No reply sent]
-  J --> K[Master sees timeout]
-  I -- Corrupt or replay --> L[Faulted UDP reply sent]
-  I -- No --> M[Normal UDP reply sent]
-  L --> N[Master receives UDP reply and continues processing]
-  M --> N
+  A{Master transport}
+  A -- :udp --> B[Bus.Transport.UdpSocket sends UDP payload]
+  A -- raw --> C[Bus.Transport.RawSocket sends EtherCAT Ethernet frame]
+  B --> D[Simulator.Udp receives UDP payload]
+  C --> E[Simulator.RawSocket receives EtherType 0x88A4 frame]
+  D --> F[Frame.decode converts payload into EtherCAT datagrams]
+  E --> F
+  F --> G[EtherCAT.Simulator executes datagrams against in-memory slaves]
+  G --> H[Simulated slaves update ESC state, AL state, mailbox, and PDO images]
+  H --> I[Simulator builds reply datagrams and WKC]
+  I --> J{Transport wrapper}
+  J -- UDP --> K[Frame.encode builds UDP reply payload]
+  J -- Raw --> L[EtherCAT payload is wrapped in Ethernet reply frame]
+  K --> M[Master receives reply and continues processing]
+  L --> M
 ```
 
-This is just a UDP request/response loop. The important boundary is that only
-the master-side EtherCAT logic is "real" here. On the simulator side,
-`EtherCAT.Simulator.Udp` is a normal UDP server that speaks EtherCAT datagrams
-inside the UDP payload; it is not a raw EtherCAT slave NIC.
+The important boundary is that only the master-side EtherCAT logic is "real"
+here. On the simulator side, both endpoints are just transport adapters around
+the same in-memory slave segment.
 
 ## Architecture
 
@@ -80,7 +82,7 @@ It owns:
 - WKC accumulation
 - injected runtime faults
 - signal subscriptions and snapshots for tooling
-- optional supervision of the UDP endpoint
+- optional supervision of UDP or raw transport endpoints
 
 It does not own device-profile logic inline. That lives in the simulator's
 private slave runtime and profile modules under `lib/ethercat/simulator/slave/`.
@@ -93,6 +95,7 @@ lib/ethercat/
 └── simulator/
     ├── driver_adapter.ex
     ├── fault.ex
+    ├── raw_socket.ex
     ├── runtime/
     │   ├── faults.ex
     │   ├── milestones.ex
@@ -147,7 +150,6 @@ Intentionally simplified:
 - embedded polling-loop shape from SOES
 - HAL and firmware-driver structure
 - hardware interrupt behavior
-- raw-socket simulation
 - link-carrier modeling below the protocol layer
 - full DC behavior
 
@@ -158,7 +160,7 @@ The rule is: preserve protocol behavior, not firmware structure.
 Main entry points:
 
 - `start/1` — start the supervised simulator runtime, including `udp: [...]`
-  when you want the real UDP endpoint
+  or `raw: [interface: ...]` when you want a real transport endpoint
 - `child_spec/1` — supervisor-friendly form of `start/1`
 - `start_link/1` — low-level in-memory simulator core only
 - `stop/0` — stop the singleton simulator runtime
@@ -196,6 +198,7 @@ Implemented and validated surface:
 
 - one or more simulated slaves behind one named simulator instance
 - real UDP transport path through `EtherCAT.Bus.Transport.UdpSocket`
+- single-link raw transport path through `EtherCAT.Bus.Transport.RawSocket`
 - startup addressing modes:
   - broadcast
   - auto-increment
@@ -229,6 +232,10 @@ The simulator has two fault boundaries:
 
 - `EtherCAT.Simulator` for datagram/runtime behavior
 - `EtherCAT.Simulator.Udp` for malformed, stale, or mismatched raw UDP replies
+
+The raw-socket endpoint currently has no separate transport-fault injector. It
+exists to make the single-link raw transport path testable; redundancy-aware
+topology simulation is still future work.
 
 Runtime fault injection supports:
 

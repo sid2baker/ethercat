@@ -2,6 +2,7 @@ defmodule EtherCAT.SimulatorTest do
   use ExUnit.Case, async: false
 
   alias EtherCAT.Bus.Datagram
+  alias EtherCAT.Bus.Frame
   import EtherCAT.Integration.Assertions
   alias EtherCAT.IntegrationSupport.Drivers.EK1100
   alias EtherCAT.Simulator
@@ -10,6 +11,12 @@ defmodule EtherCAT.SimulatorTest do
   alias EtherCAT.Simulator.Udp.Fault, as: UdpFault
 
   @loopback {127, 0, 0, 1}
+  @raw_loopback_interface "lo"
+  @af_packet 17
+  @ethertype 0x88A4
+  @broadcast_mac <<0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF>>
+  @test_source_mac <<0x02, 0x00, 0x00, 0x00, 0x00, 0x01>>
+  @min_frame_size 60
 
   setup do
     _ = Simulator.stop()
@@ -52,6 +59,24 @@ defmodule EtherCAT.SimulatorTest do
     assert {:ok, %{udp: %{port: port}}} = Simulator.info()
     assert is_integer(port)
     assert port > 0
+
+    assert :ok = Supervisor.stop(supervisor)
+    assert {:error, :not_found} = Simulator.info()
+  end
+
+  @tag :raw_socket
+  test "child_spec/1 uses the supervised runtime and honors raw opts" do
+    assert {:ok, supervisor} =
+             Supervisor.start_link(
+               [{Simulator, devices: [], raw: [interface: @raw_loopback_interface]}],
+               strategy: :one_for_one
+             )
+
+    assert {:ok, %{raw: %{interface: @raw_loopback_interface, ifindex: ifindex}}} =
+             Simulator.info()
+
+    assert is_integer(ifindex)
+    assert ifindex > 0
 
     assert :ok = Supervisor.stop(supervisor)
     assert {:error, :not_found} = Simulator.info()
@@ -297,5 +322,142 @@ defmodule EtherCAT.SimulatorTest do
       assert {:ok, %{scheduled_faults: []}} = Simulator.info()
       assert {:ok, %{state: :safeop}} = Simulator.device_snapshot(:coupler)
     end)
+  end
+
+  @tag :raw_socket
+  test "raw simulator endpoint processes EtherCAT frames over loopback" do
+    device = SimSlave.from_driver(EK1100, name: :coupler)
+
+    assert {:ok, supervisor} =
+             Supervisor.start_link(
+               [{Simulator, devices: [device], raw: [interface: @raw_loopback_interface]}],
+               strategy: :one_for_one
+             )
+
+    %{socket: socket, ifindex: ifindex} = open_test_raw_socket!(@raw_loopback_interface)
+
+    on_exit(fn ->
+      :socket.close(socket)
+      _ = stop_supervisor(supervisor)
+    end)
+
+    datagram = %Datagram{
+      cmd: 1,
+      idx: 7,
+      address: <<0::little-signed-16, 0x0010::little-unsigned-16>>,
+      data: <<0, 0>>
+    }
+
+    assert {:ok, payload} = Frame.encode([datagram])
+    raw_frame = build_test_raw_frame(payload)
+
+    assert :ok = :socket.sendto(socket, raw_frame, sockaddr_ll(ifindex, @broadcast_mac))
+
+    assert {:ok, [%Datagram{cmd: 1, idx: 7, wkc: 1, data: <<0, 0>>}]} =
+             recv_processed_reply(socket, 1_000)
+  end
+
+  defp open_test_raw_socket!(interface) do
+    with {:ok, ifindex} <- :net.if_name2index(String.to_charlist(interface)),
+         {:ok, socket} <- :socket.open(@af_packet, :raw, {:raw, @ethertype}),
+         :ok <- :socket.bind(socket, sockaddr_ll(ifindex)) do
+      %{socket: socket, ifindex: ifindex}
+    else
+      {:error, reason} ->
+        flunk("raw simulator tests require AF_PACKET access on #{interface}: #{inspect(reason)}")
+    end
+  end
+
+  defp recv_processed_reply(socket, timeout_ms) do
+    deadline_ms = System.monotonic_time(:millisecond) + timeout_ms
+    recv_processed_reply_until(socket, deadline_ms)
+  end
+
+  defp recv_processed_reply_until(socket, deadline_ms) do
+    remaining_ms = deadline_ms - System.monotonic_time(:millisecond)
+
+    if remaining_ms <= 0 do
+      flunk("timed out waiting for processed raw simulator reply")
+    else
+      case :socket.recvmsg(socket, 0, 0, remaining_ms) do
+        {:ok, msg} ->
+          case decode_test_frame(msg_data(msg)) do
+            {:ok, datagrams} when datagrams != [] ->
+              if Enum.any?(datagrams, &(&1.wkc != 0 or &1.circular)) do
+                {:ok, datagrams}
+              else
+                recv_processed_reply_until(socket, deadline_ms)
+              end
+
+            _ ->
+              recv_processed_reply_until(socket, deadline_ms)
+          end
+
+        {:error, reason} ->
+          flunk("failed to receive raw simulator reply: #{inspect(reason)}")
+      end
+    end
+  end
+
+  defp decode_test_frame(
+         <<_destination::binary-size(6), _source::binary-size(6), @ethertype::big-unsigned-16,
+           payload_with_padding::binary>>
+       ) do
+    with {:ok, payload, _padding} <- split_payload_and_padding(payload_with_padding) do
+      Frame.decode(payload)
+    end
+  end
+
+  defp decode_test_frame(_frame), do: {:error, :not_ethercat}
+
+  defp split_payload_and_padding(<<ecat_header::little-unsigned-16, _rest::binary>> = payload) do
+    <<type::4, _reserved::1, len::11>> = <<ecat_header::big-unsigned-16>>
+    payload_size = 2 + len
+
+    cond do
+      type != 1 ->
+        {:error, :unsupported_type}
+
+      byte_size(payload) < payload_size ->
+        {:error, :truncated_payload}
+
+      true ->
+        <<ecat_payload::binary-size(payload_size), padding::binary>> = payload
+        {:ok, ecat_payload, padding}
+    end
+  end
+
+  defp split_payload_and_padding(_payload), do: {:error, :truncated_payload}
+
+  defp build_test_raw_frame(payload) do
+    frame_body =
+      <<@broadcast_mac::binary, @test_source_mac::binary, @ethertype::big-unsigned-16,
+        payload::binary>>
+
+    pad_needed = max(0, @min_frame_size - byte_size(frame_body))
+    <<frame_body::binary, 0::size(pad_needed)-unit(8)>>
+  end
+
+  defp sockaddr_ll(ifindex, mac \\ <<0::48>>) do
+    mac_padded =
+      if byte_size(mac) < 8, do: <<mac::binary, 0::size((8 - byte_size(mac)) * 8)>>, else: mac
+
+    addr =
+      <<@ethertype::16-big, ifindex::32-native, 0::16, 0::8, 6::8, mac_padded::binary-size(8)>>
+
+    %{family: @af_packet, addr: addr}
+  end
+
+  defp msg_data(%{iov: [data | _]}), do: data
+  defp msg_data(_), do: <<>>
+
+  defp stop_supervisor(supervisor) when is_pid(supervisor) do
+    if Process.alive?(supervisor) do
+      Supervisor.stop(supervisor)
+    else
+      :ok
+    end
+  catch
+    :exit, _reason -> :ok
   end
 end

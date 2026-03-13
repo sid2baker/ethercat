@@ -1,1 +1,1 @@
-ExUnit.start(exclude: [:hardware])
+ExUnit.start(exclude: [:hardware, :raw_socket])
