@@ -58,14 +58,22 @@ defmodule EtherCAT.Integration.Trace do
   @spec format(t(), keyword()) :: String.t()
   def format(%__MODULE__{} = trace, opts \\ []) do
     title = Keyword.get(opts, :title, "Integration trace")
+    limit = Keyword.get(opts, :limit)
+    entries = snapshot(trace)
+    visible_entries = maybe_limit_entries(entries, limit)
 
-    entries =
-      trace
-      |> snapshot()
+    header =
+      case {limit, length(entries) > length(visible_entries)} do
+        {limit, true} when is_integer(limit) -> "[showing last #{limit} trace entries]"
+        _other -> nil
+      end
+
+    formatted_entries =
+      visible_entries
       |> Enum.map(&format_entry/1)
       |> Enum.join("\n")
 
-    [title, entries]
+    [title, header, formatted_entries]
     |> Enum.reject(&(&1 == ""))
     |> Enum.join("\n")
   end
@@ -85,6 +93,12 @@ defmodule EtherCAT.Integration.Trace do
   defp append(%__MODULE__{} = trace, entry) do
     event = Map.put(entry, :at_ms, System.monotonic_time(:millisecond) - trace.started_at_ms)
     Agent.cast(trace.agent, fn entries -> [event | entries] end)
+  end
+
+  defp maybe_limit_entries(entries, nil), do: entries
+
+  defp maybe_limit_entries(entries, limit) when is_integer(limit) and limit > 0 do
+    Enum.take(entries, -limit)
   end
 
   defp format_entry(%{kind: :note, at_ms: at_ms, label: label, metadata: metadata}) do

@@ -64,6 +64,8 @@ letting the loop invent arbitrary refactors.
 - `32`: telemetry-triggered follow-up `SAFEOP` retreat armed on master recovery entry without an imperative mid-scenario injection
 - `33`: PDO-participating slave disconnect whose reconnect-time PREOP mailbox failure must replace the stale critical disconnect fault so recovery can later finish cleanly
 - `34`: retained reconnect PREOP mailbox failure that arms a later counted PDO disconnect through `Scenario.inject_fault_on_event/4` instead of an imperative mid-scenario action
+- `35`: retained reconnect PREOP mailbox failure that arms a later counted PDO disconnect whose recovery entry then arms a follow-up `SAFEOP` retreat on another PDO slave
+- `36`: captured `EL3202` reconnect-time PREOP timeout on a real startup SDO map that later arms a counted PDO disconnect while typed RTD decode must still recover cleanly
 
 These are the current regression scenarios, not just backlog items. Each one
 should keep its `.md` note and matching `_test.exs` file aligned.
@@ -212,12 +214,12 @@ Prefer the new test helpers for new scenarios:
 
 ## Next Directions
 
-The next useful scenario after the event-triggered counted-disconnect mix case is:
+The next useful scenario after the captured-device `EL3202` reconnect PREOP mix case is:
 
-- a longer chained helper-only case where a retained mailbox fault arms the
-  counted disconnect, and the resulting master `:recovering` entry then arms a
-  follow-up `SAFEOP` retreat, proving these telemetry triggers compose without
-  promoting master-observed events into simulator milestones
+- a split-domain captured-device variant that keeps the real hardware ring
+  shape (`EK1100` / `EL1809` / `EL2809` / `EL3202`) but forces the RTD
+  terminal through reconnect PREOP recovery while the digital loopback domain
+  stays independently healthy
 
 ## When To Combine Scenarios
 

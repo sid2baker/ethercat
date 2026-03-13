@@ -181,7 +181,9 @@ defmodule EtherCAT.Integration.Scenario do
   end
 
   defp maybe_dump_trace(nil), do: :ok
-  defp maybe_dump_trace(trace), do: IO.puts(:stderr, Trace.format(trace, title: "Scenario trace"))
+
+  defp maybe_dump_trace(trace),
+    do: IO.puts(:stderr, Trace.format(trace, title: "Scenario trace", limit: 200))
 
   defp register_teardown(teardowns, fun) when is_pid(teardowns) and is_function(fun, 0) do
     Agent.update(teardowns, &[fun | &1])

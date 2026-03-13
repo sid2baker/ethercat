@@ -50,11 +50,21 @@ defmodule EtherCAT.Integration.Simulator.ReconnectPreopMailboxAndDisconnectMixTe
       assert :ok = EtherCAT.Simulator.inject_fault(Fault.disconnect(:outputs) |> Fault.next(30))
     end)
     |> Scenario.expect_eventually(
-      "output disconnect drives recovery while the mailbox fault remains retained",
-      fn _ctx ->
-        Expect.master_state(:recovering)
-        Expect.slave_fault(:mailbox, {:preop, {:preop_configuration_failed, @mailbox_failure}})
-        Expect.slave_fault(:outputs, {:down, :disconnected})
+      "trace captures the later disconnect inside the retained mailbox fault lifecycle",
+      fn %{trace: trace} ->
+        Expect.trace_sequence(trace, [
+          {:event, [:ethercat, :master, :slave_fault, :changed],
+           metadata: [
+             slave: :mailbox,
+             to: {:preop, {:preop_configuration_failed, @mailbox_failure}}
+           ]},
+          {:event, [:ethercat, :master, :slave_fault, :changed],
+           metadata: [slave: :outputs, to: {:down, :disconnected}]}
+        ])
+
+        Expect.trace_event(trace, [:ethercat, :master, :state, :changed],
+          metadata: [to: :recovering]
+        )
       end,
       attempts: 120
     )
@@ -88,43 +98,49 @@ defmodule EtherCAT.Integration.Simulator.ReconnectPreopMailboxAndDisconnectMixTe
                                                                                                  trace:
                                                                                                    trace
                                                                                                } ->
+      Expect.trace_sequence(trace, [
+        {:event, [:ethercat, :master, :slave_fault, :changed],
+         metadata: [
+           slave: :mailbox,
+           to: {:preop, {:preop_configuration_failed, @mailbox_failure}}
+         ]},
+        {:event, [:ethercat, :master, :slave_fault, :changed],
+         metadata: [slave: :outputs, to: {:down, :disconnected}]}
+      ])
+
+      Expect.trace_sequence(trace, [
+        {:event, [:ethercat, :master, :slave_fault, :changed],
+         metadata: [slave: :outputs, to: {:down, :disconnected}]},
+        {:event, [:ethercat, :master, :slave_fault, :changed],
+         metadata: [
+           slave: :outputs,
+           from: {:down, :disconnected},
+           to: {:reconnecting, :authorized}
+         ]},
+        {:event, [:ethercat, :master, :slave_fault, :changed],
+         metadata: [slave: :outputs, from: {:reconnecting, :authorized}, to: nil]}
+      ])
+
+      Expect.trace_sequence(trace, [
+        {:event, [:ethercat, :master, :slave_fault, :changed],
+         metadata: [
+           slave: :mailbox,
+           to: {:preop, {:preop_configuration_failed, @mailbox_failure}}
+         ]},
+        {:event, [:ethercat, :master, :slave_fault, :changed],
+         metadata: [
+           slave: :mailbox,
+           from: {:preop, {:preop_configuration_failed, @mailbox_failure}},
+           to: nil
+         ]}
+      ])
+
       Expect.trace_event(trace, [:ethercat, :master, :state, :changed],
         metadata: [to: :recovering]
       )
 
       Expect.trace_event(trace, [:ethercat, :master, :state, :changed],
         metadata: [to: :operational]
-      )
-
-      Expect.trace_event(trace, [:ethercat, :master, :slave_fault, :changed],
-        metadata: [slave: :outputs, to: {:down, :disconnected}]
-      )
-
-      Expect.trace_event(trace, [:ethercat, :master, :slave_fault, :changed],
-        metadata: [
-          slave: :outputs,
-          from: {:down, :disconnected},
-          to: {:reconnecting, :authorized}
-        ]
-      )
-
-      Expect.trace_event(trace, [:ethercat, :master, :slave_fault, :changed],
-        metadata: [slave: :outputs, from: {:reconnecting, :authorized}, to: nil]
-      )
-
-      Expect.trace_event(trace, [:ethercat, :master, :slave_fault, :changed],
-        metadata: [
-          slave: :mailbox,
-          to: {:preop, {:preop_configuration_failed, @mailbox_failure}}
-        ]
-      )
-
-      Expect.trace_event(trace, [:ethercat, :master, :slave_fault, :changed],
-        metadata: [
-          slave: :mailbox,
-          from: {:preop, {:preop_configuration_failed, @mailbox_failure}},
-          to: nil
-        ]
       )
     end)
     |> Scenario.run()

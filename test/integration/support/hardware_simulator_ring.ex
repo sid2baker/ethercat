@@ -1,13 +1,8 @@
-defmodule EtherCAT.IntegrationSupport.SegmentedMailboxRing do
+defmodule EtherCAT.IntegrationSupport.HardwareSimulatorRing do
   @moduledoc false
 
-  alias EtherCAT.IntegrationSupport.Drivers.{
-    EK1100,
-    EL1809,
-    EL2809,
-    SegmentedConfiguredMailboxDevice
-  }
-
+  alias EtherCAT.IntegrationSupport.Drivers.{EK1100, EL1809, EL2809, EL3202}
+  alias EtherCAT.IntegrationSupport.Hardware
   alias EtherCAT.IntegrationSupport.SimulatorRing
   alias EtherCAT.Simulator.Slave
   alias EtherCAT.Slave.Config, as: SlaveConfig
@@ -23,7 +18,7 @@ defmodule EtherCAT.IntegrationSupport.SegmentedMailboxRing do
     start_opts =
       Keyword.merge(
         [
-          domains: [SimulatorRing.default_domain()],
+          domains: [Hardware.main_domain()],
           slaves: slaves(Keyword.get(opts, :slave_config_opts, []))
         ],
         Keyword.get(opts, :start_opts, [])
@@ -36,60 +31,31 @@ defmodule EtherCAT.IntegrationSupport.SegmentedMailboxRing do
     )
   end
 
-  @spec startup_blob() :: binary()
-  def startup_blob do
-    0..191
-    |> Enum.map(fn value -> rem(value * 13 + 7, 256) end)
-    |> :erlang.list_to_binary()
-  end
-
   @spec devices() :: [struct()]
   def devices do
     [
       Slave.from_driver(EK1100, name: :coupler),
       Slave.from_driver(EL1809, name: :inputs),
       Slave.from_driver(EL2809, name: :outputs),
-      Slave.from_driver(SegmentedConfiguredMailboxDevice, name: :mailbox)
+      Slave.from_driver(EL3202, name: :rtd)
     ]
   end
 
   @spec slaves(keyword()) :: [SlaveConfig.t()]
   def slaves(opts \\ []) do
     shared_health_poll_ms = Keyword.get(opts, :health_poll_ms)
-    output_health_poll_ms = Keyword.get(opts, :output_health_poll_ms, shared_health_poll_ms || 20)
-
-    mailbox_health_poll_ms =
-      Keyword.get(opts, :mailbox_health_poll_ms, shared_health_poll_ms || 20)
 
     [
-      %SlaveConfig{
-        name: :coupler,
-        driver: EK1100,
-        process_data: :none,
-        target_state: :op,
+      Hardware.coupler(
         health_poll_ms: Keyword.get(opts, :coupler_health_poll_ms, shared_health_poll_ms)
-      },
-      %SlaveConfig{
-        name: :inputs,
-        driver: EL1809,
-        process_data: {:all, :main},
-        target_state: :op,
+      ),
+      Hardware.inputs(
         health_poll_ms: Keyword.get(opts, :input_health_poll_ms, shared_health_poll_ms)
-      },
-      %SlaveConfig{
-        name: :outputs,
-        driver: EL2809,
-        process_data: {:all, :main},
-        target_state: :op,
-        health_poll_ms: output_health_poll_ms
-      },
-      %SlaveConfig{
-        name: :mailbox,
-        driver: SegmentedConfiguredMailboxDevice,
-        process_data: :none,
-        target_state: :op,
-        health_poll_ms: mailbox_health_poll_ms
-      }
+      ),
+      Hardware.outputs(
+        health_poll_ms: Keyword.get(opts, :output_health_poll_ms, shared_health_poll_ms)
+      ),
+      Hardware.rtd(health_poll_ms: Keyword.get(opts, :rtd_health_poll_ms, shared_health_poll_ms))
     ]
   end
 

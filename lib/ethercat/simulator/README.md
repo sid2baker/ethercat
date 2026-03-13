@@ -405,6 +405,12 @@ now covers:
 - `34` retained reconnect PREOP mailbox failure that arms a later counted PDO
   disconnect through `Scenario.inject_fault_on_event/4` instead of a separate
   imperative test step
+- `35` retained reconnect PREOP mailbox failure that arms a later counted PDO
+  disconnect whose recovery entry then arms a follow-up `SAFEOP` retreat on a
+  different PDO slave
+- `36` captured `EL3202` reconnect PREOP timeout on a real startup SDO map
+  that later arms a counted PDO disconnect while typed RTD decode must still
+  recover cleanly
 
 ## Widget-Facing Signal API
 

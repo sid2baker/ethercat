@@ -20,7 +20,7 @@ recovery interval without losing track of the already-retained mailbox fault.
 
 - The mailbox slave should retain its reconnect PREOP failure as a slave-local
   fault and stay in `:preop`.
-- The output disconnect should force the master into `:recovering`.
+- The output disconnect should create a real master `:recovering` interval.
 - The output slave should be tracked as `{:down, :disconnected}` until the
   counted disconnect window ends and reconnect succeeds.
 - After the output slave heals, the master should return to `:operational`
@@ -49,7 +49,8 @@ The runtime behaves as intended:
 2. inject a reconnect PREOP mailbox fault script
 3. wait until the mailbox fault is retained
 4. inject a counted output disconnect while the mailbox fault is still present
-5. assert the master enters `:recovering` and tracks the output as down
+5. assert the output is tracked as down and the trace captures the recovery
+   interval
 6. assert the output recovers while the mailbox fault still remains
 7. assert the mailbox fault later clears too
 8. assert the trace captured the distinct master and slave fault lifecycles

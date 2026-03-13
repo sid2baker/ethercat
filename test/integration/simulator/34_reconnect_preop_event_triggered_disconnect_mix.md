@@ -25,7 +25,8 @@ simulator core.
   fault and stay in `:preop`.
 - That retained mailbox-fault transition should synchronously arm the counted
   output disconnect.
-- The later output disconnect should force the master into `:recovering`.
+- The later output disconnect should create a real master `:recovering`
+  interval.
 - The output slave should heal first and let the master return to
   `:operational` while the mailbox PREOP fault still remains retained.
 - The mailbox slave should later recover on its PREOP retry path without a
@@ -39,7 +40,7 @@ simulator core.
 3. inject the reconnect PREOP mailbox fault script
 4. assert the mailbox fault transition matched and the follow-up disconnect was
    injected through the telemetry helper
-5. assert the output disconnect drives the master into `:recovering` while the
-   mailbox fault remains retained
+5. assert the output disconnect becomes visible while the mailbox fault remains
+   retained and the trace captures the recovery interval
 6. assert the output heals first
 7. assert the mailbox retry path later heals too
