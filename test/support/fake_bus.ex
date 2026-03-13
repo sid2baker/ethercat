@@ -40,7 +40,7 @@ defmodule EtherCAT.TestSupport.FakeBus do
 
   @impl true
   def handle_call(
-        {:transact, tx, _deadline_us, _enqueued_at_us},
+        {:transact, tx, _stale_after_us, _enqueued_at_us},
         _from,
         %{responses: [reply | rest], calls_rev: calls_rev} = state
       ) do
@@ -48,7 +48,7 @@ defmodule EtherCAT.TestSupport.FakeBus do
   end
 
   def handle_call(
-        {:transact, tx, _deadline_us, _enqueued_at_us},
+        {:transact, tx, _stale_after_us, _enqueued_at_us},
         _from,
         %{default_reply: default_reply, calls_rev: calls_rev} = state
       ) do

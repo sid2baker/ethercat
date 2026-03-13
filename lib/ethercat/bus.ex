@@ -6,11 +6,18 @@ defmodule EtherCAT.Bus do
   Callers build `EtherCAT.Bus.Transaction` values and submit them as either:
 
   - `transaction/2` — reliable work, eligible for batching with other reliable transactions
-  - `transaction/3` — realtime work with a staleness deadline; stale work is discarded
+  - `transaction/3` — realtime work with a staleness budget; stale work is discarded
 
   Realtime and reliable transactions are strictly separated:
   realtime always has priority, and realtime transactions never share a frame with
   reliable transactions.
+
+  In this API, `reliable` means non-expiring background work: the bus keeps it
+  queued until it can be sent or the link fails. It does not mean the transport
+  can never time out.
+
+  `realtime` means deadline-sensitive work: it gets priority and is dropped
+  once it has become too old to be useful.
   """
 
   @behaviour :gen_statem
@@ -127,6 +134,10 @@ defmodule EtherCAT.Bus do
 
   Reliable work may be batched with other reliable transactions when the bus is
   already busy, but an idle bus sends immediately.
+
+  `Reliable` here means non-expiring background work. The bus will not discard
+  it due to age while it is queued, but the transaction can still fail due to
+  timeouts or link loss.
   """
   @spec transaction(server(), Transaction.t()) :: {:ok, [Result.t()]} | {:error, term()}
   def transaction(bus, %Transaction{} = tx) do
@@ -134,16 +145,19 @@ defmodule EtherCAT.Bus do
   end
 
   @doc """
-  Execute a realtime transaction with a staleness deadline in microseconds.
+  Execute a realtime transaction with a staleness budget in microseconds.
 
   Realtime work is discarded if it has become stale by the time the bus is ready
   to dispatch it. Realtime transactions are never mixed with reliable traffic.
+
+  `stale_after_us` is a max queued age relative to submission time, not an
+  absolute wall-clock deadline.
   """
   @spec transaction(server(), Transaction.t(), pos_integer()) ::
           {:ok, [Result.t()]} | {:error, term()}
-  def transaction(bus, %Transaction{} = tx, deadline_us)
-      when is_integer(deadline_us) and deadline_us > 0 do
-    do_call(bus, {:transact, tx, deadline_us, System.monotonic_time(:microsecond)}, tx)
+  def transaction(bus, %Transaction{} = tx, stale_after_us)
+      when is_integer(stale_after_us) and stale_after_us > 0 do
+    do_call(bus, {:transact, tx, stale_after_us, System.monotonic_time(:microsecond)}, tx)
   end
 
   @doc """
@@ -261,11 +275,11 @@ defmodule EtherCAT.Bus do
     :keep_state_and_data
   end
 
-  def handle_event({:call, from}, {:transact, tx, deadline_us, enqueued_at_us}, :down, _data) do
+  def handle_event({:call, from}, {:transact, tx, stale_after_us, enqueued_at_us}, :down, _data) do
     submission = %Submission{
       from: from,
       tx: tx,
-      deadline_us: deadline_us,
+      stale_after_us: stale_after_us,
       enqueued_at_us: enqueued_at_us
     }
 
@@ -273,12 +287,12 @@ defmodule EtherCAT.Bus do
     :keep_state_and_data
   end
 
-  def handle_event({:call, from}, {:transact, tx, deadline_us, enqueued_at_us}, state, data)
+  def handle_event({:call, from}, {:transact, tx, stale_after_us, enqueued_at_us}, state, data)
       when state in [:idle, :awaiting] do
     submission = %Submission{
       from: from,
       tx: tx,
-      deadline_us: deadline_us,
+      stale_after_us: stale_after_us,
       enqueued_at_us: enqueued_at_us
     }
 
@@ -390,13 +404,7 @@ defmodule EtherCAT.Bus do
     meta = %{datagram_count: tx |> Transaction.datagrams() |> length(), class: call_class(msg)}
 
     Telemetry.span([:ethercat, :bus, :transact], meta, fn ->
-      result =
-        try do
-          :gen_statem.call(bus, msg, @call_timeout_ms)
-        catch
-          :exit, {:timeout, _} -> {:error, :timeout}
-          :exit, reason -> {:error, reason}
-        end
+      result = safe_call(bus, msg)
 
       case result do
         {:ok, response_datagrams} ->
@@ -427,9 +435,9 @@ defmodule EtherCAT.Bus do
 
   defp enqueue_submission(
          %{realtime: realtime} = data,
-         %Submission{deadline_us: deadline_us} = submission
+         %Submission{stale_after_us: stale_after_us} = submission
        )
-       when is_integer(deadline_us) do
+       when is_integer(stale_after_us) do
     %{data | realtime: :queue.in(submission, realtime)}
   end
 
@@ -469,9 +477,9 @@ defmodule EtherCAT.Bus do
     %{data | realtime: keep |> Enum.reverse() |> :queue.from_list()}
   end
 
-  defp stale?(%Submission{deadline_us: deadline_us, enqueued_at_us: enqueued_at_us}, now_us)
-       when is_integer(deadline_us) do
-    now_us - enqueued_at_us > deadline_us
+  defp stale?(%Submission{stale_after_us: stale_after_us, enqueued_at_us: enqueued_at_us}, now_us)
+       when is_integer(stale_after_us) do
+    now_us - enqueued_at_us > stale_after_us
   end
 
   defp dispatch_reliable(%{reliable: reliable} = data) do
@@ -747,11 +755,11 @@ defmodule EtherCAT.Bus do
   defp awaiting_from_in_flight(nil), do: []
   defp awaiting_from_in_flight(%InFlight{awaiting: awaiting}), do: awaiting
 
-  defp submission_class(%Submission{deadline_us: nil}), do: :reliable
+  defp submission_class(%Submission{stale_after_us: nil}), do: :reliable
   defp submission_class(%Submission{}), do: :realtime
 
   defp call_class({:transact, _tx, nil, _enqueued_at_us}), do: :reliable
-  defp call_class({:transact, _tx, _deadline_us, _enqueued_at_us}), do: :realtime
+  defp call_class({:transact, _tx, _stale_after_us, _enqueued_at_us}), do: :realtime
 
   defp queue_depth(data, :realtime), do: :queue.len(data.realtime)
   defp queue_depth(data, :reliable), do: :queue.len(data.reliable)
