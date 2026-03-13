@@ -11,12 +11,32 @@ The rule is simple:
    - simulator cannot express the fault
    - simulator expresses it, but assertions/observability are weak
    - master/domain/slave behavior is wrong
-4. Fix the smallest layer that unblocks the scenario:
+   - the master public API is making the fault awkward to express, observe, or recover from
+   - the test/helper API is making the scenario awkward to write or assert
+4. Say explicitly whether a better API should exist:
+   - no API change needed
+   - better master API would help
+   - better simulator or test-helper API would help
+5. If the scenario exposed a real fault, describe it concretely:
+   - expected behavior
+   - actual behavior
+   - visible runtime impact
+   - suspected broken layer and why
+6. Write a short fix plan before editing code:
+   - keep the failing test as the reproducer
+   - patch the smallest honest layer
+   - add or tighten cheaper unit coverage when it pins the same bug cleanly
+   - rerun the targeted test and the relevant broader suite
+7. Fix the smallest layer that unblocks the scenario:
    - missing fault model -> extend simulator API
    - missing visibility -> extend snapshots, telemetry, or test helpers
    - product bug -> fix implementation
-5. Re-run the targeted test, then the simulator suite.
-6. Only then move to a harder scenario.
+   - awkward master API -> improve the public runtime surface if that is the real blocker
+   - awkward test API -> improve helpers or fault builders if that is the real blocker
+8. Re-run the targeted test, then the simulator suite.
+9. Commit the fix with the scenario test path in the commit message body so history
+   points back to the regression that found it.
+10. Only then move to a harder scenario.
 
 The point is to keep every improvement tied to a concrete scenario instead of
 letting the loop invent arbitrary refactors.
@@ -26,6 +46,28 @@ letting the loop invent arbitrary refactors.
 - Scenario doc: `NN_case_name.md`
 - Matching test: `NN_case_name_test.exs`
 - Shared harness code lives in `test/integration/support/`
+
+## Required Outputs Per Scenario
+
+Every worthwhile simulator scenario should leave behind these artifacts:
+
+- a short scenario note and matching test
+- an explicit API note:
+  - `no API change needed`
+  - `better master API suggested`
+  - `better test/helper API suggested`
+- when a fault is found, a concrete fault description:
+  - what broke
+  - what should have happened
+  - what actually happened
+  - how the failure stayed visible in master/domain/slave behavior
+- a short repair plan
+- the fix itself, unless the repo is genuinely blocked
+- a commit that mentions the triggering test path, for example
+  `test/integration/simulator/NN_case_name_test.exs`
+
+Do not stop at "bug found". The expected loop is reproduce -> describe ->
+plan -> fix -> verify -> commit.
 
 ## Current Scenario Set
 
@@ -212,6 +254,30 @@ Prefer the new test helpers for new scenarios:
   - telemetry-triggered injections complete before the matching callback returns,
     so follow-up assertions do not depend on spawned-process races
 
+## API Pressure Is Signal
+
+When a scenario is awkward, say why.
+
+The loop should explicitly call out when a better API would improve the work:
+
+- master API pressure:
+  - the public `EtherCAT` surface makes it too hard to observe the fault honestly
+  - recovery state is visible internally but awkward to assert publicly
+  - callers need lower-level knowledge than they should to reproduce or verify behavior
+- test API pressure:
+  - fault builders are too coarse for a deterministic scenario
+  - assertions require too much boilerplate or helper-local knowledge
+  - the scenario needs sleeps because the helper surface lacks a real trigger or observation point
+
+If a better API seems warranted, say so explicitly even if the current change
+does not implement it. Also say whether that API change is:
+
+- required to land the scenario honestly now
+- useful follow-up work, but not required for the current fix
+
+Prefer small, truthful API improvements over helper-local hacks or brittle
+test code.
+
 ## Next Directions
 
 The next useful scenario after the captured-device `EL3202` reconnect PREOP mix case is:
@@ -272,6 +338,28 @@ That keeps this folder centered on the hardest class of failures:
 - deterministic fault/recovery choreography
 - cases that are too expensive or too unsafe to induce repeatedly on a bench
 
+## Fault Report And Repair Loop
+
+When a simulator scenario finds a product fault, the LLM should leave a clear
+repair trail:
+
+1. Name the fault in one sentence.
+2. Describe the trigger and expected behavior.
+3. Describe the actual behavior and the visible runtime damage.
+4. State whether the problem is in:
+   - master runtime behavior
+   - slave behavior
+   - domain behavior
+   - simulator fault modeling
+   - test/helper API
+   - master public API
+5. Write a short plan for the smallest honest fix.
+6. Implement the fix instead of stopping at diagnosis.
+7. Verify the triggering test first, then the relevant broader suite.
+
+If the fault cannot be fixed in the current change, say exactly what blocks it.
+Do not silently leave a reproduced fault without a plan.
+
 ## Scenario Authoring Checklist
 
 Before adding a new simulator scenario, check these in order:
@@ -285,7 +373,9 @@ Before adding a new simulator scenario, check these in order:
 4. Is the assertion about the public runtime behavior?
    Prefer master/domain/slave state, retained faults, signals, and queue drain
    over helper-local implementation details.
-5. If the scenario proves a product bug, did the fix also get a focused unit
+5. Did the scenario expose master API pressure or test-helper API pressure?
+   If yes, say so explicitly even if the improvement is deferred.
+6. If the scenario proves a product bug, did the fix also get a focused unit
    regression where that is cheaper to maintain?
 
 For failure diagnostics, keep these by default:
@@ -297,6 +387,25 @@ For failure diagnostics, keep these by default:
 
 If a scenario still needs bespoke sleeps after that checklist, the API is
 probably missing a better trigger or observation point.
+
+## Commit Expectations
+
+If a scenario exposes a real bug or a required API improvement, commit the fix
+after verification.
+
+That commit should:
+
+- mention the triggering scenario test path in the body, for example
+  `Found by: test/integration/simulator/24_reconnect_preop_mailbox_abort_test.exs`
+- summarize the fault in plain language
+- summarize the fix and any API adjustments
+- mention validation that was run
+
+The commit should make it easy to answer:
+
+- which test found this fault?
+- what was broken?
+- what changed to fix it?
 
 ## Common Anti-Patterns
 
@@ -326,8 +435,10 @@ When one of those feels tempting, it usually means one of three things:
   scriptable simulator API over brittle sleeps in tests.
 - If the scenario is easy to trigger but hard to assert, improve snapshots or
   test helpers before changing runtime behavior.
+- If the scenario exposes master API pressure, say so explicitly instead of
+  normalizing awkward call patterns in the test.
 - If the scenario exposes a mismatch with expected master behavior, fix the bug
-  before adding more scenarios on top.
+  before adding more scenarios on top, and commit with the triggering test path.
 - If the idea is really an address-space or protocol-limit boundary, cover it
   in focused master/startup unit tests instead of inventing giant simulator
   rings the transport cannot honestly address.
