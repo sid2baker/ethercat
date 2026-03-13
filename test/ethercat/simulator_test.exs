@@ -121,6 +121,16 @@ defmodule EtherCAT.SimulatorTest do
     assert {:error, :not_found} = Simulator.subscribe(:coupler)
   end
 
+  test "public simulator api distinguishes a server crash from not_found" do
+    previous = Process.flag(:trap_exit, true)
+    on_exit(fn -> Process.flag(:trap_exit, previous) end)
+
+    assert {:ok, _pid} = Simulator.start_link(devices: [])
+
+    assert {:error, {:server_exit, _reason}} = Simulator.process_datagrams(:invalid)
+    assert {:error, :not_found} = Simulator.info()
+  end
+
   test "setup cleanup can stop the supervised simulator runtime" do
     assert {:ok, _supervisor} =
              Simulator.start(devices: [], udp: [ip: @loopback, port: 0])
