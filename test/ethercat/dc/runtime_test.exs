@@ -7,22 +7,7 @@ defmodule EtherCAT.DC.RuntimeTest do
   alias EtherCAT.DC.API, as: DCAPI
   alias EtherCAT.DC.Config, as: DCConfig
   alias EtherCAT.DC.Runtime, as: DCRuntime
-
-  defmodule FakeBus do
-    use GenServer
-
-    def start_link(replies) do
-      GenServer.start_link(__MODULE__, replies)
-    end
-
-    @impl true
-    def init(replies), do: {:ok, replies}
-
-    @impl true
-    def handle_call({:transact, _tx, _deadline_us, _enqueued_at_us}, _from, [reply | rest]) do
-      {:reply, reply, rest}
-    end
-  end
+  alias EtherCAT.TestSupport.FakeBus
 
   test "maintenance_transaction uses configured-address FRMW for dc system time" do
     station = 0x1002
@@ -128,7 +113,10 @@ defmodule EtherCAT.DC.RuntimeTest do
   test "successful tick clears pending restart notification state" do
     {:ok, bus} =
       start_supervised(
-        {FakeBus, [{:ok, [%Datagram{data: <<0::64>>, wkc: 1, circular: false, irq: 0}]}]}
+        {FakeBus,
+         [
+           responses: [{:ok, [%Datagram{data: <<0::64>>, wkc: 1, circular: false, irq: 0}]}]
+         ]}
       )
 
     data = %DC{

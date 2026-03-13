@@ -4,40 +4,7 @@ defmodule EtherCAT.MasterRecoveryBusTest do
   alias EtherCAT.DC.Config, as: DCConfig
   alias EtherCAT.Domain
   alias EtherCAT.Domain.API, as: DomainAPI
-
-  defmodule FakeBus do
-    use GenServer
-
-    def start_link({responses, info}) do
-      GenServer.start_link(__MODULE__, {responses, info}, name: EtherCAT.Bus)
-    end
-
-    @impl true
-    def init({responses, info}) do
-      {:ok, %{responses: responses, info: info}}
-    end
-
-    @impl true
-    def handle_call(
-          {:transact, _tx, _deadline_us, _enqueued_at_us},
-          _from,
-          %{responses: [reply | rest]} = state
-        ) do
-      {:reply, reply, %{state | responses: rest}}
-    end
-
-    def handle_call(
-          {:transact, _tx, _deadline_us, _enqueued_at_us},
-          _from,
-          %{responses: []} = state
-        ) do
-      {:reply, {:ok, [%{data: <<0>>, wkc: 1, circular: false, irq: 0}]}, state}
-    end
-
-    def handle_call(:info, _from, %{info: info} = state) do
-      {:reply, {:ok, info}, state}
-    end
-  end
+  alias EtherCAT.TestSupport.FakeBus
 
   test "recovering retry does not restart stopped domains while the bus is down" do
     domain_id = :"master_domain_retry_#{System.unique_integer([:positive, :monotonic])}"
@@ -45,8 +12,11 @@ defmodule EtherCAT.MasterRecoveryBusTest do
     bus =
       start_supervised!(
         {FakeBus,
-         {List.duplicate({:ok, [%{data: <<0>>, wkc: 1, circular: false, irq: 0}]}, 8),
-          %{state: :idle, carrier_up: false}}}
+         [
+           name: EtherCAT.Bus,
+           responses: List.duplicate({:ok, [%{data: <<0>>, wkc: 1, circular: false, irq: 0}]}, 8),
+           info: %{state: :idle, carrier_up: false}
+         ]}
       )
 
     {:ok, _pid} =
@@ -74,8 +44,11 @@ defmodule EtherCAT.MasterRecoveryBusTest do
     bus =
       start_supervised!(
         {FakeBus,
-         {List.duplicate({:ok, [%{wkc: 1}]}, 8),
-          %{state: :idle, carrier_up: true, link_monitor_mode: :disabled}}}
+         [
+           name: EtherCAT.Bus,
+           responses: List.duplicate({:ok, [%{wkc: 1}]}, 8),
+           info: %{state: :idle, carrier_up: true, link_monitor_mode: :disabled}
+         ]}
       )
 
     data = %EtherCAT.Master{

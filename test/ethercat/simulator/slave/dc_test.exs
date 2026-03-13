@@ -1,6 +1,7 @@
 defmodule EtherCAT.Simulator.Slave.DCTest do
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
+  import EtherCAT.Integration.Assertions
   alias EtherCAT.Simulator.Slave.Definition
   alias EtherCAT.Simulator.Slave.Runtime.Device
 
@@ -8,10 +9,10 @@ defmodule EtherCAT.Simulator.Slave.DCTest do
     slave = Device.new(Definition.build(:mailbox_device, dc_capable?: true), 0)
 
     before = read_u64(Device.read_register(slave, 0x0910, 8))
-    Process.sleep(1)
-    after_read = read_u64(Device.read_register(slave, 0x0910, 8))
 
-    assert after_read > before
+    assert_eventually(fn ->
+      assert read_u64(Device.read_register(slave, 0x0910, 8)) > before
+    end)
 
     latched = Device.write_register(slave, 0x0900, <<0::32>>)
 
@@ -42,12 +43,13 @@ defmodule EtherCAT.Simulator.Slave.DCTest do
     assert read_u32(Device.read_register(configured, 0x092C, 4)) == 0
 
     before = read_u64(Device.read_register(configured, 0x0910, 8))
-    Process.sleep(1)
     maintained = Device.write_register(configured, 0x0910, <<0::64>>)
-    after_write = read_u64(Device.read_register(maintained, 0x0910, 8))
 
-    assert after_write > before
-    assert after_write > 0
+    assert_eventually(fn ->
+      after_write = read_u64(Device.read_register(maintained, 0x0910, 8))
+      assert after_write > before
+      assert after_write > 0
+    end)
   end
 
   defp read_u16(<<value::16-little>>), do: value

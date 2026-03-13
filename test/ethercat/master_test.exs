@@ -7,28 +7,7 @@ defmodule EtherCAT.MasterTest do
   alias EtherCAT.Domain.API, as: DomainAPI
   alias EtherCAT.Master.Config.DomainPlan
   alias EtherCAT.Slave.Config, as: SlaveConfig
-
-  defmodule FakeBus do
-    use GenServer
-
-    def start_link(arg) do
-      GenServer.start_link(__MODULE__, arg)
-    end
-
-    @impl true
-    def init(responses) do
-      {:ok, responses}
-    end
-
-    @impl true
-    def handle_call({:transact, _tx, _deadline_us, _enqueued_at_us}, _from, [reply | rest]) do
-      {:reply, reply, rest}
-    end
-
-    def handle_call({:transact, _tx, _deadline_us, _enqueued_at_us}, _from, []) do
-      {:reply, {:ok, [%{data: <<0>>, wkc: 1, circular: false, irq: 0}]}, []}
-    end
-  end
+  alias EtherCAT.TestSupport.FakeBus
 
   defmodule FakeDC do
     @behaviour :gen_statem
@@ -428,7 +407,10 @@ defmodule EtherCAT.MasterTest do
 
     bus =
       start_supervised!(
-        {FakeBus, List.duplicate({:ok, [%{data: <<0>>, wkc: 1, circular: false, irq: 0}]}, 8)}
+        {FakeBus,
+         [
+           responses: List.duplicate({:ok, [%{data: <<0>>, wkc: 1, circular: false, irq: 0}]}, 8)
+         ]}
       )
 
     {:ok, _pid} =

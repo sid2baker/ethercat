@@ -2,6 +2,7 @@ defmodule EtherCAT.SimulatorTest do
   use ExUnit.Case, async: false
 
   alias EtherCAT.Bus.Datagram
+  import EtherCAT.Integration.Assertions
   alias EtherCAT.IntegrationSupport.Drivers.EK1100
   alias EtherCAT.Simulator
   alias EtherCAT.Simulator.Fault
@@ -131,13 +132,14 @@ defmodule EtherCAT.SimulatorTest do
     assert {:ok, %{scheduled_faults: [%{fault: {:fault_script, [:drop_responses]}}]}} =
              Simulator.info()
 
-    Process.sleep(80)
-
-    assert {:ok,
-            %{next_fault: {:next_exchange, :drop_responses}, pending_faults: [:drop_responses]}} =
-             Simulator.info()
-
-    assert {:ok, %{scheduled_faults: []}} = Simulator.info()
+    assert_eventually(fn ->
+      assert {:ok,
+              %{
+                next_fault: {:next_exchange, :drop_responses},
+                pending_faults: [:drop_responses],
+                scheduled_faults: []
+              }} = Simulator.info()
+    end)
   end
 
   test "fault scripts can wait on milestones between queued and slave-local steps" do
@@ -291,9 +293,9 @@ defmodule EtherCAT.SimulatorTest do
     assert {:ok, %{scheduled_faults: [%{fault: {:retreat_to_safeop, :coupler}}]}} =
              Simulator.info()
 
-    Process.sleep(40)
-
-    assert {:ok, %{scheduled_faults: []}} = Simulator.info()
-    assert {:ok, %{state: :safeop}} = Simulator.device_snapshot(:coupler)
+    assert_eventually(fn ->
+      assert {:ok, %{scheduled_faults: []}} = Simulator.info()
+      assert {:ok, %{state: :safeop}} = Simulator.device_snapshot(:coupler)
+    end)
   end
 end

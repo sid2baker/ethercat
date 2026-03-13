@@ -4,17 +4,41 @@ defmodule EtherCAT.BusTest do
   alias EtherCAT.Bus
   alias EtherCAT.Bus.{Datagram, Frame, Transaction}
   alias EtherCAT.Bus.Link.Redundant
+  import EtherCAT.Integration.Assertions
+
+  @submission_enqueued_event [:ethercat, :bus, :submission, :enqueued]
+
+  setup do
+    handler_id = "bus-test-#{System.unique_integer([:positive, :monotonic])}"
+
+    :ok =
+      :telemetry.attach(
+        handler_id,
+        @submission_enqueued_event,
+        &__MODULE__.handle_submission_enqueued/4,
+        self()
+      )
+
+    on_exit(fn -> :telemetry.detach(handler_id) end)
+
+    :ok
+  end
 
   defmodule FakeLink do
     @behaviour EtherCAT.Bus.Link
 
     import Kernel, except: [send: 2]
 
-    defstruct [:owner, :test_pid]
+    defstruct [:name, :owner, :test_pid]
 
     @impl true
     def open(opts) do
-      {:ok, %__MODULE__{owner: self(), test_pid: Keyword.fetch!(opts, :test_pid)}}
+      {:ok,
+       %__MODULE__{
+         name: Keyword.get(opts, :link_name, "fake"),
+         owner: self(),
+         test_pid: Keyword.fetch!(opts, :test_pid)
+       }}
     end
 
     @impl true
@@ -62,7 +86,7 @@ defmodule EtherCAT.BusTest do
     def needs_reconnect?(%__MODULE__{}), do: false
 
     @impl true
-    def name(%__MODULE__{}), do: "fake"
+    def name(%__MODULE__{name: name}), do: name
 
     @impl true
     def interfaces(%__MODULE__{}), do: []
@@ -147,7 +171,7 @@ defmodule EtherCAT.BusTest do
   end
 
   test "realtime work expires while waiting for an earlier frame" do
-    {:ok, bus} = start_bus()
+    {:ok, bus, link_name} = start_bus()
 
     first = Task.async(fn -> Bus.transaction(bus, Transaction.brd({0x0000, 1})) end)
     first_frame = assert_sent_frame()
@@ -157,7 +181,8 @@ defmodule EtherCAT.BusTest do
         Bus.transaction(bus, Transaction.fprd(0x1000, {0x0130, 2}), 1_000)
       end)
 
-    Process.sleep(5)
+    enqueued_at_us = assert_submission_enqueued([{:realtime, 1}], link_name)
+    wait_until_elapsed_us(enqueued_at_us, 1_001)
     reply_ok(bus, first_frame)
 
     assert {:error, :expired} = Task.await(expired)
@@ -166,7 +191,7 @@ defmodule EtherCAT.BusTest do
   end
 
   test "realtime dispatches ahead of reliable backlog and is never mixed into the same frame" do
-    {:ok, bus} = start_bus()
+    {:ok, bus, link_name} = start_bus()
 
     first = Task.async(fn -> Bus.transaction(bus, Transaction.brd({0x0000, 1})) end)
     first_frame = assert_sent_frame()
@@ -181,7 +206,7 @@ defmodule EtherCAT.BusTest do
         Bus.transaction(bus, Transaction.fprd(0x1000, {0x0130, 2}), 50_000)
       end)
 
-    Process.sleep(10)
+    assert_submission_enqueued([{:reliable, 1}, {:realtime, 1}], link_name)
     reply_ok(bus, first_frame)
 
     realtime_frame = assert_sent_frame()
@@ -198,7 +223,7 @@ defmodule EtherCAT.BusTest do
   end
 
   test "reliable backlog batches into one frame and replies are sliced back to original callers" do
-    {:ok, bus} = start_bus()
+    {:ok, bus, link_name} = start_bus()
 
     first = Task.async(fn -> Bus.transaction(bus, Transaction.brd({0x0000, 1})) end)
     first_frame = assert_sent_frame()
@@ -206,7 +231,7 @@ defmodule EtherCAT.BusTest do
     read_a = Task.async(fn -> Bus.transaction(bus, Transaction.fprd(0x1000, {0x0130, 2})) end)
     read_b = Task.async(fn -> Bus.transaction(bus, Transaction.fprd(0x1001, {0x0130, 2})) end)
 
-    Process.sleep(10)
+    assert_submission_enqueued([{:reliable, 1}, {:reliable, 2}], link_name)
     reply_ok(bus, first_frame)
 
     batch_frame = assert_sent_frame()
@@ -222,7 +247,7 @@ defmodule EtherCAT.BusTest do
   end
 
   test "oversized reliable transaction returns frame_too_large without dropping the bus" do
-    {:ok, bus} = start_bus()
+    {:ok, bus, _link_name} = start_bus()
 
     oversized =
       Task.async(fn ->
@@ -301,12 +326,12 @@ defmodule EtherCAT.BusTest do
   end
 
   test "single-port bus reports link monitor mode and recovers after carrier restore" do
-    {:ok, bus} = start_bus()
+    {:ok, bus, link_name} = start_bus()
 
     assert {:ok,
             %{
               state: :idle,
-              link: "fake",
+              link: ^link_name,
               carrier_up: false,
               frame_timeout_ms: 50,
               link_monitor_mode: :disabled
@@ -324,7 +349,10 @@ defmodule EtherCAT.BusTest do
     assert {:error, :down} = Task.await(while_down)
 
     send(bus, {:ethercat_link, "eth0", false, true})
-    Process.sleep(250)
+
+    assert_eventually(fn ->
+      assert {:ok, %{state: :idle, carrier_up: false}} = Bus.info(bus)
+    end)
 
     assert {:ok, %{state: :idle, carrier_up: false}} = Bus.info(bus)
 
@@ -338,14 +366,14 @@ defmodule EtherCAT.BusTest do
   end
 
   test "settle drains buffered receive traffic while idle" do
-    {:ok, bus} = start_bus()
+    {:ok, bus, _link_name} = start_bus()
 
     assert :ok = Bus.settle(bus)
     assert_receive :fake_link_drained
   end
 
   test "settle waits for the current in-flight transaction before draining" do
-    {:ok, bus} = start_bus()
+    {:ok, bus, _link_name} = start_bus()
 
     read = Task.async(fn -> Bus.transaction(bus, Transaction.fprd(0x1000, {0x0130, 2})) end)
     sent = assert_sent_frame()
@@ -363,7 +391,7 @@ defmodule EtherCAT.BusTest do
   end
 
   test "quiesce drains before and after the quiet window" do
-    {:ok, bus} = start_bus()
+    {:ok, bus, _link_name} = start_bus()
 
     assert :ok = Bus.quiesce(bus, 1)
     assert_receive :fake_link_drained
@@ -371,7 +399,18 @@ defmodule EtherCAT.BusTest do
   end
 
   defp start_bus do
-    Bus.start_link(link_mod: FakeLink, transport: :udp, test_pid: self(), frame_timeout_ms: 50)
+    link_name = "fake_#{System.unique_integer([:positive, :monotonic])}"
+
+    case Bus.start_link(
+           link_mod: FakeLink,
+           transport: :udp,
+           test_pid: self(),
+           link_name: link_name,
+           frame_timeout_ms: 50
+         ) do
+      {:ok, bus} -> {:ok, bus, link_name}
+      error -> error
+    end
   end
 
   defp start_redundant_bus do
@@ -422,4 +461,70 @@ defmodule EtherCAT.BusTest do
          address: <<0x1001::little-unsigned-16, _::little-unsigned-16>>
        }),
        do: <<0xBB, 0x00>>
+
+  def handle_submission_enqueued(event, measurements, metadata, pid) do
+    send(pid, {:submission_enqueued, event, measurements, metadata})
+  end
+
+  defp assert_submission_enqueued(expected, link_name, timeout \\ 500)
+
+  defp assert_submission_enqueued(expected, link_name, timeout)
+       when is_list(expected) and is_binary(link_name) do
+    do_assert_submission_enqueued(
+      Enum.map(expected, &normalize_submission(&1, link_name)),
+      timeout,
+      nil
+    )
+  end
+
+  defp do_assert_submission_enqueued([], _timeout, matched_at_us),
+    do: matched_at_us || System.monotonic_time(:microsecond)
+
+  defp do_assert_submission_enqueued(expected, timeout, matched_at_us) do
+    receive do
+      {:submission_enqueued, @submission_enqueued_event, %{queue_depth: queue_depth}, metadata} ->
+        case pop_expected_submission(expected, {metadata.class, queue_depth, metadata.link}) do
+          {:ok, remaining_expected} ->
+            do_assert_submission_enqueued(
+              remaining_expected,
+              timeout,
+              System.monotonic_time(:microsecond)
+            )
+
+          :error ->
+            do_assert_submission_enqueued(expected, timeout, matched_at_us)
+        end
+    after
+      timeout ->
+        flunk("expected submission telemetry #{inspect(expected)}")
+    end
+  end
+
+  defp pop_expected_submission(expected, actual) do
+    case Enum.split_while(expected, &(&1 != trim_submission(actual))) do
+      {_, []} -> :error
+      {prefix, [_match | suffix]} -> {:ok, prefix ++ suffix}
+    end
+  end
+
+  defp normalize_submission({class, queue_depth, link}, _default_link),
+    do: {class, queue_depth, link}
+
+  defp normalize_submission({class, queue_depth}, default_link),
+    do: {class, queue_depth, default_link}
+
+  defp trim_submission({class, queue_depth, link}), do: {class, queue_depth, link}
+
+  defp wait_until_elapsed_us(start_us, target_elapsed_us) do
+    remaining_us = target_elapsed_us - (System.monotonic_time(:microsecond) - start_us)
+
+    if remaining_us > 0 do
+      receive do
+      after
+        max(div(remaining_us, 1_000), 0) -> wait_until_elapsed_us(start_us, target_elapsed_us)
+      end
+    else
+      :ok
+    end
+  end
 end

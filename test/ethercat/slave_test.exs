@@ -4,6 +4,7 @@ defmodule EtherCAT.SlaveTest do
   alias EtherCAT.Slave.ProcessData
   alias EtherCAT.Slave.ProcessData.Plan.DomainAttachment
   alias EtherCAT.Slave.ProcessData.Plan.SmGroup
+  alias EtherCAT.TestSupport.FakeBus
 
   defmodule TestDriver do
     @behaviour EtherCAT.Slave.Driver
@@ -116,26 +117,6 @@ defmodule EtherCAT.SlaveTest do
     def on_op(slave_name, _config) do
       send(self(), {:driver_on_op, slave_name})
       :ok
-    end
-  end
-
-  defmodule FakeBus do
-    use GenServer
-
-    def start_link(responses) do
-      GenServer.start_link(__MODULE__, responses)
-    end
-
-    @impl true
-    def init(responses), do: {:ok, responses}
-
-    @impl true
-    def handle_call({:transact, _tx, _deadline_us, _enqueued_at_us}, _from, [reply | rest]) do
-      {:reply, reply, rest}
-    end
-
-    def handle_call({:transact, _tx, _deadline_us, _enqueued_at_us}, _from, []) do
-      {:reply, {:ok, [%{wkc: 0}]}, []}
     end
   end
 
@@ -822,7 +803,13 @@ defmodule EtherCAT.SlaveTest do
 
   test "down waits for master reconnect authorization after the link returns" do
     bus =
-      start_supervised!({FakeBus, [{:ok, [%{data: <<0>>, wkc: 1, circular: false, irq: 0}]}]})
+      start_supervised!(
+        {FakeBus,
+         [
+           responses: [{:ok, [%{data: <<0>>, wkc: 1, circular: false, irq: 0}]}],
+           default_reply: {:ok, [%{wkc: 0}]}
+         ]}
+      )
 
     data = %EtherCAT.Slave{
       bus: bus,

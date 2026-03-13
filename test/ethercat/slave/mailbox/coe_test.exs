@@ -5,36 +5,22 @@ defmodule EtherCAT.Slave.Mailbox.CoETest do
   alias EtherCAT.Slave.Mailbox.CoE
 
   defmodule FakeBus do
-    use GenServer
+    def child_spec(responses) do
+      %{
+        id: {__MODULE__, make_ref()},
+        start: {__MODULE__, :start_link, [responses]}
+      }
+    end
 
     def start_link(responses) do
-      GenServer.start_link(__MODULE__, responses)
+      EtherCAT.TestSupport.FakeBus.start_link(
+        responses: responses,
+        default_reply: {:error, :unexpected_transaction}
+      )
     end
 
-    def calls(pid) do
-      GenServer.call(pid, :calls)
-    end
-
-    @impl true
-    def init(responses) do
-      {:ok, %{responses: responses, calls_rev: []}}
-    end
-
-    @impl true
-    def handle_call(
-          {:transact, tx, _deadline_us, _enqueued_at_us},
-          _from,
-          %{responses: [reply | rest], calls_rev: calls_rev} = state
-        ) do
-      {:reply, reply, %{state | responses: rest, calls_rev: [tx | calls_rev]}}
-    end
-
-    def handle_call({:transact, _tx, _deadline_us, _enqueued_at_us}, _from, state) do
-      {:reply, {:error, :unexpected_transaction}, state}
-    end
-
-    def handle_call(:calls, _from, %{calls_rev: calls_rev} = state) do
-      {:reply, Enum.reverse(calls_rev), state}
+    def calls(server) do
+      EtherCAT.TestSupport.FakeBus.calls(server)
     end
   end
 
