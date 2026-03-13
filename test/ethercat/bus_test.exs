@@ -222,6 +222,87 @@ defmodule EtherCAT.BusTest do
     assert {:ok, [%{wkc: 1}]} = Task.await(first)
   end
 
+  test "realtime keeps preempting reliable backlog under sustained load" do
+    {:ok, bus, link_name} = start_bus()
+
+    first = Task.async(fn -> Bus.transaction(bus, Transaction.brd({0x0000, 1})) end)
+    first_frame = assert_sent_frame()
+
+    reliable_stations = Enum.to_list(0x2000..0x2007)
+    realtime_stations = [0x3000, 0x3001, 0x3002]
+
+    reliable_tasks =
+      for station <- reliable_stations do
+        Task.async(fn -> Bus.transaction(bus, Transaction.fprd(station, {0x0130, 2})) end)
+      end
+
+    realtime_tasks =
+      for station <- realtime_stations do
+        Task.async(fn ->
+          Bus.transaction(bus, Transaction.fprd(station, {0x0130, 2}), 100_000)
+        end)
+      end
+
+    assert_submission_enqueued(
+      Enum.map(1..length(reliable_tasks), &{:reliable, &1}) ++
+        Enum.map(1..length(realtime_tasks), &{:realtime, &1}),
+      link_name
+    )
+
+    reply_ok(bus, first_frame)
+
+    first_realtime_frame = assert_sent_frame()
+    assert_single_station_read(first_realtime_frame, 0x3000)
+
+    late_realtime =
+      Task.async(fn ->
+        Bus.transaction(bus, Transaction.fprd(0x3003, {0x0130, 2}), 100_000)
+      end)
+
+    assert_submission_enqueued([{:realtime, 3}], link_name)
+
+    reply_with(bus, first_realtime_frame, fn dg -> %{dg | data: <<0xA0, 0x00>>, wkc: 1} end)
+
+    second_realtime_frame = assert_sent_frame()
+    assert_single_station_read(second_realtime_frame, 0x3001)
+    reply_with(bus, second_realtime_frame, fn dg -> %{dg | data: <<0xA1, 0x00>>, wkc: 1} end)
+
+    third_realtime_frame = assert_sent_frame()
+    assert_single_station_read(third_realtime_frame, 0x3002)
+    reply_with(bus, third_realtime_frame, fn dg -> %{dg | data: <<0xA2, 0x00>>, wkc: 1} end)
+
+    fourth_realtime_frame = assert_sent_frame()
+    assert_single_station_read(fourth_realtime_frame, 0x3003)
+    reply_with(bus, fourth_realtime_frame, fn dg -> %{dg | data: <<0xA3, 0x00>>, wkc: 1} end)
+
+    reliable_batch_frame = assert_sent_frame()
+    assert length(reliable_batch_frame) == length(reliable_stations)
+    assert Enum.all?(reliable_batch_frame, &match?(%Datagram{cmd: 4}, &1))
+
+    reply_with(bus, reliable_batch_frame, fn dg ->
+      <<station::little-unsigned-16, _offset::little-unsigned-16>> = dg.address
+      %{dg | data: <<station - 0x2000, 0x00>>, wkc: 1}
+    end)
+
+    assert {:ok, [%{wkc: 1}]} = Task.await(first)
+
+    assert [
+             {:ok, [%{data: <<0xA0, 0x00>>, wkc: 1}]},
+             {:ok, [%{data: <<0xA1, 0x00>>, wkc: 1}]},
+             {:ok, [%{data: <<0xA2, 0x00>>, wkc: 1}]}
+           ] = Enum.map(realtime_tasks, &Task.await/1)
+
+    assert {:ok, [%{data: <<0xA3, 0x00>>, wkc: 1}]} = Task.await(late_realtime)
+
+    reliable_results = Enum.map(reliable_tasks, &Task.await/1)
+
+    assert Enum.zip(reliable_results, 0..7)
+           |> Enum.all?(fn
+             {{:ok, [%{data: <<value, 0x00>>, wkc: 1}]}, value} -> true
+             _ -> false
+           end)
+  end
+
   test "reliable backlog batches into one frame and replies are sliced back to original callers" do
     {:ok, bus, link_name} = start_bus()
 
@@ -471,6 +552,16 @@ defmodule EtherCAT.BusTest do
     assert_receive {:fake_link_sent, payload, _tx_at}, timeout
     assert {:ok, datagrams} = Frame.decode(payload)
     datagrams
+  end
+
+  defp assert_single_station_read(
+         [%Datagram{cmd: 4, address: <<station::little-unsigned-16, 0x30, 0x01>>}],
+         station
+       ),
+       do: :ok
+
+  defp assert_single_station_read(datagrams, station) do
+    flunk("expected single FPRD frame for station #{station}, got: #{inspect(datagrams)}")
   end
 
   defp assert_sent_transport(interface) do
