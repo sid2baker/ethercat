@@ -345,7 +345,7 @@ defmodule EtherCAT.BusTest do
     assert {:ok, [%{wkc: 1}]} = Task.await(small)
   end
 
-  test "redundant link merges duplicate responses by higher WKC" do
+  test "redundant link keeps the processed forward-path reply over the reverse passthrough copy" do
     {:ok, bus} = start_redundant_bus()
 
     read = Task.async(fn -> Bus.transaction(bus, Transaction.fprd(0x1000, {0x0130, 2})) end)
@@ -353,12 +353,38 @@ defmodule EtherCAT.BusTest do
     primary = assert_sent_transport("pri")
     secondary = assert_sent_transport("sec")
 
-    reply_transport(bus, primary, fn dg -> %{dg | data: <<0x11, 0x11>>, wkc: 1} end)
+    # In a healthy ring, the primary port receives the secondary-originated
+    # reverse-path copy unchanged, while the secondary port receives the
+    # processed forward-path reply.
+    reply_transport(bus, primary, fn dg -> %{dg | wkc: 0} end)
     refute_receive {:fake_transport_sent, _, _, _, _}, 20
 
-    reply_transport(bus, secondary, fn dg -> %{dg | data: <<0x22, 0x22>>, wkc: 2} end)
+    reply_transport(bus, secondary, fn dg -> %{dg | data: <<0x22, 0x22>>, wkc: 1} end)
 
-    assert {:ok, [%{data: <<0x22, 0x22>>, wkc: 2}]} = Task.await(read)
+    assert {:ok, [%{data: <<0x22, 0x22>>, wkc: 1}]} = Task.await(read)
+  end
+
+  test "redundant link merges complementary logical data from both sides of a break" do
+    {:ok, bus} = start_redundant_bus()
+
+    original = <<0xF0, 0xF1, 0xF2, 0xF3>>
+
+    read =
+      Task.async(fn ->
+        Bus.transaction(bus, Transaction.lrw({0x0000, original}))
+      end)
+
+    primary = assert_sent_transport("pri")
+    secondary = assert_sent_transport("sec")
+
+    # Primary-originated frame processes the left half and bounces back to
+    # primary. Secondary-originated frame reaches the break in reverse, then
+    # processes the right half on the way back to secondary.
+    reply_transport(bus, primary, fn dg -> %{dg | data: <<0x10, 0x11, 0xF2, 0xF3>>, wkc: 2} end)
+    refute_receive {:fake_transport_sent, _, _, _, _}, 20
+    reply_transport(bus, secondary, fn dg -> %{dg | data: <<0xF0, 0xF1, 0x12, 0x13>>, wkc: 2} end)
+
+    assert {:ok, [%{data: <<0x10, 0x11, 0x12, 0x13>>, wkc: 4}]} = Task.await(read)
   end
 
   test "redundant link degrades to the surviving port after carrier loss" do

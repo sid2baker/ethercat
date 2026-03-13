@@ -1,5 +1,45 @@
 defmodule EtherCAT.Bus.Link.Redundant do
-  @moduledoc false
+  @moduledoc """
+  Redundant dual-link adapter for EtherCAT bus I/O.
+
+  The same EtherCAT payload is transmitted on both master links and the
+  returned datagrams are merged into a single reply.
+
+  ## Physical path model
+
+  Healthy ring:
+
+  - the primary-originated frame traverses slaves in forward station order and
+    returns on the secondary port with slave data
+  - the secondary-originated frame traverses the healthy line in reverse and
+    returns on the primary port as an unchanged passthrough copy
+
+  Single break between two slave groups:
+
+  - the primary-originated frame processes the left side up to the break and
+    bounces back to the primary port
+  - the secondary-originated frame reaches the break in reverse, then
+    processes the right side in forward station order on the way back to the
+    secondary port
+
+  This means a healthy redundant exchange usually yields one processed reply
+  plus one reverse-path passthrough copy, while a single break yields two
+  complementary partial replies.
+
+  ## Merge model
+
+  This adapter is transport-level. It assumes the underlying transports return
+  the physically correct per-port payloads.
+
+  When both replies are available:
+
+  - working counters are summed
+  - logical datagram payloads are merged against the original sent payload so
+    complementary process-data halves survive a single break
+  - non-logical datagrams keep the side with the stronger WKC
+
+  When only one reply is available by timeout, that partial reply is surfaced.
+  """
 
   @behaviour EtherCAT.Bus.Link
 
@@ -12,6 +52,7 @@ defmodule EtherCAT.Bus.Link.Redundant do
   @type awaiting_t :: %{
           primary?: boolean(),
           secondary?: boolean(),
+          sent_payload: binary(),
           primary_payload: binary() | nil,
           primary_rx_at: integer() | nil,
           secondary_payload: binary() | nil,
@@ -71,7 +112,7 @@ defmodule EtherCAT.Bus.Link.Redundant do
         {:error, clear_awaiting(link), first_error || :down}
 
       _ ->
-        {:ok, %{link | awaiting: new_awaiting(sent_ports)}}
+        {:ok, %{link | awaiting: new_awaiting(sent_ports, payload)}}
     end
   end
 
@@ -310,6 +351,7 @@ defmodule EtherCAT.Bus.Link.Redundant do
     cond do
       awaiting.primary_payload && awaiting.secondary_payload ->
         merge_payloads(
+          awaiting.sent_payload,
           awaiting.primary_payload,
           awaiting.primary_rx_at,
           awaiting.secondary_payload,
@@ -327,10 +369,20 @@ defmodule EtherCAT.Bus.Link.Redundant do
     end
   end
 
-  defp merge_payloads(primary_payload, primary_rx_at, secondary_payload, secondary_rx_at) do
-    case {Frame.decode(primary_payload), Frame.decode(secondary_payload)} do
-      {{:ok, primary_datagrams}, {:ok, secondary_datagrams}} ->
-        merged = merge_datagrams(primary_datagrams, secondary_datagrams)
+  defp merge_payloads(
+         sent_payload,
+         primary_payload,
+         primary_rx_at,
+         secondary_payload,
+         secondary_rx_at
+       ) do
+    case {
+      Frame.decode(sent_payload),
+      Frame.decode(primary_payload),
+      Frame.decode(secondary_payload)
+    } do
+      {{:ok, sent_datagrams}, {:ok, primary_datagrams}, {:ok, secondary_datagrams}} ->
+        merged = merge_datagrams(sent_datagrams, primary_datagrams, secondary_datagrams)
 
         case Frame.encode(merged) do
           {:ok, payload} -> {:ok, payload, min_timestamp(primary_rx_at, secondary_rx_at)}
@@ -342,15 +394,107 @@ defmodule EtherCAT.Bus.Link.Redundant do
     end
   end
 
-  defp merge_datagrams(primary_datagrams, secondary_datagrams) do
+  defp merge_datagrams(sent_datagrams, primary_datagrams, secondary_datagrams) do
+    primary_by_idx = Map.new(primary_datagrams, &{&1.idx, &1})
     secondary_by_idx = Map.new(secondary_datagrams, &{&1.idx, &1})
 
-    Enum.map(primary_datagrams, fn primary ->
-      case Map.get(secondary_by_idx, primary.idx) do
-        nil -> primary
-        secondary -> if secondary.wkc > primary.wkc, do: secondary, else: primary
-      end
+    Enum.map(sent_datagrams, fn sent ->
+      primary = Map.get(primary_by_idx, sent.idx)
+      secondary = Map.get(secondary_by_idx, sent.idx)
+      merge_datagram(sent, primary, secondary)
     end)
+  end
+
+  defp merge_datagram(sent, nil, nil), do: sent
+  defp merge_datagram(_sent, primary, nil), do: primary
+  defp merge_datagram(_sent, nil, secondary), do: secondary
+
+  defp merge_datagram(sent, primary, secondary) do
+    preferred = preferred_datagram(primary, secondary)
+
+    %{
+      preferred
+      | data: merge_data(sent, primary, secondary, preferred),
+        wkc: primary.wkc + secondary.wkc,
+        circular: primary.circular or secondary.circular
+    }
+  end
+
+  defp merge_data(
+         %{cmd: cmd, data: sent_data},
+         %{data: primary_data},
+         %{data: secondary_data},
+         _preferred
+       )
+       when cmd in [10, 11, 12] and
+              byte_size(sent_data) == byte_size(primary_data) and
+              byte_size(sent_data) == byte_size(secondary_data) do
+    merge_logical_data(
+      sent_data,
+      primary_data,
+      secondary_data,
+      preferred_side(primary_data, secondary_data, sent_data)
+    )
+  end
+
+  defp merge_data(_sent, _primary, _secondary, preferred), do: preferred.data
+
+  defp merge_logical_data(<<>>, <<>>, <<>>, _preferred_side), do: <<>>
+
+  defp merge_logical_data(
+         <<sent_byte, sent_rest::binary>>,
+         <<primary_byte, primary_rest::binary>>,
+         <<secondary_byte, secondary_rest::binary>>,
+         preferred_side
+       ) do
+    merged_byte =
+      cond do
+        primary_byte != sent_byte and secondary_byte == sent_byte ->
+          primary_byte
+
+        secondary_byte != sent_byte and primary_byte == sent_byte ->
+          secondary_byte
+
+        primary_byte != sent_byte and secondary_byte != sent_byte and
+            primary_byte == secondary_byte ->
+          primary_byte
+
+        primary_byte != sent_byte and secondary_byte != sent_byte and preferred_side == :secondary ->
+          secondary_byte
+
+        primary_byte != sent_byte ->
+          primary_byte
+
+        secondary_byte != sent_byte ->
+          secondary_byte
+
+        true ->
+          sent_byte
+      end
+
+    <<
+      merged_byte,
+      merge_logical_data(sent_rest, primary_rest, secondary_rest, preferred_side)::binary
+    >>
+  end
+
+  defp preferred_side(primary_data, secondary_data, sent_data) do
+    primary_changed? = primary_data != sent_data
+    secondary_changed? = secondary_data != sent_data
+
+    cond do
+      primary_changed? and not secondary_changed? -> :primary
+      secondary_changed? and not primary_changed? -> :secondary
+      true -> :primary
+    end
+  end
+
+  defp preferred_side(primary, secondary) do
+    if secondary.wkc > primary.wkc, do: :secondary, else: :primary
+  end
+
+  defp preferred_datagram(primary, secondary) do
+    if preferred_side(primary, secondary) == :secondary, do: secondary, else: primary
   end
 
   defp min_timestamp(nil, other), do: other
@@ -368,10 +512,11 @@ defmodule EtherCAT.Bus.Link.Redundant do
   defp awaiting_port?(awaiting, :primary), do: awaiting.primary?
   defp awaiting_port?(awaiting, :secondary), do: awaiting.secondary?
 
-  defp new_awaiting(sent_ports) do
+  defp new_awaiting(sent_ports, sent_payload) do
     %{
       primary?: :primary in sent_ports,
       secondary?: :secondary in sent_ports,
+      sent_payload: sent_payload,
       primary_payload: nil,
       primary_rx_at: nil,
       secondary_payload: nil,
