@@ -82,6 +82,34 @@ defmodule EtherCAT.SimulatorTest do
     assert {:error, :not_found} = Simulator.info()
   end
 
+  @tag :raw_socket
+  test "supervised runtime can expose primary and secondary raw endpoints" do
+    assert {:ok, supervisor} =
+             Supervisor.start_link(
+               [
+                 {Simulator,
+                  devices: [],
+                  raw: [
+                    primary: [interface: @raw_loopback_interface],
+                    secondary: [interface: @raw_loopback_interface]
+                  ],
+                  topology: :redundant}
+               ],
+               strategy: :one_for_one
+             )
+
+    assert {:ok,
+            %{
+              raw: %{
+                primary: %{interface: @raw_loopback_interface, ingress: :primary},
+                secondary: %{interface: @raw_loopback_interface, ingress: :secondary}
+              }
+            }} = Simulator.info()
+
+    assert :ok = Supervisor.stop(supervisor)
+    assert {:error, :not_found} = Simulator.info()
+  end
+
   test "public simulator api returns not_found instead of exiting when no simulator is running" do
     assert {:error, :not_found} = Simulator.process_datagrams([])
     assert {:error, :not_found} = Simulator.clear_faults()

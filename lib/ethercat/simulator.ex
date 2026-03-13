@@ -10,6 +10,7 @@ defmodule EtherCAT.Simulator do
   alias EtherCAT.Simulator.Runtime.Milestones
   alias EtherCAT.Simulator.Runtime.Router
   alias EtherCAT.Simulator.Runtime.Snapshot
+  alias EtherCAT.Simulator.Runtime.Topology
   alias EtherCAT.Simulator.State
   alias EtherCAT.Simulator.Slave.Runtime.Device
   alias EtherCAT.Simulator.Runtime.Subscriptions
@@ -143,7 +144,13 @@ defmodule EtherCAT.Simulator do
   @spec process_datagrams([Datagram.t()]) ::
           {:ok, [Datagram.t()]} | {:error, :no_response | :not_found | :timeout}
   def process_datagrams(datagrams),
-    do: safe_call({:process_datagrams, datagrams}, 5_000)
+    do: process_datagrams(datagrams, [])
+
+  @doc false
+  @spec process_datagrams([Datagram.t()], keyword()) ::
+          {:ok, [Datagram.t()]} | {:error, :no_response | :not_found | :timeout}
+  def process_datagrams(datagrams, opts) when is_list(opts),
+    do: safe_call({:process_datagrams, datagrams, opts}, 5_000)
 
   @spec info() :: {:ok, map()} | {:error, :not_found | :timeout}
   def info do
@@ -171,6 +178,10 @@ defmodule EtherCAT.Simulator do
 
   @spec clear_faults() :: :ok | {:error, :not_found | :timeout}
   def clear_faults, do: safe_call(:clear_faults, 5_000)
+
+  @spec set_topology(:linear | :redundant | {:redundant, keyword()}) ::
+          :ok | {:error, :invalid_topology | :not_found | :timeout}
+  def set_topology(topology), do: safe_call({:set_topology, topology}, 5_000)
 
   @spec signals(atom()) :: {:ok, [atom()]} | {:error, :not_found | :timeout}
   def signals(slave_name), do: safe_call({:signals, slave_name}, 5_000)
@@ -218,12 +229,22 @@ defmodule EtherCAT.Simulator do
   def init(opts) do
     devices = Keyword.get(opts, :devices, [])
 
-    slaves =
-      devices
-      |> Enum.with_index()
-      |> Enum.map(fn {definition, position} -> Device.new(definition, position) end)
+    topology =
+      opts
+      |> Keyword.get(:topology)
+      |> Topology.normalize(length(devices))
 
-    {:ok, State.new(slaves)}
+    with {:ok, topology} <- topology do
+      slaves =
+        devices
+        |> Enum.with_index()
+        |> Enum.map(fn {definition, position} -> Device.new(definition, position) end)
+
+      {:ok, State.new(slaves, topology)}
+    else
+      {:error, :invalid_topology} ->
+        {:stop, :invalid_topology}
+    end
   end
 
   defp normalize_start_opts(opts) do
@@ -264,7 +285,7 @@ defmodule EtherCAT.Simulator do
   end
 
   defp maybe_put_default_raw_info(info) do
-    case RawSocket.info() do
+    case RawSocket.infos() do
       {:ok, raw_info} -> Map.put(info, :raw, raw_info)
       {:error, _reason} -> info
     end
@@ -291,13 +312,14 @@ defmodule EtherCAT.Simulator do
 
   @impl true
   def handle_call(
-        {:process_datagrams, datagrams},
+        {:process_datagrams, datagrams, opts},
         _from,
-        %{slaves: slaves, faults: faults} = state
+        %{slaves: slaves, faults: faults, topology: topology} = state
       ) do
     {planned_fault_entry, faults} = Faults.pop_pending(faults)
     effective_faults = Faults.apply_pending(faults, planned_fault_entry)
     state = %{state | faults: faults}
+    ingress = Keyword.get(opts, :ingress)
 
     if effective_faults.drop_responses? do
       {:reply, {:error, :no_response}, maybe_resume_fault_script(state, planned_fault_entry)}
@@ -311,7 +333,9 @@ defmodule EtherCAT.Simulator do
           effective_faults.disconnected,
           effective_faults.wkc_offset,
           effective_faults.command_wkc_offsets,
-          effective_faults.logical_wkc_offsets
+          effective_faults.logical_wkc_offsets,
+          topology,
+          ingress
         )
 
       state =
@@ -327,6 +351,10 @@ defmodule EtherCAT.Simulator do
 
       {:reply, {:ok, responses}, state}
     end
+  end
+
+  def handle_call({:process_datagrams, datagrams}, from, state) do
+    handle_call({:process_datagrams, datagrams, []}, from, state)
   end
 
   def handle_call({:inject_fault, fault}, _from, state) do
@@ -349,6 +377,16 @@ defmodule EtherCAT.Simulator do
       |> finalize_signal_changes(before_signals)
 
     {:reply, :ok, state}
+  end
+
+  def handle_call({:set_topology, topology}, _from, %{slaves: slaves} = state) do
+    case Topology.normalize(topology, length(slaves)) do
+      {:ok, normalized_topology} ->
+        {:reply, :ok, %{state | topology: normalized_topology}}
+
+      {:error, :invalid_topology} ->
+        {:reply, {:error, :invalid_topology}, state}
+    end
   end
 
   def handle_call({:signals, slave_name}, _from, %{slaves: slaves} = state) do

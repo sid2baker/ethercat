@@ -2,7 +2,7 @@ defmodule EtherCAT.Simulator.Runtime.Snapshot do
   @moduledoc false
 
   alias EtherCAT.Simulator.State
-  alias EtherCAT.Simulator.Runtime.Faults
+  alias EtherCAT.Simulator.Runtime.{Faults, Topology}
   alias EtherCAT.Simulator.Slave.Runtime.Device
   alias EtherCAT.Simulator.Runtime.Subscriptions
 
@@ -14,7 +14,8 @@ defmodule EtherCAT.Simulator.Runtime.Snapshot do
         faults: faults,
         connections: connections,
         subscriptions: subscriptions,
-        scheduled_faults: scheduled_faults
+        scheduled_faults: scheduled_faults,
+        topology: topology
       }) do
     faults_info = Faults.info(faults)
     scheduled_faults = scheduled_fault_info(scheduled_faults)
@@ -23,9 +24,11 @@ defmodule EtherCAT.Simulator.Runtime.Snapshot do
       slaves: Enum.map(slaves, &Device.info/1),
       connections: connections,
       subscriptions: Subscriptions.info(subscriptions),
-      scheduled_faults: scheduled_faults
+      scheduled_faults: scheduled_faults,
+      topology: topology
     }
     |> Map.merge(faults_info)
+    |> Map.update!(:topology, &Topology.info/1)
   end
 
   @spec device(simulator_state(), atom()) :: {:ok, map()} | {:error, :not_found}

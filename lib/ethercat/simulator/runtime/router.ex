@@ -3,6 +3,7 @@ defmodule EtherCAT.Simulator.Runtime.Router do
 
   alias EtherCAT.Bus.Datagram
   alias EtherCAT.Simulator.Runtime.Faults
+  alias EtherCAT.Simulator.Runtime.Topology
   alias EtherCAT.Simulator.Slave.Runtime.Device
 
   @aprd 1
@@ -26,7 +27,9 @@ defmodule EtherCAT.Simulator.Runtime.Router do
           MapSet.t(atom()),
           integer(),
           %{optional(Faults.command_name()) => integer()},
-          %{optional(atom()) => integer()}
+          %{optional(atom()) => integer()},
+          Topology.t(),
+          Topology.ingress()
         ) ::
           {[Datagram.t()], [Device.t()]}
   def process_datagrams(
@@ -35,9 +38,14 @@ defmodule EtherCAT.Simulator.Runtime.Router do
         disconnected,
         wkc_offset,
         command_wkc_offsets,
-        logical_wkc_offsets
+        logical_wkc_offsets,
+        topology,
+        ingress
       ) do
     slaves = Enum.map(slaves, &Device.prepare/1)
+
+    disconnected =
+      MapSet.union(disconnected, Topology.unreachable_slaves(topology, ingress, slaves))
 
     {responses, slaves} =
       Enum.map_reduce(datagrams, slaves, fn datagram, current_slaves ->
@@ -64,7 +72,7 @@ defmodule EtherCAT.Simulator.Runtime.Router do
     target_position = -position
 
     {response_data, wkc, slaves} =
-      update_single(slaves, disconnected, target_position, fn slave ->
+      update_single(slaves, disconnected, target_position, datagram.data, fn slave ->
         process_register_command(slave, datagram, offset)
       end)
 
@@ -84,6 +92,7 @@ defmodule EtherCAT.Simulator.Runtime.Router do
       update_first(
         slaves,
         disconnected,
+        datagram.data,
         fn slave -> slave.station == station end,
         fn slave -> process_register_command(slave, datagram, offset) end
       )
@@ -178,7 +187,7 @@ defmodule EtherCAT.Simulator.Runtime.Router do
     {updated_slave, response_data, 1}
   end
 
-  defp update_single(slaves, disconnected, target_position, fun) do
+  defp update_single(slaves, disconnected, target_position, default_response_data, fun) do
     {slaves, response_data, wkc, matched?} =
       Enum.reduce(slaves, {[], nil, 0, false}, fn slave, {acc, response_data, wkc, matched?} ->
         if slave.position == target_position and not MapSet.member?(disconnected, slave.name) do
@@ -190,13 +199,13 @@ defmodule EtherCAT.Simulator.Runtime.Router do
       end)
 
     if matched? do
-      {response_data || <<>>, wkc, Enum.reverse(slaves)}
+      {response_data || default_response_data, wkc, Enum.reverse(slaves)}
     else
-      {<<>>, 0, Enum.reverse(slaves)}
+      {default_response_data, 0, Enum.reverse(slaves)}
     end
   end
 
-  defp update_first(slaves, disconnected, matcher, fun) do
+  defp update_first(slaves, disconnected, default_response_data, matcher, fun) do
     {updated_entries, matched?} =
       Enum.map_reduce(slaves, false, fn slave, matched? ->
         cond do
@@ -228,9 +237,9 @@ defmodule EtherCAT.Simulator.Runtime.Router do
     slaves = Enum.reverse(slaves)
 
     if matched? do
-      {response_data || <<>>, wkc, slaves}
+      {response_data || default_response_data, wkc, slaves}
     else
-      {<<>>, 0, slaves}
+      {default_response_data, 0, slaves}
     end
   end
 

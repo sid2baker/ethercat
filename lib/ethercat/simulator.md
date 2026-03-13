@@ -16,6 +16,8 @@ The simulator can now expose two host-side ingress styles:
 
 - `udp: [...]` through `EtherCAT.Simulator.Udp`
 - `raw: [interface: ...]` through `EtherCAT.Simulator.RawSocket`
+- `raw: [primary: [...], secondary: [...]]` for redundant raw ingress against
+  one shared slave segment
 
 In both cases, the slave segment is still userspace Elixir code that decodes
 EtherCAT datagrams, executes them against in-memory slaves, and encodes the
@@ -160,12 +162,16 @@ The rule is: preserve protocol behavior, not firmware structure.
 Main entry points:
 
 - `start/1` — start the supervised simulator runtime, including `udp: [...]`
-  or `raw: [interface: ...]` when you want a real transport endpoint
+  or raw endpoint config when you want a real transport endpoint
 - `child_spec/1` — supervisor-friendly form of `start/1`
 - `start_link/1` — low-level in-memory simulator core only
 - `stop/0` — stop the singleton simulator runtime
 - `process_datagrams/1` — execute EtherCAT datagrams directly
+- `process_datagrams/2` — execute EtherCAT datagrams with simulator-local
+  options such as raw ingress side
 - `inject_fault/1` / `clear_faults/0` — deterministic runtime fault injection
+- `set_topology/1` — switch the simulator between linear and redundant
+  topology modes, including a deterministic single break
 - `info/0`, `device_snapshot/1`, `signal_snapshot/2`, `connections/0`
   — stable runtime snapshots for tooling
 - `signals/1`, `signal_definitions/1`, `get_value/2`, `set_value/3`
@@ -199,6 +205,10 @@ Implemented and validated surface:
 - one or more simulated slaves behind one named simulator instance
 - real UDP transport path through `EtherCAT.Bus.Transport.UdpSocket`
 - single-link raw transport path through `EtherCAT.Bus.Transport.RawSocket`
+- dual raw ingress endpoints for redundant master tests
+- redundant topology modeling:
+  - healthy secondary passthrough
+  - deterministic single break through `set_topology({:redundant, break_after: n})`
 - startup addressing modes:
   - broadcast
   - auto-increment
@@ -233,9 +243,10 @@ The simulator has two fault boundaries:
 - `EtherCAT.Simulator` for datagram/runtime behavior
 - `EtherCAT.Simulator.Udp` for malformed, stale, or mismatched raw UDP replies
 
-The raw-socket endpoint currently has no separate transport-fault injector. It
-exists to make the single-link raw transport path testable; redundancy-aware
-topology simulation is still future work.
+The raw-socket endpoint still has no separate transport-fault injector. The
+redundant raw path is modeled through topology changes at the simulator core:
+healthy redundant ingress, or a single deterministic break that splits primary
+and secondary reachability.
 
 Runtime fault injection supports:
 

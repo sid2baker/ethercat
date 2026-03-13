@@ -22,10 +22,12 @@ defmodule EtherCAT.Simulator.RawSocket do
   @default_name __MODULE__
   @echo_retention_ms 100
 
+  @type ingress :: :primary | :secondary
   @type state :: %{
           socket: :socket.socket(),
           interface: String.t(),
           ifindex: non_neg_integer(),
+          ingress: ingress(),
           recent_tx_frames: [{binary(), integer()}]
         }
 
@@ -44,6 +46,10 @@ defmodule EtherCAT.Simulator.RawSocket do
     GenServer.start_link(__MODULE__, opts, name: Keyword.get(opts, :name, @default_name))
   end
 
+  @spec endpoint_name(ingress()) :: atom()
+  def endpoint_name(:primary), do: Module.concat(__MODULE__, Primary)
+  def endpoint_name(:secondary), do: Module.concat(__MODULE__, Secondary)
+
   @spec info(GenServer.server()) :: {:ok, map()} | {:error, :not_found}
   def info(name \\ @default_name) do
     GenServer.call(name, :info)
@@ -52,9 +58,21 @@ defmodule EtherCAT.Simulator.RawSocket do
     :exit, _reason -> {:error, :not_found}
   end
 
+  @spec infos() :: {:ok, map()} | {:error, :not_found}
+  def infos do
+    case info() do
+      {:ok, raw_info} ->
+        {:ok, raw_info}
+
+      {:error, :not_found} ->
+        endpoint_infos()
+    end
+  end
+
   @impl true
   def init(opts) do
     interface = Keyword.fetch!(opts, :interface)
+    ingress = Keyword.get(opts, :ingress, :primary)
 
     with {:ok, ifindex} <- :net.if_name2index(String.to_charlist(interface)),
          {:ok, socket} <- :socket.open(@af_packet, :raw, {:raw, @ethertype}),
@@ -66,6 +84,7 @@ defmodule EtherCAT.Simulator.RawSocket do
          socket: socket,
          interface: interface,
          ifindex: ifindex,
+         ingress: ingress,
          recent_tx_frames: []
        }}
     else
@@ -81,6 +100,7 @@ defmodule EtherCAT.Simulator.RawSocket do
       %{
         interface: state.interface,
         ifindex: state.ifindex,
+        ingress: state.ingress,
         recent_tx_frame_count: length(state.recent_tx_frames)
       }}, state}
   end
@@ -127,7 +147,8 @@ defmodule EtherCAT.Simulator.RawSocket do
                split_ethercat_frame(raw_frame),
              {:ok, datagrams} <- Frame.decode(payload),
              :request <- classify_payload(datagrams),
-             {:ok, response_datagrams} <- Simulator.process_datagrams(datagrams),
+             {:ok, response_datagrams} <-
+               Simulator.process_datagrams(datagrams, ingress: state.ingress),
              {:ok, response_payload} <- Frame.encode(response_datagrams),
              reply_frame <- <<response_header::binary, response_payload::binary, padding::binary>>,
              :ok <- :socket.sendto(socket, reply_frame, sockaddr_ll(state.ifindex, requester_mac)) do
@@ -247,4 +268,17 @@ defmodule EtherCAT.Simulator.RawSocket do
 
   defp msg_data(%{iov: [data | _]}), do: data
   defp msg_data(_), do: <<>>
+
+  defp endpoint_infos do
+    [:primary, :secondary]
+    |> Enum.map(fn ingress -> {ingress, info(endpoint_name(ingress))} end)
+    |> Enum.reduce(%{}, fn
+      {ingress, {:ok, raw_info}}, acc -> Map.put(acc, ingress, raw_info)
+      {_ingress, {:error, :not_found}}, acc -> acc
+    end)
+    |> case do
+      endpoints when map_size(endpoints) > 0 -> {:ok, endpoints}
+      _endpoints -> {:error, :not_found}
+    end
+  end
 end

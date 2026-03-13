@@ -41,5 +41,35 @@ defmodule EtherCAT.Simulator.Supervisor do
   defp maybe_udp_child(udp_opts) when is_list(udp_opts), do: [{Udp, udp_opts}]
 
   defp maybe_raw_child(nil), do: []
-  defp maybe_raw_child(raw_opts) when is_list(raw_opts), do: [{RawSocket, raw_opts}]
+
+  defp maybe_raw_child(raw_opts) when is_list(raw_opts) do
+    raw_opts
+    |> normalize_raw_endpoints()
+    |> Enum.map(fn {name, opts} ->
+      {RawSocket, Keyword.put(opts, :name, name)}
+    end)
+  end
+
+  defp normalize_raw_endpoints(raw_opts) do
+    cond do
+      Keyword.has_key?(raw_opts, :primary) or Keyword.has_key?(raw_opts, :secondary) ->
+        []
+        |> maybe_add_raw_endpoint(:primary, Keyword.get(raw_opts, :primary))
+        |> maybe_add_raw_endpoint(:secondary, Keyword.get(raw_opts, :secondary))
+
+      true ->
+        [{Keyword.get(raw_opts, :name, RawSocket), raw_opts}]
+    end
+  end
+
+  defp maybe_add_raw_endpoint(endpoints, _ingress, nil), do: endpoints
+
+  defp maybe_add_raw_endpoint(endpoints, ingress, opts) when is_list(opts) do
+    endpoints ++
+      [
+        {RawSocket.endpoint_name(ingress),
+         opts
+         |> Keyword.put(:ingress, ingress)}
+      ]
+  end
 end
