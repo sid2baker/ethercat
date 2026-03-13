@@ -11,6 +11,10 @@ while the real UDP endpoint lives in `EtherCAT.Simulator.Udp`.
 For the full implementation guide and the SOES-derived simulator notes, see:
 
 - `lib/ethercat/simulator/README.md`
+- `lib/ethercat/simulator/ARCHITECTURE.md`
+- `lib/ethercat/simulator/CAPABILITIES.md`
+- `lib/ethercat/simulator/FAULTS.md`
+- `lib/ethercat/simulator/TESTING.md`
 - `lib/ethercat/simulator/slave/reference/slave_spec/README.md`
 
 ## What This Is Not

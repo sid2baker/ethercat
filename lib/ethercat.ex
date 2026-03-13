@@ -32,46 +32,52 @@ defmodule EtherCAT do
 
   ## Runtime Lifecycle
 
-  This is the public `state/0` lifecycle. It matches the actual `Master`
-  states directly.
+  This is the user-facing `state/0` lifecycle. It shows the main session flow
+  without trying to encode every exact `Master` state transition in one dense
+  graph.
 
   ```mermaid
-  stateDiagram-v2
-      [*] --> idle
-      idle --> discovering: start/1
-      discovering --> awaiting_preop: configured slaves are still pending
-      discovering --> idle: startup fails or stop/0
-      awaiting_preop --> preop_ready: all slaves reached PREOP, no activation requested
-      awaiting_preop --> operational: all slaves reached PREOP and activation succeeds
-      awaiting_preop --> activation_blocked: all slaves reached PREOP but activation is incomplete
-      awaiting_preop --> idle: timeout, fatal activation failure, or stop/0
-      preop_ready --> operational: activate/0 succeeds
-      preop_ready --> activation_blocked: activate/0 is incomplete
-      preop_ready --> recovering: critical runtime fault
-      preop_ready --> idle: stop/0 or fatal subsystem exit
-      deactivated --> operational: activate/0 succeeds
-      deactivated --> preop_ready: deactivate to PREOP
-      deactivated --> activation_blocked: target transition is incomplete
-      deactivated --> recovering: critical runtime fault
-      deactivated --> idle: stop/0 or fatal subsystem exit
-      activation_blocked --> operational: retry clears activation failures and no runtime faults remain
-      activation_blocked --> deactivated: retry clears transition failures and SAFEOP is healthy
-      activation_blocked --> preop_ready: retry clears transition failures and PREOP is healthy
-      activation_blocked --> recovering: activation failures clear but runtime faults remain
-      activation_blocked --> idle: stop/0 or fatal subsystem exit
-      operational --> deactivated: deactivate/0 settles in SAFEOP
-      operational --> preop_ready: deactivate to PREOP
-      operational --> recovering: critical runtime fault
-      operational --> idle: stop/0 or fatal subsystem exit
-      recovering --> operational: critical runtime faults are cleared and target is OP
-      recovering --> deactivated: critical runtime faults are cleared and target is SAFEOP
-      recovering --> preop_ready: critical runtime faults are cleared and target is PREOP
-      recovering --> idle: stop/0 or recovery fails
+  flowchart TD
+      A[start/1] --> B[discovering]
+      B --> C[awaiting_preop]
+      B -->|startup fails or stop/0| Z[idle]
+      C -->|configured slaves become usable in PREOP| D{activation requested?}
+      C -->|timeout, fatal startup failure, or stop/0| Z
+
+      D -->|no| E[preop_ready]
+      D -->|yes, target reached| F[operational]
+      D -->|yes, transition incomplete| G[activation_blocked]
+
+      E -->|activate/0 succeeds| F
+      E -->|activate/0 is incomplete| G
+
+      F -->|deactivate/0 to SAFEOP| H[deactivated]
+      F -->|deactivate/0 to PREOP| E
+
+      E -->|critical runtime fault| I[recovering]
+      H -->|critical runtime fault| I
+      F -->|critical runtime fault| I
+      G -->|runtime faults remain after activation retry| I
+
+      G -->|retry reaches OP| F
+      G -->|retry settles in SAFEOP| H
+      G -->|retry settles in PREOP| E
+
+      I -->|faults cleared, target OP| F
+      I -->|faults cleared, target SAFEOP| H
+      I -->|faults cleared, target PREOP| E
+
+      E -->|stop/0 or fatal exit| Z
+      H -->|stop/0 or fatal exit| Z
+      F -->|stop/0 or fatal exit| Z
+      G -->|stop/0 or fatal exit| Z
+      I -->|recovery fails or stop/0| Z
   ```
 
   Physical link loss normally appears here as a runtime `:recovering` transition,
   not an immediate return to `:idle`. `:idle` is reserved for explicit stop,
-  startup failure, bus-process exit, or fatal policy.
+  startup failure, bus-process exit, or fatal policy. For the exact master-side
+  state semantics, read `EtherCAT.Master`.
 
   ## Startup Sequence
 
@@ -79,34 +85,30 @@ defmodule EtherCAT do
   sequenceDiagram
       autonumber
       participant App
-      participant Master
+      participant EtherCAT
       participant Bus
+      participant Slaves
       participant DC
-      participant Domain
-      participant Slave
 
-      App->>Master: start/1
-      Master->>Bus: count slaves, assign stations, verify link
+      App->>EtherCAT: start/1
+      EtherCAT->>Bus: discover ring, assign stations, verify link
       opt DC is configured
-          Master->>DC: initialize clocks
+          EtherCAT->>DC: initialize clocks
       end
-      Master->>Domain: start domains in open state
-      Master->>Slave: start slave processes
-      Slave->>Bus: reach PREOP through INIT, SII, and mailbox setup
-      Slave->>Domain: register PDO layout
-      Slave-->>Master: report ready at PREOP
+      EtherCAT->>Slaves: start configured slaves
+      Slaves->>Bus: reach PREOP through SII, mailbox, and PDO setup
+      Slaves-->>EtherCAT: report ready at PREOP
       opt activation is requested and possible
+          EtherCAT->>Bus: start cyclic domains
           opt DC runtime is available
-              Master->>DC: start runtime maintenance
+              EtherCAT->>DC: start runtime maintenance
+              opt DC lock is required
+                  EtherCAT->>DC: wait for lock
+              end
           end
-          Master->>Domain: start cyclic exchange
-          opt DC lock is required
-              Master->>DC: wait for lock
-          end
-          Master->>Slave: request SAFEOP
-          Master->>Slave: request OP
+          EtherCAT->>Slaves: request SAFEOP then OP
       end
-      Master-->>App: state becomes preop_ready, activation_blocked, or operational
+      EtherCAT-->>App: preop_ready, activation_blocked, or operational
   ```
 
   ## Usage
