@@ -23,12 +23,45 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
     {{:outputs, :ch16}, {:inputs, :ch16}}
   ]
   @type ring() :: :default | :hardware | :segmented
+  @type transport() :: {:udp, keyword()} | {:raw, keyword()}
+  @type endpoint() ::
+          %{
+            transport: :udp,
+            port: :inet.port_number(),
+            master_ip: :inet.ip_address(),
+            simulator_ip: :inet.ip_address()
+          }
+          | %{
+              transport: :raw,
+              master_interface: binary(),
+              simulator_interface: binary()
+            }
 
   @spec master_ip() :: :inet.ip_address()
   def master_ip, do: @master_ip
 
   @spec simulator_ip() :: :inet.ip_address()
   def simulator_ip, do: @simulator_ip
+
+  @spec raw_master_interface() :: binary()
+  def raw_master_interface do
+    System.get_env("ETHERCAT_RAW_MASTER_INTERFACE") || "veth-m0"
+  end
+
+  @spec raw_simulator_interface() :: binary()
+  def raw_simulator_interface do
+    System.get_env("ETHERCAT_RAW_SIMULATOR_INTERFACE") || "veth-s0"
+  end
+
+  @spec default_transport() :: transport()
+  def default_transport do
+    case System.get_env("ETHERCAT_INTEGRATION_TRANSPORT") do
+      nil -> {:udp, []}
+      "udp" -> {:udp, []}
+      "raw" -> {:raw, []}
+      other -> raise ArgumentError, "unsupported ETHERCAT_INTEGRATION_TRANSPORT=#{inspect(other)}"
+    end
+  end
 
   @spec reset!() :: :ok
   def reset! do
@@ -110,15 +143,40 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
     raise ArgumentError, "ring #{inspect(ring)} does not expose a startup blob"
   end
 
-  @spec start_simulator!(keyword()) :: %{port: :inet.port_number()}
+  @spec start_simulator!(keyword()) :: endpoint()
   def start_simulator!(opts \\ []) do
     ring = Keyword.get(opts, :ring, :default)
     devices = Keyword.get(opts, :devices, devices(ring))
-    udp_opts = Keyword.get(opts, :udp, ip: @simulator_ip, port: 0)
     connections = Keyword.get(opts, :connections, connections(ring))
+    transport = normalize_transport(Keyword.get(opts, :transport, default_transport()))
 
-    {:ok, _supervisor} = Simulator.start(devices: devices, udp: udp_opts)
-    {:ok, %{udp: %{port: port}}} = Simulator.info()
+    simulator =
+      case transport do
+        {:udp, transport_opts} ->
+          udp_opts = udp_simulator_opts(transport_opts)
+
+          {:ok, _supervisor} = Simulator.start(devices: devices, udp: udp_opts)
+          {:ok, %{udp: %{port: port}}} = Simulator.info()
+
+          %{
+            transport: :udp,
+            port: port,
+            master_ip: udp_master_ip(transport_opts),
+            simulator_ip: udp_simulator_ip(transport_opts)
+          }
+
+        {:raw, transport_opts} ->
+          raw_opts = [interface: raw_simulator_interface(transport_opts)]
+
+          {:ok, _supervisor} = Simulator.start(devices: devices, raw: raw_opts)
+          {:ok, %{raw: %{interface: interface}}} = Simulator.info()
+
+          %{
+            transport: :raw,
+            simulator_interface: interface,
+            master_interface: raw_master_interface(transport_opts)
+          }
+      end
 
     Process.sleep(20)
 
@@ -126,18 +184,14 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
       assert_ok!(Slave.connect(source, target))
     end)
 
-    %{port: port}
+    simulator
   end
 
-  @spec start_master!(:inet.port_number(), keyword()) :: :ok
-  def start_master!(port, opts \\ []) do
+  @spec start_master!(endpoint() | :inet.port_number(), keyword()) :: :ok
+  def start_master!(endpoint, opts \\ []) do
     ring = Keyword.get(opts, :ring, :default)
 
     default_start_opts = [
-      transport: :udp,
-      bind_ip: @master_ip,
-      host: @simulator_ip,
-      port: port,
       dc: nil,
       scan_stable_ms: 20,
       scan_poll_ms: 10,
@@ -146,11 +200,15 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
       slaves: slave_configs(ring, Keyword.get(opts, :slave_config_opts, []))
     ]
 
-    start_opts = Keyword.merge(default_start_opts, Keyword.get(opts, :start_opts, []))
+    start_opts =
+      default_start_opts
+      |> Keyword.merge(start_master_transport_opts(endpoint, Keyword.get(opts, :transport)))
+      |> Keyword.merge(Keyword.get(opts, :start_opts, []))
+
     assert_ok!(start_master_with_retry(start_opts, 5))
   end
 
-  @spec boot_operational!(keyword()) :: %{port: :inet.port_number()}
+  @spec boot_operational!(keyword()) :: endpoint()
   def boot_operational!(opts \\ []) do
     reset!()
 
@@ -158,9 +216,10 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
       opts
       |> Keyword.get(:simulator_opts, [])
       |> Keyword.put_new(:ring, Keyword.get(opts, :ring, :default))
+      |> maybe_put_transport(opts)
       |> start_simulator!()
 
-    start_master!(simulator.port, opts)
+    start_master!(simulator, opts)
 
     await_timeout_ms = Keyword.get(opts, :await_operational_ms, 2_000)
     assert_ok!(EtherCAT.await_operational(await_timeout_ms))
@@ -168,7 +227,7 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
     simulator
   end
 
-  @spec boot_preop_ready!(keyword()) :: %{port: :inet.port_number()}
+  @spec boot_preop_ready!(keyword()) :: endpoint()
   def boot_preop_ready!(opts \\ []) do
     reset!()
 
@@ -176,9 +235,10 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
       opts
       |> Keyword.get(:simulator_opts, [])
       |> Keyword.put_new(:ring, Keyword.get(opts, :ring, :default))
+      |> maybe_put_transport(opts)
       |> start_simulator!()
 
-    start_master!(simulator.port, opts)
+    start_master!(simulator, opts)
 
     await_timeout_ms = Keyword.get(opts, :await_running_ms, 2_000)
     assert_ok!(EtherCAT.await_running(await_timeout_ms))
@@ -221,4 +281,77 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
   end
 
   defp start_master_with_retry(start_opts, _attempts_left), do: EtherCAT.start(start_opts)
+
+  defp normalize_transport({transport, opts}) when transport in [:udp, :raw] and is_list(opts),
+    do: {transport, opts}
+
+  defp normalize_transport(:udp), do: {:udp, []}
+  defp normalize_transport(:raw), do: {:raw, []}
+
+  defp udp_simulator_opts(opts) do
+    [ip: udp_simulator_ip(opts), port: Keyword.get(opts, :simulator_port, 0)]
+  end
+
+  defp udp_master_ip(opts), do: Keyword.get(opts, :master_ip, @master_ip)
+  defp udp_simulator_ip(opts), do: Keyword.get(opts, :simulator_ip, @simulator_ip)
+
+  defp raw_master_interface(opts) do
+    Keyword.get(opts, :master_interface, raw_master_interface())
+  end
+
+  defp raw_simulator_interface(opts) do
+    Keyword.get(opts, :simulator_interface, raw_simulator_interface())
+  end
+
+  defp start_master_transport_opts(%{transport: :udp} = endpoint, _transport_override) do
+    [
+      transport: :udp,
+      bind_ip: Map.fetch!(endpoint, :master_ip),
+      host: Map.fetch!(endpoint, :simulator_ip),
+      port: Map.fetch!(endpoint, :port)
+    ]
+  end
+
+  defp start_master_transport_opts(%{transport: :raw} = endpoint, _transport_override) do
+    [interface: Map.fetch!(endpoint, :master_interface)]
+  end
+
+  defp start_master_transport_opts(port, nil) when is_integer(port) do
+    [
+      transport: :udp,
+      bind_ip: @master_ip,
+      host: @simulator_ip,
+      port: port
+    ]
+  end
+
+  defp start_master_transport_opts(port, transport_override) when is_integer(port) do
+    start_master_transport_opts(start_simulator_context_from_port(port, transport_override), nil)
+  end
+
+  defp start_simulator_context_from_port(port, {:udp, opts}) do
+    %{
+      transport: :udp,
+      port: port,
+      master_ip: udp_master_ip(opts),
+      simulator_ip: udp_simulator_ip(opts)
+    }
+  end
+
+  defp start_simulator_context_from_port(_port, {:raw, _opts}) do
+    raise ArgumentError, "raw master startup requires the simulator endpoint map, not just a port"
+  end
+
+  defp start_simulator_context_from_port(port, :udp),
+    do: start_simulator_context_from_port(port, {:udp, []})
+
+  defp start_simulator_context_from_port(port, :raw),
+    do: start_simulator_context_from_port(port, {:raw, []})
+
+  defp maybe_put_transport(simulator_opts, parent_opts) do
+    case Keyword.fetch(parent_opts, :transport) do
+      {:ok, transport} -> Keyword.put_new(simulator_opts, :transport, transport)
+      :error -> simulator_opts
+    end
+  end
 end

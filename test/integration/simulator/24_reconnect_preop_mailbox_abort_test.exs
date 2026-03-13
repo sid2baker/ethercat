@@ -22,7 +22,7 @@ defmodule EtherCAT.Integration.Simulator.ReconnectPreopMailboxAbortTest do
   test "reconnect-time mailbox aborts rerun PREOP configuration and self-heal after faults clear" do
     simulator = SimulatorRing.start_simulator!(devices: devices(), connections: connections())
 
-    SimulatorRing.start_master!(simulator.port,
+    SimulatorRing.start_master!(simulator,
       start_opts: [domains: [%DomainConfig{id: :main, cycle_time_us: 10_000}], slaves: slaves()]
     )
 

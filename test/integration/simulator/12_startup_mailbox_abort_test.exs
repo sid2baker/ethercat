@@ -41,7 +41,7 @@ defmodule EtherCAT.Integration.Simulator.StartupMailboxAbortTest do
 
     assert :ok = Simulator.inject_fault(Fault.mailbox_abort(:mailbox, 0x2000, 0x02, @abort_code))
 
-    SimulatorRing.start_master!(simulator.port,
+    SimulatorRing.start_master!(simulator,
       start_opts: [domains: [], slaves: slaves, frame_timeout_ms: 20]
     )
 
@@ -57,7 +57,7 @@ defmodule EtherCAT.Integration.Simulator.StartupMailboxAbortTest do
     assert :ok = Simulator.clear_faults()
     assert :ok = EtherCAT.stop()
 
-    SimulatorRing.start_master!(simulator.port,
+    SimulatorRing.start_master!(simulator,
       start_opts: [domains: [], slaves: slaves, frame_timeout_ms: 20]
     )
 

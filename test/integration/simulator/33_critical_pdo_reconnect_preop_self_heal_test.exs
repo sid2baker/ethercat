@@ -100,7 +100,7 @@ defmodule EtherCAT.Integration.Simulator.CriticalPdoReconnectPreopSelfHealTest d
     SimulatorRing.reset!()
     simulator = SimulatorRing.start_simulator!(devices: devices(), connections: [])
 
-    SimulatorRing.start_master!(simulator.port,
+    SimulatorRing.start_master!(simulator,
       start_opts: [domains: [%DomainConfig{id: :main, cycle_time_us: 10_000}], slaves: slaves()]
     )
 

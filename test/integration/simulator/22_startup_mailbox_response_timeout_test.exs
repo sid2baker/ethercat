@@ -52,7 +52,7 @@ defmodule EtherCAT.Integration.Simulator.StartupMailboxResponseTimeoutTest do
                |> Fault.after_milestone(Fault.mailbox_step(:mailbox, :download_segment, 1))
              )
 
-    SimulatorRing.start_master!(simulator.port,
+    SimulatorRing.start_master!(simulator,
       start_opts: [domains: [], slaves: slaves, frame_timeout_ms: 20]
     )
 
@@ -68,7 +68,7 @@ defmodule EtherCAT.Integration.Simulator.StartupMailboxResponseTimeoutTest do
     assert :ok = Simulator.clear_faults()
     assert :ok = EtherCAT.stop()
 
-    SimulatorRing.start_master!(simulator.port,
+    SimulatorRing.start_master!(simulator,
       start_opts: [domains: [], slaves: slaves, frame_timeout_ms: 20]
     )
 
