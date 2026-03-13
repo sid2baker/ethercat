@@ -27,7 +27,7 @@ defmodule EtherCAT.Integration.Expect do
 
   @spec master_state(atom() | [atom(), ...]) :: :ok
   def master_state(expected) do
-    actual = EtherCAT.state()
+    assert {:ok, actual} = EtherCAT.state()
 
     assert match_expected?(actual, expected),
            "expected master state #{inspect(expected)}, got #{inspect(actual)}"

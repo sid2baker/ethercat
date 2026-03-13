@@ -18,7 +18,7 @@ defmodule EtherCAT.Integration.Simulator.TargetedWKCMismatchTest do
     assert :ok = Simulator.inject_fault(Fault.logical_wkc_offset(:outputs, -1) |> Fault.next(12))
 
     assert_eventually(fn ->
-      assert :recovering = EtherCAT.state()
+      assert {:ok, :recovering} = EtherCAT.state()
 
       assert {:ok,
               %{
@@ -26,15 +26,17 @@ defmodule EtherCAT.Integration.Simulator.TargetedWKCMismatchTest do
                 last_invalid_reason: {:wkc_mismatch, %{expected: 3, actual: 2}}
               }} = EtherCAT.domain_info(:main)
 
-      assert Enum.all?(EtherCAT.slaves(), &is_nil(&1.fault))
+      assert {:ok, slaves} = EtherCAT.slaves()
+      assert Enum.all?(slaves, &is_nil(&1.fault))
       assert {:ok, %{al_state: :op}} = EtherCAT.slave_info(:outputs)
     end)
 
     assert_eventually(fn ->
       assert {:ok, %{next_fault: nil, pending_faults: []}} = Simulator.info()
-      assert :operational = EtherCAT.state()
+      assert {:ok, :operational} = EtherCAT.state()
       assert {:ok, %{cycle_health: :healthy}} = EtherCAT.domain_info(:main)
-      assert Enum.all?(EtherCAT.slaves(), &is_nil(&1.fault))
+      assert {:ok, slaves} = EtherCAT.slaves()
+      assert Enum.all?(slaves, &is_nil(&1.fault))
       assert {:ok, %{al_state: :op}} = EtherCAT.slave_info(:outputs)
     end)
   end

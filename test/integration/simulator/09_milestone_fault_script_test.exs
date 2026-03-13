@@ -33,7 +33,7 @@ defmodule EtherCAT.Integration.Simulator.MilestoneFaultScriptTest do
 
     assert_eventually(
       fn ->
-        assert :recovering = EtherCAT.state()
+        assert {:ok, :recovering} = EtherCAT.state()
       end,
       80
     )
@@ -54,7 +54,7 @@ defmodule EtherCAT.Integration.Simulator.MilestoneFaultScriptTest do
 
         assert remaining > 0
         assert remaining < 12
-        assert :operational = EtherCAT.state()
+        assert {:ok, :operational} = EtherCAT.state()
         assert nil == SimulatorRing.fault_for(:outputs)
       end,
       160
@@ -63,7 +63,7 @@ defmodule EtherCAT.Integration.Simulator.MilestoneFaultScriptTest do
     assert_eventually(
       fn ->
         assert {:retreated, :safeop} = SimulatorRing.fault_for(:outputs)
-        assert :operational = EtherCAT.state()
+        assert {:ok, :operational} = EtherCAT.state()
         assert {:ok, %{al_state: :safeop}} = EtherCAT.slave_info(:outputs)
       end,
       220
@@ -73,7 +73,7 @@ defmodule EtherCAT.Integration.Simulator.MilestoneFaultScriptTest do
       fn ->
         assert {:ok, %{scheduled_faults: []}} = Simulator.info()
         assert nil == SimulatorRing.fault_for(:outputs)
-        assert :operational = EtherCAT.state()
+        assert {:ok, :operational} = EtherCAT.state()
         assert {:ok, %{al_state: :op}} = EtherCAT.slave_info(:outputs)
         assert {:ok, %{cycle_health: :healthy}} = EtherCAT.domain_info(:main)
       end,

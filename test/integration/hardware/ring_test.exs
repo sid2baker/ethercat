@@ -13,7 +13,7 @@ defmodule EtherCAT.Integration.Hardware.RingTest do
     on_exit(fn ->
       case EtherCAT.stop() do
         :ok -> :ok
-        :already_stopped -> :ok
+        {:error, :already_stopped} -> :ok
       end
     end)
 
@@ -33,7 +33,7 @@ defmodule EtherCAT.Integration.Hardware.RingTest do
              )
 
     assert :ok = EtherCAT.await_operational(5_000)
-    assert :operational = EtherCAT.state()
+    assert {:ok, :operational} = EtherCAT.state()
 
     assert {:ok, %{station: 0x1000, al_state: :op}} = EtherCAT.slave_info(:coupler)
     assert {:ok, %{station: 0x1001, al_state: :op}} = EtherCAT.slave_info(:inputs)

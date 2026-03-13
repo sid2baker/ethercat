@@ -107,7 +107,7 @@ defmodule EtherCAT.Capture do
          format: @capture_format,
          captured_at: captured_at(),
          source: %{
-           master_state: EtherCAT.state(),
+           master_state: fetch_master_state(),
            bus: bus_info,
            slave_name: slave_name,
            station: info.station
@@ -328,7 +328,7 @@ defmodule EtherCAT.Capture do
 
   defp fetch_slaves do
     case EtherCAT.slaves() do
-      slaves when is_list(slaves) -> {:ok, slaves}
+      {:ok, slaves} -> {:ok, slaves}
       {:error, _} = err -> err
     end
   end
@@ -336,8 +336,15 @@ defmodule EtherCAT.Capture do
   defp fetch_bus do
     case EtherCAT.bus() do
       {:error, _} = err -> err
-      nil -> {:error, :not_started}
-      bus -> {:ok, bus}
+      {:ok, nil} -> {:error, :not_started}
+      {:ok, bus} -> {:ok, bus}
+    end
+  end
+
+  defp fetch_master_state do
+    case EtherCAT.state() do
+      {:ok, state} -> state
+      {:error, reason} -> {:error, reason}
     end
   end
 

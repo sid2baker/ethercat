@@ -198,6 +198,11 @@ defmodule EtherCAT do
   """
   @type master_query_error :: {:error, :not_started | :timeout}
 
+  @typedoc """
+  Successful query value wrapped with `:ok`, or a local master query error.
+  """
+  @type master_query_result(value) :: {:ok, value} | master_query_error()
+
   @typedoc "Direction of a registered process-data signal."
   @type signal_direction :: :input | :output
 
@@ -295,15 +300,15 @@ defmodule EtherCAT do
   @doc """
   Return the stable bus server reference for direct frame transactions.
 
-  Returns `Bus` while the session owns a running bus process.
-  Returns `nil` if the master process exists but the bus subsystem is not
-  currently running, such as after the session has settled back to `:idle`.
+  Returns `{:ok, bus}` while the session owns a running bus process.
+  Returns `{:ok, nil}` if the master process exists but the bus subsystem is
+  not currently running, such as after the session has settled back to `:idle`.
 
   Returns `{:error, :not_started}` if the master does not exist and
   `{:error, :timeout}` if the local master call itself times out.
   """
-  @spec bus() :: EtherCAT.Bus.server() | nil | master_query_error()
-  def bus, do: MasterAPI.bus()
+  @spec bus() :: master_query_result(EtherCAT.Bus.server() | nil)
+  def bus, do: ok_query(MasterAPI.bus())
 
   @doc """
   Start the master: open the interface, discover slaves, and begin
@@ -336,9 +341,18 @@ defmodule EtherCAT do
   @spec start(keyword()) :: :ok | {:error, term()}
   def start(opts \\ []), do: MasterAPI.start(opts)
 
-  @doc "Stop the master: tear the session down completely. Returns `:already_stopped` if not running."
-  @spec stop() :: :ok | :already_stopped
-  def stop, do: MasterAPI.stop()
+  @doc """
+  Stop the master: tear the session down completely.
+
+  Returns `{:error, :already_stopped}` if not running.
+  """
+  @spec stop() :: :ok | {:error, :already_stopped}
+  def stop do
+    case MasterAPI.stop() do
+      :ok -> :ok
+      :already_stopped -> {:error, :already_stopped}
+    end
+  end
 
   @doc """
   Block until the master reaches a usable session state, then return `:ok`.
@@ -373,23 +387,27 @@ defmodule EtherCAT do
     - `:activation_blocked` — the transition to the desired runtime target is blocked
     - `:recovering` — runtime fault recovery in progress
 
-  `:idle` means the master process exists and the session is idle.
+  Returns `{:ok, state}` on success.
+
+  `{:ok, :idle}` means the master process exists and the session is idle.
   `{:error, :not_started}` means there is no local master process at all.
 
   Returns `{:error, :not_started}` if the master does not exist and
   `{:error, :timeout}` if the local master call itself times out.
   """
-  @spec state() :: session_state() | master_query_error()
-  def state, do: MasterAPI.state()
+  @spec state() :: master_query_result(session_state())
+  def state, do: ok_query(MasterAPI.state())
 
   @doc """
   Return a Distributed Clocks status snapshot for the current session.
 
+  Returns `{:ok, status}` on success.
+
   Returns `{:error, :not_started}` if the master process does not exist.
   Returns `{:error, :timeout}` if the local master call itself times out.
   """
-  @spec dc_status() :: EtherCAT.DC.Status.t() | master_query_error()
-  def dc_status, do: MasterAPI.dc_status()
+  @spec dc_status() :: master_query_result(EtherCAT.DC.Status.t())
+  def dc_status, do: ok_query(MasterAPI.dc_status())
 
   @doc "Return the current DC reference clock as `%{name, station}`."
   @spec reference_clock() ::
@@ -408,11 +426,13 @@ defmodule EtherCAT do
   Return the last terminal startup/runtime failure retained after the master
   returned to `:idle`.
 
+  Returns `{:ok, failure}` on success, where `failure` may be `nil`.
+
   Returns `{:error, :not_started}` if the master does not exist and
   `{:error, :timeout}` if the local master call itself times out.
   """
-  @spec last_failure() :: map() | nil | master_query_error()
-  def last_failure, do: MasterAPI.last_failure()
+  @spec last_failure() :: master_query_result(map() | nil)
+  def last_failure, do: ok_query(MasterAPI.last_failure())
 
   @doc """
   Configure a discovered slave while the session is still in PREOP.
@@ -442,22 +462,23 @@ defmodule EtherCAT do
   def deactivate(target \\ :safeop), do: MasterAPI.deactivate(target)
 
   @doc """
-  Return `[%{name:, station:, server:, pid:, fault:}]` for all running slaves.
+  Return `{:ok, [%{name:, station:, server:, pid:, fault:}]}` for all running
+  slaves.
 
   Returns `{:error, :not_started}` if the master does not exist and
   `{:error, :timeout}` if the local master call itself times out.
   """
-  @spec slaves() :: [slave_summary()] | master_query_error()
-  def slaves, do: MasterAPI.slaves()
+  @spec slaves() :: master_query_result([slave_summary()])
+  def slaves, do: ok_query(MasterAPI.slaves())
 
   @doc """
-  Return `[{id, cycle_time_us, pid}]` for all running domains.
+  Return `{:ok, [{id, cycle_time_us, pid}]}` for all running domains.
 
   Returns `{:error, :not_started}` if the master does not exist and
   `{:error, :timeout}` if the local master call itself times out.
   """
-  @spec domains() :: [domain_summary()] | master_query_error()
-  def domains, do: MasterAPI.domains()
+  @spec domains() :: master_query_result([domain_summary()])
+  def domains, do: ok_query(MasterAPI.domains())
 
   @doc """
   Update the live cycle period of a running domain.
@@ -606,4 +627,7 @@ defmodule EtherCAT do
           {:ok, binary()} | {:error, term()}
   def upload_sdo(slave_name, index, subindex),
     do: SlaveAPI.upload_sdo(slave_name, index, subindex)
+
+  defp ok_query({:error, _} = err), do: err
+  defp ok_query(value), do: {:ok, value}
 end

@@ -23,7 +23,7 @@ defmodule EtherCAT.Integration.Simulator.DisconnectWithHealthPollTest do
 
     assert_eventually(
       fn ->
-        assert :recovering = EtherCAT.state()
+        assert {:ok, :recovering} = EtherCAT.state()
         assert {:down, :disconnected} = SimulatorRing.fault_for(:outputs)
       end,
       80
@@ -32,7 +32,7 @@ defmodule EtherCAT.Integration.Simulator.DisconnectWithHealthPollTest do
     assert_eventually(
       fn ->
         assert {:ok, %{next_fault: nil, pending_faults: []}} = Simulator.info()
-        assert :operational = EtherCAT.state()
+        assert {:ok, :operational} = EtherCAT.state()
         assert nil == SimulatorRing.fault_for(:outputs)
         assert {:ok, %{al_state: :op}} = EtherCAT.slave_info(:outputs)
       end,

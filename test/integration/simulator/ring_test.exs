@@ -21,7 +21,7 @@ defmodule EtherCAT.Integration.Simulator.RingTest do
     assert :ok = SimulatorRing.start_master!(port)
 
     assert :ok = EtherCAT.await_operational(2_000)
-    assert :operational = EtherCAT.state()
+    assert {:ok, :operational} = EtherCAT.state()
 
     assert {:ok, %{station: 0x1000, al_state: :op}} = EtherCAT.slave_info(:coupler)
     assert {:ok, %{station: 0x1001, al_state: :op}} = EtherCAT.slave_info(:inputs)

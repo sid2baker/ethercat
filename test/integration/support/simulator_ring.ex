@@ -2,7 +2,16 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
   @moduledoc false
 
   alias EtherCAT.Domain.Config, as: DomainConfig
-  alias EtherCAT.IntegrationSupport.Drivers.{EK1100, EL1809, EL2809}
+
+  alias EtherCAT.IntegrationSupport.Drivers.{
+    EK1100,
+    EL1809,
+    EL2809,
+    EL3202,
+    SegmentedConfiguredMailboxDevice
+  }
+
+  alias EtherCAT.IntegrationSupport.Hardware
   alias EtherCAT.Simulator
   alias EtherCAT.Simulator.Slave
   alias EtherCAT.Slave.Config, as: SlaveConfig
@@ -13,6 +22,7 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
     {{:outputs, :ch1}, {:inputs, :ch1}},
     {{:outputs, :ch16}, {:inputs, :ch16}}
   ]
+  @type ring() :: :default | :hardware | :segmented
 
   @spec master_ip() :: :inet.ip_address()
   def master_ip, do: @master_ip
@@ -31,17 +41,81 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
   def stop_all! do
     case EtherCAT.stop() do
       :ok -> :ok
-      :already_stopped -> :ok
+      {:error, :already_stopped} -> :ok
     end
 
     :ok = Simulator.stop()
   end
 
+  @spec devices(ring()) :: [struct()]
+  def devices(ring \\ :default)
+
+  def devices(:default) do
+    [
+      Slave.from_driver(EK1100, name: :coupler),
+      Slave.from_driver(EL1809, name: :inputs),
+      Slave.from_driver(EL2809, name: :outputs)
+    ]
+  end
+
+  def devices(:hardware) do
+    devices(:default) ++ [Slave.from_driver(EL3202, name: :rtd)]
+  end
+
+  def devices(:segmented) do
+    devices(:default) ++ [Slave.from_driver(SegmentedConfiguredMailboxDevice, name: :mailbox)]
+  end
+
+  @spec connections(ring()) :: [{{atom(), atom()}, {atom(), atom()}}]
+  def connections(_ring \\ :default), do: @default_connections
+
+  @spec slave_configs(ring(), keyword()) :: [SlaveConfig.t()]
+  def slave_configs(ring \\ :default, opts \\ [])
+
+  def slave_configs(:default, opts) do
+    Hardware.full_ring(Keyword.put(opts, :include_rtd, false))
+  end
+
+  def slave_configs(:hardware, opts) do
+    Hardware.full_ring(opts)
+  end
+
+  def slave_configs(:segmented, opts) do
+    shared_health_poll_ms = Keyword.get(opts, :health_poll_ms)
+    output_health_poll_ms = Keyword.get(opts, :output_health_poll_ms, shared_health_poll_ms || 20)
+
+    mailbox_health_poll_ms =
+      Keyword.get(opts, :mailbox_health_poll_ms, shared_health_poll_ms || 20)
+
+    Hardware.full_ring(
+      opts
+      |> Keyword.put(:include_rtd, false)
+      |> Keyword.put(:output_health_poll_ms, output_health_poll_ms)
+    ) ++
+      [
+        %SlaveConfig{
+          name: :mailbox,
+          driver: SegmentedConfiguredMailboxDevice,
+          process_data: :none,
+          target_state: :op,
+          health_poll_ms: mailbox_health_poll_ms
+        }
+      ]
+  end
+
+  @spec startup_blob(ring()) :: binary()
+  def startup_blob(:segmented), do: SegmentedConfiguredMailboxDevice.startup_blob()
+
+  def startup_blob(ring) do
+    raise ArgumentError, "ring #{inspect(ring)} does not expose a startup blob"
+  end
+
   @spec start_simulator!(keyword()) :: %{port: :inet.port_number()}
   def start_simulator!(opts \\ []) do
-    devices = Keyword.get(opts, :devices, default_devices())
+    ring = Keyword.get(opts, :ring, :default)
+    devices = Keyword.get(opts, :devices, devices(ring))
     udp_opts = Keyword.get(opts, :udp, ip: @simulator_ip, port: 0)
-    connections = Keyword.get(opts, :connections, @default_connections)
+    connections = Keyword.get(opts, :connections, connections(ring))
 
     {:ok, _supervisor} = Simulator.start(devices: devices, udp: udp_opts)
     {:ok, %{udp: %{port: port}}} = Simulator.info()
@@ -57,6 +131,8 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
 
   @spec start_master!(:inet.port_number(), keyword()) :: :ok
   def start_master!(port, opts \\ []) do
+    ring = Keyword.get(opts, :ring, :default)
+
     default_start_opts = [
       transport: :udp,
       bind_ip: @master_ip,
@@ -67,7 +143,7 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
       scan_poll_ms: 10,
       frame_timeout_ms: 20,
       domains: [default_domain()],
-      slaves: ring_slave_configs(Keyword.get(opts, :slave_config_opts, []))
+      slaves: slave_configs(ring, Keyword.get(opts, :slave_config_opts, []))
     ]
 
     start_opts = Keyword.merge(default_start_opts, Keyword.get(opts, :start_opts, []))
@@ -78,7 +154,12 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
   def boot_operational!(opts \\ []) do
     reset!()
 
-    simulator = start_simulator!(Keyword.get(opts, :simulator_opts, []))
+    simulator =
+      opts
+      |> Keyword.get(:simulator_opts, [])
+      |> Keyword.put_new(:ring, Keyword.get(opts, :ring, :default))
+      |> start_simulator!()
+
     start_master!(simulator.port, opts)
 
     await_timeout_ms = Keyword.get(opts, :await_operational_ms, 2_000)
@@ -91,7 +172,12 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
   def boot_preop_ready!(opts \\ []) do
     reset!()
 
-    simulator = start_simulator!(Keyword.get(opts, :simulator_opts, []))
+    simulator =
+      opts
+      |> Keyword.get(:simulator_opts, [])
+      |> Keyword.put_new(:ring, Keyword.get(opts, :ring, :default))
+      |> start_simulator!()
+
     start_master!(simulator.port, opts)
 
     await_timeout_ms = Keyword.get(opts, :await_running_ms, 2_000)
@@ -100,55 +186,18 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
     simulator
   end
 
-  @spec ring_slave_configs(keyword()) :: [SlaveConfig.t()]
-  def ring_slave_configs(opts \\ []) do
-    shared_health_poll_ms = Keyword.get(opts, :health_poll_ms)
-
-    [
-      %SlaveConfig{
-        name: :coupler,
-        driver: EK1100,
-        process_data: :none,
-        target_state: :op,
-        health_poll_ms: Keyword.get(opts, :coupler_health_poll_ms, shared_health_poll_ms)
-      },
-      %SlaveConfig{
-        name: :inputs,
-        driver: EL1809,
-        process_data: {:all, :main},
-        target_state: :op,
-        health_poll_ms: Keyword.get(opts, :input_health_poll_ms, shared_health_poll_ms)
-      },
-      %SlaveConfig{
-        name: :outputs,
-        driver: EL2809,
-        process_data: {:all, :main},
-        target_state: :op,
-        health_poll_ms: Keyword.get(opts, :output_health_poll_ms, shared_health_poll_ms)
-      }
-    ]
-  end
-
   @spec default_domain() :: DomainConfig.t()
-  def default_domain do
-    %DomainConfig{id: :main, cycle_time_us: 10_000}
-  end
+  def default_domain, do: Hardware.main_domain()
 
   @spec fault_for(atom()) :: term()
   def fault_for(slave_name) do
-    EtherCAT.slaves()
+    {:ok, slaves} = EtherCAT.slaves()
+
+    slaves
     |> Enum.find_value(fn
       %{name: ^slave_name, fault: fault} -> fault
       _slave -> nil
     end)
-  end
-
-  defp default_devices do
-    [
-      Slave.from_driver(EK1100, name: :coupler),
-      Slave.from_driver(EL1809, name: :inputs),
-      Slave.from_driver(EL2809, name: :outputs)
-    ]
   end
 
   defp assert_ok!(:ok), do: :ok

@@ -22,14 +22,16 @@ defmodule EtherCAT.Integration.Simulator.TransientTimeoutTest do
         total_miss_count: &(&1 > 0)
       )
 
-      assert Enum.all?(EtherCAT.slaves(), &is_nil(&1.fault))
+      assert {:ok, slaves} = EtherCAT.slaves()
+      assert Enum.all?(slaves, &is_nil(&1.fault))
     end)
 
     Expect.eventually(fn ->
       Expect.master_state(:operational)
       Expect.domain(:main, cycle_health: :healthy, total_miss_count: &(&1 > 0))
       Expect.simulator_queue_empty()
-      assert Enum.all?(EtherCAT.slaves(), &is_nil(&1.fault))
+      assert {:ok, slaves} = EtherCAT.slaves()
+      assert Enum.all?(slaves, &is_nil(&1.fault))
     end)
   end
 end

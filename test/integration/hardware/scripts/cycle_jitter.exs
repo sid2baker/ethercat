@@ -1,12 +1,30 @@
 #!/usr/bin/env elixir
 # Domain cycle jitter histogram — self-clocking loopback method.
 #
+# ## Hardware Requirements
+#
+# Required slaves:
+#   - EK1100 coupler
+#   - EL1809 digital input terminal
+#   - EL2809 digital output terminal
+#   - EL3202 is optional; it is started only because `Hardware.full_ring/0`
+#     describes the maintained bench layout
+#
+# Required wiring:
+#   - one physical loopback wire from an EL2809 output channel to an EL1809
+#     input channel
+#   - defaults to `:outputs/:ch1 -> :inputs/:ch1`
+#
+# Required capabilities:
+#   - cyclic PDO exchange on the digital I/O pair
+#   - stable OP state long enough to collect the requested sample count
+#
 # Measures the actual inter-cycle interval using a hardware feedback loop:
 #
-#   1. Write :outputs ch1 = 1
-#   2. Wait for {:ethercat, :signal, :inputs, :ch1, 1}  ← one domain cycle later
-#   3. Write :outputs ch1 = 0
-#   4. Wait for {:ethercat, :signal, :inputs, :ch1, 0}  ← one domain cycle later
+#   1. Write the configured EL2809 output channel = 1
+#   2. Wait for the configured EL1809 input channel = 1  ← one domain cycle later
+#   3. Write the configured EL2809 output channel = 0
+#   4. Wait for the configured EL1809 input channel = 0  ← one domain cycle later
 #   5. Repeat — each notification represents exactly one domain cycle passing
 #
 # Because the loopback wire gates each toggle through the hardware bus, the
@@ -25,9 +43,11 @@
 #   MIX_ENV=test mix run test/integration/hardware/scripts/cycle_jitter.exs --interface enp0s31f6
 #
 # Optional flags:
-#   --period-ms N    domain cycle period ms     (default 10)
-#   --samples N      number of half-cycles      (default 2000)
-#   --bucket-us N    histogram bucket width µs  (default 100)
+#   --period-ms N        domain cycle period ms     (default 10)
+#   --samples N          number of half-cycles      (default 2000)
+#   --bucket-us N        histogram bucket width µs  (default 100)
+#   --input-channel N    EL1809 loopback input      (default 1)
+#   --output-channel N   EL2809 loopback output     (default 1)
 
 alias EtherCAT.IntegrationSupport.Hardware
 
@@ -42,17 +62,20 @@ alias EtherCAT.IntegrationSupport.Hardware
 defmodule CycleJitter.Collector do
   @timeout_ms 5_000
 
-  def collect(n, period_ms) do
+  def collect(n, period_ms, opts) do
+    input_channel = Keyword.fetch!(opts, :input_channel)
+    output_channel = Keyword.fetch!(opts, :output_channel)
+
     # Drive ch1 to a known 0 state and wait for it to propagate through hardware.
     # Without the sleep, a subsequent write(1) may overwrite the 0 in ETS before
     # any domain cycle fires, leaving the input unchanged → no notification.
-    EtherCAT.write_output(:outputs, :ch1, 0)
+    EtherCAT.write_output(:outputs, output_channel, 0)
     Process.sleep(period_ms * 4)
-    flush_ch1()
+    flush_channel(input_channel)
 
     # Arm: write 1 and wait for the first rising-edge confirmation
-    EtherCAT.write_output(:outputs, :ch1, 1)
-    wait_for(:ch1, 1)
+    EtherCAT.write_output(:outputs, output_channel, 1)
+    wait_for(input_channel, 1)
 
     # Now collect n transitions.  Each wait_for call is one bus cycle.
     # Start at i=0 so target=0 first — priming left ch1=1, so the first write(0)
@@ -61,14 +84,14 @@ defmodule CycleJitter.Collector do
       Enum.map_reduce(0..(n - 1), System.monotonic_time(:microsecond), fn i, prev_t ->
         # 0, 1, 0, 1 ...
         target = rem(i, 2)
-        EtherCAT.write_output(:outputs, :ch1, target)
-        wait_for(:ch1, target)
+        EtherCAT.write_output(:outputs, output_channel, target)
+        wait_for(input_channel, target)
         now = System.monotonic_time(:microsecond)
         {now - prev_t, now}
       end)
 
     # Leave ch1 = 0
-    EtherCAT.write_output(:outputs, :ch1, 0)
+    EtherCAT.write_output(:outputs, output_channel, 0)
     intervals
   end
 
@@ -80,13 +103,18 @@ defmodule CycleJitter.Collector do
     end
   end
 
-  defp flush_ch1 do
+  defp flush_channel(channel) do
     receive do
-      {:ethercat, :signal, :inputs, :ch1, _} -> flush_ch1()
+      {:ethercat, :signal, :inputs, ^channel, _} -> flush_channel(channel)
     after
       0 -> :ok
     end
   end
+end
+
+channel_name = fn
+  n when is_integer(n) and n in 1..16 -> :"ch#{n}"
+  n -> raise "channel must be 1..16, got: #{inspect(n)}"
 end
 
 # ---------------------------------------------------------------------------
@@ -95,13 +123,22 @@ end
 
 {opts, _, _} =
   OptionParser.parse(System.argv(),
-    switches: [interface: :string, period_ms: :integer, samples: :integer, bucket_us: :integer]
+    switches: [
+      interface: :string,
+      period_ms: :integer,
+      samples: :integer,
+      bucket_us: :integer,
+      input_channel: :integer,
+      output_channel: :integer
+    ]
   )
 
 interface = opts[:interface] || raise "pass --interface, e.g. --interface enp0s31f6"
 period_ms = Keyword.get(opts, :period_ms, 10)
 samples = Keyword.get(opts, :samples, 2_000)
 bucket_us = Keyword.get(opts, :bucket_us, 100)
+input_channel = channel_name.(Keyword.get(opts, :input_channel, 1))
+output_channel = channel_name.(Keyword.get(opts, :output_channel, 1))
 period_us = period_ms * 1_000
 
 IO.puts("""
@@ -110,6 +147,7 @@ EtherCAT domain cycle jitter (self-clocking loopback)
   period     : #{period_ms} ms (#{period_us} µs)
   samples    : #{samples} half-cycles
   bucket     : #{bucket_us} µs
+  loopback   : :outputs/#{output_channel} -> :inputs/#{input_channel}
   method     : output toggle → loopback → input notification
 """)
 
@@ -130,18 +168,18 @@ Process.sleep(300)
 IO.puts("Waiting for bus to reach OP...")
 :ok = EtherCAT.await_running(15_000)
 
-EtherCAT.subscribe(:inputs, :ch1, self())
+EtherCAT.subscribe(:inputs, input_channel, self())
 
 # Warm-up: discard first 50 cycles to let the bus stabilise.
 # Write 0 first and sleep to ensure hardware sees 0 before we start toggling.
 IO.puts("Warming up (50 cycles)...")
-EtherCAT.write_output(:outputs, :ch1, 0)
+EtherCAT.write_output(:outputs, output_channel, 0)
 Process.sleep(period_ms * 4)
 
 # Flush any notifications that arrived during the sleep
 Stream.repeatedly(fn ->
   receive do
-    {:ethercat, :signal, :inputs, :ch1, _} -> true
+    {:ethercat, :signal, :inputs, ^input_channel, _} -> true
   after
     0 -> false
   end
@@ -151,12 +189,13 @@ end)
 
 Enum.each(1..50, fn i ->
   target = rem(i, 2)
-  EtherCAT.write_output(:outputs, :ch1, target)
+  EtherCAT.write_output(:outputs, output_channel, target)
 
   receive do
-    {:ethercat, :signal, :inputs, :ch1, ^target} -> :ok
+    {:ethercat, :signal, :inputs, ^input_channel, ^target} -> :ok
   after
-    2_000 -> raise "warm-up timeout — check EL2809 ch1 → EL1809 ch1 loopback wire"
+    2_000 ->
+      raise "warm-up timeout — check EL2809 #{output_channel} -> EL1809 #{input_channel} loopback wire"
   end
 end)
 
@@ -167,7 +206,11 @@ end)
 IO.puts("Collecting #{samples} samples...")
 {:ok, stats_before} = EtherCAT.Domain.API.stats(:main)
 
-intervals = CycleJitter.Collector.collect(samples, period_ms)
+intervals =
+  CycleJitter.Collector.collect(samples, period_ms,
+    input_channel: input_channel,
+    output_channel: output_channel
+  )
 
 {:ok, stats_after} = EtherCAT.Domain.API.stats(:main)
 miss_delta = stats_after.total_miss_count - stats_before.total_miss_count

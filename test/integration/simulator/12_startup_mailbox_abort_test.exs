@@ -49,7 +49,7 @@ defmodule EtherCAT.Integration.Simulator.StartupMailboxAbortTest do
             {:activation_failed, %{mailbox: {:safeop, {:preop_configuration_failed, @failure}}}}} =
              EtherCAT.await_running(2_500)
 
-    assert :activation_blocked = EtherCAT.state()
+    assert {:ok, :activation_blocked} = EtherCAT.state()
 
     assert {:ok, %{al_state: :preop, configuration_error: @failure}} =
              EtherCAT.slave_info(:mailbox)
@@ -62,7 +62,7 @@ defmodule EtherCAT.Integration.Simulator.StartupMailboxAbortTest do
     )
 
     assert :ok = EtherCAT.await_operational(2_500)
-    assert :operational = EtherCAT.state()
+    assert {:ok, :operational} = EtherCAT.state()
     assert {:ok, %{configuration_error: nil}} = EtherCAT.slave_info(:mailbox)
     assert {:ok, <<1>>} = EtherCAT.upload_sdo(:mailbox, 0x2000, 0x02)
   end

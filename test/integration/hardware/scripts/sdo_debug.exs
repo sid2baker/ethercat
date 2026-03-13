@@ -35,10 +35,11 @@ EtherCAT.start(
 # Allow startup to complete to PREOP
 :ok = EtherCAT.await_running(10_000)
 
-bus = EtherCAT.bus()
+{:ok, bus} = EtherCAT.bus()
+{:ok, slaves} = EtherCAT.slaves()
 
 %{station: station} =
-  EtherCAT.slaves()
+  slaves
   |> Enum.find(fn %{name: name} -> name == :rtd end)
 
 IO.puts("station: 0x#{Integer.to_string(station, 16)}\n")

@@ -23,7 +23,7 @@ defmodule EtherCAT.IntegrationSupport.Drivers.SegmentedConfiguredMailboxDevice d
   @impl true
   def decode_signal(_signal, _config, raw), do: raw
 
-  defp startup_blob do
+  def startup_blob do
     0..191
     |> Enum.map(fn value -> rem(value * 13 + 7, 256) end)
     |> :erlang.list_to_binary()

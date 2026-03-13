@@ -60,7 +60,7 @@ defmodule EtherCAT.Integration.Simulator.StartupSegmentedDownloadAckFaultTest do
             {:activation_failed, %{mailbox: {:safeop, {:preop_configuration_failed, @failure}}}}} =
              EtherCAT.await_running(2_500)
 
-    assert :activation_blocked = EtherCAT.state()
+    assert {:ok, :activation_blocked} = EtherCAT.state()
 
     assert {:ok, %{al_state: :preop, configuration_error: @failure}} =
              EtherCAT.slave_info(:mailbox)
@@ -73,7 +73,7 @@ defmodule EtherCAT.Integration.Simulator.StartupSegmentedDownloadAckFaultTest do
     )
 
     assert :ok = EtherCAT.await_operational(2_500)
-    assert :operational = EtherCAT.state()
+    assert {:ok, :operational} = EtherCAT.state()
     assert {:ok, %{configuration_error: nil}} = EtherCAT.slave_info(:mailbox)
     assert {:ok, ^expected} = EtherCAT.upload_sdo(:mailbox, 0x2003, 0x01)
   end

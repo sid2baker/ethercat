@@ -38,26 +38,36 @@ defmodule EtherCAT.Integration.Simulator.CriticalPdoReconnectPreopSelfHealTest d
     Scenario.new()
     |> Scenario.trace()
     |> Scenario.inject_fault(Fault.script(fault_script))
-    |> Scenario.expect_eventually(
+    |> Scenario.act(
       "the reconnecting PDO slave retains the PREOP configuration failure",
       fn _ctx ->
-        Expect.master_state(:recovering)
-        Expect.slave_fault(:combo, {:preop, {:preop_configuration_failed, @failure}})
-        Expect.slave(:combo, al_state: :preop, configuration_error: @failure)
-      end,
-      attempts: 220
+        Expect.eventually(
+          fn ->
+            Expect.master_state(:recovering)
+            Expect.slave_fault(:combo, {:preop, {:preop_configuration_failed, @failure}})
+            Expect.slave(:combo, al_state: :preop, configuration_error: @failure)
+          end,
+          attempts: 220,
+          label: "the reconnecting PDO slave retains the PREOP configuration failure"
+        )
+      end
     )
-    |> Scenario.expect_eventually(
+    |> Scenario.act(
       "the later retry clears both the slave fault and the master recovery state",
       fn _ctx ->
-        Expect.master_state(:operational)
-        Expect.domain(:main, cycle_health: :healthy)
-        Expect.slave_fault(:combo, nil)
-        Expect.slave(:combo, al_state: :op, configuration_error: nil)
-        assert {:ok, ^expected} = EtherCAT.upload_sdo(:combo, 0x2003, 0x01)
-        Expect.simulator_queue_empty()
-      end,
-      attempts: 360
+        Expect.eventually(
+          fn ->
+            Expect.master_state(:operational)
+            Expect.domain(:main, cycle_health: :healthy)
+            Expect.slave_fault(:combo, nil)
+            Expect.slave(:combo, al_state: :op, configuration_error: nil)
+            assert {:ok, ^expected} = EtherCAT.upload_sdo(:combo, 0x2003, 0x01)
+            Expect.simulator_queue_empty()
+          end,
+          attempts: 360,
+          label: "the later retry clears both the slave fault and the master recovery state"
+        )
+      end
     )
     |> Scenario.act("trace captured recovery entry, retained PREOP fault, and final resume", fn %{
                                                                                                   trace:

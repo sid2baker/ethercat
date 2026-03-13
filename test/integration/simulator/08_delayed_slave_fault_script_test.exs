@@ -28,7 +28,7 @@ defmodule EtherCAT.Integration.Simulator.DelayedSlaveFaultScriptTest do
 
     assert_eventually(
       fn ->
-        assert :recovering = EtherCAT.state()
+        assert {:ok, :recovering} = EtherCAT.state()
       end,
       80
     )
@@ -39,7 +39,7 @@ defmodule EtherCAT.Integration.Simulator.DelayedSlaveFaultScriptTest do
                  Simulator.info()
 
         assert scheduled_fault == {:retreat_to_safeop, :outputs}
-        assert :operational = EtherCAT.state()
+        assert {:ok, :operational} = EtherCAT.state()
         assert nil == SimulatorRing.fault_for(:outputs)
       end,
       120
@@ -48,7 +48,7 @@ defmodule EtherCAT.Integration.Simulator.DelayedSlaveFaultScriptTest do
     assert_eventually(
       fn ->
         assert {:retreated, :safeop} = SimulatorRing.fault_for(:outputs)
-        assert :operational = EtherCAT.state()
+        assert {:ok, :operational} = EtherCAT.state()
         assert {:ok, %{al_state: :safeop}} = EtherCAT.slave_info(:outputs)
       end,
       120
@@ -58,7 +58,7 @@ defmodule EtherCAT.Integration.Simulator.DelayedSlaveFaultScriptTest do
       fn ->
         assert {:ok, %{pending_faults: [], scheduled_faults: []}} = Simulator.info()
         assert nil == SimulatorRing.fault_for(:outputs)
-        assert :operational = EtherCAT.state()
+        assert {:ok, :operational} = EtherCAT.state()
         assert {:ok, %{al_state: :op}} = EtherCAT.slave_info(:outputs)
         assert {:ok, %{cycle_health: :healthy}} = EtherCAT.domain_info(:main)
       end,

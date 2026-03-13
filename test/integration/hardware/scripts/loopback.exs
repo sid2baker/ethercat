@@ -1,5 +1,27 @@
 #!/usr/bin/env elixir
 # Inspect the actual SII PDO configs and LRW frame data for EL2809.
+#
+# ## Hardware Requirements
+#
+# Required slaves:
+#   - EK1100 coupler
+#   - EL2809 digital output terminal at station `0x1002`
+#
+# Optional slaves:
+#   - EL1809 and EL3202 are started only to preserve the maintained bench
+#     layout; they are not part of the core inspection logic
+#
+# Required capabilities:
+#   - direct EtherCAT bus access for raw SII and FPRD reads
+#   - one writable EL2809 PDO mapped into a domain
+#
+# Adaptation notes:
+#   - this script intentionally assumes the maintained bench station order and
+#     reads the EL2809 directly at station `0x1002`; change those station
+#     addresses first if your coupler layout differs
+#   - the domain start uses a synthetic slave name `:out`; if your bench needs a
+#     different name, update both the `Hardware.outputs(name: :out, ...)` call
+#     and the later `DomainAPI.read(:main, {:out, ...})` lookup together
 
 alias EtherCAT.{Bus, Domain}
 alias EtherCAT.Domain.API, as: DomainAPI
@@ -56,7 +78,7 @@ Process.sleep(300)
 
 :ok = EtherCAT.await_operational(10_000)
 
-bus = EtherCAT.bus()
+{:ok, bus} = EtherCAT.bus()
 
 # Read domain stats to know image size
 {:ok, stats} = DomainAPI.stats(:main)

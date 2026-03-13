@@ -102,9 +102,9 @@ rtd_slave = Hardware.rtd()
 
 :ok = EtherCAT.await_running(15_000)
 
-bus = EtherCAT.bus()
+{:ok, bus} = EtherCAT.bus()
 
-initial_dc = EtherCAT.dc_status()
+{:ok, initial_dc} = EtherCAT.dc_status()
 
 IO.puts("""
   Master reached OP.
@@ -154,7 +154,7 @@ convergence_data =
         if now >= deadline do
           {:halt, {:timeout, acc}}
         else
-          status = EtherCAT.dc_status()
+          {:ok, status} = EtherCAT.dc_status()
 
           sample =
             if is_integer(status.max_sync_diff_ns) do
@@ -225,7 +225,7 @@ convergence_data =
 
 IO.puts("\n── 4. Per-slave DC registers (FPRD) ──────────────────────────────")
 
-slave_list = EtherCAT.slaves()
+{:ok, slave_list} = EtherCAT.slaves()
 
 hex = fn n -> "0x#{String.pad_leading(Integer.to_string(n, 16), 4, "0")}" end
 ns_to_ms = fn ns -> Float.round(ns / 1_000_000.0, 3) end
@@ -312,7 +312,7 @@ drift_stats =
     samples =
       Enum.reduce_while(1..drift_samples, [], fn _, acc ->
         Process.sleep(period_ms * 2)
-        status = EtherCAT.dc_status()
+        {:ok, status} = EtherCAT.dc_status()
 
         if is_integer(status.max_sync_diff_ns) do
           {:cont, [status.max_sync_diff_ns | acc]}
@@ -335,6 +335,8 @@ drift_stats =
         Enum.at(list, idx)
       end
 
+      {:ok, final_dc_status} = EtherCAT.dc_status()
+
       IO.puts("""
         #{n} samples:
           min    : #{hd(sorted)} ns
@@ -343,7 +345,7 @@ drift_stats =
           p99    : #{percentile.(sorted, 99)} ns
           max    : #{List.last(sorted)} ns
           mean   : #{Float.round(mean, 1)} ns
-          locked : #{EtherCAT.dc_status().lock_state}
+          locked : #{final_dc_status.lock_state}
       """)
 
       %{
@@ -475,10 +477,12 @@ jitter_result =
 # Summary
 # ---------------------------------------------------------------------------
 
+{:ok, final_dc_status} = EtherCAT.dc_status()
+
 IO.puts("""
 ── Summary ───────────────────────────────────────────────────────────
   DC active          : #{dc_active}
-  DC lock state      : #{EtherCAT.dc_status().lock_state}
+  DC lock state      : #{final_dc_status.lock_state}
   Convergence result : #{convergence_data.final_state}
 """)
 

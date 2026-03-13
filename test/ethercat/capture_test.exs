@@ -2,7 +2,7 @@ defmodule EtherCAT.CaptureTest do
   use ExUnit.Case, async: false
 
   alias EtherCAT.Capture
-  alias EtherCAT.IntegrationSupport.SegmentedMailboxRing
+  alias EtherCAT.IntegrationSupport.SimulatorRing
   alias EtherCAT.Simulator
   alias EtherCAT.Simulator.Slave.Definition
 
@@ -24,7 +24,7 @@ defmodule EtherCAT.CaptureTest do
   test "captures a dynamically discovered mailbox slave and selected sdos" do
     boot_dynamic_capture_ring!()
 
-    assert EtherCAT.state() == :preop_ready
+    assert EtherCAT.state() == {:ok, :preop_ready}
 
     assert {:ok, slaves} = Capture.list_slaves()
     assert Enum.any?(slaves, &(&1.name == :slave_3 and &1.coe))
@@ -279,10 +279,12 @@ defmodule EtherCAT.CaptureTest do
 
   defp boot_dynamic_capture_ring! do
     {:ok, _supervisor} =
-      Simulator.start(devices: SegmentedMailboxRing.devices(), udp: [ip: @simulator_ip, port: 0])
+      Simulator.start(
+        devices: SimulatorRing.devices(:segmented),
+        udp: [ip: @simulator_ip, port: 0]
+      )
 
     {:ok, %{udp: %{port: port}}} = Simulator.info()
-    Process.sleep(20)
 
     assert :ok =
              EtherCAT.start(

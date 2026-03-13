@@ -143,11 +143,12 @@ rtd_slave = Hardware.rtd()
 
 :ok = EtherCAT.await_running(15_000)
 
-bus = EtherCAT.bus()
+{:ok, bus} = EtherCAT.bus()
+{:ok, slaves} = EtherCAT.slaves()
 
 # Find the EL2809 station address
 {:ok, outputs_station} =
-  EtherCAT.slaves()
+  slaves
   |> Enum.find_value(fn
     %{name: :outputs, station: station} -> {:ok, station}
     _ -> nil

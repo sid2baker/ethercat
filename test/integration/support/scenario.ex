@@ -3,7 +3,6 @@ defmodule EtherCAT.Integration.Scenario do
 
   import ExUnit.Assertions
 
-  alias EtherCAT.Integration.Expect
   alias EtherCAT.Integration.Trace
   alias EtherCAT.Simulator
   alias EtherCAT.Simulator.Fault
@@ -98,14 +97,6 @@ defmodule EtherCAT.Integration.Scenario do
     act(scenario, "capture #{inspect(key)}", fn %{assigns: assigns} = ctx ->
       value = fun.(ctx)
       %{ctx | assigns: Map.put(assigns, key, value)}
-    end)
-  end
-
-  @spec expect_eventually(t(), String.t(), (context() -> term()), keyword()) :: t()
-  def expect_eventually(%__MODULE__{} = scenario, label, fun, opts \\ [])
-      when is_binary(label) and is_function(fun, 1) do
-    act(scenario, label, fn %{trace: trace} = ctx ->
-      Expect.eventually(fn -> fun.(ctx) end, Keyword.merge(opts, trace: trace, label: label))
     end)
   end
 

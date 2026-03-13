@@ -43,7 +43,7 @@ defmodule EtherCAT.Integration.Simulator.MailboxProtocolFaultSDOTest do
   test "init-phase mailbox counter mismatches surface as exact CoE errors" do
     value = "hello-sim\0\0\0"
 
-    assert :preop_ready = EtherCAT.state()
+    assert {:ok, :preop_ready} = EtherCAT.state()
 
     assert :ok =
              Simulator.inject_fault(
@@ -59,18 +59,18 @@ defmodule EtherCAT.Integration.Simulator.MailboxProtocolFaultSDOTest do
     assert {:error, {:unexpected_mailbox_counter, 1, 2}} =
              EtherCAT.upload_sdo(:mailbox, 0x2001, 0x01)
 
-    assert :preop_ready = EtherCAT.state()
+    assert {:ok, :preop_ready} = EtherCAT.state()
 
     assert :ok = Simulator.clear_faults()
 
     assert {:ok, ^value} = EtherCAT.upload_sdo(:mailbox, 0x2001, 0x01)
-    assert :preop_ready = EtherCAT.state()
+    assert {:ok, :preop_ready} = EtherCAT.state()
   end
 
   test "segmented mailbox toggle mismatches surface as exact CoE errors" do
     blob = multi_segment_blob()
 
-    assert :preop_ready = EtherCAT.state()
+    assert {:ok, :preop_ready} = EtherCAT.state()
 
     assert :ok =
              Simulator.inject_fault(
@@ -86,12 +86,12 @@ defmodule EtherCAT.Integration.Simulator.MailboxProtocolFaultSDOTest do
     assert {:error, {:toggle_mismatch, 0, 1}} =
              EtherCAT.upload_sdo(:mailbox, 0x2003, 0x01)
 
-    assert :preop_ready = EtherCAT.state()
+    assert {:ok, :preop_ready} = EtherCAT.state()
 
     assert :ok = Simulator.clear_faults()
 
     assert {:ok, ^blob} = EtherCAT.upload_sdo(:mailbox, 0x2003, 0x01)
-    assert :preop_ready = EtherCAT.state()
+    assert {:ok, :preop_ready} = EtherCAT.state()
   end
 
   defp multi_segment_blob do

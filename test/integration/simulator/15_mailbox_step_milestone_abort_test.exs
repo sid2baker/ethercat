@@ -45,7 +45,7 @@ defmodule EtherCAT.Integration.Simulator.MailboxStepMilestoneAbortTest do
   test "mailbox milestones can arm upload aborts after successful segment progress" do
     blob = multi_segment_blob()
 
-    assert :preop_ready = EtherCAT.state()
+    assert {:ok, :preop_ready} = EtherCAT.state()
 
     assert :ok =
              Simulator.inject_fault(
@@ -67,20 +67,20 @@ defmodule EtherCAT.Integration.Simulator.MailboxStepMilestoneAbortTest do
     assert {:error, {:sdo_abort, 0x2003, 0x01, @abort_code}} =
              EtherCAT.upload_sdo(:mailbox, 0x2003, 0x01)
 
-    assert :preop_ready = EtherCAT.state()
+    assert {:ok, :preop_ready} = EtherCAT.state()
     assert {:ok, %{scheduled_faults: [], pending_faults: []}} = Simulator.info()
 
     assert :ok = Simulator.clear_faults()
 
     assert {:ok, ^blob} = EtherCAT.upload_sdo(:mailbox, 0x2003, 0x01)
-    assert :preop_ready = EtherCAT.state()
+    assert {:ok, :preop_ready} = EtherCAT.state()
   end
 
   test "mailbox milestones can arm download aborts after successful segment progress" do
     original = multi_segment_blob()
     updated = updated_multi_segment_blob()
 
-    assert :preop_ready = EtherCAT.state()
+    assert {:ok, :preop_ready} = EtherCAT.state()
     assert {:ok, ^original} = EtherCAT.upload_sdo(:mailbox, 0x2003, 0x01)
 
     assert :ok =
@@ -104,14 +104,14 @@ defmodule EtherCAT.Integration.Simulator.MailboxStepMilestoneAbortTest do
              EtherCAT.download_sdo(:mailbox, 0x2003, 0x01, updated)
 
     assert {:ok, ^original} = EtherCAT.upload_sdo(:mailbox, 0x2003, 0x01)
-    assert :preop_ready = EtherCAT.state()
+    assert {:ok, :preop_ready} = EtherCAT.state()
     assert {:ok, %{scheduled_faults: [], pending_faults: []}} = Simulator.info()
 
     assert :ok = Simulator.clear_faults()
 
     assert :ok = EtherCAT.download_sdo(:mailbox, 0x2003, 0x01, updated)
     assert {:ok, ^updated} = EtherCAT.upload_sdo(:mailbox, 0x2003, 0x01)
-    assert :preop_ready = EtherCAT.state()
+    assert {:ok, :preop_ready} = EtherCAT.state()
   end
 
   defp multi_segment_blob do

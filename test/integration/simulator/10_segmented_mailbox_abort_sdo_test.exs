@@ -45,7 +45,7 @@ defmodule EtherCAT.Integration.Simulator.SegmentedMailboxAbortSDOTest do
   test "public segmented sdo upload can abort mid-transfer without degrading the master" do
     blob = segmented_blob()
 
-    assert :preop_ready = EtherCAT.state()
+    assert {:ok, :preop_ready} = EtherCAT.state()
     assert {:ok, ^blob} = EtherCAT.upload_sdo(:mailbox, 0x2002, 0x01)
 
     assert :ok =
@@ -56,19 +56,19 @@ defmodule EtherCAT.Integration.Simulator.SegmentedMailboxAbortSDOTest do
     assert {:error, {:sdo_abort, 0x2002, 0x01, @abort_code}} =
              EtherCAT.upload_sdo(:mailbox, 0x2002, 0x01)
 
-    assert :preop_ready = EtherCAT.state()
+    assert {:ok, :preop_ready} = EtherCAT.state()
 
     assert :ok = Simulator.clear_faults()
 
     assert {:ok, ^blob} = EtherCAT.upload_sdo(:mailbox, 0x2002, 0x01)
-    assert :preop_ready = EtherCAT.state()
+    assert {:ok, :preop_ready} = EtherCAT.state()
   end
 
   test "public segmented sdo download can abort mid-transfer without mutating the object" do
     original = segmented_blob()
     updated = updated_segmented_blob()
 
-    assert :preop_ready = EtherCAT.state()
+    assert {:ok, :preop_ready} = EtherCAT.state()
     assert {:ok, ^original} = EtherCAT.upload_sdo(:mailbox, 0x2002, 0x01)
 
     assert :ok =
@@ -80,13 +80,13 @@ defmodule EtherCAT.Integration.Simulator.SegmentedMailboxAbortSDOTest do
              EtherCAT.download_sdo(:mailbox, 0x2002, 0x01, updated)
 
     assert {:ok, ^original} = EtherCAT.upload_sdo(:mailbox, 0x2002, 0x01)
-    assert :preop_ready = EtherCAT.state()
+    assert {:ok, :preop_ready} = EtherCAT.state()
 
     assert :ok = Simulator.clear_faults()
 
     assert :ok = EtherCAT.download_sdo(:mailbox, 0x2002, 0x01, updated)
     assert {:ok, ^updated} = EtherCAT.upload_sdo(:mailbox, 0x2002, 0x01)
-    assert :preop_ready = EtherCAT.state()
+    assert {:ok, :preop_ready} = EtherCAT.state()
   end
 
   defp segmented_blob do

@@ -68,10 +68,31 @@ defmodule EtherCAT.IntegrationSupport.Hardware do
   @spec full_ring(keyword()) :: [SlaveConfig.t()]
   def full_ring(opts \\ []) do
     include_rtd = Keyword.get(opts, :include_rtd, true)
-    coupler_opts = Keyword.get(opts, :coupler, [])
-    inputs_opts = Keyword.get(opts, :inputs, [])
-    outputs_opts = Keyword.get(opts, :outputs, [])
-    rtd_opts = Keyword.get(opts, :rtd, [])
+    shared_health_poll_ms = Keyword.get(opts, :health_poll_ms)
+
+    coupler_opts =
+      slave_opts(
+        Keyword.get(opts, :coupler, []),
+        Keyword.get(opts, :coupler_health_poll_ms, shared_health_poll_ms)
+      )
+
+    inputs_opts =
+      slave_opts(
+        Keyword.get(opts, :inputs, []),
+        Keyword.get(opts, :input_health_poll_ms, shared_health_poll_ms)
+      )
+
+    outputs_opts =
+      slave_opts(
+        Keyword.get(opts, :outputs, []),
+        Keyword.get(opts, :output_health_poll_ms, shared_health_poll_ms)
+      )
+
+    rtd_opts =
+      slave_opts(
+        Keyword.get(opts, :rtd, []),
+        Keyword.get(opts, :rtd_health_poll_ms, shared_health_poll_ms)
+      )
 
     [coupler(coupler_opts), inputs(inputs_opts), outputs(outputs_opts)] ++
       if(include_rtd, do: [rtd(rtd_opts)], else: [])
@@ -86,4 +107,9 @@ defmodule EtherCAT.IntegrationSupport.Hardware do
     SlaveConfig
     |> struct!(Keyword.merge(defaults, opts))
   end
+
+  defp slave_opts(opts, nil), do: opts
+
+  defp slave_opts(opts, health_poll_ms),
+    do: Keyword.put_new(opts, :health_poll_ms, health_poll_ms)
 end

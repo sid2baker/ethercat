@@ -109,7 +109,7 @@ defmodule Mix.Tasks.Ethercat.Capture do
       {:error, :not_started} ->
         :ok
 
-      :idle ->
+      {:ok, :idle} ->
         :ok
 
       state ->

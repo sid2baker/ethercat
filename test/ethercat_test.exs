@@ -20,7 +20,7 @@ defmodule EtherCATTest do
                slaves: [%EtherCAT.Slave.Config{name: :coupler}, nil]
              )
 
-    assert EtherCAT.state() == :idle
+    assert EtherCAT.state() == {:ok, :idle}
   end
 
   test "start rejects invalid process_data requests" do
@@ -35,7 +35,7 @@ defmodule EtherCATTest do
                ]
              )
 
-    assert EtherCAT.state() == :idle
+    assert EtherCAT.state() == {:ok, :idle}
   end
 
   test "start rejects invalid slave target states" do
@@ -47,7 +47,7 @@ defmodule EtherCATTest do
                ]
              )
 
-    assert EtherCAT.state() == :idle
+    assert EtherCAT.state() == {:ok, :idle}
   end
 
   test "slave config defaults to the built-in default driver" do
@@ -70,7 +70,7 @@ defmodule EtherCATTest do
     status = EtherCAT.dc_status()
 
     assert match?({:error, :not_started}, status) or
-             match?(%EtherCAT.DC.Status{lock_state: :disabled}, status)
+             match?({:ok, %EtherCAT.DC.Status{lock_state: :disabled}}, status)
   end
 
   test "await_running returns timeout instead of exiting when the master call itself times out" do

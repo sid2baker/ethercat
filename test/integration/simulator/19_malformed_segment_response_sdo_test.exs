@@ -43,7 +43,7 @@ defmodule EtherCAT.Integration.Simulator.MalformedSegmentResponseSDOTest do
   test "invalid segmented padding surfaces as an exact parser error" do
     blob = multi_segment_blob()
 
-    assert :preop_ready = EtherCAT.state()
+    assert {:ok, :preop_ready} = EtherCAT.state()
 
     assert :ok =
              Simulator.inject_fault(
@@ -59,18 +59,18 @@ defmodule EtherCAT.Integration.Simulator.MalformedSegmentResponseSDOTest do
     assert {:error, {:invalid_segment_padding, 7}} =
              EtherCAT.upload_sdo(:mailbox, 0x2003, 0x01)
 
-    assert :preop_ready = EtherCAT.state()
+    assert {:ok, :preop_ready} = EtherCAT.state()
 
     assert :ok = Simulator.clear_faults()
 
     assert {:ok, ^blob} = EtherCAT.upload_sdo(:mailbox, 0x2003, 0x01)
-    assert :preop_ready = EtherCAT.state()
+    assert {:ok, :preop_ready} = EtherCAT.state()
   end
 
   test "unexpected segment commands surface as exact parser errors" do
     blob = multi_segment_blob()
 
-    assert :preop_ready = EtherCAT.state()
+    assert {:ok, :preop_ready} = EtherCAT.state()
 
     assert :ok =
              Simulator.inject_fault(
@@ -86,12 +86,12 @@ defmodule EtherCAT.Integration.Simulator.MalformedSegmentResponseSDOTest do
     assert {:error, {:unexpected_sdo_segment_command, 0x20}} =
              EtherCAT.upload_sdo(:mailbox, 0x2003, 0x01)
 
-    assert :preop_ready = EtherCAT.state()
+    assert {:ok, :preop_ready} = EtherCAT.state()
 
     assert :ok = Simulator.clear_faults()
 
     assert {:ok, ^blob} = EtherCAT.upload_sdo(:mailbox, 0x2003, 0x01)
-    assert :preop_ready = EtherCAT.state()
+    assert {:ok, :preop_ready} = EtherCAT.state()
   end
 
   defp multi_segment_blob do

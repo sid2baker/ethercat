@@ -92,7 +92,7 @@ defmodule FT.Helpers do
     |> Enum.reduce_while(:polling, fn _, _ ->
       state = EtherCAT.state()
 
-      if state == target_state do
+      if state == {:ok, target_state} do
         {:halt, :ok}
       else
         if System.monotonic_time(:millisecond) >= deadline do
@@ -294,7 +294,7 @@ EtherCAT.Telemetry.attach()
 
 {domain_id, domain_pid} =
   case EtherCAT.domains() do
-    [{id, _cycle_time_us, pid} | _] -> {id, pid}
+    {:ok, [{id, _cycle_time_us, pid} | _]} -> {id, pid}
     _ -> raise "No domains found"
   end
 
@@ -331,7 +331,8 @@ FT.Helpers.section("A2. Slave process crash detection")
 
 start_bus.(nil)
 
-%{pid: slave_pid} = Enum.find(EtherCAT.slaves(), &(&1.name == :outputs))
+{:ok, slaves} = EtherCAT.slaves()
+%{pid: slave_pid} = Enum.find(slaves, &(&1.name == :outputs))
 
 IO.puts("  Slave :outputs pid=#{inspect(slave_pid)}")
 
