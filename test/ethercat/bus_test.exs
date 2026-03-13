@@ -334,7 +334,11 @@ defmodule EtherCAT.BusTest do
               link: ^link_name,
               carrier_up: false,
               frame_timeout_ms: 50,
-              link_monitor_mode: :disabled
+              link_monitor_mode: :disabled,
+              timeout_count: 0,
+              last_down_reason: nil,
+              queue_depths: %{realtime: 0, reliable: 0},
+              in_flight: nil
             }} = Bus.info(bus)
 
     read = Task.async(fn -> Bus.transaction(bus, Transaction.fprd(0x1000, {0x0130, 2})) end)
@@ -344,6 +348,7 @@ defmodule EtherCAT.BusTest do
     assert {:error, :down} = Task.await(read)
 
     assert {:ok, %{state: :down, carrier_up: false}} = Bus.info(bus)
+    assert {:ok, %{state: :down, last_down_reason: :carrier_lost}} = Bus.info(bus)
 
     while_down = Task.async(fn -> Bus.transaction(bus, Transaction.fprd(0x1000, {0x0130, 2})) end)
     assert {:error, :down} = Task.await(while_down)
@@ -363,6 +368,44 @@ defmodule EtherCAT.BusTest do
     reply_with(bus, restored_frame, fn dg -> %{dg | data: <<0x12, 0x34>>, wkc: 1} end)
 
     assert {:ok, [%{data: <<0x12, 0x34>>, wkc: 1}]} = Task.await(after_restore)
+  end
+
+  test "info reports queue depth and in-flight frame details while awaiting" do
+    {:ok, bus, link_name} = start_bus()
+
+    first = Task.async(fn -> Bus.transaction(bus, Transaction.brd({0x0000, 1})) end)
+    first_frame = assert_sent_frame()
+    assert_submission_enqueued([{:reliable, 1}], link_name)
+
+    queued =
+      Task.async(fn ->
+        Bus.transaction(bus, Transaction.fprd(0x1000, {0x0130, 2}))
+      end)
+
+    assert_submission_enqueued([{:reliable, 1}], link_name)
+
+    assert {:ok,
+            %{
+              state: :awaiting,
+              queue_depths: %{realtime: 0, reliable: 1},
+              in_flight: %{
+                caller_count: 1,
+                datagram_count: 1,
+                payload_size: payload_size,
+                age_ms: age_ms
+              }
+            }} = Bus.info(bus)
+
+    assert is_integer(payload_size) and payload_size > 0
+    assert is_integer(age_ms) and age_ms >= 0
+
+    reply_ok(bus, first_frame)
+
+    queued_frame = assert_sent_frame()
+    reply_with(bus, queued_frame, fn dg -> %{dg | data: <<0x12, 0x34>>, wkc: 1} end)
+
+    assert {:ok, [%{wkc: 1}]} = Task.await(first)
+    assert {:ok, [%{data: <<0x12, 0x34>>, wkc: 1}]} = Task.await(queued)
   end
 
   test "settle drains buffered receive traffic while idle" do

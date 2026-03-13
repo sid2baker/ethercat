@@ -36,6 +36,7 @@ defmodule EtherCAT.Bus do
     :link_monitor,
     :idx,
     :in_flight,
+    last_down_reason: nil,
     settle_callers: [],
     frame_timeout_ms: 25,
     link_monitor_mode: :disabled,
@@ -50,6 +51,7 @@ defmodule EtherCAT.Bus do
             link_monitor: pid() | nil,
             idx: non_neg_integer(),
             in_flight: term() | nil,
+            last_down_reason: term() | nil,
             settle_callers: [term()],
             frame_timeout_ms: pos_integer(),
             link_monitor_mode: :disabled | LinkMonitor.mode(),
@@ -149,26 +151,14 @@ defmodule EtherCAT.Bus do
   """
   @spec set_frame_timeout(server(), pos_integer()) :: :ok | {:error, term()}
   def set_frame_timeout(bus, timeout_ms) when is_integer(timeout_ms) and timeout_ms > 0 do
-    try do
-      :gen_statem.call(bus, {:set_frame_timeout, timeout_ms}, @call_timeout_ms)
-    catch
-      :exit, {:timeout, _} -> {:error, :timeout}
-      :exit, reason -> {:error, reason}
-    end
+    safe_call(bus, {:set_frame_timeout, timeout_ms})
   end
 
   @doc """
-  Return low-level bus runtime information.
+  Return low-level bus runtime information, including queue and in-flight state.
   """
   @spec info(server()) :: {:ok, map()} | {:error, term()}
-  def info(bus) do
-    try do
-      :gen_statem.call(bus, :info, @call_timeout_ms)
-    catch
-      :exit, {:timeout, _} -> {:error, :timeout}
-      :exit, reason -> {:error, reason}
-    end
-  end
+  def info(bus), do: safe_call(bus, :info)
 
   @doc """
   Wait until the bus is idle, then drain any buffered receive traffic.
@@ -177,14 +167,7 @@ defmodule EtherCAT.Bus do
   transaction to begin from a quiescent transport state.
   """
   @spec settle(server()) :: :ok | {:error, term()}
-  def settle(bus) do
-    try do
-      :gen_statem.call(bus, :settle, @call_timeout_ms)
-    catch
-      :exit, {:timeout, _} -> {:error, :timeout}
-      :exit, reason -> {:error, reason}
-    end
-  end
+  def settle(bus), do: safe_call(bus, :settle)
 
   @doc """
   Drain the bus, wait through a short quiet window, then drain once more.
@@ -336,7 +319,14 @@ defmodule EtherCAT.Bus do
       link: link_name(data),
       carrier_up: carrier_up?(data),
       frame_timeout_ms: data.frame_timeout_ms,
-      link_monitor_mode: data.link_monitor_mode
+      link_monitor_mode: data.link_monitor_mode,
+      timeout_count: data.timeout_count,
+      last_down_reason: data.last_down_reason,
+      queue_depths: %{
+        realtime: queue_depth(data, :realtime),
+        reliable: queue_depth(data, :reliable)
+      },
+      in_flight: in_flight_info(data.in_flight)
     }
 
     {:keep_state_and_data, [{:reply, from, {:ok, info}}]}
@@ -681,7 +671,7 @@ defmodule EtherCAT.Bus do
     end
   end
 
-  defp transition_down(data, state, _reason, extra_submissions \\ []) do
+  defp transition_down(data, state, reason, extra_submissions \\ []) do
     reply_in_flight(data.in_flight, {:error, :down})
     reply_submissions(extra_submissions, {:error, :down})
     reply_settle_callers(data.settle_callers, {:error, :down})
@@ -692,6 +682,7 @@ defmodule EtherCAT.Bus do
      %{
        data
        | in_flight: nil,
+         last_down_reason: reason,
          link: data.link_mod.clear_awaiting(data.link),
          settle_callers: [],
          realtime: :queue.new(),
@@ -741,6 +732,18 @@ defmodule EtherCAT.Bus do
   defp in_flight_tx_at(nil), do: 0
   defp in_flight_tx_at(%InFlight{tx_at: tx_at}), do: tx_at
 
+  defp in_flight_info(nil), do: nil
+
+  defp in_flight_info(%InFlight{} = in_flight) do
+    %{
+      caller_count: length(in_flight.awaiting),
+      payload_size: in_flight.payload_size,
+      datagram_count: in_flight.datagram_count,
+      age_ms:
+        System.convert_time_unit(System.monotonic_time() - in_flight.tx_at, :native, :millisecond)
+    }
+  end
+
   defp awaiting_from_in_flight(nil), do: []
   defp awaiting_from_in_flight(%InFlight{awaiting: awaiting}), do: awaiting
 
@@ -761,6 +764,15 @@ defmodule EtherCAT.Bus do
   defp wait_quiet_window(quiet_ms) do
     Process.sleep(quiet_ms)
     :ok
+  end
+
+  defp safe_call(bus, msg, timeout \\ @call_timeout_ms) do
+    try do
+      :gen_statem.call(bus, msg, timeout)
+    catch
+      :exit, {:timeout, _} -> {:error, :timeout}
+      :exit, reason -> {:error, reason}
+    end
   end
 
   defp start_link_monitor(_owner, []), do: {:ok, nil, :disabled}
