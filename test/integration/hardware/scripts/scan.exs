@@ -1,5 +1,15 @@
 # Scan the EtherCAT bus: count slaves, assign stations, read SII identity.
 #
+# ## Hardware Requirements
+#
+# Required hardware:
+#   - one powered EtherCAT segment on the selected interface
+#
+# Required capabilities:
+#   - broadcast read/write access to assign temporary station addresses
+#   - SII identity reads on the discovered slaves
+#   - no other master process should be assigning stations concurrently
+#
 # Usage:
 #   MIX_ENV=test mix run test/integration/hardware/scripts/scan.exs --interface enp0s31f6
 

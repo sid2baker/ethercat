@@ -1,5 +1,15 @@
 # EtherCAT socket diagnostic — run directly on the target device in IEx.
 #
+# ## Hardware Requirements
+#
+# Required hardware:
+#   - one powered EtherCAT segment on the selected interface
+#   - a closed ring/return path if you want the echo and BRD phases to succeed
+#
+# Required capabilities:
+#   - AF_PACKET raw socket access on the host
+#   - no competing master process bound to the same interface while this script runs
+#
 # Four sequential tests to pinpoint where frame exchange breaks down:
 #
 #   [1] System + interface info

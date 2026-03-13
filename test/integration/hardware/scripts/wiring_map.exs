@@ -1,6 +1,22 @@
 #!/usr/bin/env elixir
 # Channel wiring map — commission-time loopback verification.
 #
+# ## Hardware Requirements
+#
+# Required slaves:
+#   - EK1100 coupler
+#   - EL1809 digital input terminal
+#   - EL2809 digital output terminal
+#
+# Optional slaves:
+#   - EL3202 is started only to preserve the maintained bench topology
+#
+# Required wiring:
+#   - one intended wire per EL2809 output into the matching EL1809 input
+#
+# Required capabilities:
+#   - writable digital outputs and readable digital inputs in OP
+#
 # Activates each EL2809 output channel one at a time, waits two domain cycles,
 # then reads all 16 EL1809 input channels to find the matching input.
 #

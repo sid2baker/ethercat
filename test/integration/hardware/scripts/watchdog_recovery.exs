@@ -1,6 +1,24 @@
 #!/usr/bin/env elixir
 # EtherCAT watchdog trip and recovery test.
 #
+# ## Hardware Requirements
+#
+# Required slaves:
+#   - EK1100 coupler
+#   - EL1809 digital input terminal
+#   - EL2809 digital output terminal at slave name `:outputs`
+#
+# Optional slaves:
+#   - EL3202 is started only to keep the maintained bench layout intact
+#
+# Required wiring:
+#   - representative loopback wiring from the EL2809 outputs back into the
+#     EL1809 inputs so the script can verify the safe-state transition
+#
+# Required capabilities:
+#   - the EL2809 SyncManager watchdog must be enabled
+#   - raw AL status reads must succeed while the domain is stopped/restarted
+#
 # Verifies the EL2809 SM watchdog behavior when the domain stops cycling:
 #
 #   1. Start → OP: confirm all slaves reach OP state

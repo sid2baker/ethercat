@@ -1,6 +1,18 @@
 #!/usr/bin/env elixir
 # Mailbox / SDO diagnostic for the EL3202 CoE slave.
 #
+# ## Hardware Requirements
+#
+# Required slaves:
+#   - EK1100 coupler
+#   - EL1809 digital input terminal
+#   - EL2809 digital output terminal
+#   - EL3202 RTD terminal at slave name `:rtd`
+#
+# Required capabilities:
+#   - CoE mailbox access on the EL3202
+#   - PREOP startup without PDO participation (`process_data: :none`)
+#
 # Reads SII mailbox config + ESC SM register state, then tests
 # whether writing a full recv_size-padded SDO frame makes SM1 go "full"
 # (i.e., the slave actually processed the request and put a response in SM1).

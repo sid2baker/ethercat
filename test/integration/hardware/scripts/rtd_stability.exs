@@ -1,6 +1,20 @@
 #!/usr/bin/env elixir
 # EL3202 long-duration RTD stability analysis.
 #
+# ## Hardware Requirements
+#
+# Required slaves:
+#   - EK1100 coupler
+#   - EL3202 two-channel PT100 RTD terminal at slave name `:rtd`
+#
+# Optional slaves:
+#   - EL1809 and EL2809 are started only to preserve the maintained bench
+#     topology; the script does not exercise their process data
+#
+# Required capabilities:
+#   - CoE mailbox access so EL3202 startup configuration succeeds
+#   - stable PDO updates for `channel1` and `channel2` during the run
+#
 # Accumulates per-channel statistics using Welford's online algorithm
 # (numerically stable running mean + variance without storing all samples).
 #

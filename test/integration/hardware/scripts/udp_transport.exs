@@ -1,6 +1,20 @@
 #!/usr/bin/env elixir
 # EtherCAT UDP transport test — spec §2.6
 #
+# ## Hardware Requirements
+#
+# Required hardware:
+#   - an EtherCAT device or bridge that implements the optional UDP/IP
+#     transport path from spec §2.6
+#
+# Required capabilities:
+#   - UDP reachability to the target host/segment
+#   - EtherCAT-over-UDP support on the remote side
+#
+# Notes:
+#   - this is not expected to work with the maintained EK1100/EL1809/EL2809/EL3202
+#     bench; most Beckhoff slave terminals do not expose the optional UDP path
+#
 # Tests the UDP/IP encapsulation transport independently of the full master.
 # ESCs that support UDP respond on port 0x88A4 (34980) regardless of source
 # or destination IP — the only header field checked by the ESC is the UDP

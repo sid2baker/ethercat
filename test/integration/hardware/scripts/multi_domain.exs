@@ -1,6 +1,24 @@
 #!/usr/bin/env elixir
 # Multi-domain multi-rate test + split-SM validation.
 #
+# ## Hardware Requirements
+#
+# Required slaves:
+#   - EK1100 coupler
+#   - EL1809 digital input terminal at slave name `:inputs`
+#   - EL2809 digital output terminal at slave name `:outputs`
+#
+# Optional slaves:
+#   - EL3202 at slave name `:rtd` when `--no-rtd` is not used
+#
+# Required wiring:
+#   - one loopback wire from `:outputs/:ch1` to `:inputs/:ch1`
+#   - one loopback wire from `:outputs/:ch2` to `:inputs/:ch2`
+#
+# Required capabilities:
+#   - split domain/SM attachments on the digital pair
+#   - stable OP on the maintained bench long enough to collect latency samples
+#
 # This example deliberately splits one physical SyncManager-backed PDO area
 # across multiple domains:
 #
@@ -33,12 +51,6 @@
 #     measure actual LRW frame round-trip in the 1ms `:fast` domain, report
 #     headroom,
 #     and state the API floor (cycle_time_us >= 1_000).
-#
-# Hardware:
-#   position 0  EK1100 coupler
-#   position 1  EL1809 16-ch digital input  (slave name :inputs)
-#   position 2  EL2809 16-ch digital output (slave name :outputs)
-#   position 3  EL3202 2-ch PT100           (slave name :rtd, optional)
 #
 # Usage:
 #   MIX_ENV=test mix run test/integration/hardware/scripts/multi_domain.exs --interface enp0s31f6
@@ -124,6 +136,10 @@ rtd_slave = Hardware.rtd(process_data: {:all, :rtd})
     domains: domain_configs,
     slaves:
       [
+        # Maintained bench assumption: ch1 stays mapped to :fast and ch2 stays
+        # mapped to :slow on both sides of the loopback. If your bench uses
+        # different channels, update these process_data mappings together with
+        # the latency measurement pairs below.
         Hardware.coupler(),
         Hardware.inputs(process_data: [ch1: :fast, ch2: :slow]),
         Hardware.outputs(process_data: [ch1: :fast, ch2: :slow])
@@ -351,6 +367,8 @@ end
 
 latency_stats =
   [
+    # Bench-specific loopback assumptions. Change these pairs together with the
+    # process_data split above if your maintained wiring does not use ch1/ch2.
     {:fast, :ch1, fast_period_ms},
     {:slow, :ch2, slow_period_ms}
   ]

@@ -1,5 +1,15 @@
 # Raw socket probe — bypasses EtherCAT.Link entirely.
 #
+# ## Hardware Requirements
+#
+# Required hardware:
+#   - one powered EtherCAT segment on the selected interface
+#   - a closed return path so the probe BRD frame can come back
+#
+# Required capabilities:
+#   - AF_PACKET raw socket access on the host
+#   - no other master process actively driving the same NIC while probing
+#
 # Opens an AF_PACKET socket directly and sends a minimal EtherCAT BRD frame,
 # polling for the response with :socket.recvmsg. Shows every step so you can
 # see exactly where frames are lost.

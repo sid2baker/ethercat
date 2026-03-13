@@ -1,6 +1,24 @@
 #!/usr/bin/env elixir
 # Distributed Clocks synchronization test.
 #
+# ## Hardware Requirements
+#
+# Required slaves:
+#   - EK1100 coupler
+#   - EL1809 digital input terminal at slave name `:inputs`
+#   - EL2809 digital output terminal at slave name `:outputs`
+#
+# Optional slaves:
+#   - EL3202 at slave name `:rtd` when `--no-rtd` is not used
+#
+# Required wiring:
+#   - one loopback wire from the selected EL2809 output channel to the selected
+#     EL1809 input channel for the jitter comparison phase
+#
+# Required capabilities:
+#   - DC-capable slaves if you want lock and drift phases to succeed
+#   - stable OP on the digital pair for the jitter comparison
+#
 # Tests the EtherCAT DC subsystem end-to-end:
 #
 #   1. Startup: bring bus to OP with DC enabled; show DC status.
@@ -17,12 +35,6 @@
 # the script reports the status and runs a no-DC timing baseline instead so
 # the run is still useful.
 #
-# Hardware:
-#   position 0  EK1100 coupler
-#   position 1  EL1809 16-ch digital input  (slave name :inputs)
-#   position 2  EL2809 16-ch digital output (slave name :outputs)
-#   position 3  EL3202 2-ch PT100           (slave name :rtd)
-#
 # Usage:
 #   MIX_ENV=test mix run test/integration/hardware/scripts/dc_sync.exs --interface enp0s31f6
 #
@@ -32,9 +44,16 @@
 #   --drift-samples N    sync_diff samples to collect    (default 200)
 #   --jitter-samples N   half-cycles for jitter test     (default 500)
 #   --lock-threshold N   ns sync_diff convergence gate   (default 1000)
+#   --input-channel N    EL1809 loopback input           (default 1)
+#   --output-channel N   EL2809 loopback output          (default 1)
 #   --no-rtd             skip EL3202
 
 alias EtherCAT.IntegrationSupport.Hardware
+
+channel_name = fn
+  n when is_integer(n) and n in 1..16 -> :"ch#{n}"
+  n -> raise "channel must be 1..16, got: #{inspect(n)}"
+end
 
 # ---------------------------------------------------------------------------
 # Parse args
@@ -49,6 +68,8 @@ alias EtherCAT.IntegrationSupport.Hardware
       drift_samples: :integer,
       jitter_samples: :integer,
       lock_threshold: :integer,
+      input_channel: :integer,
+      output_channel: :integer,
       no_rtd: :boolean
     ]
   )
@@ -59,6 +80,8 @@ lock_timeout_ms = Keyword.get(opts, :lock_timeout, 10_000)
 drift_samples = Keyword.get(opts, :drift_samples, 200)
 jitter_samples = Keyword.get(opts, :jitter_samples, 500)
 lock_threshold = Keyword.get(opts, :lock_threshold, 1_000)
+input_channel = channel_name.(Keyword.get(opts, :input_channel, 1))
+output_channel = channel_name.(Keyword.get(opts, :output_channel, 1))
 include_rtd = not Keyword.get(opts, :no_rtd, false)
 
 IO.puts("""
@@ -69,6 +92,7 @@ EtherCAT distributed clocks synchronization test
   lock timeout    : #{lock_timeout_ms} ms
   drift samples   : #{drift_samples}
   jitter samples  : #{jitter_samples}
+  loopback        : :outputs/#{output_channel} -> :inputs/#{input_channel}
 """)
 
 # ---------------------------------------------------------------------------
@@ -371,16 +395,16 @@ IO.puts(
   "\n── 6. Loopback jitter (DC#{if dc_active, do: " enabled", else: " disabled"}) ───────────────────────────────────"
 )
 
-EtherCAT.subscribe(:inputs, :ch1, self())
+EtherCAT.subscribe(:inputs, input_channel, self())
 
 # Stabilise: write 0, sleep, flush
-EtherCAT.write_output(:outputs, :ch1, 0)
+EtherCAT.write_output(:outputs, output_channel, 0)
 Process.sleep(period_ms * 5)
 
 # Flush stale notifications
 Stream.repeatedly(fn ->
   receive do
-    {:ethercat, :signal, :inputs, :ch1, _} -> true
+    {:ethercat, :signal, :inputs, ^input_channel, _} -> true
   after
     0 -> false
   end
@@ -388,13 +412,13 @@ end)
 |> Stream.take_while(& &1)
 |> Stream.run()
 
-IO.puts("  Priming loopback ch1=1...")
+IO.puts("  Priming loopback #{output_channel}=1...")
 
-EtherCAT.write_output(:outputs, :ch1, 1)
+EtherCAT.write_output(:outputs, output_channel, 1)
 
 primed =
   receive do
-    {:ethercat, :signal, :inputs, :ch1, 1} -> :ok
+    {:ethercat, :signal, :inputs, ^input_channel, 1} -> :ok
   after
     5_000 -> :timeout
   end
@@ -410,12 +434,13 @@ jitter_result =
       Enum.map_reduce(0..(jitter_samples - 1), System.monotonic_time(:microsecond), fn i,
                                                                                        prev_t ->
         target = rem(i, 2)
-        EtherCAT.write_output(:outputs, :ch1, target)
+        EtherCAT.write_output(:outputs, output_channel, target)
 
         receive do
-          {:ethercat, :signal, :inputs, :ch1, ^target} -> :ok
+          {:ethercat, :signal, :inputs, ^input_channel, ^target} -> :ok
         after
-          5_000 -> raise "loopback timeout — check EL2809 ch1 → EL1809 ch1 wire"
+          5_000 ->
+            raise "loopback timeout — check EL2809 #{output_channel} -> EL1809 #{input_channel} wire"
         end
 
         now = System.monotonic_time(:microsecond)
@@ -467,7 +492,7 @@ jitter_result =
     %{p99_us: p99_j, verdict: verdict, miss_delta: miss_delta}
   else
     IO.puts(
-      "  ✗ Loopback prime timeout — skipping jitter test (check EL2809 ch1 → EL1809 ch1 wire)"
+      "  ✗ Loopback prime timeout — skipping jitter test (check EL2809 #{output_channel} -> EL1809 #{input_channel} wire)"
     )
 
     nil
@@ -514,6 +539,6 @@ end
 IO.puts("──────────────────────────────────────────────────────────────────")
 
 # Cleanup
-EtherCAT.write_output(:outputs, :ch1, 0)
+EtherCAT.write_output(:outputs, output_channel, 0)
 Process.sleep(period_ms * 3)
 EtherCAT.stop()

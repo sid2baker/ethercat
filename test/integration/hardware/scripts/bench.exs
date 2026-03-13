@@ -1,5 +1,15 @@
 # EtherCAT link latency benchmark.
 #
+# ## Hardware Requirements
+#
+# Required hardware:
+#   - one powered EtherCAT slave segment reachable on the selected interface
+#   - a closed return path so BRD frames come back to the host
+#
+# Required capabilities:
+#   - raw EtherCAT frame exchange on the selected NIC
+#   - enough stable link time to complete the requested sample count
+#
 # Sends N BRD frames and reports RTT statistics.
 # Paste into IEx on the target, or run via:
 #   MIX_ENV=test mix run test/integration/hardware/scripts/bench.exs --interface eth0

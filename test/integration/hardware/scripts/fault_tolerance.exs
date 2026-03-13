@@ -1,6 +1,25 @@
 #!/usr/bin/env elixir
 # EtherCAT fault tolerance validation.
 #
+# ## Hardware Requirements
+#
+# Required slaves:
+#   - EK1100 coupler
+#   - EL1809 digital input terminal at slave name `:inputs`
+#   - EL2809 digital output terminal at slave name `:outputs`
+#
+# Optional slaves:
+#   - EL3202 at slave name `:rtd` when `--no-rtd` is not used
+#
+# Required wiring:
+#   - the maintained bench order `EK1100 -> EL1809 -> EL2809 -> EL3202`
+#   - physical access to the host-side main cable and to the segment cable after
+#     `:outputs` so scenarios B-D can be triggered on demand
+#
+# Required capabilities:
+#   - runtime telemetry events for domain/slave crashes and reconnects
+#   - optional split-domain support when `--split-sm` is used
+#
 # Tests the runtime fault detection and recovery mechanisms:
 #
 #   A. Process crash detection (no hardware interaction required)
@@ -24,12 +43,6 @@
 #        - slave reaches :preop (post_transition sends {:slave_ready})
 #        - if C stopped the domain, master restarts it
 #        - master activates to :op → returns to :operational
-#
-# Hardware:
-#   position 0  EK1100 coupler          (:coupler)
-#   position 1  EL1809 16-ch DI         (:inputs)
-#   position 2  EL2809 16-ch DO         (:outputs)
-#   position 3  EL3202 2-ch PT100       (:rtd)
 #
 # Usage:
 #   MIX_ENV=test mix run test/integration/hardware/scripts/fault_tolerance.exs --interface enp0s31f6
@@ -257,6 +270,9 @@ start_bus = fn health_poll_ms_opt ->
 
   output_process_data =
     if split_sm do
+      # Maintained bench assumption: ch1 stays in the fast domain and ch2 stays
+      # in the slow domain on both EL1809 and EL2809. If your wiring or signal
+      # split differs, update both input/output mappings together.
       [ch1: :fast, ch2: :slow]
     else
       {:all, :main}
@@ -369,6 +385,9 @@ results =
     Map.put(results, :b, :skipped)
   else
     FT.Helpers.section("B. Domain stop on total bus failure (miss_threshold=#{miss_threshold})")
+    # Maintained bench assumption: "main cable" means the host-facing cable
+    # into the EK1100. If your topology uses a switch or bridge upstream,
+    # adapt the pull point so this scenario causes frame-level loss.
     IO.puts("  NOTE: Pull the MAIN cable (from PC/switch to EK1100 coupler),")
     IO.puts("        NOT a cable between slaves. This causes frame-level errors")
     IO.puts("        which accumulate toward miss_threshold.")
@@ -444,6 +463,9 @@ results =
     {Map.put(results, :c, :skipped), :skipped}
   else
     FT.Helpers.section("C. Slave disconnect → :down (health_poll_ms=#{poll_ms})")
+    # Maintained bench assumption: the disconnect point is the segment after the
+    # EL2809 named :outputs. Change both the prompt and the downstream
+    # assertions if your watched slave or split point differ.
     IO.puts("  Pull the cable AFTER the :outputs (EL2809) slave.")
     IO.puts("  Expected:")
     IO.puts("    - [:ethercat, :slave, :down] fires within ~#{poll_ms} ms")
