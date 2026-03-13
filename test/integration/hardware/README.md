@@ -257,7 +257,7 @@ Run the smallest thing first:
 ```bash
 mix test test/integration/simulator/NN_case_name_test.exs
 mix test test/integration/simulator
-ETHERCAT_INTERFACE=<eth-iface> mix test test/integration/hardware/ring_test.exs
+ETHERCAT_INTERFACE=<eth-iface> mix test --include hardware test/integration/hardware/ring_test.exs
 ```
 
 ## Promotion To Real Hardware
@@ -281,6 +281,27 @@ Use hardware to answer questions the simulator cannot fully settle:
 - does transport timing on an actual NIC change the failure meaning?
 - does the RTD terminal or loopback wiring reveal drift from the simulated model?
 
+## Running Hardware ExUnit Coverage
+
+The hardware ring tests now build a small transport matrix from env vars.
+
+- `ETHERCAT_INTERFACE=<eth-iface>` enables the raw single-link ring tests.
+- `ETHERCAT_UDP_HOST=<ip>` enables the UDP single-link ring tests.
+- `ETHERCAT_UDP_BIND_IP=<ip>` optionally pins the UDP socket to one local IP.
+- `ETHERCAT_UDP_PORT=<port>` optionally overrides the default EtherCAT UDP port `34980`.
+- `ETHERCAT_BACKUP_INTERFACE=<eth-iface>` adds the redundant raw ring tests when paired with `ETHERCAT_INTERFACE`.
+
+Examples:
+
+```bash
+ETHERCAT_INTERFACE=enp3s0 mix test --include hardware test/integration/hardware/ring_test.exs
+ETHERCAT_INTERFACE=enp3s0 ETHERCAT_UDP_HOST=192.168.1.10 mix test --include hardware test/integration/hardware/ring_test.exs
+ETHERCAT_INTERFACE=enp3s0 ETHERCAT_BACKUP_INTERFACE=enp4s0 mix test --include hardware test/integration/hardware/redundant_ring_test.exs
+```
+
+When both raw and UDP are configured, `test/integration/hardware/ring_test.exs`
+defines the same ring assertions once per available transport.
+
 ## Running A Hardware Script
 
 ```bash
@@ -291,8 +312,8 @@ Requirements:
 
 - `MIX_ENV=test` is required because the scripts reuse
   `test/integration/support/`
-- ExUnit hardware tests use `ETHERCAT_INTERFACE`; these scripts take
-  `--interface` directly
+- ExUnit hardware tests use the env vars above; scripts take `--interface`
+  directly
 - raw Ethernet socket access still requires `CAP_NET_RAW` or root
 
 Recommended promotion scripts:

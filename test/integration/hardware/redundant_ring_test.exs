@@ -1,10 +1,10 @@
-defmodule EtherCAT.Integration.Hardware.RingTest do
+defmodule EtherCAT.Integration.Hardware.RedundantRingTest do
   use ExUnit.Case, async: false
 
   alias EtherCAT.IntegrationSupport.Hardware
 
   @moduletag :hardware
-  @single_link_profiles Hardware.single_link_profiles()
+  @redundant_profiles Hardware.redundant_profiles()
 
   setup do
     _ = EtherCAT.stop()
@@ -19,14 +19,8 @@ defmodule EtherCAT.Integration.Hardware.RingTest do
     :ok
   end
 
-  if @single_link_profiles == [] do
-    test "hardware ring transport is configured" do
-      flunk(Hardware.single_link_configuration_message())
-    end
-  end
-
-  if @single_link_profiles != [] do
-    for profile <- @single_link_profiles do
+  if @redundant_profiles != [] do
+    for profile <- @redundant_profiles do
       test "boots the EK1100 -> EL1809 -> EL2809 ring to operational over #{profile.label}" do
         profile = unquote(Macro.escape(profile))
 
@@ -66,7 +60,7 @@ defmodule EtherCAT.Integration.Hardware.RingTest do
     end
 
     defp start_ring(profile) do
-      assert Keyword.get(Hardware.start_opts(profile), :backup_interface) == nil
+      assert is_binary(Keyword.get(Hardware.start_opts(profile), :backup_interface))
 
       EtherCAT.start(
         Hardware.start_opts(profile) ++
