@@ -44,3 +44,57 @@ jobs:
 
       - name: Run tests
         run: mix test --warnings-as-errors
+
+  raw:
+    name: Raw Simulator
+    runs-on: ubuntu-24.04
+    env:
+      MIX_ENV: test
+      ETHERCAT_INTEGRATION_TRANSPORT: raw
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Erlang and Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: "28.0"
+          elixir-version: "1.19.1"
+
+      - name: Cache Mix
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+            ~/.hex/packages
+          key: ${{ runner.os }}-raw-mix-otp-28.0-elixir-1.19.1-${{ hashFiles('mix.lock') }}
+
+      - name: Install dependencies
+        run: mix deps.get
+
+      - name: Create raw test veth pairs
+        run: |
+          sudo ip link add veth-m0 type veth peer name veth-s0
+          sudo ip link add veth-m1 type veth peer name veth-s1
+          sudo ip link set veth-m0 up
+          sudo ip link set veth-s0 up
+          sudo ip link set veth-m1 up
+          sudo ip link set veth-s1 up
+
+      - name: Grant CAP_NET_RAW to BEAM
+        run: |
+          BEAM=$(readlink -f "$(dirname "$(dirname "$(command -v erl)")")"/erts-*/bin/beam.smp)
+          sudo setcap cap_net_raw+ep "$BEAM"
+          getcap "$BEAM"
+
+      - name: Run raw simulator tests
+        run: |
+          mix test \
+            test/ethercat/simulator_test.exs \
+            test/ethercat/simulator_redundancy_test.exs \
+            test/integration/simulator/ring_test.exs \
+            test/integration/simulator/redundant_raw_ring_test.exs \
+            --include raw_socket \
+            --include raw_socket_redundant
