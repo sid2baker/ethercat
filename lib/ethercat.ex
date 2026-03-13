@@ -175,13 +175,132 @@ defmodule EtherCAT do
   alias EtherCAT.Master.API, as: MasterAPI
   alias EtherCAT.Slave.API, as: SlaveAPI
 
+  @typedoc """
+  Public master session states returned by `state/0` once the local query
+  succeeds.
+  """
+  @type session_state ::
+          :idle
+          | :discovering
+          | :awaiting_preop
+          | :preop_ready
+          | :deactivated
+          | :operational
+          | :activation_blocked
+          | :recovering
+
+  @typedoc """
+  Local wrapper errors returned when a synchronous master query cannot complete.
+
+  These are transport-level API failures, not session lifecycle states.
+  """
+  @type master_query_error :: {:error, :not_started | :timeout}
+
+  @typedoc "Direction of a registered process-data signal."
+  @type signal_direction :: :input | :output
+
+  @typedoc "AL state reported in `slave_info/1`."
+  @type slave_al_state :: :init | :preop | :safeop | :op
+
+  @typedoc "Runtime state reported in `domain_info/1`."
+  @type domain_runtime_state :: :open | :cycling | :stopped
+
+  @typedoc "Cycle health reported by `domain_info/1`."
+  @type domain_cycle_health :: :healthy | {:invalid, term()}
+
+  @typedoc "Identity snapshot reported in `slave_info/1`."
+  @type slave_identity :: %{
+          required(:vendor_id) => non_neg_integer(),
+          required(:product_code) => non_neg_integer(),
+          required(:revision) => non_neg_integer(),
+          required(:serial_number) => non_neg_integer()
+        }
+
+  @typedoc "ESC capability snapshot reported in `slave_info/1`."
+  @type slave_esc_info :: %{
+          required(:fmmu_count) => non_neg_integer(),
+          required(:sm_count) => non_neg_integer()
+        }
+
+  @typedoc "SyncManager attachment summary reported in `slave_info/1`."
+  @type slave_attachment_summary :: %{
+          required(:domain) => EtherCAT.Domain.domain_id(),
+          required(:sm_index) => non_neg_integer(),
+          required(:direction) => signal_direction(),
+          required(:logical_address) => non_neg_integer() | nil,
+          required(:sm_size) => non_neg_integer() | nil,
+          required(:signal_count) => non_neg_integer(),
+          required(:signals) => [atom()]
+        }
+
+  @typedoc "Signal registration summary reported in `slave_info/1`."
+  @type slave_signal_summary :: %{
+          required(:name) => atom(),
+          required(:domain) => EtherCAT.Domain.domain_id(),
+          required(:direction) => signal_direction(),
+          required(:sm_index) => non_neg_integer(),
+          required(:bit_offset) => non_neg_integer(),
+          required(:bit_size) => pos_integer()
+        }
+
+  @typedoc "Compact slave summary returned by `slaves/0`."
+  @type slave_summary :: %{
+          required(:name) => atom(),
+          required(:station) => non_neg_integer(),
+          required(:server) => :gen_statem.server_ref(),
+          required(:pid) => pid() | nil,
+          required(:fault) => term() | nil
+        }
+
+  @typedoc "Compact domain summary returned by `domains/0`."
+  @type domain_summary :: {EtherCAT.Domain.domain_id(), pos_integer(), pid()}
+
+  @typedoc "Detailed snapshot returned by `slave_info/1`."
+  @type slave_info :: %{
+          required(:name) => atom(),
+          required(:station) => non_neg_integer(),
+          required(:al_state) => slave_al_state(),
+          required(:identity) => slave_identity() | nil,
+          required(:esc) => slave_esc_info() | nil,
+          required(:driver) => module() | nil,
+          required(:coe) => boolean(),
+          required(:available_fmmus) => non_neg_integer() | nil,
+          required(:used_fmmus) => non_neg_integer(),
+          required(:attachments) => [slave_attachment_summary()],
+          required(:signals) => [slave_signal_summary()],
+          required(:configuration_error) => term() | nil
+        }
+
+  @typedoc "Detailed snapshot returned by `domain_info/1`."
+  @type domain_info :: %{
+          required(:id) => EtherCAT.Domain.domain_id(),
+          required(:cycle_time_us) => pos_integer(),
+          required(:state) => domain_runtime_state(),
+          required(:cycle_count) => non_neg_integer(),
+          required(:miss_count) => non_neg_integer(),
+          required(:total_miss_count) => non_neg_integer(),
+          required(:cycle_health) => domain_cycle_health(),
+          required(:logical_base) => non_neg_integer(),
+          required(:image_size) => non_neg_integer(),
+          required(:expected_wkc) => non_neg_integer(),
+          required(:last_cycle_started_at_us) => integer() | nil,
+          required(:last_cycle_completed_at_us) => integer() | nil,
+          required(:last_valid_cycle_at_us) => integer() | nil,
+          required(:last_invalid_cycle_at_us) => integer() | nil,
+          required(:last_invalid_reason) => term() | nil
+        }
+
   @doc """
   Return the stable bus server reference for direct frame transactions.
+
+  Returns `Bus` while the session owns a running bus process.
+  Returns `nil` if the master process exists but the bus subsystem is not
+  currently running, such as after the session has settled back to `:idle`.
 
   Returns `{:error, :not_started}` if the master does not exist and
   `{:error, :timeout}` if the local master call itself times out.
   """
-  @spec bus() :: EtherCAT.Bus.server() | nil | {:error, :not_started | :timeout}
+  @spec bus() :: EtherCAT.Bus.server() | nil | master_query_error()
   def bus, do: MasterAPI.bus()
 
   @doc """
@@ -252,19 +371,13 @@ defmodule EtherCAT do
     - `:activation_blocked` — the transition to the desired runtime target is blocked
     - `:recovering` — runtime fault recovery in progress
 
+  `:idle` means the master process exists and the session is idle.
+  `{:error, :not_started}` means there is no local master process at all.
+
   Returns `{:error, :not_started}` if the master does not exist and
   `{:error, :timeout}` if the local master call itself times out.
   """
-  @spec state() ::
-          :idle
-          | :discovering
-          | :awaiting_preop
-          | :preop_ready
-          | :deactivated
-          | :operational
-          | :activation_blocked
-          | :recovering
-          | {:error, :not_started | :timeout}
+  @spec state() :: session_state() | master_query_error()
   def state, do: MasterAPI.state()
 
   @doc """
@@ -273,7 +386,7 @@ defmodule EtherCAT do
   Returns `{:error, :not_started}` if the master process does not exist.
   Returns `{:error, :timeout}` if the local master call itself times out.
   """
-  @spec dc_status() :: EtherCAT.DC.Status.t() | {:error, :not_started | :timeout}
+  @spec dc_status() :: EtherCAT.DC.Status.t() | master_query_error()
   def dc_status, do: MasterAPI.dc_status()
 
   @doc "Return the current DC reference clock as `%{name, station}`."
@@ -296,7 +409,7 @@ defmodule EtherCAT do
   Returns `{:error, :not_started}` if the master does not exist and
   `{:error, :timeout}` if the local master call itself times out.
   """
-  @spec last_failure() :: map() | nil | {:error, :not_started | :timeout}
+  @spec last_failure() :: map() | nil | master_query_error()
   def last_failure, do: MasterAPI.last_failure()
 
   @doc """
@@ -332,17 +445,7 @@ defmodule EtherCAT do
   Returns `{:error, :not_started}` if the master does not exist and
   `{:error, :timeout}` if the local master call itself times out.
   """
-  @spec slaves() ::
-          [
-            %{
-              name: atom(),
-              station: non_neg_integer(),
-              server: :gen_statem.server_ref(),
-              pid: pid() | nil,
-              fault: term() | nil
-            }
-          ]
-          | {:error, :not_started | :timeout}
+  @spec slaves() :: [slave_summary()] | master_query_error()
   def slaves, do: MasterAPI.slaves()
 
   @doc """
@@ -351,7 +454,7 @@ defmodule EtherCAT do
   Returns `{:error, :not_started}` if the master does not exist and
   `{:error, :timeout}` if the local master call itself times out.
   """
-  @spec domains() :: list() | {:error, :not_started | :timeout}
+  @spec domains() :: [domain_summary()] | master_query_error()
   def domains, do: MasterAPI.domains()
 
   @doc """
@@ -380,7 +483,9 @@ defmodule EtherCAT do
     - `:used_fmmus` — count of active `{domain, SyncManager}` attachments
     - `:attachments` — list of `%{domain, sm_index, direction, logical_address, sm_size, signal_count, signals}`
     - `:signals` — list of `%{name, domain, direction, bit_offset, bit_size}` for registered signals
-    - `:configuration_error` — last configuration failure atom, or `nil`
+    - `:configuration_error` — last configuration failure term, or `nil`
+      Common values are structured tuples such as
+      `{:mailbox_config_failed, index, subindex, reason}`.
 
   ## Example
 
@@ -405,7 +510,7 @@ defmodule EtherCAT do
         configuration_error: nil
       }}
   """
-  @spec slave_info(atom()) :: {:ok, map()} | {:error, :not_found | :timeout}
+  @spec slave_info(atom()) :: {:ok, slave_info()} | {:error, :not_found | :timeout}
   def slave_info(slave_name), do: SlaveAPI.info(slave_name)
 
   @doc """
@@ -437,7 +542,7 @@ defmodule EtherCAT do
         expected_wkc: 3
       }}
   """
-  @spec domain_info(atom()) :: {:ok, map()} | {:error, :not_found | :timeout}
+  @spec domain_info(atom()) :: {:ok, domain_info()} | {:error, :not_found | :timeout}
   def domain_info(domain_id), do: DomainAPI.info(domain_id)
 
   @doc """
