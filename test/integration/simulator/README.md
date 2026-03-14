@@ -108,6 +108,7 @@ plan -> fix -> verify -> commit.
 - `34`: retained reconnect PREOP mailbox failure that arms a later counted PDO disconnect through `Scenario.inject_fault_on_event/4` instead of an imperative mid-scenario action
 - `35`: retained reconnect PREOP mailbox failure that arms a later counted PDO disconnect whose recovery entry then arms a follow-up `SAFEOP` retreat on another PDO slave
 - `36`: captured `EL3202` reconnect-time PREOP timeout on a real startup SDO map that later arms a counted PDO disconnect while typed RTD decode must still recover cleanly
+- `37`: split-domain captured `EL3202` reconnect-time PREOP timeout where the digital loopback domain must stay healthy while the RTD retry path heals independently
 
 These are the current regression scenarios, not just backlog items. Each one
 should keep its `.md` note and matching `_test.exs` file aligned.
@@ -302,12 +303,13 @@ test code.
 
 ## Next Directions
 
-The next useful scenario after the captured-device `EL3202` reconnect PREOP mix case is:
+The split-domain captured-device follow-up to scenario `36` is now covered by
+scenario `37`.
 
-- a split-domain captured-device variant that keeps the real hardware ring
-  shape (`EK1100` / `EL1809` / `EL2809` / `EL3202`) but forces the RTD
-  terminal through reconnect PREOP recovery while the digital loopback domain
-  stays independently healthy
+Only add a new "next" placeholder here when there is a concrete captured fault
+story to name. Until then, use the checklist below to decide whether the next
+improvement belongs in a new simulator scenario, a cheaper unit regression, or
+bench-only validation.
 
 ## When To Combine Scenarios
 
