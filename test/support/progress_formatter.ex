@@ -9,7 +9,21 @@ defmodule EtherCAT.TestProgressFormatter do
   end
 
   @impl true
-  def handle_cast({:module_started, %ExUnit.TestModule{file: file}}, %{trace?: false} = state) do
+  def handle_cast(
+        {:test_started, %ExUnit.Test{state: {:excluded, _reason}}},
+        state
+      ) do
+    {:noreply, state}
+  end
+
+  def handle_cast(
+        {:test_started, %ExUnit.Test{state: {:skipped, _reason}}},
+        state
+      ) do
+    {:noreply, state}
+  end
+
+  def handle_cast({:test_started, %ExUnit.Test{tags: %{file: file}}}, %{trace?: false} = state) do
     file
     |> Path.relative_to_cwd()
     |> phase_for()
