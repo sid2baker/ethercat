@@ -8,7 +8,6 @@ defmodule EtherCAT.Integration.Simulator.ReconnectPreopMultiRetryMailboxFaultsTe
   alias EtherCAT.Simulator.Fault
 
   @disconnect_steps 30
-  @first_failure {:mailbox_config_failed, 0x2003, 0x01, :response_timeout}
   @second_failure {:mailbox_config_failed, 0x2003, 0x01, :invalid_coe_response}
 
   setup do
@@ -125,21 +124,24 @@ defmodule EtherCAT.Integration.Simulator.ReconnectPreopMultiRetryMailboxFaultsTe
       Expect.trace_event(trace, [:ethercat, :master, :slave_fault, :changed],
         metadata: [
           slave: :mailbox,
-          to: {:preop, {:preop_configuration_failed, @first_failure}}
+          to: :preop,
+          to_detail: :preop_configuration_failed
         ]
       )
 
       Expect.trace_event(trace, [:ethercat, :master, :slave_fault, :changed],
         metadata: [
           slave: :mailbox,
-          to: {:preop, {:preop_configuration_failed, @second_failure}}
+          to: :preop,
+          to_detail: :preop_configuration_failed
         ]
       )
 
       Expect.trace_event(trace, [:ethercat, :master, :slave_fault, :changed],
         metadata: [
           slave: :mailbox,
-          from: {:preop, {:preop_configuration_failed, @second_failure}},
+          from: :preop,
+          from_detail: :preop_configuration_failed,
           to: nil
         ]
       )

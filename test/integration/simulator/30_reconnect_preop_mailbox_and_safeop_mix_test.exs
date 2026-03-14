@@ -36,7 +36,7 @@ defmodule EtherCAT.Integration.Simulator.ReconnectPreopMailboxAndSafeopMixTest d
     |> Scenario.inject_fault_on_event(
       [:ethercat, :master, :slave_fault, :changed],
       Fault.retreat_to_safeop(:outputs),
-      metadata: [slave: :mailbox, to: {:preop, {:preop_configuration_failed, @mailbox_failure}}]
+      metadata: [slave: :mailbox, to: :preop, to_detail: :preop_configuration_failed]
     )
     |> Scenario.inject_fault(Fault.script(fault_script))
     |> Scenario.act("mailbox fault retention arms the telemetry-triggered SAFEOP retreat", fn %{
@@ -48,7 +48,8 @@ defmodule EtherCAT.Integration.Simulator.ReconnectPreopMailboxAndSafeopMixTest d
           Expect.trace_event(trace, [:ethercat, :master, :slave_fault, :changed],
             metadata: [
               slave: :mailbox,
-              to: {:preop, {:preop_configuration_failed, @mailbox_failure}}
+              to: :preop,
+              to_detail: :preop_configuration_failed
             ]
           )
 
@@ -114,22 +115,24 @@ defmodule EtherCAT.Integration.Simulator.ReconnectPreopMailboxAndSafeopMixTest d
       Expect.trace_event(trace, [:ethercat, :master, :slave_fault, :changed],
         metadata: [
           slave: :mailbox,
-          to: {:preop, {:preop_configuration_failed, @mailbox_failure}}
+          to: :preop,
+          to_detail: :preop_configuration_failed
         ]
       )
 
       Expect.trace_event(trace, [:ethercat, :master, :slave_fault, :changed],
-        metadata: [slave: :outputs, to: {:retreated, :safeop}]
+        metadata: [slave: :outputs, to: :retreated, to_detail: :safeop]
       )
 
       Expect.trace_event(trace, [:ethercat, :master, :slave_fault, :changed],
-        metadata: [slave: :outputs, from: {:retreated, :safeop}, to: nil]
+        metadata: [slave: :outputs, from: :retreated, from_detail: :safeop, to: nil]
       )
 
       Expect.trace_event(trace, [:ethercat, :master, :slave_fault, :changed],
         metadata: [
           slave: :mailbox,
-          from: {:preop, {:preop_configuration_failed, @mailbox_failure}},
+          from: :preop,
+          from_detail: :preop_configuration_failed,
           to: nil
         ]
       )

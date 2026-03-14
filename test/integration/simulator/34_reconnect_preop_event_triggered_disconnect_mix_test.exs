@@ -37,7 +37,7 @@ defmodule EtherCAT.Integration.Simulator.ReconnectPreopEventTriggeredDisconnectM
     |> Scenario.inject_fault_on_event(
       [:ethercat, :master, :slave_fault, :changed],
       @event_triggered_disconnect,
-      metadata: [slave: :mailbox, to: {:preop, {:preop_configuration_failed, @mailbox_failure}}]
+      metadata: [slave: :mailbox, to: :preop, to_detail: :preop_configuration_failed]
     )
     |> Scenario.inject_fault(Fault.script(mailbox_fault_script))
     |> Scenario.act(
@@ -48,7 +48,8 @@ defmodule EtherCAT.Integration.Simulator.ReconnectPreopEventTriggeredDisconnectM
             Expect.trace_event(trace, [:ethercat, :master, :slave_fault, :changed],
               metadata: [
                 slave: :mailbox,
-                to: {:preop, {:preop_configuration_failed, @mailbox_failure}}
+                to: :preop,
+                to_detail: :preop_configuration_failed
               ]
             )
 
@@ -79,14 +80,15 @@ defmodule EtherCAT.Integration.Simulator.ReconnectPreopEventTriggeredDisconnectM
               {:event, [:ethercat, :master, :slave_fault, :changed],
                metadata: [
                  slave: :mailbox,
-                 to: {:preop, {:preop_configuration_failed, @mailbox_failure}}
+                 to: :preop,
+                 to_detail: :preop_configuration_failed
                ]},
               {:note, "telemetry trigger matched",
                metadata: [fault: "next 30 exchanges disconnect outputs"]},
               {:note, "telemetry-triggered fault injected",
                metadata: [fault: "next 30 exchanges disconnect outputs"]},
               {:event, [:ethercat, :master, :slave_fault, :changed],
-               metadata: [slave: :outputs, to: {:down, :disconnected}]}
+               metadata: [slave: :outputs, to: :down, to_detail: :no_response]}
             ])
 
             Expect.trace_event(trace, [:ethercat, :master, :state, :changed],
@@ -146,39 +148,44 @@ defmodule EtherCAT.Integration.Simulator.ReconnectPreopEventTriggeredDisconnectM
           {:event, [:ethercat, :master, :slave_fault, :changed],
            metadata: [
              slave: :mailbox,
-             to: {:preop, {:preop_configuration_failed, @mailbox_failure}}
+             to: :preop,
+             to_detail: :preop_configuration_failed
            ]},
           {:note, "telemetry trigger matched",
            metadata: [fault: "next 30 exchanges disconnect outputs"]},
           {:note, "telemetry-triggered fault injected",
            metadata: [fault: "next 30 exchanges disconnect outputs"]},
           {:event, [:ethercat, :master, :slave_fault, :changed],
-           metadata: [slave: :outputs, to: {:down, :disconnected}]}
+           metadata: [slave: :outputs, to: :down, to_detail: :no_response]}
         ])
 
         Expect.trace_sequence(trace, [
           {:event, [:ethercat, :master, :slave_fault, :changed],
-           metadata: [slave: :outputs, to: {:down, :disconnected}]},
+           metadata: [slave: :outputs, to: :down, to_detail: :no_response]},
           {:event, [:ethercat, :master, :slave_fault, :changed],
            metadata: [
              slave: :outputs,
-             from: {:down, :disconnected},
-             to: {:reconnecting, :authorized}
+             from: :down,
+             from_detail: :no_response,
+             to: :reconnecting,
+             to_detail: :authorized
            ]},
           {:event, [:ethercat, :master, :slave_fault, :changed],
-           metadata: [slave: :outputs, from: {:reconnecting, :authorized}, to: nil]}
+           metadata: [slave: :outputs, from: :reconnecting, from_detail: :authorized, to: nil]}
         ])
 
         Expect.trace_sequence(trace, [
           {:event, [:ethercat, :master, :slave_fault, :changed],
            metadata: [
              slave: :mailbox,
-             to: {:preop, {:preop_configuration_failed, @mailbox_failure}}
+             to: :preop,
+             to_detail: :preop_configuration_failed
            ]},
           {:event, [:ethercat, :master, :slave_fault, :changed],
            metadata: [
              slave: :mailbox,
-             from: {:preop, {:preop_configuration_failed, @mailbox_failure}},
+             from: :preop,
+             from_detail: :preop_configuration_failed,
              to: nil
            ]}
         ])

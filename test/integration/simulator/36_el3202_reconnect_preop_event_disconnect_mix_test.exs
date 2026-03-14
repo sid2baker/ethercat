@@ -8,7 +8,6 @@ defmodule EtherCAT.Integration.Simulator.EL3202ReconnectPreopEventDisconnectMixT
   alias EtherCAT.Simulator.Slave, as: SimSlave
 
   @disconnect_steps 30
-  @rtd_failure {:mailbox_config_failed, 0x8010, 0x19, :response_timeout}
   @event_triggered_disconnect Fault.disconnect(:outputs) |> Fault.next(@disconnect_steps)
   @channel1_reading %{
     ohms: 119.375,
@@ -60,7 +59,7 @@ defmodule EtherCAT.Integration.Simulator.EL3202ReconnectPreopEventDisconnectMixT
     |> Scenario.inject_fault_on_event(
       [:ethercat, :master, :slave_fault, :changed],
       @event_triggered_disconnect,
-      metadata: [slave: :rtd, to: {:preop, {:preop_configuration_failed, @rtd_failure}}]
+      metadata: [slave: :rtd, to: :preop, to_detail: :preop_configuration_failed]
     )
     |> Scenario.inject_fault(
       Fault.script(List.duplicate(Fault.disconnect(:rtd), @disconnect_steps))
@@ -78,13 +77,13 @@ defmodule EtherCAT.Integration.Simulator.EL3202ReconnectPreopEventDisconnectMixT
           fn ->
             Expect.trace_sequence(trace, [
               {:event, [:ethercat, :master, :slave_fault, :changed],
-               metadata: [slave: :rtd, to: {:preop, {:preop_configuration_failed, @rtd_failure}}]},
+               metadata: [slave: :rtd, to: :preop, to_detail: :preop_configuration_failed]},
               {:note, "telemetry trigger matched",
                metadata: [fault: "next 30 exchanges disconnect outputs"]},
               {:note, "telemetry-triggered fault injected",
                metadata: [fault: "next 30 exchanges disconnect outputs"]},
               {:event, [:ethercat, :master, :slave_fault, :changed],
-               metadata: [slave: :outputs, to: {:down, :disconnected}]}
+               metadata: [slave: :outputs, to: :down, to_detail: :no_response]}
             ])
           end,
           attempts: 260,
@@ -103,17 +102,19 @@ defmodule EtherCAT.Integration.Simulator.EL3202ReconnectPreopEventDisconnectMixT
 
             Expect.trace_sequence(trace, [
               {:event, [:ethercat, :master, :slave_fault, :changed],
-               metadata: [slave: :rtd, to: {:preop, {:preop_configuration_failed, @rtd_failure}}]},
+               metadata: [slave: :rtd, to: :preop, to_detail: :preop_configuration_failed]},
               {:event, [:ethercat, :master, :slave_fault, :changed],
-               metadata: [slave: :outputs, to: {:down, :disconnected}]},
+               metadata: [slave: :outputs, to: :down, to_detail: :no_response]},
               {:event, [:ethercat, :master, :slave_fault, :changed],
                metadata: [
                  slave: :outputs,
-                 from: {:down, :disconnected},
-                 to: {:reconnecting, :authorized}
+                 from: :down,
+                 from_detail: :no_response,
+                 to: :reconnecting,
+                 to_detail: :authorized
                ]},
               {:event, [:ethercat, :master, :slave_fault, :changed],
-               metadata: [slave: :outputs, from: {:reconnecting, :authorized}, to: nil]}
+               metadata: [slave: :outputs, from: :reconnecting, from_detail: :authorized, to: nil]}
             ])
           end,
           attempts: 320,
@@ -166,35 +167,38 @@ defmodule EtherCAT.Integration.Simulator.EL3202ReconnectPreopEventDisconnectMixT
          } ->
         Expect.trace_sequence(trace, [
           {:event, [:ethercat, :master, :slave_fault, :changed],
-           metadata: [slave: :rtd, to: {:preop, {:preop_configuration_failed, @rtd_failure}}]},
+           metadata: [slave: :rtd, to: :preop, to_detail: :preop_configuration_failed]},
           {:note, "telemetry trigger matched",
            metadata: [fault: "next 30 exchanges disconnect outputs"]},
           {:note, "telemetry-triggered fault injected",
            metadata: [fault: "next 30 exchanges disconnect outputs"]},
           {:event, [:ethercat, :master, :slave_fault, :changed],
-           metadata: [slave: :outputs, to: {:down, :disconnected}]}
+           metadata: [slave: :outputs, to: :down, to_detail: :no_response]}
         ])
 
         Expect.trace_sequence(trace, [
           {:event, [:ethercat, :master, :slave_fault, :changed],
-           metadata: [slave: :outputs, to: {:down, :disconnected}]},
+           metadata: [slave: :outputs, to: :down, to_detail: :no_response]},
           {:event, [:ethercat, :master, :slave_fault, :changed],
            metadata: [
              slave: :outputs,
-             from: {:down, :disconnected},
-             to: {:reconnecting, :authorized}
+             from: :down,
+             from_detail: :no_response,
+             to: :reconnecting,
+             to_detail: :authorized
            ]},
           {:event, [:ethercat, :master, :slave_fault, :changed],
-           metadata: [slave: :outputs, from: {:reconnecting, :authorized}, to: nil]}
+           metadata: [slave: :outputs, from: :reconnecting, from_detail: :authorized, to: nil]}
         ])
 
         Expect.trace_sequence(trace, [
           {:event, [:ethercat, :master, :slave_fault, :changed],
-           metadata: [slave: :rtd, to: {:preop, {:preop_configuration_failed, @rtd_failure}}]},
+           metadata: [slave: :rtd, to: :preop, to_detail: :preop_configuration_failed]},
           {:event, [:ethercat, :master, :slave_fault, :changed],
            metadata: [
              slave: :rtd,
-             from: {:preop, {:preop_configuration_failed, @rtd_failure}},
+             from: :preop,
+             from_detail: :preop_configuration_failed,
              to: nil
            ]}
         ])

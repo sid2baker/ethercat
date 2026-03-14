@@ -78,13 +78,14 @@ defmodule EtherCAT.Integration.Simulator.CriticalPdoReconnectPreopSelfHealTest d
       )
 
       Expect.trace_event(trace, [:ethercat, :master, :slave_fault, :changed],
-        metadata: [slave: :combo, to: {:preop, {:preop_configuration_failed, @failure}}]
+        metadata: [slave: :combo, to: :preop, to_detail: :preop_configuration_failed]
       )
 
       Expect.trace_event(trace, [:ethercat, :master, :slave_fault, :changed],
         metadata: [
           slave: :combo,
-          from: {:preop, {:preop_configuration_failed, @failure}},
+          from: :preop,
+          from_detail: :preop_configuration_failed,
           to: nil
         ]
       )

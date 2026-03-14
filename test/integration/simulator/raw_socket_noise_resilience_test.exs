@@ -61,7 +61,11 @@ defmodule EtherCAT.Integration.Simulator.RawSocketNoiseResilienceTest do
   end
 
   defp build_rogue_frame(idx) do
-    # BRD datagram (cmd=7) with wkc=99 so the simulator classifies it as :ignore
+    # BRD datagram (cmd=7) wrapped in an EtherCAT header with type=0 (invalid).
+    # The frame carries EtherType 0x88A4 so the raw socket accepts it, but
+    # Frame.decode rejects it ({:error, :unsupported_type}), which exercises
+    # the bus rearm path without risking an idx collision that would feed
+    # garbage data into a pending transaction.
     cmd = 7
     data = <<0, 0>>
     len = byte_size(data)
@@ -71,7 +75,8 @@ defmodule EtherCAT.Integration.Simulator.RawSocketNoiseResilienceTest do
       <<cmd::8, idx::8, 0::32, len_field::little-16, 0::little-16, data::binary, 99::little-16>>
 
     dg_size = byte_size(datagram)
-    <<ecat_hdr::big-unsigned-16>> = <<1::4, 0::1, dg_size::11>>
+    # Type=0 (not 1) → Frame.decode returns {:error, :unsupported_type}
+    <<ecat_hdr::big-unsigned-16>> = <<0::4, 0::1, dg_size::11>>
     ecat_payload = <<ecat_hdr::little-16, datagram::binary>>
 
     src_mac = <<0xBA, 0xAD, 0xF0, 0x0D, 0x00, 0x01>>
