@@ -11,12 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `36ed6b8`, `eee9d1e`, `a4b947b` — `EtherCAT.Simulator` now supports raw-socket transport, redundant dual-ingress raw topologies, and shared UDP/raw transport fixtures for integration and hardware bring-up.
 - `c4a6621`, `1f2b526`, `b12eec5` — integration coverage now includes event-triggered reconnect/disconnect mixes, harder clustered recovery chains, and split-domain EL3202 reconnect scenarios.
 - `80dc840`, `c42b0c9` — bus and hardware tooling now expose richer runtime diagnostics plus loopback and hardening knobs for real hardware bring-up.
-- `93c864d`, `6516c23`, `4a3321b`, `(pending hash)` — GitHub Actions now cover CI and release automation, including raw-capable runners, raw simulator setup, and tag-build verification.
+- `93c864d`, `6516c23`, `4a3321b`, `8eff41c` — GitHub Actions now cover CI and release automation, including raw-capable runners, raw simulator setup, and tag-build verification.
 
 ### Changed
-- `4ae4392`, `0248012`, `(pending hash)` — public master/domain/slave query paths are normalized, root API contracts are clearer, and synchronous calls now return `{:error, {:server_exit, reason}}` when a local server dies mid-call instead of exiting the caller.
-- `04b2c5f`, `072119d`, `9b3b4ba`, `dad947e`, `(pending hash)` — simulator and helper/reference guidance was consolidated into source-adjacent docs and local-only helper material so the tracked repo surface stays focused on maintained implementation docs.
-- `(pending hash)` — capture snapshots now write portable `.capture` data files instead of executable Elixir source, and generated simulator scaffolds load those data-only artifacts safely.
+- `4ae4392`, `0248012`, `8eff41c` — public master/domain/slave query paths are normalized, root API contracts are clearer, and synchronous calls now return `{:error, {:server_exit, reason}}` when a local server dies mid-call instead of exiting the caller.
+- `04b2c5f`, `072119d`, `9b3b4ba`, `dad947e`, `8eff41c` — simulator and helper/reference guidance was consolidated into source-adjacent docs and local-only helper material so the tracked repo surface stays focused on maintained implementation docs.
+- `8eff41c` — capture snapshots now write portable `.capture` data files instead of executable Elixir source, and generated simulator scaffolds load those data-only artifacts safely.
 
 ### Fixed
 - `95f343d` — DC recovery and configuration validation are stricter, reducing invalid recovery paths and catching bad setup earlier.
@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `d852fd4` — bus transaction aging semantics and diagnostics are now more explicit during retry and timeout handling.
 
 ### Docs
-- `8f773d6`, `c42b0c9`, `0248012`, `04b2c5f`, `072119d`, `9b3b4ba`, `ee210fa`, `(pending hash)` — README, hardware playbooks, simulator docs, and API guidance were rewritten to better explain transport boundaries, bring-up workflow, release metadata, and fault/recovery scenarios.
+- `8f773d6`, `c42b0c9`, `0248012`, `04b2c5f`, `072119d`, `9b3b4ba`, `ee210fa`, `8eff41c` — README, hardware playbooks, simulator docs, and API guidance were rewritten to better explain transport boundaries, bring-up workflow, release metadata, and fault/recovery scenarios.
 
 ## [0.3.1] - 2026-03-12
 
