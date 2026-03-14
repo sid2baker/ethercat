@@ -72,7 +72,16 @@ defmodule MultiDomain.Telemetry do
     :ets.insert(:md_durations, {domain, duration_us})
   end
 
-  def handle([:ethercat, :domain, :cycle, :missed], _measurements, %{domain: domain}, _cfg) do
+  def handle([:ethercat, :domain, :cycle, :invalid], _measurements, %{domain: domain}, _cfg) do
+    :ets.update_counter(:md_misses, domain, {2, 1}, {domain, 0})
+  end
+
+  def handle(
+        [:ethercat, :domain, :cycle, :transport_miss],
+        _measurements,
+        %{domain: domain},
+        _cfg
+      ) do
     :ets.update_counter(:md_misses, domain, {2, 1}, {domain, 0})
   end
 end
@@ -184,7 +193,11 @@ handler_id = "multi-domain-#{System.unique_integer([:positive, :monotonic])}"
 
 :telemetry.attach_many(
   handler_id,
-  [[:ethercat, :domain, :cycle, :done], [:ethercat, :domain, :cycle, :missed]],
+  [
+    [:ethercat, :domain, :cycle, :done],
+    [:ethercat, :domain, :cycle, :invalid],
+    [:ethercat, :domain, :cycle, :transport_miss]
+  ],
   &MultiDomain.Telemetry.handle/4,
   nil
 )

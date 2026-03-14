@@ -2,6 +2,7 @@ defmodule EtherCAT.DC do
   @moduledoc File.read!(Path.join(__DIR__, "dc.md"))
 
   @behaviour :gen_statem
+  require Logger
 
   alias EtherCAT.Bus
   alias EtherCAT.DC.Runtime
@@ -78,7 +79,10 @@ defmodule EtherCAT.DC do
   def callback_mode, do: [:handle_event_function, :state_enter]
 
   @impl true
-  def init(opts), do: {:ok, :running, State.new(opts)}
+  def init(opts) do
+    Logger.metadata(component: :dc, ref_station: Keyword.fetch!(opts, :ref_station))
+    {:ok, :running, State.new(opts)}
+  end
 
   @impl true
   def handle_event(:enter, _old, :running, data) do

@@ -9,6 +9,7 @@ defmodule EtherCAT.DC.Runtime do
   alias EtherCAT.DC.Status
   alias EtherCAT.Slave.ESC.Registers
   alias EtherCAT.Telemetry
+  alias EtherCAT.Utils
 
   @default_diagnostic_interval_ns 10_000_000
 
@@ -168,7 +169,14 @@ defmodule EtherCAT.DC.Runtime do
     failures = data.fail_count + 1
 
     if failures >= 3 and (failures == 3 or rem(failures, 100) == 0) do
-      Logger.warning("[DC] runtime tick failed: #{inspect(reason)} (#{failures} consecutive)")
+      Logger.warning(
+        "[DC] runtime tick failed: #{inspect(reason)} (#{failures} consecutive)",
+        component: :dc,
+        event: :runtime_tick_failed,
+        ref_station: data.ref_station,
+        reason_kind: Utils.reason_kind(reason),
+        consecutive_failures: failures
+      )
     end
 
     if failures == 3 do
@@ -201,11 +209,22 @@ defmodule EtherCAT.DC.Runtime do
 
   defp maybe_log_runtime_recovered(fail_count) when fail_count >= 3 do
     Telemetry.dc_runtime_state_changed(:failing, :healthy, nil, fail_count)
-    Logger.info("[DC] runtime recovered after #{fail_count} failure(s)")
+
+    Logger.info(
+      "[DC] runtime recovered after #{fail_count} failure(s)",
+      component: :dc,
+      event: :runtime_recovered,
+      consecutive_failures: fail_count
+    )
   end
 
   defp maybe_log_runtime_recovered(fail_count) when fail_count > 0 do
-    Logger.info("[DC] runtime recovered after #{fail_count} failure(s)")
+    Logger.info(
+      "[DC] runtime recovered after #{fail_count} failure(s)",
+      component: :dc,
+      event: :runtime_recovered,
+      consecutive_failures: fail_count
+    )
   end
 
   defp maybe_notify_runtime_recovered(%{notify_recovered_on_success?: true}) do

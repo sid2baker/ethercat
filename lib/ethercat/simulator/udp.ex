@@ -31,6 +31,7 @@ defmodule EtherCAT.Simulator.Udp do
   alias EtherCAT.Bus.Frame
   alias EtherCAT.Simulator
   alias EtherCAT.Simulator.Udp.Fault
+  alias EtherCAT.Utils
 
   @type frame_fault_mode :: :truncate | :unsupported_type | :wrong_idx | :replay_previous
   @type fault ::
@@ -99,6 +100,13 @@ defmodule EtherCAT.Simulator.Udp do
       {:ok, socket} ->
         {:ok, {_bound_ip, actual_port}} = :inet.sockname(socket)
 
+        Logger.metadata(
+          component: :simulator,
+          transport: :udp,
+          listen_ip: ip,
+          listen_port: actual_port
+        )
+
         {:ok,
          %{
            socket: socket,
@@ -148,7 +156,14 @@ defmodule EtherCAT.Simulator.Udp do
           next_state
 
         {:error, reason, next_state} ->
-          Logger.warning("[EtherCAT.Simulator.Udp] dropped invalid payload: #{inspect(reason)}")
+          Logger.warning(
+            "[EtherCAT.Simulator.Udp] dropped invalid payload: #{inspect(reason)}",
+            event: :invalid_payload_dropped,
+            reason_kind: Utils.reason_kind(reason),
+            sender_ip: sender_ip,
+            sender_port: sender_port
+          )
+
           next_state
       end
 

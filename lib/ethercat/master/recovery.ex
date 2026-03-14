@@ -9,6 +9,7 @@ defmodule EtherCAT.Master.Recovery do
   alias EtherCAT.Master.Status
   alias EtherCAT.Slave.API, as: SlaveAPI
   alias EtherCAT.Telemetry
+  alias EtherCAT.Utils
 
   @spec retry_activation_blocked_state(%EtherCAT.Master{}) ::
           {:ok, :deactivated | :operational | :preop_ready, %EtherCAT.Master{}}
@@ -22,8 +23,8 @@ defmodule EtherCAT.Master.Recovery do
   def retry_activation_blocked_state(%{activation_failures: failures} = data) do
     retried_failures =
       Enum.reduce(failures, %{}, fn
-        {name, {:down, _}}, acc ->
-          Map.put(acc, name, {:down, :disconnected})
+        {name, {:down, reason}}, acc ->
+          Map.put(acc, name, {:down, reason})
 
         {name, {:reconnecting, _reason}}, acc ->
           Map.put(acc, name, {:reconnecting, :authorized})
@@ -38,7 +39,12 @@ defmodule EtherCAT.Master.Recovery do
 
             {:error, reason} ->
               Logger.warning(
-                "[Master] activation-blocked retry: #{inspect(name)} still not in :#{transition_request_target(data)}: #{inspect(reason)}"
+                "[Master] activation-blocked retry: #{inspect(name)} still not in :#{transition_request_target(data)}: #{inspect(reason)}",
+                component: :master,
+                event: :activation_retry_failed,
+                slave: name,
+                target_state: transition_request_target(data),
+                reason_kind: Utils.reason_kind(reason)
               )
 
               Map.put(acc, name, {transition_request_target(data), reason})
@@ -68,7 +74,13 @@ defmodule EtherCAT.Master.Recovery do
   end
 
   def authorize_activation_reconnect(data, name) do
-    Logger.info("[Master] slave #{name} link restored during activation — authorizing reconnect")
+    Logger.info(
+      "[Master] slave #{name} link restored during activation — authorizing reconnect",
+      component: :master,
+      event: :slave_reconnect_authorization_started,
+      phase: :activation,
+      slave: name
+    )
 
     case SlaveAPI.authorize_reconnect(name) do
       :ok ->
@@ -76,7 +88,12 @@ defmodule EtherCAT.Master.Recovery do
 
       {:error, reason} ->
         Logger.warning(
-          "[Master] slave #{name} reconnect authorization failed during activation: #{inspect(reason)}"
+          "[Master] slave #{name} reconnect authorization failed during activation: #{inspect(reason)}",
+          component: :master,
+          event: :slave_reconnect_authorization_failed,
+          phase: :activation,
+          slave: name,
+          reason_kind: Utils.reason_kind(reason)
         )
 
         {:error, put_activation_failure(data, name, {:reconnect_failed, reason})}
@@ -105,7 +122,12 @@ defmodule EtherCAT.Master.Recovery do
       maybe_resume_from_activation_blocked(next_data)
     else
       Logger.info(
-        "[Master] slave #{name} reached :preop during transition retry — requesting :#{target}"
+        "[Master] slave #{name} reached :preop during transition retry — requesting :#{target}",
+        component: :master,
+        event: :slave_transition_retry_started,
+        phase: :activation,
+        slave: name,
+        target_state: target
       )
 
       case SlaveAPI.request(name, target) do
@@ -119,7 +141,13 @@ defmodule EtherCAT.Master.Recovery do
 
         {:error, reason} ->
           Logger.warning(
-            "[Master] slave #{name} still not in :#{target} during transition retry: #{inspect(reason)}"
+            "[Master] slave #{name} still not in :#{target} during transition retry: #{inspect(reason)}",
+            component: :master,
+            event: :slave_transition_retry_failed,
+            phase: :activation,
+            slave: name,
+            target_state: target,
+            reason_kind: Utils.reason_kind(reason)
           )
 
           {:activation_blocked, put_activation_failure(data, name, {target, reason})}
@@ -129,7 +157,13 @@ defmodule EtherCAT.Master.Recovery do
 
   @spec authorize_runtime_reconnect(%EtherCAT.Master{}, atom()) :: %EtherCAT.Master{}
   def authorize_runtime_reconnect(data, name) do
-    Logger.info("[Master] slave #{name} link restored — authorizing reconnect")
+    Logger.info(
+      "[Master] slave #{name} link restored — authorizing reconnect",
+      component: :master,
+      event: :slave_reconnect_authorization_started,
+      phase: :runtime,
+      slave: name
+    )
 
     case SlaveAPI.authorize_reconnect(name) do
       :ok ->
@@ -137,7 +171,12 @@ defmodule EtherCAT.Master.Recovery do
 
       {:error, reason} ->
         Logger.warning(
-          "[Master] slave #{name} reconnect authorization failed: #{inspect(reason)}"
+          "[Master] slave #{name} reconnect authorization failed: #{inspect(reason)}",
+          component: :master,
+          event: :slave_reconnect_authorization_failed,
+          phase: :runtime,
+          slave: name,
+          reason_kind: Utils.reason_kind(reason)
         )
 
         put_slave_fault(data, name, {:reconnect_failed, reason})
@@ -154,7 +193,14 @@ defmodule EtherCAT.Master.Recovery do
       recovered_data = clear_tracked_slave_fault(data, name)
       maybe_resume_recovered_state(state, recovered_data)
     else
-      Logger.info("[Master] slave #{name} reconnected and in :preop — requesting :#{target}")
+      Logger.info(
+        "[Master] slave #{name} reconnected and in :preop — requesting :#{target}",
+        component: :master,
+        event: :slave_transition_retry_started,
+        phase: :runtime,
+        slave: name,
+        target_state: target
+      )
 
       case SlaveAPI.request(name, target) do
         :ok ->
@@ -168,7 +214,13 @@ defmodule EtherCAT.Master.Recovery do
 
         {:error, reason} ->
           Logger.warning(
-            "[Master] slave #{name} :#{target} request failed after reconnect: #{inspect(reason)}"
+            "[Master] slave #{name} :#{target} request failed after reconnect: #{inspect(reason)}",
+            component: :master,
+            event: :slave_transition_retry_failed,
+            phase: :runtime,
+            slave: name,
+            target_state: target,
+            reason_kind: Utils.reason_kind(reason)
           )
 
           next_data =
@@ -259,7 +311,10 @@ defmodule EtherCAT.Master.Recovery do
       next_state = Status.desired_public_state(data)
 
       Logger.info(
-        "[Master] recovery succeeded; desired runtime target #{inspect(Status.desired_runtime_target(data))} is healthy again"
+        "[Master] recovery succeeded; desired runtime target #{inspect(Status.desired_runtime_target(data))} is healthy again",
+        component: :master,
+        event: :recovery_succeeded,
+        runtime_target: Status.desired_runtime_target(data)
       )
 
       {:ok, next_state, %{data | activation_failures: %{}, runtime_faults: %{}}}
@@ -293,7 +348,10 @@ defmodule EtherCAT.Master.Recovery do
         next_state = Status.desired_public_state(data)
 
         Logger.info(
-          "[Master] transition retries succeeded; desired runtime target #{inspect(Status.desired_runtime_target(data))} is healthy again"
+          "[Master] transition retries succeeded; desired runtime target #{inspect(Status.desired_runtime_target(data))} is healthy again",
+          component: :master,
+          event: :activation_retry_succeeded,
+          runtime_target: Status.desired_runtime_target(data)
         )
 
         {:ok, next_state, %{data | activation_failures: %{}, runtime_faults: %{}}}
@@ -310,11 +368,22 @@ defmodule EtherCAT.Master.Recovery do
          is_integer(data.dc_ref_station) do
       case Activation.start_dc_runtime(data, notify_recovered_on_success?: true) do
         {:ok, restarted_data} ->
-          Logger.info("[Master] restarted DC runtime")
+          Logger.info(
+            "[Master] restarted DC runtime",
+            component: :master,
+            event: :dc_runtime_restarted
+          )
+
           restarted_data
 
         {:error, reason} ->
-          Logger.debug("[Master] failed to restart DC runtime: #{inspect(reason)}")
+          Logger.debug(
+            "[Master] failed to restart DC runtime: #{inspect(reason)}",
+            component: :master,
+            event: :dc_runtime_restart_failed,
+            reason_kind: Utils.reason_kind(reason)
+          )
+
           data
       end
     else
@@ -398,7 +467,13 @@ defmodule EtherCAT.Master.Recovery do
 
       {:error, reason} ->
         Logger.debug(
-          "[Master] recovery retry: #{inspect(name)} still not in :#{target}: #{inspect(reason)}"
+          "[Master] recovery retry: #{inspect(name)} still not in :#{target}: #{inspect(reason)}",
+          component: :master,
+          event: :slave_transition_retry_failed,
+          phase: :recovery,
+          slave: name,
+          target_state: target,
+          reason_kind: Utils.reason_kind(reason)
         )
 
         put_tracked_runtime_slave_fault(data, name, {:preop, reason})
@@ -412,7 +487,13 @@ defmodule EtherCAT.Master.Recovery do
 
       {:error, reason} ->
         Logger.debug(
-          "[Master] slave retry: #{inspect(name)} still not in :#{target}: #{inspect(reason)}"
+          "[Master] slave retry: #{inspect(name)} still not in :#{target}: #{inspect(reason)}",
+          component: :master,
+          event: :slave_transition_retry_failed,
+          phase: :steady_state,
+          slave: name,
+          target_state: target,
+          reason_kind: Utils.reason_kind(reason)
         )
 
         put_slave_fault_entry(slave_faults, name, {:preop, reason})
@@ -426,7 +507,12 @@ defmodule EtherCAT.Master.Recovery do
 
       {:error, reason} ->
         Logger.debug(
-          "[Master] recovery retry: #{inspect(name)} PREOP configuration still failing: #{inspect(reason)}"
+          "[Master] recovery retry: #{inspect(name)} PREOP configuration still failing: #{inspect(reason)}",
+          component: :master,
+          event: :slave_preop_configuration_retry_failed,
+          phase: :recovery,
+          slave: name,
+          reason_kind: Utils.reason_kind(reason)
         )
 
         put_tracked_runtime_slave_fault(
@@ -444,7 +530,12 @@ defmodule EtherCAT.Master.Recovery do
 
       {:error, reason} ->
         Logger.debug(
-          "[Master] slave retry: #{inspect(name)} PREOP configuration still failing: #{inspect(reason)}"
+          "[Master] slave retry: #{inspect(name)} PREOP configuration still failing: #{inspect(reason)}",
+          component: :master,
+          event: :slave_preop_configuration_retry_failed,
+          phase: :steady_state,
+          slave: name,
+          reason_kind: Utils.reason_kind(reason)
         )
 
         put_slave_fault_entry(slave_faults, name, {:preop, {:preop_configuration_failed, reason}})
@@ -458,7 +549,12 @@ defmodule EtherCAT.Master.Recovery do
 
       {:error, reason} ->
         Logger.debug(
-          "[Master] slave reconnect authorization retry failed for #{inspect(name)}: #{inspect(reason)}"
+          "[Master] slave reconnect authorization retry failed for #{inspect(name)}: #{inspect(reason)}",
+          component: :master,
+          event: :slave_reconnect_authorization_retry_failed,
+          phase: :steady_state,
+          slave: name,
+          reason_kind: Utils.reason_kind(reason)
         )
 
         put_slave_fault_entry(slave_faults, name, {:reconnect_failed, reason})
@@ -472,7 +568,12 @@ defmodule EtherCAT.Master.Recovery do
 
       {:error, reason} ->
         Logger.debug(
-          "[Master] activation-blocked reconnect authorization retry failed for #{inspect(name)}: #{inspect(reason)}"
+          "[Master] activation-blocked reconnect authorization retry failed for #{inspect(name)}: #{inspect(reason)}",
+          component: :master,
+          event: :slave_reconnect_authorization_retry_failed,
+          phase: :activation,
+          slave: name,
+          reason_kind: Utils.reason_kind(reason)
         )
 
         Map.put(activation_failures, name, {:reconnect_failed, reason})
@@ -492,7 +593,11 @@ defmodule EtherCAT.Master.Recovery do
     case DomainAPI.start_cycling(domain_id) do
       :ok ->
         Logger.info(
-          "[Master] restarted domain #{domain_id} after stop caused by #{inspect(reason)}"
+          "[Master] restarted domain #{domain_id} after stop caused by #{inspect(reason)}",
+          component: :master,
+          event: :domain_restarted,
+          domain: domain_id,
+          reason_kind: Utils.reason_kind(reason)
         )
 
         data
@@ -502,7 +607,11 @@ defmodule EtherCAT.Master.Recovery do
 
       {:error, restart_reason} ->
         Logger.debug(
-          "[Master] failed to restart domain #{domain_id} after stop: #{inspect(restart_reason)}"
+          "[Master] failed to restart domain #{domain_id} after stop: #{inspect(restart_reason)}",
+          component: :master,
+          event: :domain_restart_failed,
+          domain: domain_id,
+          reason_kind: Utils.reason_kind(restart_reason)
         )
 
         data

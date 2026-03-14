@@ -54,6 +54,15 @@ defmodule EtherCAT.Utils do
   def fault_kind({fault, _, _}) when is_atom(fault), do: fault
   def fault_kind(_fault), do: :unknown
 
+  @spec fault_detail(term()) :: atom() | nil
+  def fault_detail(nil), do: nil
+  def fault_detail(fault) when is_atom(fault), do: fault
+  def fault_detail({_fault, detail}) when is_atom(detail), do: detail
+  def fault_detail({_fault, detail}), do: reason_kind(detail)
+  def fault_detail({_fault, detail, _extra}) when is_atom(detail), do: detail
+  def fault_detail({_fault, detail, _extra}), do: reason_kind(detail)
+  def fault_detail(_fault), do: :unknown
+
   @spec cycle_reason_metadata(term()) :: %{
           reason: atom(),
           expected_wkc: non_neg_integer() | nil,

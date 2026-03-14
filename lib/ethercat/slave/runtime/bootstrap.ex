@@ -43,7 +43,8 @@ defmodule EtherCAT.Slave.Runtime.Bootstrap do
     t0 = System.monotonic_time(:millisecond)
 
     Logger.debug(
-      "[Slave #{data.name}] init: reading SII (station=0x#{Integer.to_string(data.station, 16)})"
+      "[Slave #{data.name}] init: reading SII (station=0x#{Integer.to_string(data.station, 16)})",
+      event: :sii_read_started
     )
 
     with {:ok, sii_data} <- read_sii_data(data, t0),
@@ -72,7 +73,14 @@ defmodule EtherCAT.Slave.Runtime.Bootstrap do
             "vendor=0x#{Integer.to_string(identity.vendor_id, 16)} " <>
             "product=0x#{Integer.to_string(identity.product_code, 16)} " <>
             "fmmus=#{esc_info.fmmu_count} " <>
-            "mbx_recv=#{mailbox_config.recv_size} pdos=#{length(pdo_configs)}"
+            "mbx_recv=#{mailbox_config.recv_size} pdos=#{length(pdo_configs)}",
+          event: :sii_read_completed,
+          duration_ms: sii_ms,
+          vendor_id: identity.vendor_id,
+          product_code: identity.product_code,
+          fmmu_count: esc_info.fmmu_count,
+          mailbox_recv_size: mailbox_config.recv_size,
+          pdo_count: length(pdo_configs)
         )
 
         {:ok,
@@ -122,12 +130,23 @@ defmodule EtherCAT.Slave.Runtime.Bootstrap do
   end
 
   defp transition_to_preop(data, transition, t0) do
-    Logger.debug("[Slave #{data.name}] init: transitioning to PREOP")
+    Logger.debug(
+      "[Slave #{data.name}] init: transitioning to PREOP",
+      event: :preop_transition_started,
+      target_state: :preop
+    )
 
     case transition.(data, :preop) do
       {:ok, preop_data} ->
         preop_ms = System.monotonic_time(:millisecond) - t0
-        Logger.debug("[Slave #{data.name}] init: PREOP reached in #{preop_ms}ms total")
+
+        Logger.debug(
+          "[Slave #{data.name}] init: PREOP reached in #{preop_ms}ms total",
+          event: :preop_transition_completed,
+          target_state: :preop,
+          duration_ms: preop_ms
+        )
+
         {:ok, preop_data}
 
       {:error, reason, failed_data} ->
@@ -141,7 +160,10 @@ defmodule EtherCAT.Slave.Runtime.Bootstrap do
   defp configure_mailbox_sync_managers(data) do
     %{recv_offset: ro, recv_size: rs, send_offset: so, send_size: ss} = data.mailbox_config
 
-    Logger.debug("[Slave #{data.name}] init: setting up mailbox SMs")
+    Logger.debug(
+      "[Slave #{data.name}] init: setting up mailbox SMs",
+      event: :mailbox_sync_manager_setup_started
+    )
 
     sm0 = <<ro::16-little, rs::16-little, @mailbox_receive_sm_control::8, 0::8, 0x00::8, 0::8>>
     sm1 = <<so::16-little, ss::16-little, @mailbox_send_sm_control::8, 0::8, 0x00::8, 0::8>>
@@ -196,9 +218,19 @@ defmodule EtherCAT.Slave.Runtime.Bootstrap do
       "[Slave #{name}] startup retry #{retry_count} phase=#{phase} reason=#{inspect(reason)} " <>
         "— retrying in #{retry_ms} ms"
 
+    metadata = [
+      component: :slave,
+      slave: name,
+      event: :startup_retry,
+      phase: phase,
+      reason_kind: Utils.reason_kind(reason),
+      retry_count: retry_count,
+      retry_delay_ms: retry_ms
+    ]
+
     case Utils.retry_log_level(retry_count) do
-      :warning -> Logger.warning(message)
-      :debug -> Logger.debug(message)
+      :warning -> Logger.warning(message, metadata)
+      :debug -> Logger.debug(message, metadata)
     end
   end
 end

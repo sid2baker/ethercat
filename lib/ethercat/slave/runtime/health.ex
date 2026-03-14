@@ -7,6 +7,7 @@ defmodule EtherCAT.Slave.Runtime.Health do
   alias EtherCAT.Bus.Transaction
   alias EtherCAT.Slave
   alias EtherCAT.Slave.ESC.Registers
+  alias EtherCAT.Utils
 
   @type opts :: [
           transition_to: (%Slave{}, atom() -> {:ok, %Slave{}} | {:error, term(), %Slave{}}),
@@ -35,7 +36,13 @@ defmodule EtherCAT.Slave.Runtime.Health do
           EtherCAT.Telemetry.slave_health_fault(data.name, data.station, al_state, error_code)
 
           Logger.warning(
-            "[Slave #{data.name}] AL fault detected: state=0x#{Integer.to_string(al_state, 16)} code=0x#{Integer.to_string(error_code, 16)} — retreating to safeop"
+            "[Slave #{data.name}] AL fault detected: state=0x#{Integer.to_string(al_state, 16)} code=0x#{Integer.to_string(error_code, 16)} — retreating to safeop",
+            component: :slave,
+            slave: data.name,
+            station: data.station,
+            event: :health_fault,
+            al_state: al_state,
+            error_code: error_code
           )
 
           case transition_to.(data, :safeop) do
@@ -44,7 +51,15 @@ defmodule EtherCAT.Slave.Runtime.Health do
               {:next_state, :safeop, new_data}
 
             {:error, reason, new_data} ->
-              Logger.error("[Slave #{data.name}] SafeOp retreat failed: #{inspect(reason)}")
+              Logger.error(
+                "[Slave #{data.name}] SafeOp retreat failed: #{inspect(reason)}",
+                component: :slave,
+                slave: data.name,
+                station: data.station,
+                event: :safeop_retreat_failed,
+                reason_kind: Utils.reason_kind(reason)
+              )
+
               {:keep_state, new_data, [health_poll_action(data.health_poll_ms)]}
           end
         else
@@ -52,10 +67,10 @@ defmodule EtherCAT.Slave.Runtime.Health do
         end
 
       {:ok, [%{wkc: 0}]} ->
-        report_down(data, "wkc=0")
+        report_down(data, :no_response, "wkc=0")
 
       {:error, reason} ->
-        report_down(data, "bus error #{inspect(reason)}")
+        report_down(data, reason, "bus error #{inspect(reason)}")
     end
   end
 
@@ -70,7 +85,14 @@ defmodule EtherCAT.Slave.Runtime.Health do
            deadline_us
          ) do
       {:ok, [%{wkc: wkc}]} when wkc > 0 ->
-        Logger.info("[Slave #{data.name}] reconnected — waiting for master authorization")
+        Logger.info(
+          "[Slave #{data.name}] reconnected — waiting for master authorization",
+          component: :slave,
+          slave: data.name,
+          station: data.station,
+          event: :reconnected
+        )
+
         send(EtherCAT.Master, {:slave_reconnected, data.name})
 
         {:keep_state, %{data | reconnect_ready?: true}, [health_poll_action(data.health_poll_ms)]}
@@ -102,10 +124,19 @@ defmodule EtherCAT.Slave.Runtime.Health do
   @spec health_poll_action(pos_integer()) :: {{:timeout, :health_poll}, pos_integer(), nil}
   def health_poll_action(ms), do: {{:timeout, :health_poll}, ms, nil}
 
-  defp report_down(data, reason_text) do
-    EtherCAT.Telemetry.slave_down(data.name, data.station)
-    Logger.warning("[Slave #{data.name}] health poll: #{reason_text} — entering :down")
-    send(EtherCAT.Master, {:slave_down, data.name})
+  defp report_down(data, reason, reason_text) do
+    EtherCAT.Telemetry.slave_down(data.name, data.station, reason)
+
+    Logger.warning(
+      "[Slave #{data.name}] health poll: #{reason_text} — entering :down",
+      component: :slave,
+      slave: data.name,
+      station: data.station,
+      event: :down,
+      reason_kind: Utils.reason_kind(reason)
+    )
+
+    send(EtherCAT.Master, {:slave_down, data.name, Utils.reason_kind(reason)})
     {:next_state, :down, data}
   end
 

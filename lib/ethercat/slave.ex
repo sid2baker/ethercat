@@ -124,6 +124,12 @@ defmodule EtherCAT.Slave do
 
   @impl true
   def init(opts) do
+    Logger.metadata(
+      component: :slave,
+      slave: Keyword.fetch!(opts, :name),
+      station: Keyword.fetch!(opts, :station)
+    )
+
     opts
     |> State.new()
     |> initialize_to_preop()
@@ -212,7 +218,12 @@ defmodule EtherCAT.Slave do
 
   def handle_event(:enter, _old, :down, data) do
     Logger.info(
-      "[Slave #{data.name}] entering :down — reconnect poll every #{data.health_poll_ms}ms"
+      "[Slave #{data.name}] entering :down — reconnect poll every #{data.health_poll_ms}ms",
+      component: :slave,
+      slave: data.name,
+      station: data.station,
+      event: :down_entered,
+      health_poll_ms: data.health_poll_ms
     )
 
     {:keep_state, %{data | reconnect_ready?: false}, Polling.down_enter_actions(data)}

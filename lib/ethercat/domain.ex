@@ -2,6 +2,7 @@ defmodule EtherCAT.Domain do
   @moduledoc File.read!(Path.join(__DIR__, "domain.md"))
 
   @behaviour :gen_statem
+  require Logger
 
   alias EtherCAT.Domain.Calls
   alias EtherCAT.Domain.Cycle
@@ -53,7 +54,10 @@ defmodule EtherCAT.Domain do
   def callback_mode, do: [:handle_event_function, :state_enter]
 
   @impl true
-  def init(opts), do: {:ok, :open, State.new(opts)}
+  def init(opts) do
+    Logger.metadata(component: :domain, domain: Keyword.fetch!(opts, :id))
+    {:ok, :open, State.new(opts)}
+  end
 
   @impl true
   def handle_event(:enter, _old, :open, _data), do: :keep_state_and_data

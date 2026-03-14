@@ -3,11 +3,12 @@ defmodule EtherCAT.Master.Startup do
 
   require Logger
 
-  alias EtherCAT.{Bus, Domain, Slave}
+  alias EtherCAT.{Bus, Domain, Slave, Telemetry, Utils}
   alias EtherCAT.Bus.Transaction
   alias EtherCAT.DC.API, as: DCAPI
   alias EtherCAT.Master.Config
   alias EtherCAT.Master.Config.DomainPlan
+  alias EtherCAT.Master.Status
   alias EtherCAT.Master.Startup.InitRecovery
   alias EtherCAT.Master.Startup.Reset, as: InitReset
   alias EtherCAT.Master.Startup.Verification, as: InitVerification
@@ -30,14 +31,24 @@ defmodule EtherCAT.Master.Startup do
       case Bus.set_frame_timeout(Bus, target_ms) do
         :ok ->
           Logger.info(
-            "[Master] bus frame timeout set to #{target_ms}ms (slaves=#{slave_count}, dc_cycle_ns=#{inspect(dc_cycle_ns(data))})"
+            "[Master] bus frame timeout set to #{target_ms}ms (slaves=#{slave_count}, dc_cycle_ns=#{inspect(dc_cycle_ns(data))})",
+            component: :master,
+            event: :frame_timeout_tuned,
+            slave_count: slave_count,
+            frame_timeout_ms: target_ms,
+            dc_cycle_ns: dc_cycle_ns(data)
           )
 
           :ok
 
         {:error, reason} ->
           Logger.warning(
-            "[Master] failed to tune bus frame timeout to #{target_ms}ms: #{inspect(reason)}"
+            "[Master] failed to tune bus frame timeout to #{target_ms}ms: #{inspect(reason)}",
+            component: :master,
+            event: :frame_timeout_tune_failed,
+            slave_count: slave_count,
+            frame_timeout_ms: target_ms,
+            reason_kind: Utils.reason_kind(reason)
           )
 
           :ok
@@ -50,38 +61,82 @@ defmodule EtherCAT.Master.Startup do
   @spec configure_network(%EtherCAT.Master{}) ::
           {:ok, %EtherCAT.Master{}} | {:error, term(), %EtherCAT.Master{}}
   def configure_network(data) do
+    started_at_ms = System.monotonic_time(:millisecond)
     count = data.slave_count
-    Logger.info("[Master] configuring #{count} slave(s)")
 
-    with :ok <- validate_topology_addressing(data, count),
-         {:ok, stations} <- assign_station_addresses(data, count),
-         {:ok, slave_topology} <- read_topology_statuses(stations),
-         :ok <- reset_slaves_to_init(stations),
-         {:ok, dc_ref_station, dc_stations} <- initialize_distributed_clocks(data, slave_topology),
-         {:ok, domain_refs} <- start_domains(data),
-         {:ok, effective_slave_configs, slaves, pending_preop, activatable_slaves, slave_refs} <-
-           start_slaves(data, count, if(dc_ref_station, do: dc_cycle_ns(data), else: nil)) do
-      {:ok,
-       %{
-         data
-         | dc_ref_station: dc_ref_station,
-           dc_stations: dc_stations,
-           slave_configs: effective_slave_configs,
-           slaves: slaves,
-           pending_preop: MapSet.new(pending_preop),
-           activatable_slaves: activatable_slaves,
-           activation_failures: %{},
-           domain_refs: domain_refs,
-           slave_refs: slave_refs
-       }}
-    else
-      {:error, reason} ->
-        {:error, reason, data}
+    Logger.info(
+      "[Master] configuring #{count} slave(s)",
+      component: :master,
+      event: :configuration_started,
+      slave_count: count
+    )
 
-      {:error, reason, started_slaves} ->
-        {:error, reason, %{data | slaves: started_slaves}}
+    result =
+      with :ok <- validate_topology_addressing(data, count),
+           {:ok, stations} <- assign_station_addresses(data, count),
+           {:ok, slave_topology} <- read_topology_statuses(stations),
+           :ok <- reset_slaves_to_init(stations),
+           {:ok, dc_ref_station, dc_stations} <-
+             initialize_distributed_clocks(data, slave_topology),
+           {:ok, domain_refs} <- start_domains(data),
+           {:ok, effective_slave_configs, slaves, pending_preop, activatable_slaves, slave_refs} <-
+             start_slaves(data, count, if(dc_ref_station, do: dc_cycle_ns(data), else: nil)) do
+        {:ok,
+         %{
+           data
+           | dc_ref_station: dc_ref_station,
+             dc_stations: dc_stations,
+             slave_configs: effective_slave_configs,
+             slaves: slaves,
+             pending_preop: MapSet.new(pending_preop),
+             activatable_slaves: activatable_slaves,
+             activation_failures: %{},
+             domain_refs: domain_refs,
+             slave_refs: slave_refs
+         }}
+      else
+        {:error, reason} ->
+          {:error, reason, data}
+
+        {:error, reason, started_slaves} ->
+          {:error, reason, %{data | slaves: started_slaves}}
+      end
+
+    emit_configuration_result(result, data, count, started_at_ms)
+    result
+  end
+
+  defp emit_configuration_result(result, data, slave_count, started_at_ms) do
+    duration_ms = System.monotonic_time(:millisecond) - started_at_ms
+    runtime_target = configuration_runtime_target(result, data)
+
+    case result do
+      {:ok, _configured} ->
+        Telemetry.master_configuration_result(
+          :ok,
+          duration_ms,
+          slave_count,
+          runtime_target,
+          nil
+        )
+
+      {:error, reason, _failed_data} ->
+        Telemetry.master_configuration_result(
+          :error,
+          duration_ms,
+          slave_count,
+          runtime_target,
+          reason
+        )
     end
   end
+
+  defp configuration_runtime_target({:ok, %{activatable_slaves: []}}, _data), do: :preop
+
+  defp configuration_runtime_target({:ok, configured}, _data),
+    do: Status.desired_runtime_target(configured)
+
+  defp configuration_runtime_target(_result, data), do: Status.desired_runtime_target(data)
 
   @doc false
   @spec recommended_frame_timeout_ms(%EtherCAT.Master{}, non_neg_integer()) :: pos_integer()
@@ -343,7 +398,10 @@ defmodule EtherCAT.Master.Startup do
 
   defp log_lingering_init_errors(statuses) do
     Logger.debug(
-      "[Master] continuing with slaves in INIT but with AL error latched: #{inspect(statuses)}"
+      "[Master] continuing with slaves in INIT but with AL error latched: #{inspect(statuses)}",
+      component: :master,
+      event: :init_errors_latched,
+      affected_slave_count: length(statuses)
     )
   end
 
@@ -354,11 +412,23 @@ defmodule EtherCAT.Master.Startup do
   defp initialize_distributed_clocks(_data, slave_topology) do
     case classify_dc_init_result(DCAPI.initialize_clocks(Bus, slave_topology)) do
       {:ok, nil, []} ->
-        Logger.debug("[Master] no DC-capable slaves found - running without DC")
+        Logger.debug(
+          "[Master] no DC-capable slaves found - running without DC",
+          component: :master,
+          event: :dc_init_skipped
+        )
+
         {:ok, nil, []}
 
       {:ok, ref_station, dc_stations} ->
-        Logger.info("[Master] DC initialized, ref=0x#{Integer.to_string(ref_station, 16)}")
+        Logger.info(
+          "[Master] DC initialized, ref=0x#{Integer.to_string(ref_station, 16)}",
+          component: :master,
+          event: :dc_initialized,
+          ref_station: ref_station,
+          monitored_station_count: length(dc_stations)
+        )
+
         {:ok, ref_station, dc_stations}
 
       {:error, reason} ->

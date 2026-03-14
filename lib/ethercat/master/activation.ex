@@ -3,7 +3,7 @@ defmodule EtherCAT.Master.Activation do
 
   require Logger
 
-  alias EtherCAT.{Bus, DC}
+  alias EtherCAT.{Bus, DC, Telemetry, Utils}
   alias EtherCAT.DC.API, as: DCAPI
   alias EtherCAT.Domain.API, as: DomainAPI
   alias EtherCAT.Master.Config
@@ -17,34 +17,60 @@ defmodule EtherCAT.Master.Activation do
           | {:activation_blocked, %EtherCAT.Master{}}
           | {:error, term(), %EtherCAT.Master{}}
   def activate_network(%{activatable_slaves: []} = data) do
-    Logger.info("[Master] dynamic startup: slaves held in :preop for runtime configuration")
+    started_at_ms = System.monotonic_time(:millisecond)
 
-    case quiesce_bus() do
-      :ok ->
-        {:ok, :preop_ready, %{data | activation_failures: %{}}}
+    Logger.info(
+      "[Master] dynamic startup: slaves held in :preop for runtime configuration",
+      component: :master,
+      event: :activation_started,
+      runtime_target: :preop
+    )
 
-      {:error, reason} ->
-        {:error, {:bus_not_ready, reason}, data}
-    end
+    result =
+      case quiesce_bus() do
+        :ok ->
+          {:ok, :preop_ready, %{data | activation_failures: %{}}}
+
+        {:error, reason} ->
+          {:error, {:bus_not_ready, reason}, data}
+      end
+
+    emit_activation_result(result, data, started_at_ms)
+    result
   end
 
   def activate_network(data) do
-    Logger.info("[Master] activating — starting DC, cyclic domains, and advancing slaves to :op")
+    started_at_ms = System.monotonic_time(:millisecond)
 
-    case quiesce_bus() do
-      :ok ->
-        do_activate_network(data)
+    Logger.info(
+      "[Master] activating — starting DC, cyclic domains, and advancing slaves to :op",
+      component: :master,
+      event: :activation_started,
+      runtime_target: :op
+    )
 
-      {:error, reason} ->
-        {:error, {:bus_not_ready, reason}, data}
-    end
+    result =
+      case quiesce_bus() do
+        :ok ->
+          do_activate_network(data)
+
+        {:error, reason} ->
+          {:error, {:bus_not_ready, reason}, data}
+      end
+
+    emit_activation_result(result, data, started_at_ms)
+    result
   end
 
   defp do_activate_network(data) do
     case preop_activation_failures(data.activatable_slaves) do
       activation_failures when map_size(activation_failures) > 0 ->
         Logger.warning(
-          "[Master] activation incomplete; blocked for #{inspect(Map.keys(activation_failures))}"
+          "[Master] activation incomplete; blocked for #{inspect(Map.keys(activation_failures))}",
+          component: :master,
+          event: :activation_blocked,
+          runtime_target: Status.desired_runtime_target(data),
+          blocked_count: map_size(activation_failures)
         )
 
         {:activation_blocked, %{data | activation_failures: activation_failures}}
@@ -62,7 +88,11 @@ defmodule EtherCAT.Master.Activation do
                 {:ok, :operational, activated_data}
               else
                 Logger.warning(
-                  "[Master] activation incomplete; blocked for #{inspect(Map.keys(activation_failures))}"
+                  "[Master] activation incomplete; blocked for #{inspect(Map.keys(activation_failures))}",
+                  component: :master,
+                  event: :activation_blocked,
+                  runtime_target: Status.desired_runtime_target(data),
+                  blocked_count: map_size(activation_failures)
                 )
 
                 {:activation_blocked, activated_data}
@@ -148,7 +178,14 @@ defmodule EtherCAT.Master.Activation do
             {[name | ready], failures}
 
           {:error, reason} ->
-            Logger.warning("[Master] slave #{inspect(name)} → safeop failed: #{inspect(reason)}")
+            Logger.warning(
+              "[Master] slave #{inspect(name)} → safeop failed: #{inspect(reason)}",
+              component: :master,
+              event: :slave_safeop_failed,
+              slave: name,
+              reason_kind: Utils.reason_kind(reason)
+            )
+
             {ready, Map.put(failures, name, {:safeop, reason})}
         end
       end)
@@ -159,7 +196,14 @@ defmodule EtherCAT.Master.Activation do
           failures
 
         {:error, reason} ->
-          Logger.warning("[Master] slave #{inspect(name)} → op failed: #{inspect(reason)}")
+          Logger.warning(
+            "[Master] slave #{inspect(name)} → op failed: #{inspect(reason)}",
+            component: :master,
+            event: :slave_op_failed,
+            slave: name,
+            reason_kind: Utils.reason_kind(reason)
+          )
+
           Map.put(failures, name, {:op, reason})
       end
     end)
@@ -169,7 +213,14 @@ defmodule EtherCAT.Master.Activation do
     Enum.reduce(slave_names, %{}, fn name, failures ->
       case SlaveAPI.info(name) do
         {:ok, %{al_state: :preop, configuration_error: reason}} when not is_nil(reason) ->
-          Logger.warning("[Master] slave #{inspect(name)} blocked in PREOP: #{inspect(reason)}")
+          Logger.warning(
+            "[Master] slave #{inspect(name)} blocked in PREOP: #{inspect(reason)}",
+            component: :master,
+            event: :slave_preop_blocked,
+            slave: name,
+            reason_kind: Utils.reason_kind(reason)
+          )
+
           Map.put(failures, name, {:safeop, {:preop_configuration_failed, reason}})
 
         _other ->
@@ -184,5 +235,27 @@ defmodule EtherCAT.Master.Activation do
 
   defp quiesce_bus do
     Bus.quiesce(Bus, @activation_quiet_ms)
+  end
+
+  defp emit_activation_result(result, data, started_at_ms) do
+    duration_ms = System.monotonic_time(:millisecond) - started_at_ms
+    runtime_target = Status.desired_runtime_target(data)
+
+    case result do
+      {:ok, _next_state, _active_data} ->
+        Telemetry.master_activation_result(:ok, duration_ms, runtime_target, 0, nil)
+
+      {:activation_blocked, blocked_data} ->
+        Telemetry.master_activation_result(
+          :blocked,
+          duration_ms,
+          runtime_target,
+          map_size(blocked_data.activation_failures),
+          nil
+        )
+
+      {:error, reason, _failed_data} ->
+        Telemetry.master_activation_result(:error, duration_ms, runtime_target, 0, reason)
+    end
   end
 end

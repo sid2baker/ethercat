@@ -55,6 +55,9 @@ Both bypass the gen_statem entirely via direct ETS access.
 
 - `[:ethercat, :domain, :cycle, :done]` —
   `%{duration_us, cycle_count, completed_at_us}`
-- `[:ethercat, :domain, :cycle, :missed]` —
-  `%{miss_count, total_miss_count, invalid_at_us}`, metadata:
-  `%{domain, reason}` for both invalid cycle responses and transport misses
+- `[:ethercat, :domain, :cycle, :invalid]` —
+  `%{total_invalid_count, invalid_at_us}`, metadata:
+  `%{domain, reason, expected_wkc, actual_wkc, reply_count}` for bad-but-live cycle replies
+- `[:ethercat, :domain, :cycle, :transport_miss]` —
+  `%{consecutive_miss_count, total_invalid_count, invalid_at_us}`, metadata:
+  `%{domain, reason, expected_wkc, actual_wkc, reply_count}` for timeout/down/unusable transport misses

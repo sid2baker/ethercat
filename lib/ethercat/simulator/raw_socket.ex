@@ -16,6 +16,7 @@ defmodule EtherCAT.Simulator.RawSocket do
 
   alias EtherCAT.Bus.Frame
   alias EtherCAT.Simulator
+  alias EtherCAT.Utils
 
   @af_packet 17
   @ethertype 0x88A4
@@ -77,6 +78,14 @@ defmodule EtherCAT.Simulator.RawSocket do
     with {:ok, ifindex} <- :net.if_name2index(String.to_charlist(interface)),
          {:ok, socket} <- :socket.open(@af_packet, :raw, {:raw, @ethertype}),
          :ok <- :socket.bind(socket, sockaddr_ll(ifindex)) do
+      Logger.metadata(
+        component: :simulator,
+        transport: :raw_socket,
+        interface: interface,
+        ingress: ingress,
+        ifindex: ifindex
+      )
+
       :ok = arm_receive(socket)
 
       {:ok,
@@ -162,7 +171,9 @@ defmodule EtherCAT.Simulator.RawSocket do
 
           {:error, reason} ->
             Logger.warning(
-              "[EtherCAT.Simulator.RawSocket] dropped invalid raw frame: #{inspect(reason)}"
+              "[EtherCAT.Simulator.RawSocket] dropped invalid raw frame: #{inspect(reason)}",
+              event: :invalid_frame_dropped,
+              reason_kind: Utils.reason_kind(reason)
             )
 
             state

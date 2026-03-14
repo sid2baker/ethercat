@@ -125,20 +125,40 @@ defmodule EtherCAT.Integration.Trace do
     "master #{inspect(metadata.from)} -> #{inspect(metadata.to)}"
   end
 
+  defp describe_event([:ethercat, :master, :startup, :bus_stable], measurements, _metadata) do
+    "master bus stable slaves=#{measurements.slave_count}"
+  end
+
+  defp describe_event([:ethercat, :master, :configuration, :result], measurements, metadata) do
+    "master configuration #{metadata.status} target=#{metadata.runtime_target} duration_ms=#{measurements.duration_ms} reason=#{inspect(metadata.reason)}"
+  end
+
+  defp describe_event([:ethercat, :master, :activation, :result], measurements, metadata) do
+    "master activation #{metadata.status} target=#{metadata.runtime_target} blocked=#{metadata.blocked_count} duration_ms=#{measurements.duration_ms}"
+  end
+
+  defp describe_event([:ethercat, :master, :dc_lock, :decision], _measurements, metadata) do
+    "master dc lock #{metadata.transition} policy=#{metadata.policy} outcome=#{metadata.outcome} state=#{metadata.lock_state}"
+  end
+
   defp describe_event([:ethercat, :master, :slave_fault, :changed], _measurements, metadata) do
-    "master slave fault #{metadata.slave} #{inspect(metadata.from)} -> #{inspect(metadata.to)}"
+    "master slave fault #{metadata.slave} #{inspect(metadata.from)}:#{inspect(metadata.from_detail)} -> #{inspect(metadata.to)}:#{inspect(metadata.to_detail)}"
   end
 
   defp describe_event([:ethercat, :slave, :down], _measurements, metadata) do
-    "slave #{metadata.slave} down"
+    "slave #{metadata.slave} down reason=#{metadata.reason}"
   end
 
   defp describe_event([:ethercat, :slave, :health, :fault], measurements, metadata) do
     "slave #{metadata.slave} health fault al_state=#{measurements.al_state} error_code=#{measurements.error_code}"
   end
 
-  defp describe_event([:ethercat, :domain, :cycle, :missed], _measurements, metadata) do
-    "domain #{metadata.domain} missed cycle: #{inspect(metadata.reason)}"
+  defp describe_event([:ethercat, :domain, :cycle, :invalid], _measurements, metadata) do
+    "domain #{metadata.domain} invalid cycle: #{inspect(metadata.reason)}"
+  end
+
+  defp describe_event([:ethercat, :domain, :cycle, :transport_miss], _measurements, metadata) do
+    "domain #{metadata.domain} transport miss: #{inspect(metadata.reason)}"
   end
 
   defp describe_event([:ethercat, :domain, :stopped], _measurements, metadata) do

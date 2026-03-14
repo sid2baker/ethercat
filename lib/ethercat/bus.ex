@@ -113,6 +113,7 @@ defmodule EtherCAT.Bus do
     with {:ok, link} <- link_mod.open(link_opts),
          {:ok, link_monitor, link_monitor_mode} <-
            start_link_monitor(self(), link_mod.interfaces(link)) do
+      Logger.metadata(component: :bus, link: link_name(link_mod, link))
       maybe_log_link_monitor_mode(link_name(link_mod, link), link_monitor_mode)
 
       {:ok, :idle,
@@ -223,7 +224,12 @@ defmodule EtherCAT.Bus do
         data
       )
       when state != :down do
-    Logger.warning("[Bus] carrier lost on #{ifname}")
+    Logger.warning(
+      "[Bus] carrier lost on #{ifname}",
+      component: :bus,
+      event: :carrier_lost,
+      endpoint: ifname
+    )
 
     case data.link_mod.carrier(data.link, ifname, false) do
       {:ok, link} ->
@@ -240,7 +246,12 @@ defmodule EtherCAT.Bus do
         :down,
         data
       ) do
-    Logger.info("[Bus] carrier restored on #{ifname}")
+    Logger.info(
+      "[Bus] carrier restored on #{ifname}",
+      component: :bus,
+      event: :carrier_restored,
+      endpoint: ifname
+    )
 
     case data.link_mod.carrier(data.link, ifname, true) do
       {:ok, link} ->
@@ -258,7 +269,12 @@ defmodule EtherCAT.Bus do
         data
       )
       when state in [:idle, :awaiting] do
-    Logger.info("[Bus] carrier restored on #{ifname}")
+    Logger.info(
+      "[Bus] carrier restored on #{ifname}",
+      component: :bus,
+      event: :carrier_restored,
+      endpoint: ifname
+    )
 
     case data.link_mod.carrier(data.link, ifname, true) do
       {:ok, link} -> {:keep_state, %{data | link: link}}
@@ -267,7 +283,14 @@ defmodule EtherCAT.Bus do
   end
 
   def handle_event(:info, {:ethercat_link_monitor_mode, old_mode, new_mode}, _state, data) do
-    Logger.notice("[Bus] link monitor mode changed: #{old_mode} -> #{new_mode}")
+    Logger.notice(
+      "[Bus] link monitor mode changed: #{old_mode} -> #{new_mode}",
+      component: :bus,
+      event: :link_monitor_mode_changed,
+      old_mode: old_mode,
+      new_mode: new_mode
+    )
+
     {:keep_state, %{data | link_monitor_mode: new_mode}}
   end
 
@@ -378,7 +401,13 @@ defmodule EtherCAT.Bus do
           n = length(awaiting_from_in_flight(data.in_flight))
 
           Logger.warning(
-            "[Bus] frame timeout after #{elapsed_ms}ms -- #{n} caller(s) lost (#{timeouts} consecutive, transport=#{link_name(data)})"
+            "[Bus] frame timeout after #{elapsed_ms}ms -- #{n} caller(s) lost (#{timeouts} consecutive, transport=#{link_name(data)})",
+            component: :bus,
+            event: :frame_timeout,
+            link: link_name(data),
+            elapsed_ms: elapsed_ms,
+            lost_callers: n,
+            consecutive_timeouts: timeouts
           )
         end
 
@@ -817,7 +846,13 @@ defmodule EtherCAT.Bus do
   defp maybe_log_link_monitor_mode(_link, :disabled), do: :ok
 
   defp maybe_log_link_monitor_mode(link, mode) do
-    Logger.info("[Bus] link monitor mode: #{mode} (link=#{link})")
+    Logger.info(
+      "[Bus] link monitor mode: #{mode} (link=#{link})",
+      component: :bus,
+      event: :link_monitor_mode,
+      link: link,
+      mode: mode
+    )
   end
 
   defp start_named({:local, _name} = name, opts),

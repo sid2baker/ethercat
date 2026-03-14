@@ -103,20 +103,36 @@ defmodule EtherCAT.TelemetryTest do
                     %{duration_us: 42, cycle_count: 7, completed_at_us: 99}, %{domain: :main}}
   end
 
-  test "domain_cycle_missed/5 emits the domain missed telemetry event" do
-    event_name = [:ethercat, :domain, :cycle, :missed]
+  test "domain_cycle_invalid/4 emits the domain invalid-cycle telemetry event" do
+    event_name = [:ethercat, :domain, :cycle, :invalid]
     attach_event(event_name, self())
 
-    Telemetry.domain_cycle_missed(:main, 3, 8, {:wkc_mismatch, %{expected: 4, actual: 2}}, 123)
+    Telemetry.domain_cycle_invalid(:main, 8, {:wkc_mismatch, %{expected: 4, actual: 2}}, 123)
 
-    assert_receive {:telemetry_event, ^event_name,
-                    %{miss_count: 3, total_miss_count: 8, invalid_at_us: 123},
+    assert_receive {:telemetry_event, ^event_name, %{total_invalid_count: 8, invalid_at_us: 123},
                     %{
                       domain: :main,
                       reason: :wkc_mismatch,
                       expected_wkc: 4,
                       actual_wkc: 2,
                       reply_count: 1
+                    }}
+  end
+
+  test "domain_cycle_transport_miss/5 emits the domain transport-miss telemetry event" do
+    event_name = [:ethercat, :domain, :cycle, :transport_miss]
+    attach_event(event_name, self())
+
+    Telemetry.domain_cycle_transport_miss(:main, 3, 8, :timeout, 123)
+
+    assert_receive {:telemetry_event, ^event_name,
+                    %{consecutive_miss_count: 3, total_invalid_count: 8, invalid_at_us: 123},
+                    %{
+                      domain: :main,
+                      reason: :timeout,
+                      expected_wkc: nil,
+                      actual_wkc: nil,
+                      reply_count: nil
                     }}
   end
 
@@ -135,13 +151,80 @@ defmodule EtherCAT.TelemetryTest do
                     }}
   end
 
+  test "master_startup_bus_stable/1 emits the startup bus-stable event" do
+    event_name = [:ethercat, :master, :startup, :bus_stable]
+    attach_event(event_name, self())
+
+    Telemetry.master_startup_bus_stable(3)
+
+    assert_receive {:telemetry_event, ^event_name, %{slave_count: 3}, %{}}
+  end
+
+  test "master_configuration_result/4 emits the configuration result event" do
+    event_name = [:ethercat, :master, :configuration, :result]
+    attach_event(event_name, self())
+
+    Telemetry.master_configuration_result(:error, 42, 3, :op, {:dc_init_failed, :timeout})
+
+    assert_receive {:telemetry_event, ^event_name, %{duration_ms: 42},
+                    %{
+                      status: :error,
+                      slave_count: 3,
+                      runtime_target: :op,
+                      reason: :dc_init_failed
+                    }}
+  end
+
+  test "master_activation_result/5 emits the activation result event" do
+    event_name = [:ethercat, :master, :activation, :result]
+    attach_event(event_name, self())
+
+    Telemetry.master_activation_result(:blocked, 7, :op, 2, nil)
+
+    assert_receive {:telemetry_event, ^event_name, %{duration_ms: 7},
+                    %{status: :blocked, runtime_target: :op, blocked_count: 2, reason: nil}}
+  end
+
+  test "master_dc_lock_decision/5 emits the DC lock decision event" do
+    event_name = [:ethercat, :master, :dc_lock, :decision]
+    attach_event(event_name, self())
+
+    Telemetry.master_dc_lock_decision(:lost, :recovering, :enter_recovery, :locking, 15)
+
+    assert_receive {:telemetry_event, ^event_name, %{},
+                    %{
+                      transition: :lost,
+                      policy: :recovering,
+                      outcome: :enter_recovery,
+                      lock_state: :locking,
+                      max_sync_diff_ns: 15
+                    }}
+  end
+
   test "master_slave_fault_changed/3 emits the master slave fault lifecycle event" do
     event_name = [:ethercat, :master, :slave_fault, :changed]
     attach_event(event_name, self())
 
     Telemetry.master_slave_fault_changed(:mailbox, {:preop, :failed}, nil)
 
-    assert_receive {:telemetry_event, ^event_name, %{}, %{slave: :mailbox, from: :preop, to: nil}}
+    assert_receive {:telemetry_event, ^event_name, %{},
+                    %{
+                      slave: :mailbox,
+                      from: :preop,
+                      to: nil,
+                      from_detail: :failed,
+                      to_detail: nil
+                    }}
+  end
+
+  test "slave_down/3 emits the slave-down event with a bounded reason" do
+    event_name = [:ethercat, :slave, :down]
+    attach_event(event_name, self())
+
+    Telemetry.slave_down(:inputs, 0x1001, {:server_exit, :noproc})
+
+    assert_receive {:telemetry_event, ^event_name, %{},
+                    %{slave: :inputs, station: 0x1001, reason: :server_exit}}
   end
 
   test "slave_startup_retry/6 emits the startup retry event" do

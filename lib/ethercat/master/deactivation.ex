@@ -8,13 +8,17 @@ defmodule EtherCAT.Master.Deactivation do
   alias EtherCAT.Master.Config
   alias EtherCAT.Master.Status
   alias EtherCAT.Slave.API, as: SlaveAPI
+  alias EtherCAT.Utils
 
   @spec deactivate_network(%EtherCAT.Master{}, :safeop | :preop) ::
           {:ok, :deactivated | :preop_ready, %EtherCAT.Master{}}
           | {:activation_blocked, %EtherCAT.Master{}}
   def deactivate_network(data, target) when target in [:safeop, :preop] do
     Logger.info(
-      "[Master] deactivating — stopping cyclic runtime and retreating activatable slaves to :#{target}"
+      "[Master] deactivating — stopping cyclic runtime and retreating activatable slaves to :#{target}",
+      component: :master,
+      event: :deactivation_started,
+      target_state: target
     )
 
     stopped_data =
@@ -35,7 +39,12 @@ defmodule EtherCAT.Master.Deactivation do
 
           {:error, reason} ->
             Logger.warning(
-              "[Master] slave #{inspect(name)} → #{target} failed during deactivation: #{inspect(reason)}"
+              "[Master] slave #{inspect(name)} → #{target} failed during deactivation: #{inspect(reason)}",
+              component: :master,
+              event: :slave_deactivation_failed,
+              slave: name,
+              target_state: target,
+              reason_kind: Utils.reason_kind(reason)
             )
 
             {Map.put(failures, name, {target, reason}), faults}
@@ -66,7 +75,11 @@ defmodule EtherCAT.Master.Deactivation do
 
         {:error, reason} ->
           Logger.warning(
-            "[Master] failed to stop domain #{domain_id} during deactivation: #{inspect(reason)}"
+            "[Master] failed to stop domain #{domain_id} during deactivation: #{inspect(reason)}",
+            component: :master,
+            event: :domain_stop_failed,
+            domain: domain_id,
+            reason_kind: Utils.reason_kind(reason)
           )
       end
     end)

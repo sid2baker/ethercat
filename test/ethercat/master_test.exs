@@ -9,6 +9,29 @@ defmodule EtherCAT.MasterTest do
   alias EtherCAT.Slave.Config, as: SlaveConfig
   alias EtherCAT.TestSupport.FakeBus
 
+  @master_dc_lock_event [:ethercat, :master, :dc_lock, :decision]
+  @master_slave_fault_event [:ethercat, :master, :slave_fault, :changed]
+
+  setup do
+    handler_id = "master-test-#{System.unique_integer([:positive, :monotonic])}"
+
+    :ok =
+      :telemetry.attach_many(
+        handler_id,
+        [@master_dc_lock_event, @master_slave_fault_event],
+        &__MODULE__.handle_telemetry_event/4,
+        self()
+      )
+
+    on_exit(fn -> :telemetry.detach(handler_id) end)
+
+    :ok
+  end
+
+  def handle_telemetry_event(event, measurements, metadata, pid) do
+    send(pid, {:telemetry_event, event, measurements, metadata})
+  end
+
   defmodule FakeDC do
     @behaviour :gen_statem
 
@@ -533,13 +556,22 @@ defmodule EtherCAT.MasterTest do
     assert {:next_state, :recovering, %EtherCAT.Master{} = updated} =
              EtherCAT.Master.handle_event(
                :info,
-               {:slave_down, :sensor},
+               {:slave_down, :sensor, :no_response},
                :operational,
                data
              )
 
-    assert updated.slave_faults == %{sensor: {:down, :disconnected}}
-    assert updated.runtime_faults == %{{:slave, :sensor} => {:down, :disconnected}}
+    assert updated.slave_faults == %{sensor: {:down, :no_response}}
+    assert updated.runtime_faults == %{{:slave, :sensor} => {:down, :no_response}}
+
+    assert_receive {:telemetry_event, @master_slave_fault_event, %{},
+                    %{
+                      slave: :sensor,
+                      from: nil,
+                      to: :down,
+                      from_detail: nil,
+                      to_detail: :no_response
+                    }}
   end
 
   test "slave down for a non-participating slave stays local while operational" do
@@ -551,13 +583,22 @@ defmodule EtherCAT.MasterTest do
     assert {:keep_state, %EtherCAT.Master{} = updated, _actions} =
              EtherCAT.Master.handle_event(
                :info,
-               {:slave_down, :diag},
+               {:slave_down, :diag, :server_exit},
                :operational,
                data
              )
 
-    assert updated.slave_faults == %{diag: {:down, :disconnected}}
+    assert updated.slave_faults == %{diag: {:down, :server_exit}}
     assert updated.runtime_faults == %{}
+
+    assert_receive {:telemetry_event, @master_slave_fault_event, %{},
+                    %{
+                      slave: :diag,
+                      from: nil,
+                      to: :down,
+                      from_detail: nil,
+                      to_detail: :server_exit
+                    }}
   end
 
   test "operational retries retryable slave faults without entering recovering" do
@@ -629,6 +670,15 @@ defmodule EtherCAT.MasterTest do
                :operational,
                data
              )
+
+    assert_receive {:telemetry_event, @master_dc_lock_event, %{},
+                    %{
+                      transition: :lost,
+                      policy: :advisory,
+                      outcome: :continue,
+                      lock_state: :locking,
+                      max_sync_diff_ns: 250
+                    }}
   end
 
   test "dc lock loss can enter recovering independently of await_lock?" do
@@ -646,6 +696,15 @@ defmodule EtherCAT.MasterTest do
 
     assert recovering.runtime_faults == %{{:dc, :lock} => {:locking, 250}}
 
+    assert_receive {:telemetry_event, @master_dc_lock_event, %{},
+                    %{
+                      transition: :lost,
+                      policy: :recovering,
+                      outcome: :enter_recovery,
+                      lock_state: :locking,
+                      max_sync_diff_ns: 250
+                    }}
+
     assert {:next_state, :operational, %EtherCAT.Master{runtime_faults: %{}}} =
              EtherCAT.Master.handle_event(
                :info,
@@ -653,6 +712,15 @@ defmodule EtherCAT.MasterTest do
                :recovering,
                recovering
              )
+
+    assert_receive {:telemetry_event, @master_dc_lock_event, %{},
+                    %{
+                      transition: :regained,
+                      policy: :recovering,
+                      outcome: :resume_running,
+                      lock_state: :locked,
+                      max_sync_diff_ns: 42
+                    }}
   end
 
   test "dc lock loss can be fatal" do

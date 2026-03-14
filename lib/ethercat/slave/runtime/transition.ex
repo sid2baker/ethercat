@@ -7,6 +7,7 @@ defmodule EtherCAT.Slave.Runtime.Transition do
   alias EtherCAT.Bus.Transaction
   alias EtherCAT.Slave.Runtime.ALTransition
   alias EtherCAT.Slave.ESC.Registers
+  alias EtherCAT.Utils
 
   @type hook_opts :: [
           al_codes: %{required(atom()) => non_neg_integer()},
@@ -37,22 +38,59 @@ defmodule EtherCAT.Slave.Runtime.Transition do
 
   defp do_transition(data, target, opts) do
     code = Map.fetch!(Keyword.fetch!(opts, :al_codes), target)
-    Logger.debug("[Slave #{data.name}] AL → #{target} (code=0x#{Integer.to_string(code, 16)})")
+
+    Logger.debug(
+      "[Slave #{data.name}] AL → #{target} (code=0x#{Integer.to_string(code, 16)})",
+      component: :slave,
+      slave: data.name,
+      station: data.station,
+      event: :al_transition_started,
+      target_state: target,
+      al_code: code
+    )
 
     with {:ok, [%{wkc: 1}]} <-
            Bus.transaction(data.bus, Transaction.fpwr(data.station, Registers.al_control(code))) do
       poll_al(data, code, Keyword.fetch!(opts, :poll_limit), opts)
     else
       {:ok, [%{wkc: 0}]} ->
-        Logger.warning("[Slave #{data.name}] AL → #{target}: no response (wkc=0)")
+        Logger.warning(
+          "[Slave #{data.name}] AL → #{target}: no response (wkc=0)",
+          component: :slave,
+          slave: data.name,
+          station: data.station,
+          event: :al_transition_failed,
+          target_state: target,
+          reason_kind: :no_response
+        )
+
         {:error, :no_response, data}
 
       {:ok, [%{wkc: wkc}]} ->
-        Logger.warning("[Slave #{data.name}] AL → #{target}: unexpected wkc=#{inspect(wkc)}")
+        Logger.warning(
+          "[Slave #{data.name}] AL → #{target}: unexpected wkc=#{inspect(wkc)}",
+          component: :slave,
+          slave: data.name,
+          station: data.station,
+          event: :al_transition_failed,
+          target_state: target,
+          reason_kind: :unexpected_wkc,
+          actual_wkc: wkc
+        )
+
         {:error, {:unexpected_wkc, wkc}, data}
 
       {:error, reason} ->
-        Logger.warning("[Slave #{data.name}] AL → #{target} failed: #{inspect(reason)}")
+        Logger.warning(
+          "[Slave #{data.name}] AL → #{target} failed: #{inspect(reason)}",
+          component: :slave,
+          slave: data.name,
+          station: data.station,
+          event: :al_transition_failed,
+          target_state: target,
+          reason_kind: Utils.reason_kind(reason)
+        )
+
         {:error, reason, data}
     end
   end

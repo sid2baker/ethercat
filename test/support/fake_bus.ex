@@ -59,6 +59,14 @@ defmodule EtherCAT.TestSupport.FakeBus do
     {:reply, Enum.reverse(calls_rev), state}
   end
 
+  def handle_call(:settle, _from, state) do
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:set_frame_timeout, _timeout_ms}, _from, state) do
+    {:reply, :ok, state}
+  end
+
   def handle_call(:info, _from, %{info: nil} = state) do
     {:reply, {:error, :unsupported}, state}
   end

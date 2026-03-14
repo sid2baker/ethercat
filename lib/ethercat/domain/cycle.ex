@@ -9,6 +9,7 @@ defmodule EtherCAT.Domain.Cycle do
   alias EtherCAT.Domain.Image
   alias EtherCAT.Domain.Layout
   alias EtherCAT.Telemetry
+  alias EtherCAT.Utils
 
   @spec enter_actions(%Domain{}) :: list()
   def enter_actions(data) do
@@ -89,7 +90,7 @@ defmodule EtherCAT.Domain.Cycle do
   # toward the consecutive transport miss threshold that stops the domain.
   defp handle_invalid_cycle_response(data, reason, t0, next_at, next_timeout) do
     new_data =
-      record_cycle_fault(data, reason, next_at,
+      record_cycle_fault(data, :invalid, reason, next_at,
         consecutive_miss_count: 0,
         last_cycle_started_at_us: t0
       )
@@ -156,7 +157,9 @@ defmodule EtherCAT.Domain.Cycle do
   # drive the miss threshold that stops the domain.
   defp handle_consecutive_cycle_miss(data, reason, next_at, next_timeout) do
     new_data =
-      record_cycle_fault(data, reason, next_at, consecutive_miss_count: data.miss_count + 1)
+      record_cycle_fault(data, :transport_miss, reason, next_at,
+        consecutive_miss_count: data.miss_count + 1
+      )
 
     if stop_domain_now?(reason, new_data.miss_count, data.miss_threshold) do
       log_domain_stop(data.id, reason, data.miss_threshold)
@@ -168,14 +171,13 @@ defmodule EtherCAT.Domain.Cycle do
     end
   end
 
-  defp record_cycle_fault(data, reason, next_at, opts) do
+  defp record_cycle_fault(data, category, reason, next_at, opts) do
     invalid_at_us = System.monotonic_time(:microsecond)
     next_miss_count = Keyword.fetch!(opts, :consecutive_miss_count)
     next_total_miss_count = data.total_miss_count + 1
 
-    # Historical telemetry name: this event covers invalid cycle responses as
-    # well as transport misses, not only stop-threshold misses.
-    Telemetry.domain_cycle_missed(
+    emit_cycle_fault_telemetry(
+      category,
       data.id,
       next_miss_count,
       next_total_miss_count,
@@ -193,6 +195,34 @@ defmodule EtherCAT.Domain.Cycle do
     |> Map.put(:total_miss_count, next_total_miss_count)
     |> Map.put(:next_cycle_at, next_at)
     |> maybe_put_last_cycle_started_at(opts)
+  end
+
+  defp emit_cycle_fault_telemetry(
+         :invalid,
+         domain_id,
+         _next_miss_count,
+         next_total_miss_count,
+         reason,
+         invalid_at_us
+       ) do
+    Telemetry.domain_cycle_invalid(domain_id, next_total_miss_count, reason, invalid_at_us)
+  end
+
+  defp emit_cycle_fault_telemetry(
+         :transport_miss,
+         domain_id,
+         next_miss_count,
+         next_total_miss_count,
+         reason,
+         invalid_at_us
+       ) do
+    Telemetry.domain_cycle_transport_miss(
+      domain_id,
+      next_miss_count,
+      next_total_miss_count,
+      reason,
+      invalid_at_us
+    )
   end
 
   defp maybe_put_last_cycle_started_at(data, opts) do
@@ -239,10 +269,23 @@ defmodule EtherCAT.Domain.Cycle do
   defp stop_domain_now?(_reason, miss_count, miss_threshold), do: miss_count >= miss_threshold
 
   defp log_domain_stop(id, :down, _miss_threshold) do
-    Logger.error("[Domain #{id}] confirmed bus down — stopping")
+    Logger.error(
+      "[Domain #{id}] confirmed bus down — stopping",
+      component: :domain,
+      domain: id,
+      event: :stopped,
+      reason_kind: :down
+    )
   end
 
-  defp log_domain_stop(id, _reason, miss_threshold) do
-    Logger.error("[Domain #{id}] #{miss_threshold} consecutive misses — stopping")
+  defp log_domain_stop(id, reason, miss_threshold) do
+    Logger.error(
+      "[Domain #{id}] #{miss_threshold} consecutive misses — stopping",
+      component: :domain,
+      domain: id,
+      event: :stopped,
+      reason_kind: Utils.reason_kind(reason),
+      miss_threshold: miss_threshold
+    )
   end
 end

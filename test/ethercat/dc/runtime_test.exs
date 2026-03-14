@@ -9,6 +9,8 @@ defmodule EtherCAT.DC.RuntimeTest do
   alias EtherCAT.DC.Runtime, as: DCRuntime
   alias EtherCAT.TestSupport.FakeBus
 
+  @dc_runtime_state_event [:ethercat, :dc, :runtime, :state, :changed]
+
   test "maintenance_transaction uses configured-address FRMW for dc system time" do
     station = 0x1002
 
@@ -136,5 +138,84 @@ defmodule EtherCAT.DC.RuntimeTest do
     refute updated.notify_recovered_on_success?
     assert updated.fail_count == 0
     assert updated.cycle_count == 1
+  end
+
+  test "failing tick emits the runtime failing transition on the third consecutive failure" do
+    handler_id = attach_telemetry_event(@dc_runtime_state_event)
+    on_exit(fn -> :telemetry.detach(handler_id) end)
+
+    {:ok, bus} =
+      start_supervised(
+        {FakeBus, [responses: [{:error, :timeout}], default_reply: {:error, :unexpected}]}
+      )
+
+    data = %DC{
+      bus: bus,
+      ref_station: 0x1000,
+      config: %DCConfig{cycle_ns: 1_000_000},
+      monitored_stations: [0x1000],
+      tick_interval_ms: 1,
+      diagnostic_interval_cycles: 10,
+      lock_state: :locking,
+      cycle_count: 0,
+      fail_count: 2
+    }
+
+    assert {:keep_state, %DC{fail_count: 3, cycle_count: 1}, _actions} =
+             DCRuntime.handle_tick(data)
+
+    assert_receive {:telemetry_event, @dc_runtime_state_event, %{},
+                    %{
+                      from: :healthy,
+                      to: :failing,
+                      reason: :timeout,
+                      consecutive_failures: 3
+                    }}
+  end
+
+  test "successful tick emits the runtime recovered transition after a failing streak" do
+    handler_id = attach_telemetry_event(@dc_runtime_state_event)
+    on_exit(fn -> :telemetry.detach(handler_id) end)
+
+    {:ok, bus} =
+      start_supervised(
+        {FakeBus,
+         [
+           responses: [{:ok, [%Datagram{data: <<0::64>>, wkc: 1, circular: false, irq: 0}]}]
+         ]}
+      )
+
+    data = %DC{
+      bus: bus,
+      ref_station: 0x1000,
+      config: %DCConfig{cycle_ns: 1_000_000},
+      monitored_stations: [0x1000],
+      tick_interval_ms: 1,
+      diagnostic_interval_cycles: 10,
+      lock_state: :locking,
+      cycle_count: 0,
+      fail_count: 3
+    }
+
+    assert {:keep_state, %DC{fail_count: 0, cycle_count: 1}, _actions} =
+             DCRuntime.handle_tick(data)
+
+    assert_receive {:telemetry_event, @dc_runtime_state_event, %{},
+                    %{
+                      from: :failing,
+                      to: :healthy,
+                      reason: nil,
+                      consecutive_failures: 3
+                    }}
+  end
+
+  defp attach_telemetry_event(event_name) do
+    handler_id = "dc-runtime-test-#{System.unique_integer([:positive, :monotonic])}"
+    :ok = :telemetry.attach(handler_id, event_name, &__MODULE__.handle_telemetry_event/4, self())
+    handler_id
+  end
+
+  def handle_telemetry_event(event, measurements, metadata, pid) do
+    send(pid, {:telemetry_event, event, measurements, metadata})
   end
 end

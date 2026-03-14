@@ -26,8 +26,15 @@ defmodule EtherCAT.Slave.ProcessData do
   def configure_preop(data, opts) do
     run_mailbox_config = Keyword.fetch!(opts, :run_mailbox_config)
 
-    Logger.debug("[Slave #{data.name}] preop: running mailbox configuration")
-    Logger.debug("[Slave #{data.name}] preop: configuring process-data SyncManagers/FMMUs")
+    Logger.debug(
+      "[Slave #{data.name}] preop: running mailbox configuration",
+      event: :mailbox_configuration_started
+    )
+
+    Logger.debug(
+      "[Slave #{data.name}] preop: configuring process-data SyncManagers/FMMUs",
+      event: :process_data_configuration_started
+    )
 
     with {:ok, mailbox_data} <- run_mailbox_config.(data),
          {:ok, requested_signals} <-
@@ -92,101 +99,204 @@ defmodule EtherCAT.Slave.ProcessData do
 
   @spec log_configuration_error(%Slave{}, term()) :: :ok
   def log_configuration_error(data, :invalid_process_data_request) do
-    Logger.warning("[Slave #{data.name}] invalid process_data request")
+    log_configuration_warning(
+      data,
+      "[Slave #{data.name}] invalid process_data request",
+      reason_kind: :invalid_process_data_request
+    )
   end
 
   def log_configuration_error(data, {:signal_not_in_driver_model, signal_name}) do
-    Logger.warning("[Slave #{data.name}] #{inspect(signal_name)} not in driver model")
+    log_configuration_warning(
+      data,
+      "[Slave #{data.name}] #{inspect(signal_name)} not in driver model",
+      reason_kind: :signal_not_in_driver_model,
+      signal: signal_name
+    )
   end
 
   def log_configuration_error(data, {:invalid_signal_model, signal_name}) do
-    Logger.warning(
-      "[Slave #{data.name}] #{inspect(signal_name)} has an invalid signal declaration"
+    log_configuration_warning(
+      data,
+      "[Slave #{data.name}] #{inspect(signal_name)} has an invalid signal declaration",
+      reason_kind: :invalid_signal_model,
+      signal: signal_name
     )
   end
 
   def log_configuration_error(data, {:pdo_not_in_sii, pdo_index}) do
-    Logger.warning("[Slave #{data.name}] PDO 0x#{Integer.to_string(pdo_index, 16)} not in SII")
+    log_configuration_warning(
+      data,
+      "[Slave #{data.name}] PDO 0x#{Integer.to_string(pdo_index, 16)} not in SII",
+      reason_kind: :pdo_not_in_sii,
+      pdo_index: pdo_index
+    )
   end
 
   def log_configuration_error(data, {:signal_range_out_of_bounds, signal_name, pdo_index}) do
-    Logger.warning(
-      "[Slave #{data.name}] #{inspect(signal_name)} exceeds PDO 0x#{Integer.to_string(pdo_index, 16)} bounds"
+    log_configuration_warning(
+      data,
+      "[Slave #{data.name}] #{inspect(signal_name)} exceeds PDO 0x#{Integer.to_string(pdo_index, 16)} bounds",
+      reason_kind: :signal_range_out_of_bounds,
+      signal: signal_name,
+      pdo_index: pdo_index
     )
   end
 
   def log_configuration_error(data, {:sm_not_in_sii, sm_index}) do
-    Logger.warning("[Slave #{data.name}] SM#{sm_index} not found in SII")
+    log_configuration_warning(
+      data,
+      "[Slave #{data.name}] SM#{sm_index} not found in SII",
+      reason_kind: :sm_not_in_sii,
+      sm_index: sm_index
+    )
   end
 
   def log_configuration_error(data, {:signal_name_conflicts_with_latch, signal_name}) do
-    Logger.warning(
-      "[Slave #{data.name}] #{inspect(signal_name)} conflicts with a configured latch name"
+    log_configuration_warning(
+      data,
+      "[Slave #{data.name}] #{inspect(signal_name)} conflicts with a configured latch name",
+      reason_kind: :signal_name_conflicts_with_latch,
+      signal: signal_name
     )
   end
 
   def log_configuration_error(data, {:mailbox_config_failed, index, subindex, reason}) do
-    Logger.warning(
-      "[Slave #{data.name}] mailbox step 0x#{Integer.to_string(index, 16)}:0x#{Integer.to_string(subindex, 16)} failed: #{inspect(reason)}"
+    log_configuration_warning(
+      data,
+      "[Slave #{data.name}] mailbox step 0x#{Integer.to_string(index, 16)}:0x#{Integer.to_string(subindex, 16)} failed: #{inspect(reason)}",
+      reason_kind: :mailbox_config_failed,
+      mailbox_index: index,
+      mailbox_subindex: subindex,
+      mailbox_reason_kind: Utils.reason_kind(reason)
     )
   end
 
   def log_configuration_error(data, {:invalid_mailbox_step, step}) do
-    Logger.warning("[Slave #{data.name}] invalid mailbox step: #{inspect(step)}")
+    log_configuration_warning(
+      data,
+      "[Slave #{data.name}] invalid mailbox step: #{inspect(step)}",
+      reason_kind: :invalid_mailbox_step
+    )
   end
 
   def log_configuration_error(data, {:domain_register_failed, sm_index, reason}) do
-    Logger.warning(
-      "[Slave #{data.name}] domain registration for SM#{sm_index} failed: #{inspect(reason)}"
+    log_configuration_warning(
+      data,
+      "[Slave #{data.name}] domain registration for SM#{sm_index} failed: #{inspect(reason)}",
+      reason_kind: :domain_register_failed,
+      sm_index: sm_index,
+      domain_reason_kind: Utils.reason_kind(reason)
     )
   end
 
   def log_configuration_error(data, {:domain_reregister_required, sm_index, domain_id}) do
-    Logger.warning(
-      "[Slave #{data.name}] SM#{sm_index} in domain #{inspect(domain_id)} needs domain re-registration; reconnect self-heal cannot reuse the cached logical address"
+    log_configuration_warning(
+      data,
+      "[Slave #{data.name}] SM#{sm_index} in domain #{inspect(domain_id)} needs domain re-registration; reconnect self-heal cannot reuse the cached logical address",
+      reason_kind: :domain_reregister_required,
+      sm_index: sm_index,
+      domain: domain_id
     )
   end
 
   def log_configuration_error(data, {:fmmu_limit_reached, required_fmmus, available_fmmus}) do
-    Logger.warning(
-      "[Slave #{data.name}] process-data layout needs #{required_fmmus} FMMUs but hardware supports #{available_fmmus}"
+    log_configuration_warning(
+      data,
+      "[Slave #{data.name}] process-data layout needs #{required_fmmus} FMMUs but hardware supports #{available_fmmus}",
+      reason_kind: :fmmu_limit_reached,
+      required_fmmus: required_fmmus,
+      available_fmmus: available_fmmus
     )
   end
 
   def log_configuration_error(data, {:sync_manager_write_failed, sm_index, reason}) do
-    Logger.warning("[Slave #{data.name}] SM#{sm_index} write failed: #{inspect(reason)}")
+    log_configuration_warning(
+      data,
+      "[Slave #{data.name}] SM#{sm_index} write failed: #{inspect(reason)}",
+      reason_kind: :sync_manager_write_failed,
+      sm_index: sm_index,
+      sync_manager_reason_kind: Utils.reason_kind(reason)
+    )
   end
 
   def log_configuration_error(data, {:sync_manager_activate_failed, sm_index, reason}) do
-    Logger.warning("[Slave #{data.name}] SM#{sm_index} activation failed: #{inspect(reason)}")
+    log_configuration_warning(
+      data,
+      "[Slave #{data.name}] SM#{sm_index} activation failed: #{inspect(reason)}",
+      reason_kind: :sync_manager_activate_failed,
+      sm_index: sm_index,
+      sync_manager_reason_kind: Utils.reason_kind(reason)
+    )
   end
 
   def log_configuration_error(data, {:fmmu_write_failed, sm_index, reason}) do
-    Logger.warning("[Slave #{data.name}] FMMU write for SM#{sm_index} failed: #{inspect(reason)}")
+    log_configuration_warning(
+      data,
+      "[Slave #{data.name}] FMMU write for SM#{sm_index} failed: #{inspect(reason)}",
+      reason_kind: :fmmu_write_failed,
+      sm_index: sm_index,
+      fmmu_reason_kind: Utils.reason_kind(reason)
+    )
   end
 
   def log_configuration_error(data, {:sync_manager_write_failed, sm_index}) do
-    Logger.warning("[Slave #{data.name}] SM#{sm_index} write failed")
+    log_configuration_warning(
+      data,
+      "[Slave #{data.name}] SM#{sm_index} write failed",
+      reason_kind: :sync_manager_write_failed,
+      sm_index: sm_index
+    )
   end
 
   def log_configuration_error(data, {:sync_manager_activate_failed, sm_index}) do
-    Logger.warning("[Slave #{data.name}] SM#{sm_index} activation failed")
+    log_configuration_warning(
+      data,
+      "[Slave #{data.name}] SM#{sm_index} activation failed",
+      reason_kind: :sync_manager_activate_failed,
+      sm_index: sm_index
+    )
   end
 
   def log_configuration_error(data, {:fmmu_write_failed, sm_index}) do
-    Logger.warning("[Slave #{data.name}] FMMU write for SM#{sm_index} failed")
+    log_configuration_warning(
+      data,
+      "[Slave #{data.name}] FMMU write for SM#{sm_index} failed",
+      reason_kind: :fmmu_write_failed,
+      sm_index: sm_index
+    )
   end
 
   def log_configuration_error(data, {:error, reason}) do
-    Logger.warning("[Slave #{data.name}] process-data configuration failed: #{inspect(reason)}")
+    log_configuration_warning(
+      data,
+      "[Slave #{data.name}] process-data configuration failed: #{inspect(reason)}",
+      reason_kind: Utils.reason_kind(reason)
+    )
   end
 
   def log_configuration_error(data, reason) do
-    Logger.warning("[Slave #{data.name}] process-data configuration failed: #{inspect(reason)}")
+    log_configuration_warning(
+      data,
+      "[Slave #{data.name}] process-data configuration failed: #{inspect(reason)}",
+      reason_kind: Utils.reason_kind(reason)
+    )
   end
 
   defp clear_configuration_error(data) do
     %{data | configuration_error: nil}
+  end
+
+  defp log_configuration_warning(data, message, metadata) do
+    Logger.warning(
+      message,
+      [
+        component: :slave,
+        slave: data.name,
+        station: data.station,
+        event: :process_data_configuration_failed
+      ] ++ metadata
+    )
   end
 
   defp validate_subscription_names(_requested_signals, nil), do: :ok

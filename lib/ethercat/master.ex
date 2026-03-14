@@ -5,7 +5,7 @@ defmodule EtherCAT.Master do
 
   require Logger
 
-  alias EtherCAT.{Bus, Telemetry}
+  alias EtherCAT.{Bus, Telemetry, Utils}
   alias EtherCAT.Bus.Transaction
   alias EtherCAT.Master.Activation
   alias EtherCAT.Master.Calls
@@ -93,7 +93,10 @@ defmodule EtherCAT.Master do
   def callback_mode, do: [:handle_event_function, :state_enter]
 
   @impl true
-  def init(data), do: {:ok, :idle, data}
+  def init(data) do
+    Logger.metadata(component: :master)
+    {:ok, :idle, data}
+  end
 
   # Session idle -------------------------------------------------------------
 
@@ -208,7 +211,15 @@ defmodule EtherCAT.Master do
     if stable?(new_window, now_ms, data.scan_stable_ms) do
       [{_, slave_count} | _] = new_window
       Startup.tune_bus_frame_timeout(data, slave_count)
-      Logger.info("[Master] bus stable — #{slave_count} slave(s)")
+      Telemetry.master_startup_bus_stable(slave_count)
+
+      Logger.info(
+        "[Master] bus stable — #{slave_count} slave(s)",
+        component: :master,
+        event: :bus_stable,
+        slave_count: slave_count
+      )
+
       config_data = %{data | scan_window: [], slave_count: slave_count}
 
       case Startup.configure_network(config_data) do
@@ -219,7 +230,12 @@ defmodule EtherCAT.Master do
           }
 
           if MapSet.size(configured.pending_preop) == 0 do
-            Logger.info("[Master] all slaves in :preop — activating")
+            Logger.info(
+              "[Master] all slaves in :preop — activating",
+              component: :master,
+              event: :activation_starting,
+              runtime_target: Status.desired_runtime_target(configured)
+            )
 
             case Activation.activate_network(configured) do
               {:ok, next_state, active_data} ->
@@ -229,7 +245,13 @@ defmodule EtherCAT.Master do
                 {:next_state, :activation_blocked, blocked_data}
 
               {:error, reason, failed_data} ->
-                Logger.error("[Master] activation failed: #{inspect(reason)}")
+                Logger.error(
+                  "[Master] activation failed: #{inspect(reason)}",
+                  component: :master,
+                  event: :activation_failed,
+                  reason_kind: Utils.reason_kind(reason)
+                )
+
                 stop_session(failed_data)
 
                 reply_await_callers(
@@ -249,7 +271,13 @@ defmodule EtherCAT.Master do
           end
 
         {:error, reason, failed_data} ->
-          Logger.error("[Master] configuration failed: #{inspect(reason)}")
+          Logger.error(
+            "[Master] configuration failed: #{inspect(reason)}",
+            component: :master,
+            event: :configuration_failed,
+            reason_kind: Utils.reason_kind(reason)
+          )
+
           stop_session(failed_data)
 
           reply_await_callers(
@@ -294,10 +322,22 @@ defmodule EtherCAT.Master do
 
   def handle_event(:info, {:slave_ready, name, :preop}, :awaiting_preop, data) do
     new_pending = MapSet.delete(data.pending_preop, name)
-    Logger.debug("[Master] slave #{inspect(name)} reached :preop")
+
+    Logger.debug(
+      "[Master] slave #{inspect(name)} reached :preop",
+      component: :master,
+      event: :slave_preop_ready,
+      slave: name,
+      pending_count: MapSet.size(new_pending)
+    )
 
     if MapSet.size(new_pending) == 0 do
-      Logger.info("[Master] all slaves in :preop — activating")
+      Logger.info(
+        "[Master] all slaves in :preop — activating",
+        component: :master,
+        event: :activation_starting,
+        runtime_target: Status.desired_runtime_target(data)
+      )
 
       case Activation.activate_network(%{data | pending_preop: new_pending}) do
         {:ok, next_state, active_data} ->
@@ -308,7 +348,13 @@ defmodule EtherCAT.Master do
            [{{:timeout, :awaiting_preop}, :cancel}]}
 
         {:error, reason, failed_data} ->
-          Logger.error("[Master] activation failed: #{inspect(reason)}")
+          Logger.error(
+            "[Master] activation failed: #{inspect(reason)}",
+            component: :master,
+            event: :activation_failed,
+            reason_kind: Utils.reason_kind(reason)
+          )
+
           stop_session(failed_data)
 
           reply_await_callers(
@@ -331,7 +377,14 @@ defmodule EtherCAT.Master do
 
   def handle_event({:timeout, :awaiting_preop}, nil, :awaiting_preop, data) do
     remaining = MapSet.to_list(data.pending_preop)
-    Logger.error("[Master] awaiting PREOP timed out; slaves not in :preop: #{inspect(remaining)}")
+
+    Logger.error(
+      "[Master] awaiting PREOP timed out; slaves not in :preop: #{inspect(remaining)}",
+      component: :master,
+      event: :awaiting_preop_timeout,
+      pending_count: length(remaining)
+    )
+
     stop_session(data)
     reply_await_callers(data.await_callers, {:error, :awaiting_preop_timeout})
     reply_await_callers(data.await_operational_callers, {:error, :awaiting_preop_timeout})
@@ -357,19 +410,43 @@ defmodule EtherCAT.Master do
 
   def handle_event(:enter, old, :preop_ready, data) do
     emit_state_change(old, :preop_ready, data)
-    Logger.info("[Master] running — slaves ready in PREOP, waiting for explicit activate/0")
+
+    Logger.info(
+      "[Master] running — slaves ready in PREOP, waiting for explicit activate/0",
+      component: :master,
+      event: :state_entered,
+      public_state: :preop_ready,
+      runtime_target: Status.desired_runtime_target(data)
+    )
+
     {:keep_state, reply_running_waiters(data)}
   end
 
   def handle_event(:enter, old, :deactivated, data) do
     emit_state_change(old, :deactivated, data)
-    Logger.info("[Master] deactivated — runtime settled below OP, waiting for activate/0")
+
+    Logger.info(
+      "[Master] deactivated — runtime settled below OP, waiting for activate/0",
+      component: :master,
+      event: :state_entered,
+      public_state: :deactivated,
+      runtime_target: Status.desired_runtime_target(data)
+    )
+
     {:keep_state, reply_running_waiters(data)}
   end
 
   def handle_event(:enter, old, :operational, data) do
     emit_state_change(old, :operational, data)
-    Logger.info("[Master] running")
+
+    Logger.info(
+      "[Master] running",
+      component: :master,
+      event: :state_entered,
+      public_state: :operational,
+      runtime_target: Status.desired_runtime_target(data)
+    )
+
     reply_await_callers(data.await_callers, :ok)
     reply_await_callers(data.await_operational_callers, :ok)
     updated = %{data | await_callers: [], await_operational_callers: []}
@@ -478,7 +555,13 @@ defmodule EtherCAT.Master do
 
   def handle_event(:enter, old, :activation_blocked, data) do
     emit_state_change(old, :activation_blocked, data)
-    Logger.warning("[Master] activation blocked — #{Status.activation_blocked_summary(data)}")
+
+    Logger.warning(
+      "[Master] activation blocked — #{Status.activation_blocked_summary(data)}",
+      component: :master,
+      event: :activation_blocked_state,
+      blocked_count: map_size(data.activation_failures)
+    )
 
     reply_await_callers(data.await_callers, Status.activation_blocked_reply(data))
     reply_await_callers(data.await_operational_callers, Status.activation_blocked_reply(data))
@@ -560,7 +643,13 @@ defmodule EtherCAT.Master do
 
   def handle_event(:enter, old, :recovering, data) do
     emit_state_change(old, :recovering, data)
-    Logger.warning("[Master] recovering — #{Status.recovering_summary(data)}")
+
+    Logger.warning(
+      "[Master] recovering — #{Status.recovering_summary(data)}",
+      component: :master,
+      event: :recovering_state,
+      runtime_fault_count: map_size(data.runtime_faults)
+    )
 
     reply_await_callers(data.await_callers, Status.recovering_reply(data))
     reply_await_callers(data.await_operational_callers, Status.recovering_reply(data))
@@ -580,7 +669,12 @@ defmodule EtherCAT.Master do
             {:keep_state, still_recovering, [{{:timeout, :retry}, @retry_ms, nil}]}
 
           reason ->
-            Logger.error("[Master] recovery failed and requires full restart: #{inspect(reason)}")
+            Logger.error(
+              "[Master] recovery failed and requires full restart: #{inspect(reason)}",
+              component: :master,
+              event: :recovery_unrecoverable,
+              reason_kind: Utils.reason_kind(reason)
+            )
 
             stop_session(still_recovering)
 
@@ -629,7 +723,13 @@ defmodule EtherCAT.Master do
   # Bus crashed — clean up and return to idle
   def handle_event(:info, {:DOWN, ref, :process, _pid, reason}, _state, data)
       when ref == data.bus_ref and not is_nil(ref) do
-    Logger.error("[Master] bus crashed (#{inspect(reason)}) — returning to idle")
+    Logger.error(
+      "[Master] bus crashed (#{inspect(reason)}) — returning to idle",
+      component: :master,
+      event: :bus_crashed,
+      reason_kind: Utils.reason_kind(reason)
+    )
+
     reply_await_callers(data.await_callers, {:error, {:bus_down, reason}})
     reply_await_callers(data.await_operational_callers, {:error, {:bus_down, reason}})
     stop_session(data)
@@ -640,7 +740,15 @@ defmodule EtherCAT.Master do
   def handle_event(:info, {:DOWN, ref, :process, _pid, reason}, state, data)
       when is_map_key(data.domain_refs, ref) do
     {id, refs} = Map.pop(data.domain_refs, ref)
-    Logger.error("[Master] domain #{id} crashed: #{inspect(reason)}")
+
+    Logger.error(
+      "[Master] domain #{id} crashed: #{inspect(reason)}",
+      component: :master,
+      event: :domain_crashed,
+      domain: id,
+      reason_kind: Utils.reason_kind(reason)
+    )
+
     Telemetry.domain_crashed(id, reason)
 
     data_with_refs = %{data | domain_refs: refs}
@@ -655,7 +763,15 @@ defmodule EtherCAT.Master do
   def handle_event(:info, {:DOWN, ref, :process, _pid, reason}, state, data)
       when is_map_key(data.slave_refs, ref) do
     {name, refs} = Map.pop(data.slave_refs, ref)
-    Logger.error("[Master] slave #{name} crashed: #{inspect(reason)}")
+
+    Logger.error(
+      "[Master] slave #{name} crashed: #{inspect(reason)}",
+      component: :master,
+      event: :slave_crashed,
+      slave: name,
+      reason_kind: Utils.reason_kind(reason)
+    )
+
     Telemetry.slave_crashed(name, reason)
 
     data_with_refs = Map.put(data, :slave_refs, refs)
@@ -665,7 +781,12 @@ defmodule EtherCAT.Master do
   # DC runtime crashed unexpectedly
   def handle_event(:info, {:DOWN, ref, :process, _pid, reason}, state, data)
       when ref == data.dc_ref and not is_nil(ref) do
-    Logger.error("[Master] DC runtime crashed: #{inspect(reason)}")
+    Logger.error(
+      "[Master] DC runtime crashed: #{inspect(reason)}",
+      component: :master,
+      event: :dc_runtime_crashed,
+      reason_kind: Utils.reason_kind(reason)
+    )
 
     recovering_data =
       data
@@ -682,20 +803,40 @@ defmodule EtherCAT.Master do
 
   # Domain stopped cycling due to consecutive misses
   def handle_event(:info, {:domain_stopped, id, reason}, state, data) do
-    Logger.error("[Master] domain #{id} stopped cycling: #{inspect(reason)}")
+    Logger.error(
+      "[Master] domain #{id} stopped cycling: #{inspect(reason)}",
+      component: :master,
+      event: :domain_stopped,
+      domain: id,
+      reason_kind: Utils.reason_kind(reason)
+    )
+
     recovering_data = Recovery.put_runtime_fault(data, {:domain, id}, {:stopped, reason})
     Recovery.transition_runtime_fault(state, recovering_data)
   end
 
   def handle_event(:info, {:domain_cycle_invalid, id, reason}, @operational, data) do
-    Logger.warning("[Master] domain #{id} cycle invalid: #{inspect(reason)} — entering recovery")
+    Logger.warning(
+      "[Master] domain #{id} cycle invalid: #{inspect(reason)} — entering recovery",
+      component: :master,
+      event: :domain_cycle_invalid,
+      domain: id,
+      reason_kind: Utils.reason_kind(reason)
+    )
 
     {:next_state, :recovering,
      Recovery.put_runtime_fault(data, {:domain, id}, {:cycle_invalid, reason})}
   end
 
   def handle_event(:info, {:domain_cycle_invalid, id, reason}, :recovering, data) do
-    Logger.warning("[Master] domain #{id} cycle still invalid: #{inspect(reason)}")
+    Logger.warning(
+      "[Master] domain #{id} cycle still invalid: #{inspect(reason)}",
+      component: :master,
+      event: :domain_cycle_invalid,
+      domain: id,
+      reason_kind: Utils.reason_kind(reason)
+    )
+
     {:keep_state, Recovery.put_runtime_fault(data, {:domain, id}, {:cycle_invalid, reason})}
   end
 
@@ -704,7 +845,12 @@ defmodule EtherCAT.Master do
   end
 
   def handle_event(:info, {:domain_cycle_recovered, id}, :recovering, data) do
-    Logger.info("[Master] domain #{id} cycle recovered")
+    Logger.info(
+      "[Master] domain #{id} cycle recovered",
+      component: :master,
+      event: :domain_cycle_recovered,
+      domain: id
+    )
 
     case Recovery.maybe_resume_running(Recovery.clear_runtime_fault(data, {:domain, id})) do
       {:ok, next_state, healed_data} ->
@@ -721,29 +867,69 @@ defmodule EtherCAT.Master do
 
   # Slave retreated to a lower ESM state (AL fault detected by health poll)
   def handle_event(:info, {:slave_retreated, name, target_state}, @operational, data) do
-    Logger.warning("[Master] slave #{name} retreated to #{target_state}")
+    Logger.warning(
+      "[Master] slave #{name} retreated to #{target_state}",
+      component: :master,
+      event: :slave_retreated,
+      slave: name,
+      target_state: target_state
+    )
+
     track_slave_fault(:operational, data, name, {:retreated, target_state})
   end
 
   def handle_event(:info, {:slave_retreated, name, target_state}, :recovering, data) do
-    Logger.warning("[Master] slave #{name} retreated to #{target_state}")
+    Logger.warning(
+      "[Master] slave #{name} retreated to #{target_state}",
+      component: :master,
+      event: :slave_retreated,
+      slave: name,
+      target_state: target_state
+    )
+
     track_slave_fault(:recovering, data, name, {:retreated, target_state})
   end
 
   def handle_event(:info, {:slave_retreated, name, target_state}, _state, _data) do
-    Logger.warning("[Master] slave #{name} retreated to #{target_state} (already not running)")
+    Logger.warning(
+      "[Master] slave #{name} retreated to #{target_state} (already not running)",
+      component: :master,
+      event: :slave_retreated,
+      slave: name,
+      target_state: target_state
+    )
+
     :keep_state_and_data
   end
 
   # Slave physically disconnected (health poll wkc=0 or bus error)
-  def handle_event(:info, {:slave_down, name}, @operational, data) do
-    Logger.warning("[Master] slave #{name} disconnected")
-    track_slave_fault(:operational, data, name, {:down, :disconnected})
+  def handle_event(:info, {:slave_down, name, reason}, @operational, data) do
+    Logger.warning(
+      "[Master] slave #{name} disconnected",
+      component: :master,
+      event: :slave_down,
+      slave: name,
+      reason_kind: Utils.reason_kind(reason)
+    )
+
+    track_slave_fault(:operational, data, name, {:down, reason})
   end
 
-  def handle_event(:info, {:slave_down, name}, :recovering, data) do
-    Logger.warning("[Master] slave #{name} disconnected")
-    track_slave_fault(:recovering, data, name, {:down, :disconnected})
+  def handle_event(:info, {:slave_down, name, reason}, :recovering, data) do
+    Logger.warning(
+      "[Master] slave #{name} disconnected",
+      component: :master,
+      event: :slave_down,
+      slave: name,
+      reason_kind: Utils.reason_kind(reason)
+    )
+
+    track_slave_fault(:recovering, data, name, {:down, reason})
+  end
+
+  def handle_event(:info, {:slave_down, name}, state, data)
+      when state in [:operational, :recovering] do
+    handle_event(:info, {:slave_down, name, :disconnected}, state, data)
   end
 
   def handle_event(:info, {:slave_reconnected, name}, state, data)
@@ -765,19 +951,34 @@ defmodule EtherCAT.Master do
   end
 
   def handle_event(:info, {:dc_runtime_failed, reason}, @operational, data) do
-    Logger.warning("[Master] DC runtime failed: #{inspect(reason)} — entering recovery")
+    Logger.warning(
+      "[Master] DC runtime failed: #{inspect(reason)} — entering recovery",
+      component: :master,
+      event: :dc_runtime_failed,
+      reason_kind: Utils.reason_kind(reason)
+    )
 
     {:next_state, :recovering,
      Recovery.put_runtime_fault(data, {:dc, :runtime}, {:failed, reason})}
   end
 
   def handle_event(:info, {:dc_runtime_failed, reason}, :recovering, data) do
-    Logger.warning("[Master] DC runtime still failing: #{inspect(reason)}")
+    Logger.warning(
+      "[Master] DC runtime still failing: #{inspect(reason)}",
+      component: :master,
+      event: :dc_runtime_failed,
+      reason_kind: Utils.reason_kind(reason)
+    )
+
     {:keep_state, Recovery.put_runtime_fault(data, {:dc, :runtime}, {:failed, reason})}
   end
 
   def handle_event(:info, {:dc_runtime_recovered}, :recovering, data) do
-    Logger.info("[Master] DC runtime recovered")
+    Logger.info(
+      "[Master] DC runtime recovered",
+      component: :master,
+      event: :dc_runtime_recovered
+    )
 
     case Recovery.maybe_resume_running(Recovery.clear_runtime_fault(data, {:dc, :runtime})) do
       {:ok, next_state, healed_data} ->
@@ -797,23 +998,65 @@ defmodule EtherCAT.Master do
       when not is_nil(data.dc_config) do
     case Recovery.lock_policy(data) do
       :advisory ->
+        Telemetry.master_dc_lock_decision(
+          :lost,
+          :advisory,
+          :continue,
+          lock_state,
+          max_sync_diff_ns
+        )
+
         Logger.warning(
-          "[Master] DC lock lost: state=#{inspect(lock_state)} max_sync_diff_ns=#{inspect(max_sync_diff_ns)} — advisory only"
+          "[Master] DC lock lost: state=#{inspect(lock_state)} max_sync_diff_ns=#{inspect(max_sync_diff_ns)} — advisory only",
+          component: :master,
+          event: :dc_lock_lost,
+          policy: :advisory,
+          outcome: :continue,
+          lock_state: lock_state,
+          max_sync_diff_ns: max_sync_diff_ns
         )
 
         :keep_state_and_data
 
       :recovering ->
+        Telemetry.master_dc_lock_decision(
+          :lost,
+          :recovering,
+          :enter_recovery,
+          lock_state,
+          max_sync_diff_ns
+        )
+
         Logger.warning(
-          "[Master] DC lock lost: state=#{inspect(lock_state)} max_sync_diff_ns=#{inspect(max_sync_diff_ns)} — entering recovery"
+          "[Master] DC lock lost: state=#{inspect(lock_state)} max_sync_diff_ns=#{inspect(max_sync_diff_ns)} — entering recovery",
+          component: :master,
+          event: :dc_lock_lost,
+          policy: :recovering,
+          outcome: :enter_recovery,
+          lock_state: lock_state,
+          max_sync_diff_ns: max_sync_diff_ns
         )
 
         {:next_state, :recovering,
          Recovery.put_runtime_fault(data, {:dc, :lock}, {lock_state, max_sync_diff_ns})}
 
       :fatal ->
+        Telemetry.master_dc_lock_decision(
+          :lost,
+          :fatal,
+          :stop_session,
+          lock_state,
+          max_sync_diff_ns
+        )
+
         Logger.error(
-          "[Master] DC lock lost: state=#{inspect(lock_state)} max_sync_diff_ns=#{inspect(max_sync_diff_ns)} — stopping session"
+          "[Master] DC lock lost: state=#{inspect(lock_state)} max_sync_diff_ns=#{inspect(max_sync_diff_ns)} — stopping session",
+          component: :master,
+          event: :dc_lock_lost,
+          policy: :fatal,
+          outcome: :stop_session,
+          lock_state: lock_state,
+          max_sync_diff_ns: max_sync_diff_ns
         )
 
         stop_session(data)
@@ -836,23 +1079,65 @@ defmodule EtherCAT.Master do
       when not is_nil(data.dc_config) do
     case Recovery.lock_policy(data) do
       :advisory ->
+        Telemetry.master_dc_lock_decision(
+          :lost,
+          :advisory,
+          :continue,
+          lock_state,
+          max_sync_diff_ns
+        )
+
         Logger.warning(
-          "[Master] DC lock lost while recovering: state=#{inspect(lock_state)} max_sync_diff_ns=#{inspect(max_sync_diff_ns)} — advisory only"
+          "[Master] DC lock lost while recovering: state=#{inspect(lock_state)} max_sync_diff_ns=#{inspect(max_sync_diff_ns)} — advisory only",
+          component: :master,
+          event: :dc_lock_lost,
+          policy: :advisory,
+          outcome: :continue,
+          lock_state: lock_state,
+          max_sync_diff_ns: max_sync_diff_ns
         )
 
         :keep_state_and_data
 
       :recovering ->
+        Telemetry.master_dc_lock_decision(
+          :lost,
+          :recovering,
+          :keep_recovering,
+          lock_state,
+          max_sync_diff_ns
+        )
+
         Logger.warning(
-          "[Master] DC lock still lost: state=#{inspect(lock_state)} max_sync_diff_ns=#{inspect(max_sync_diff_ns)}"
+          "[Master] DC lock still lost: state=#{inspect(lock_state)} max_sync_diff_ns=#{inspect(max_sync_diff_ns)}",
+          component: :master,
+          event: :dc_lock_lost,
+          policy: :recovering,
+          outcome: :keep_recovering,
+          lock_state: lock_state,
+          max_sync_diff_ns: max_sync_diff_ns
         )
 
         {:keep_state,
          Recovery.put_runtime_fault(data, {:dc, :lock}, {lock_state, max_sync_diff_ns})}
 
       :fatal ->
+        Telemetry.master_dc_lock_decision(
+          :lost,
+          :fatal,
+          :stop_session,
+          lock_state,
+          max_sync_diff_ns
+        )
+
         Logger.error(
-          "[Master] DC lock lost while recovering: state=#{inspect(lock_state)} max_sync_diff_ns=#{inspect(max_sync_diff_ns)} — stopping session"
+          "[Master] DC lock lost while recovering: state=#{inspect(lock_state)} max_sync_diff_ns=#{inspect(max_sync_diff_ns)} — stopping session",
+          component: :master,
+          event: :dc_lock_lost,
+          policy: :fatal,
+          outcome: :stop_session,
+          lock_state: lock_state,
+          max_sync_diff_ns: max_sync_diff_ns
         )
 
         stop_session(data)
@@ -870,7 +1155,24 @@ defmodule EtherCAT.Master do
       when not is_nil(data.dc_config) do
     case Recovery.lock_policy(data) do
       :advisory ->
-        Logger.info("[Master] DC lock regained (max_sync_diff_ns=#{inspect(max_sync_diff_ns)})")
+        Telemetry.master_dc_lock_decision(
+          :regained,
+          :advisory,
+          :continue,
+          :locked,
+          max_sync_diff_ns
+        )
+
+        Logger.info(
+          "[Master] DC lock regained (max_sync_diff_ns=#{inspect(max_sync_diff_ns)})",
+          component: :master,
+          event: :dc_lock_regained,
+          policy: :advisory,
+          outcome: :continue,
+          lock_state: :locked,
+          max_sync_diff_ns: max_sync_diff_ns
+        )
+
         :keep_state_and_data
 
       :recovering ->
@@ -889,14 +1191,44 @@ defmodule EtherCAT.Master do
       when not is_nil(data.dc_config) do
     case Recovery.lock_policy(data) do
       :advisory ->
+        Telemetry.master_dc_lock_decision(
+          :regained,
+          :advisory,
+          :continue,
+          :locked,
+          max_sync_diff_ns
+        )
+
         Logger.info(
-          "[Master] DC lock regained while recovering (max_sync_diff_ns=#{inspect(max_sync_diff_ns)})"
+          "[Master] DC lock regained while recovering (max_sync_diff_ns=#{inspect(max_sync_diff_ns)})",
+          component: :master,
+          event: :dc_lock_regained,
+          policy: :advisory,
+          outcome: :continue,
+          lock_state: :locked,
+          max_sync_diff_ns: max_sync_diff_ns
         )
 
         :keep_state_and_data
 
       :recovering ->
-        Logger.info("[Master] DC lock regained (max_sync_diff_ns=#{inspect(max_sync_diff_ns)})")
+        Telemetry.master_dc_lock_decision(
+          :regained,
+          :recovering,
+          :resume_running,
+          :locked,
+          max_sync_diff_ns
+        )
+
+        Logger.info(
+          "[Master] DC lock regained (max_sync_diff_ns=#{inspect(max_sync_diff_ns)})",
+          component: :master,
+          event: :dc_lock_regained,
+          policy: :recovering,
+          outcome: :resume_running,
+          lock_state: :locked,
+          max_sync_diff_ns: max_sync_diff_ns
+        )
 
         case Recovery.maybe_resume_running(Recovery.clear_runtime_fault(data, {:dc, :lock})) do
           {:ok, next_state, healed_data} ->
@@ -1007,7 +1339,7 @@ defmodule EtherCAT.Master do
     {:keep_state, data}
   end
 
-  defp critical_slave_fault?(data, name, {:down, :disconnected}) do
+  defp critical_slave_fault?(data, name, {:down, _reason}) do
     slave_participates_in_domains?(data, name)
   end
 
