@@ -83,6 +83,14 @@ defmodule EtherCAT.Bus.Transport.RawSocket do
   def set_active_once(%__MODULE__{} = sock), do: recv_async(sock)
 
   @impl true
+  @doc "Re-arm without draining — self-sends a select notification."
+  @spec rearm(t()) :: :ok
+  def rearm(%__MODULE__{raw: raw}) do
+    Kernel.send(self(), {:"$socket", raw, :select, :buffered})
+    :ok
+  end
+
+  @impl true
   @doc """
   Match a `{:"$socket", raw, :select, _}` message from this socket.
 
@@ -101,9 +109,9 @@ defmodule EtherCAT.Bus.Transport.RawSocket do
           {:ok, ecat_payload} ->
             {:ok, ecat_payload, rx_at}
 
-          # Not an EtherCAT frame — arm again and ignore
+          # Not an EtherCAT frame — self-notify to retry without draining
           {:error, _} ->
-            recv_async(sock)
+            rearm(sock)
             :ignore
         end
 

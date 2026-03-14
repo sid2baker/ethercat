@@ -536,7 +536,7 @@ defmodule EtherCAT.Bus.Link.Redundant do
 
   defp arm_expected_port(%__MODULE__{} = link, port, true) do
     if open_port?(link, port) do
-      link.transport_mod.set_active_once(port_transport(link, port))
+      link.transport_mod.rearm(port_transport(link, port))
     end
 
     link

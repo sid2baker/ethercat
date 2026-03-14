@@ -76,6 +76,11 @@ defmodule EtherCAT.Bus.Transport.UdpSocket do
   end
 
   @impl true
+  @doc "Re-arm — delegates to `set_active_once/1` (UDP has no drain issue)."
+  @spec rearm(t()) :: :ok
+  def rearm(%__MODULE__{} = sock), do: set_active_once(sock)
+
+  @impl true
   @doc """
   Match a `{:udp, raw, _ip, _port, data}` message from this socket.
 

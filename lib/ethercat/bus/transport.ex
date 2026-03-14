@@ -59,6 +59,19 @@ defmodule EtherCAT.Bus.Transport do
   @callback match(t(), msg :: term()) ::
               {:ok, ecat_payload :: binary(), rx_at :: integer()} | :ignore
 
+  @doc """
+  Re-arm for the next async delivery without draining buffered frames.
+
+  Unlike `set_active_once/1`, this preserves any frames already in the
+  socket buffer. Used by the bus after an idx-mismatch so that a
+  legitimate response sitting behind a rogue frame is not lost.
+
+  - `RawSocket`: self-sends a synthetic select notification so `match/2`
+    re-enters and reads the next buffered frame.
+  - `UdpSocket`: delegates to `set_active_once/1` (no drain issue).
+  """
+  @callback rearm(t()) :: :ok
+
   @doc "Drain buffered frames and cancel any pending select/active registration."
   @callback drain(t()) :: :ok
 

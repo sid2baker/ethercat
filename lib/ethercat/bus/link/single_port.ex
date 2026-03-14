@@ -65,7 +65,7 @@ defmodule EtherCAT.Bus.Link.SinglePort do
 
   @impl true
   def rearm(%__MODULE__{transport: transport, transport_mod: transport_mod} = link) do
-    transport_mod.set_active_once(transport)
+    transport_mod.rearm(transport)
     link
   end
 
