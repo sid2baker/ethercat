@@ -1041,7 +1041,12 @@ defmodule EtherCAT.Master do
 
   defp emit_state_change(old_state, new_state, data)
        when is_atom(old_state) and is_atom(new_state) do
-    Telemetry.master_state_changed(old_state, new_state, Status.desired_public_state(data))
+    Telemetry.master_state_changed(
+      old_state,
+      new_state,
+      Status.desired_public_state(data),
+      Status.desired_runtime_target(data)
+    )
   end
 
   # -- Session teardown ------------------------------------------------------

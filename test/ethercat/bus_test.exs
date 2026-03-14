@@ -7,15 +7,16 @@ defmodule EtherCAT.BusTest do
   import EtherCAT.Integration.Assertions
 
   @submission_enqueued_event [:ethercat, :bus, :submission, :enqueued]
+  @transaction_stop_event [:ethercat, :bus, :transact, :stop]
 
   setup do
     handler_id = "bus-test-#{System.unique_integer([:positive, :monotonic])}"
 
     :ok =
-      :telemetry.attach(
+      :telemetry.attach_many(
         handler_id,
-        @submission_enqueued_event,
-        &__MODULE__.handle_submission_enqueued/4,
+        [@submission_enqueued_event, @transaction_stop_event],
+        &__MODULE__.handle_telemetry_event/4,
         self()
       )
 
@@ -191,6 +192,45 @@ defmodule EtherCAT.BusTest do
     assert {:error, :expired} = Task.await(expired)
     assert {:ok, [%{wkc: 1}]} = Task.await(first)
     refute_receive {:fake_link_sent, _, _}
+  end
+
+  test "transaction stop telemetry reports stable metadata on success" do
+    {:ok, bus, _link_name} = start_bus()
+
+    read = Task.async(fn -> Bus.transaction(bus, Transaction.fprd(0x1000, {0x0130, 2})) end)
+
+    sent_datagrams = assert_sent_frame()
+    reply_ok(bus, sent_datagrams)
+
+    assert {:ok, [%{wkc: 1}]} = Task.await(read)
+
+    assert_receive {:telemetry_event, @transaction_stop_event, %{duration: duration},
+                    %{
+                      class: :reliable,
+                      datagram_count: 1,
+                      total_wkc: 1,
+                      status: :ok,
+                      error_kind: nil
+                    }}
+
+    assert duration >= 0
+  end
+
+  test "transaction stop telemetry reports stable metadata on timeout" do
+    {:ok, bus, _link_name} = start_bus(frame_timeout_ms: 10)
+
+    assert {:error, :timeout} = Bus.transaction(bus, Transaction.brd({0x0000, 1}))
+
+    assert_receive {:telemetry_event, @transaction_stop_event, %{duration: duration},
+                    %{
+                      class: :reliable,
+                      datagram_count: 1,
+                      total_wkc: 0,
+                      status: :error,
+                      error_kind: :timeout
+                    }}
+
+    assert duration >= 0
   end
 
   test "realtime dispatches ahead of reliable backlog and is never mixed into the same frame" do
@@ -551,15 +591,20 @@ defmodule EtherCAT.BusTest do
     assert_receive :fake_link_drained
   end
 
-  defp start_bus do
+  defp start_bus(opts \\ []) do
     link_name = "fake_#{System.unique_integer([:positive, :monotonic])}"
 
     case Bus.start_link(
-           link_mod: FakeLink,
-           transport: :udp,
-           test_pid: self(),
-           link_name: link_name,
-           frame_timeout_ms: 50
+           Keyword.merge(
+             [
+               link_mod: FakeLink,
+               transport: :udp,
+               test_pid: self(),
+               link_name: link_name,
+               frame_timeout_ms: 50
+             ],
+             opts
+           )
          ) do
       {:ok, bus} -> {:ok, bus, link_name}
       error -> error
@@ -625,8 +670,8 @@ defmodule EtherCAT.BusTest do
        }),
        do: <<0xBB, 0x00>>
 
-  def handle_submission_enqueued(event, measurements, metadata, pid) do
-    send(pid, {:submission_enqueued, event, measurements, metadata})
+  def handle_telemetry_event(event, measurements, metadata, pid) do
+    send(pid, {:telemetry_event, event, measurements, metadata})
   end
 
   defp assert_submission_enqueued(expected, link_name, timeout \\ 500)
@@ -645,7 +690,7 @@ defmodule EtherCAT.BusTest do
 
   defp do_assert_submission_enqueued(expected, timeout, matched_at_us) do
     receive do
-      {:submission_enqueued, @submission_enqueued_event, %{queue_depth: queue_depth}, metadata} ->
+      {:telemetry_event, @submission_enqueued_event, %{queue_depth: queue_depth}, metadata} ->
         case pop_expected_submission(expected, {metadata.class, queue_depth, metadata.link}) do
           {:ok, remaining_expected} ->
             do_assert_submission_enqueued(

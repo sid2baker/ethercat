@@ -314,7 +314,7 @@ defmodule EtherCAT.Master.Recovery do
           restarted_data
 
         {:error, reason} ->
-          Logger.warning("[Master] failed to restart DC runtime: #{inspect(reason)}")
+          Logger.debug("[Master] failed to restart DC runtime: #{inspect(reason)}")
           data
       end
     else
@@ -397,7 +397,7 @@ defmodule EtherCAT.Master.Recovery do
         clear_tracked_slave_fault(data, name)
 
       {:error, reason} ->
-        Logger.warning(
+        Logger.debug(
           "[Master] recovery retry: #{inspect(name)} still not in :#{target}: #{inspect(reason)}"
         )
 
@@ -411,7 +411,7 @@ defmodule EtherCAT.Master.Recovery do
         delete_slave_fault_entry(slave_faults, name)
 
       {:error, reason} ->
-        Logger.warning(
+        Logger.debug(
           "[Master] slave retry: #{inspect(name)} still not in :#{target}: #{inspect(reason)}"
         )
 
@@ -425,7 +425,7 @@ defmodule EtherCAT.Master.Recovery do
         maybe_finish_runtime_preop_retry(data, name, target)
 
       {:error, reason} ->
-        Logger.warning(
+        Logger.debug(
           "[Master] recovery retry: #{inspect(name)} PREOP configuration still failing: #{inspect(reason)}"
         )
 
@@ -443,7 +443,7 @@ defmodule EtherCAT.Master.Recovery do
         maybe_finish_slave_preop_retry(slave_faults, name, target)
 
       {:error, reason} ->
-        Logger.warning(
+        Logger.debug(
           "[Master] slave retry: #{inspect(name)} PREOP configuration still failing: #{inspect(reason)}"
         )
 
@@ -457,7 +457,7 @@ defmodule EtherCAT.Master.Recovery do
         put_slave_fault_entry(slave_faults, name, {:reconnecting, :authorized})
 
       {:error, reason} ->
-        Logger.warning(
+        Logger.debug(
           "[Master] slave reconnect authorization retry failed for #{inspect(name)}: #{inspect(reason)}"
         )
 
@@ -471,7 +471,7 @@ defmodule EtherCAT.Master.Recovery do
         Map.put(activation_failures, name, {:reconnecting, :authorized})
 
       {:error, reason} ->
-        Logger.warning(
+        Logger.debug(
           "[Master] activation-blocked reconnect authorization retry failed for #{inspect(name)}: #{inspect(reason)}"
         )
 
@@ -501,7 +501,7 @@ defmodule EtherCAT.Master.Recovery do
         data
 
       {:error, restart_reason} ->
-        Logger.warning(
+        Logger.debug(
           "[Master] failed to restart domain #{domain_id} after stop: #{inspect(restart_reason)}"
         )
 

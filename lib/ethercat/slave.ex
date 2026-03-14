@@ -85,6 +85,10 @@ defmodule EtherCAT.Slave do
     :subscriptions,
     # %{pid => reference()}
     subscriber_refs: %{},
+    # startup retry phase for bootstrap-time observability
+    startup_retry_phase: nil,
+    # consecutive retries for the current startup retry phase
+    startup_retry_count: 0,
     # true once a disconnected slave responds again and is waiting for master-owned reconnect authorization
     reconnect_ready?: false
   ]

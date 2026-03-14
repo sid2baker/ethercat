@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `4ae4392`, `0248012`, `8eff41c` — public master/domain/slave query paths are normalized, root API contracts are clearer, and synchronous calls now return `{:error, {:server_exit, reason}}` when a local server dies mid-call instead of exiting the caller.
 - `04b2c5f`, `072119d`, `9b3b4ba`, `dad947e`, `8eff41c` — simulator and helper/reference guidance was consolidated into source-adjacent docs and local-only helper material so the tracked repo surface stays focused on maintained implementation docs.
 - `8eff41c` — capture snapshots now write portable `.capture` data files instead of executable Elixir source, and generated simulator scaffolds load those data-only artifacts safely.
+- `(pending hash)` — telemetry and logging now follow a stricter observability contract: transaction spans use stable stop metadata, link/frame events distinguish aggregate links from concrete endpoints, repeated startup/recovery retries are less noisy in logs, and new DC runtime plus slave-startup retry events improve machine-readable introspection.
 
 ### Fixed
 - `95f343d` — DC recovery and configuration validation are stricter, reducing invalid recovery paths and catching bad setup earlier.

@@ -5,6 +5,25 @@ defmodule EtherCAT.Telemetry do
   Emits events via `:telemetry` and provides lightweight atomic counters
   for IEx inspection.
 
+  ## Introspection Strategy
+
+  Telemetry is the machine-readable surface:
+
+  - event names are stable and enumerable through `events/0`
+  - measurements are numeric
+  - metadata is intentionally low-cardinality and bounded
+  - detailed failure terms stay in logs and API replies, not telemetry
+
+  Logs are the human-readable narrative:
+
+  - `info` for lifecycle transitions and successful recovery
+  - `warning` for degraded but recoverable runtime conditions
+  - `error` for crashes and session-stopping faults
+  - `debug` for step-by-step progress and repeated retry chatter
+
+  This split keeps dashboards and alerts predictable while preserving rich
+  operator context in the logs.
+
   ## Events
 
   ### Transaction span (emitted by `Bus.transaction/2|3`)
@@ -15,7 +34,7 @@ defmodule EtherCAT.Telemetry do
 
       [:ethercat, :bus, :transact, :stop]
         measurements: %{duration: integer()}
-        metadata:     %{datagram_count: integer(), total_wkc: integer(), class: :realtime | :reliable}
+        metadata:     %{datagram_count: integer(), total_wkc: integer(), class: :realtime | :reliable, status: :ok | :error, error_kind: atom() | nil}
 
       [:ethercat, :bus, :transact, :exception]
         measurements: %{duration: integer()}
@@ -44,29 +63,25 @@ defmodule EtherCAT.Telemetry do
 
       [:ethercat, :bus, :frame, :sent]
         measurements: %{size: integer(), tx_timestamp: integer() | nil}
-        metadata:     %{link: String.t(), port: :primary | :secondary}
+        metadata:     %{link: String.t(), endpoint: String.t(), port: :primary | :secondary}
 
       [:ethercat, :bus, :frame, :received]
         measurements: %{size: integer(), rx_timestamp: integer() | nil}
-        metadata:     %{link: String.t(), port: :primary | :secondary}
+        metadata:     %{link: String.t(), endpoint: String.t(), port: :primary | :secondary}
 
       [:ethercat, :bus, :frame, :dropped]
         measurements: %{size: integer()}
         metadata:     %{link: String.t(), reason: atom()}
 
-      [:ethercat, :bus, :frame, :ignored]
-        measurements: %{}
-        metadata:     %{link: String.t()}
-
   ### Link lifecycle events
 
       [:ethercat, :bus, :link, :down]
         measurements: %{}
-        metadata:     %{link: String.t(), reason: term()}
+        metadata:     %{link: String.t(), endpoint: String.t(), reason: atom()}
 
       [:ethercat, :bus, :link, :reconnected]
         measurements: %{}
-        metadata:     %{link: String.t()}
+        metadata:     %{link: String.t(), endpoint: String.t()}
 
   ### DC maintenance and lock monitoring
 
@@ -82,6 +97,10 @@ defmodule EtherCAT.Telemetry do
         measurements: %{}
         metadata:     %{ref_station: non_neg_integer(), from: atom(), to: atom(), max_sync_diff_ns: non_neg_integer() | nil}
 
+      [:ethercat, :dc, :runtime, :state, :changed]
+        measurements: %{}
+        metadata:     %{from: :healthy | :failing, to: :healthy | :failing, reason: atom() | nil, consecutive_failures: non_neg_integer()}
+
   ### Domain cycle events
 
       [:ethercat, :domain, :cycle, :done]
@@ -90,33 +109,33 @@ defmodule EtherCAT.Telemetry do
 
       [:ethercat, :domain, :cycle, :missed]
         measurements: %{miss_count: pos_integer(), total_miss_count: pos_integer(), invalid_at_us: integer()}
-        metadata:     %{domain: atom(), reason: term()}
+        metadata:     %{domain: atom(), reason: atom(), expected_wkc: non_neg_integer() | nil, actual_wkc: non_neg_integer() | nil, reply_count: non_neg_integer() | nil}
 
   ### Domain fault events
 
       [:ethercat, :domain, :stopped]
         measurements: %{}
-        metadata:     %{domain: atom(), reason: term()}
+        metadata:     %{domain: atom(), reason: atom()}
 
       [:ethercat, :domain, :crashed]
         measurements: %{}
-        metadata:     %{domain: atom(), reason: term()}
+        metadata:     %{domain: atom(), reason: atom()}
 
   ### Master lifecycle events
 
       [:ethercat, :master, :state, :changed]
         measurements: %{}
-        metadata:     %{from: atom(), to: atom(), public_state: atom()}
+        metadata:     %{from: atom(), to: atom(), public_state: atom(), runtime_target: atom()}
 
       [:ethercat, :master, :slave_fault, :changed]
         measurements: %{}
-        metadata:     %{slave: atom(), from: term() | nil, to: term() | nil}
+        metadata:     %{slave: atom(), from: atom() | nil, to: atom() | nil}
 
   ### Slave fault events
 
       [:ethercat, :slave, :crashed]
         measurements: %{}
-        metadata:     %{slave: atom(), reason: term()}
+        metadata:     %{slave: atom(), reason: atom()}
 
       [:ethercat, :slave, :health, :fault]
         measurements: %{al_state: 1 | 2 | 4 | 8, error_code: non_neg_integer()}
@@ -125,6 +144,10 @@ defmodule EtherCAT.Telemetry do
       [:ethercat, :slave, :down]
         measurements: %{}
         metadata:     %{slave: atom(), station: non_neg_integer()}
+
+      [:ethercat, :slave, :startup, :retry]
+        measurements: %{retry_count: pos_integer(), retry_delay_ms: pos_integer()}
+        metadata:     %{slave: atom(), station: non_neg_integer(), phase: atom(), reason: atom()}
 
   ## Timestamps
 
@@ -140,6 +163,8 @@ defmodule EtherCAT.Telemetry do
         [:ethercat, :bus, :link, :down]
       ], &MyHandler.handle_event/4, nil)
   """
+
+  alias EtherCAT.Utils
 
   @doc false
   def execute(event, measurements, metadata \\ %{}) do
@@ -183,20 +208,20 @@ defmodule EtherCAT.Telemetry do
   end
 
   @doc false
-  def frame_sent(link, port, size, tx_timestamp \\ nil) do
+  def frame_sent(link, endpoint, port, size, tx_timestamp \\ nil) do
     execute(
       [:ethercat, :bus, :frame, :sent],
       %{size: size, tx_timestamp: tx_timestamp},
-      %{link: link, port: port}
+      %{link: link, endpoint: endpoint, port: port}
     )
   end
 
   @doc false
-  def frame_received(link, port, size, rx_timestamp \\ nil) do
+  def frame_received(link, endpoint, port, size, rx_timestamp \\ nil) do
     execute(
       [:ethercat, :bus, :frame, :received],
       %{size: size, rx_timestamp: rx_timestamp},
-      %{link: link, port: port}
+      %{link: link, endpoint: endpoint, port: port}
     )
   end
 
@@ -205,30 +230,25 @@ defmodule EtherCAT.Telemetry do
     execute(
       [:ethercat, :bus, :frame, :dropped],
       %{size: size},
-      %{link: link, reason: reason}
+      %{link: link, reason: Utils.reason_kind(reason)}
     )
   end
 
   @doc false
-  def frame_ignored(link) do
-    execute([:ethercat, :bus, :frame, :ignored], %{}, %{link: link})
-  end
-
-  @doc false
-  def link_down(link, reason) do
+  def link_down(link, endpoint, reason) do
     execute(
       [:ethercat, :bus, :link, :down],
       %{},
-      %{link: link, reason: reason}
+      %{link: link, endpoint: endpoint, reason: Utils.reason_kind(reason)}
     )
   end
 
   @doc false
-  def link_reconnected(link) do
+  def link_reconnected(link, endpoint) do
     execute(
       [:ethercat, :bus, :link, :reconnected],
       %{},
-      %{link: link}
+      %{link: link, endpoint: endpoint}
     )
   end
 
@@ -265,6 +285,20 @@ defmodule EtherCAT.Telemetry do
   end
 
   @doc false
+  def dc_runtime_state_changed(from_state, to_state, reason, consecutive_failures) do
+    execute(
+      [:ethercat, :dc, :runtime, :state, :changed],
+      %{},
+      %{
+        from: from_state,
+        to: to_state,
+        reason: normalize_optional_reason(reason),
+        consecutive_failures: consecutive_failures
+      }
+    )
+  end
+
+  @doc false
   def domain_cycle_done(domain_id, duration_us, cycle_count, completed_at_us) do
     execute(
       [:ethercat, :domain, :cycle, :done],
@@ -275,29 +309,44 @@ defmodule EtherCAT.Telemetry do
 
   @doc false
   def domain_cycle_missed(domain_id, miss_count, total_miss_count, reason, invalid_at_us) do
+    cycle_reason = Utils.cycle_reason_metadata(reason)
+
     execute(
       [:ethercat, :domain, :cycle, :missed],
       %{miss_count: miss_count, total_miss_count: total_miss_count, invalid_at_us: invalid_at_us},
-      %{domain: domain_id, reason: reason}
+      Map.put(cycle_reason, :domain, domain_id)
     )
   end
 
   @doc false
   def domain_stopped(domain_id, reason) do
-    execute([:ethercat, :domain, :stopped], %{}, %{domain: domain_id, reason: reason})
+    execute(
+      [:ethercat, :domain, :stopped],
+      %{},
+      %{domain: domain_id, reason: Utils.reason_kind(reason)}
+    )
   end
 
   @doc false
   def domain_crashed(domain_id, reason) do
-    execute([:ethercat, :domain, :crashed], %{}, %{domain: domain_id, reason: reason})
+    execute(
+      [:ethercat, :domain, :crashed],
+      %{},
+      %{domain: domain_id, reason: Utils.reason_kind(reason)}
+    )
   end
 
   @doc false
-  def master_state_changed(from_state, to_state, public_state) do
+  def master_state_changed(from_state, to_state, public_state, runtime_target) do
     execute(
       [:ethercat, :master, :state, :changed],
       %{},
-      %{from: from_state, to: to_state, public_state: public_state}
+      %{
+        from: from_state,
+        to: to_state,
+        public_state: public_state,
+        runtime_target: runtime_target
+      }
     )
   end
 
@@ -306,13 +355,17 @@ defmodule EtherCAT.Telemetry do
     execute(
       [:ethercat, :master, :slave_fault, :changed],
       %{},
-      %{slave: slave_name, from: from_fault, to: to_fault}
+      %{slave: slave_name, from: Utils.fault_kind(from_fault), to: Utils.fault_kind(to_fault)}
     )
   end
 
   @doc false
   def slave_crashed(slave_name, reason) do
-    execute([:ethercat, :slave, :crashed], %{}, %{slave: slave_name, reason: reason})
+    execute(
+      [:ethercat, :slave, :crashed],
+      %{},
+      %{slave: slave_name, reason: Utils.reason_kind(reason)}
+    )
   end
 
   @doc false
@@ -327,6 +380,15 @@ defmodule EtherCAT.Telemetry do
   @doc false
   def slave_down(slave_name, station) do
     execute([:ethercat, :slave, :down], %{}, %{slave: slave_name, station: station})
+  end
+
+  @doc false
+  def slave_startup_retry(slave_name, station, phase, reason, retry_count, retry_delay_ms) do
+    execute(
+      [:ethercat, :slave, :startup, :retry],
+      %{retry_count: retry_count, retry_delay_ms: retry_delay_ms},
+      %{slave: slave_name, station: station, phase: phase, reason: Utils.reason_kind(reason)}
+    )
   end
 
   # ---------------------------------------------------------------------------
@@ -345,12 +407,12 @@ defmodule EtherCAT.Telemetry do
     [:ethercat, :bus, :frame, :sent],
     [:ethercat, :bus, :frame, :received],
     [:ethercat, :bus, :frame, :dropped],
-    [:ethercat, :bus, :frame, :ignored],
     [:ethercat, :bus, :link, :down],
     [:ethercat, :bus, :link, :reconnected],
     [:ethercat, :dc, :tick],
     [:ethercat, :dc, :sync_diff, :observed],
     [:ethercat, :dc, :lock, :changed],
+    [:ethercat, :dc, :runtime, :state, :changed],
     [:ethercat, :domain, :cycle, :done],
     [:ethercat, :domain, :cycle, :missed],
     [:ethercat, :domain, :stopped],
@@ -359,7 +421,8 @@ defmodule EtherCAT.Telemetry do
     [:ethercat, :master, :slave_fault, :changed],
     [:ethercat, :slave, :crashed],
     [:ethercat, :slave, :health, :fault],
-    [:ethercat, :slave, :down]
+    [:ethercat, :slave, :down],
+    [:ethercat, :slave, :startup, :retry]
   ]
 
   @event_index @all_events |> Enum.with_index() |> Map.new()
@@ -477,4 +540,7 @@ defmodule EtherCAT.Telemetry do
     :persistent_term.erase({__MODULE__, :counters})
     :ok
   end
+
+  defp normalize_optional_reason(nil), do: nil
+  defp normalize_optional_reason(reason), do: Utils.reason_kind(reason)
 end

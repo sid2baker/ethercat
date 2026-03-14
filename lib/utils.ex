@@ -36,4 +36,62 @@ defmodule EtherCAT.Utils do
     do: {:error, unexpected_reason}
 
   def expect_positive_wkc({:error, _} = err, _zero_reason, _unexpected_reason), do: err
+
+  @spec reason_kind(term()) :: atom()
+  def reason_kind(reason) when is_atom(reason), do: reason
+
+  def reason_kind({reason, _rest}) when is_atom(reason), do: reason
+  def reason_kind({reason, _, _}) when is_atom(reason), do: reason
+  def reason_kind({reason, _, _, _}) when is_atom(reason), do: reason
+
+  def reason_kind(%{__exception__: true}), do: :exception
+  def reason_kind(_reason), do: :unknown
+
+  @spec fault_kind(term()) :: atom() | nil
+  def fault_kind(nil), do: nil
+  def fault_kind(fault) when is_atom(fault), do: fault
+  def fault_kind({fault, _details}) when is_atom(fault), do: fault
+  def fault_kind({fault, _, _}) when is_atom(fault), do: fault
+  def fault_kind(_fault), do: :unknown
+
+  @spec cycle_reason_metadata(term()) :: %{
+          reason: atom(),
+          expected_wkc: non_neg_integer() | nil,
+          actual_wkc: non_neg_integer() | nil,
+          reply_count: non_neg_integer() | nil
+        }
+  def cycle_reason_metadata({:wkc_mismatch, %{expected: expected_wkc, actual: actual_wkc}})
+      when is_integer(expected_wkc) and expected_wkc >= 0 and is_integer(actual_wkc) and
+             actual_wkc >= 0 do
+    %{
+      reason: :wkc_mismatch,
+      expected_wkc: expected_wkc,
+      actual_wkc: actual_wkc,
+      reply_count: 1
+    }
+  end
+
+  def cycle_reason_metadata({:unexpected_reply, reply_count})
+      when is_integer(reply_count) and reply_count >= 0 do
+    %{
+      reason: :unexpected_reply,
+      expected_wkc: nil,
+      actual_wkc: nil,
+      reply_count: reply_count
+    }
+  end
+
+  def cycle_reason_metadata(reason) do
+    %{
+      reason: reason_kind(reason),
+      expected_wkc: nil,
+      actual_wkc: nil,
+      reply_count: nil
+    }
+  end
+
+  @spec retry_log_level(pos_integer()) :: :debug | :warning
+  def retry_log_level(retry_count) when is_integer(retry_count) and retry_count > 0 do
+    if retry_count == 1 or rem(retry_count, 10) == 0, do: :warning, else: :debug
+  end
 end

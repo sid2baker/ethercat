@@ -23,6 +23,8 @@ defmodule EtherCAT.Slave.Runtime.State do
       active_latches: nil,
       latch_poll_ms: nil,
       health_poll_ms: Keyword.get(opts, :health_poll_ms),
+      startup_retry_phase: nil,
+      startup_retry_count: 0,
       reconnect_ready?: false,
       signal_registrations: %{},
       signal_registrations_by_sm: %{},

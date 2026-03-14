@@ -28,7 +28,7 @@ defmodule EtherCAT.Bus do
   alias EtherCAT.Bus.InterfaceInfo
   alias EtherCAT.Bus.LinkMonitor
   alias EtherCAT.Bus.Link.{Redundant, SinglePort}
-  alias EtherCAT.Telemetry
+  alias EtherCAT.{Telemetry, Utils}
 
   @type server :: :gen_statem.server_ref()
 
@@ -401,7 +401,9 @@ defmodule EtherCAT.Bus do
   def handle_event(_type, _event, _state, _data), do: :keep_state_and_data
 
   defp do_call(bus, msg, tx) do
-    meta = %{datagram_count: tx |> Transaction.datagrams() |> length(), class: call_class(msg)}
+    datagram_count = tx |> Transaction.datagrams() |> length()
+    class = call_class(msg)
+    meta = %{datagram_count: datagram_count, class: class}
 
     Telemetry.span([:ethercat, :bus, :transact], meta, fn ->
       result = safe_call(bus, msg)
@@ -411,15 +413,25 @@ defmodule EtherCAT.Bus do
           results = Enum.map(response_datagrams, &result_from_datagram/1)
 
           stop_meta = %{
-            datagram_count: length(results),
+            datagram_count: datagram_count,
             total_wkc: Enum.sum(Enum.map(results, & &1.wkc)),
-            class: call_class(msg)
+            class: class,
+            status: :ok,
+            error_kind: nil
           }
 
           {{:ok, results}, stop_meta}
 
-        {:error, _} = err ->
-          {err, meta}
+        {:error, reason} = err ->
+          stop_meta = %{
+            datagram_count: datagram_count,
+            total_wkc: 0,
+            class: class,
+            status: :error,
+            error_kind: Utils.reason_kind(reason)
+          }
+
+          {err, stop_meta}
       end
     end)
   end

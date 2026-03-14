@@ -32,12 +32,19 @@ defmodule EtherCAT.Bus.Link.SinglePort do
 
     case transport_mod.send(transport, payload) do
       {:ok, tx_at} ->
-        Telemetry.frame_sent(transport_mod.name(transport), :primary, byte_size(payload), tx_at)
+        Telemetry.frame_sent(
+          name(link),
+          transport_mod.name(transport),
+          :primary,
+          byte_size(payload),
+          tx_at
+        )
+
         {:ok, link}
 
       {:error, reason} ->
         closed = close_transport(link)
-        Telemetry.link_down(name(closed), reason)
+        Telemetry.link_down(name(closed), transport_mod.name(transport), reason)
         {:error, closed, reason}
     end
   end
@@ -47,6 +54,7 @@ defmodule EtherCAT.Bus.Link.SinglePort do
     case transport_mod.match(transport, msg) do
       {:ok, ecat_payload, rx_at} ->
         Telemetry.frame_received(
+          name(link),
           transport_mod.name(transport),
           :primary,
           byte_size(ecat_payload),
@@ -89,7 +97,7 @@ defmodule EtherCAT.Bus.Link.SinglePort do
       ) do
     if transport_mod.open?(transport) and transport_mod.interface(transport) == ifname do
       closed = close_transport(link)
-      Telemetry.link_down(ifname, :carrier_lost)
+      Telemetry.link_down(name(closed), ifname, :carrier_lost)
       {:down, closed, :carrier_lost}
     else
       {:ok, link}
@@ -105,7 +113,7 @@ defmodule EtherCAT.Bus.Link.SinglePort do
     else
       case transport_mod.open(link.open_opts) do
         {:ok, reopened} ->
-          Telemetry.link_reconnected(transport_mod.name(reopened))
+          Telemetry.link_reconnected(name(link), transport_mod.name(reopened))
           %{link | transport: reopened}
 
         {:error, _} ->

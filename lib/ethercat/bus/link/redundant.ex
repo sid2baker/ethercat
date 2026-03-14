@@ -238,12 +238,12 @@ defmodule EtherCAT.Bus.Link.Redundant do
 
       case transport_mod.send(transport, payload) do
         {:ok, tx_at} ->
-          Telemetry.frame_sent(port_name(link, port), port, byte_size(payload), tx_at)
+          Telemetry.frame_sent(name(link), port_name(link, port), port, byte_size(payload), tx_at)
           {:sent, link}
 
         {:error, reason} ->
           updated = close_port(link, port)
-          Telemetry.link_down(port_name(link, port), reason)
+          Telemetry.link_down(name(link), port_name(link, port), reason)
           {:failed, updated, reason}
       end
     else
@@ -257,7 +257,14 @@ defmodule EtherCAT.Bus.Link.Redundant do
 
       case link.transport_mod.match(transport, msg) do
         {:ok, payload, rx_at} ->
-          Telemetry.frame_received(port_name(link, port), port, byte_size(payload), rx_at)
+          Telemetry.frame_received(
+            name(link),
+            port_name(link, port),
+            port,
+            byte_size(payload),
+            rx_at
+          )
+
           {:matched, link, payload, rx_at}
 
         :ignore ->
@@ -291,7 +298,7 @@ defmodule EtherCAT.Bus.Link.Redundant do
 
   defp maybe_close_for_interface(%__MODULE__{} = link, port, ifname) do
     if open_port?(link, port) and port_interface(link, port) == ifname do
-      Telemetry.link_down(ifname, :carrier_lost)
+      Telemetry.link_down(name(link), ifname, :carrier_lost)
       {close_port(link, port), true}
     else
       {link, false}
@@ -300,7 +307,7 @@ defmodule EtherCAT.Bus.Link.Redundant do
 
   defp maybe_close_for_interface({%__MODULE__{} = link, closed?}, port, ifname) do
     if open_port?(link, port) and port_interface(link, port) == ifname do
-      Telemetry.link_down(ifname, :carrier_lost)
+      Telemetry.link_down(name(link), ifname, :carrier_lost)
       {close_port(link, port), true}
     else
       {link, closed?}
@@ -318,7 +325,7 @@ defmodule EtherCAT.Bus.Link.Redundant do
 
         case link.transport_mod.open(opts) do
           {:ok, reopened} ->
-            Telemetry.link_reconnected(link.transport_mod.name(reopened))
+            Telemetry.link_reconnected(name(link), link.transport_mod.name(reopened))
             put_port_transport(link, port, reopened)
 
           {:error, _} ->

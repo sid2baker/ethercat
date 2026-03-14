@@ -172,6 +172,7 @@ defmodule EtherCAT.DC.Runtime do
     end
 
     if failures == 3 do
+      Telemetry.dc_runtime_state_changed(:healthy, :failing, reason, failures)
       send(EtherCAT.Master, {:dc_runtime_failed, reason})
     end
 
@@ -197,6 +198,11 @@ defmodule EtherCAT.DC.Runtime do
   end
 
   defp maybe_log_runtime_recovered(0), do: :ok
+
+  defp maybe_log_runtime_recovered(fail_count) when fail_count >= 3 do
+    Telemetry.dc_runtime_state_changed(:failing, :healthy, nil, fail_count)
+    Logger.info("[DC] runtime recovered after #{fail_count} failure(s)")
+  end
 
   defp maybe_log_runtime_recovered(fail_count) when fail_count > 0 do
     Logger.info("[DC] runtime recovered after #{fail_count} failure(s)")

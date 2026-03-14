@@ -153,6 +153,14 @@ defmodule EtherCAT.Integration.Trace do
     "dc lock #{inspect(metadata.from)} -> #{inspect(metadata.to)}"
   end
 
+  defp describe_event([:ethercat, :dc, :runtime, :state, :changed], _measurements, metadata) do
+    "dc runtime #{inspect(metadata.from)} -> #{inspect(metadata.to)}"
+  end
+
+  defp describe_event([:ethercat, :slave, :startup, :retry], measurements, metadata) do
+    "slave #{metadata.slave} startup retry phase=#{metadata.phase} reason=#{metadata.reason} count=#{measurements.retry_count}"
+  end
+
   defp describe_event(event, measurements, metadata) do
     "#{Enum.join(event, ".")} #{inspect(measurements)} #{inspect(metadata)}"
   end

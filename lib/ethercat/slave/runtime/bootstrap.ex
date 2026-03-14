@@ -7,6 +7,7 @@ defmodule EtherCAT.Slave.Runtime.Bootstrap do
   alias EtherCAT.Bus.Transaction
   alias EtherCAT.Slave.ESC.Registers
   alias EtherCAT.Slave.ESC.SII
+  alias EtherCAT.Telemetry
   alias EtherCAT.Utils
 
   # ETG.1000 §6.7 SyncManager control byte: mailbox/handshake + PDI IRQ.
@@ -34,11 +35,7 @@ defmodule EtherCAT.Slave.Runtime.Bootstrap do
         read_sii_and_enter_preop(init_data, transition, retry_ms)
 
       {:error, reason, init_data} ->
-        Logger.warning(
-          "[Slave #{data.name}] init transition failed: #{inspect(reason)} — retrying in #{retry_ms} ms"
-        )
-
-        {:ok, :init, init_data, [{{:timeout, :auto_advance}, retry_ms, nil}]}
+        schedule_startup_retry(init_data, :init_transition, reason, retry_ms)
     end
   end
 
@@ -52,28 +49,16 @@ defmodule EtherCAT.Slave.Runtime.Bootstrap do
     with {:ok, sii_data} <- read_sii_data(data, t0),
          {:ok, mailbox_data} <- configure_mailbox_sync_managers(sii_data),
          {:ok, preop_data} <- transition_to_preop(mailbox_data, transition, t0) do
-      {:ok, :preop, preop_data, []}
+      {:ok, :preop, reset_startup_retry(preop_data), []}
     else
       {:error, reason} ->
-        Logger.warning(
-          "[Slave #{data.name}] SII read failed: #{inspect(reason)} — retrying in #{retry_ms} ms"
-        )
-
-        {:ok, :init, data, [{{:timeout, :auto_advance}, retry_ms, nil}]}
+        schedule_startup_retry(data, :sii_read, reason, retry_ms)
 
       {:error, {:mailbox_sync_manager_setup_failed, reason}, failed_data} ->
-        Logger.warning(
-          "[Slave #{data.name}] mailbox SM setup failed: #{inspect(reason)} — retrying in #{retry_ms} ms"
-        )
-
-        {:ok, :init, failed_data, [{{:timeout, :auto_advance}, retry_ms, nil}]}
+        schedule_startup_retry(failed_data, :mailbox_setup, reason, retry_ms)
 
       {:error, {:preop_transition_failed, reason}, failed_data} ->
-        Logger.warning(
-          "[Slave #{data.name}] preop failed: #{inspect(reason)} — retrying in #{retry_ms} ms"
-        )
-
-        {:ok, :init, failed_data, [{{:timeout, :auto_advance}, retry_ms, nil}]}
+        schedule_startup_retry(failed_data, :preop_transition, reason, retry_ms)
     end
   end
 
@@ -179,6 +164,41 @@ defmodule EtherCAT.Slave.Runtime.Bootstrap do
 
       {:error, reason} ->
         {:error, {:mailbox_sync_manager_setup_failed, reason}, data}
+    end
+  end
+
+  defp schedule_startup_retry(data, phase, reason, retry_ms) do
+    retry_count =
+      if data.startup_retry_phase == phase do
+        data.startup_retry_count + 1
+      else
+        1
+      end
+
+    updated = %{
+      data
+      | startup_retry_phase: phase,
+        startup_retry_count: retry_count
+    }
+
+    Telemetry.slave_startup_retry(data.name, data.station, phase, reason, retry_count, retry_ms)
+    log_startup_retry(updated.name, phase, reason, retry_ms, retry_count)
+
+    {:ok, :init, updated, [{{:timeout, :auto_advance}, retry_ms, nil}]}
+  end
+
+  defp reset_startup_retry(data) do
+    %{data | startup_retry_phase: nil, startup_retry_count: 0}
+  end
+
+  defp log_startup_retry(name, phase, reason, retry_ms, retry_count) do
+    message =
+      "[Slave #{name}] startup retry #{retry_count} phase=#{phase} reason=#{inspect(reason)} " <>
+        "— retrying in #{retry_ms} ms"
+
+    case Utils.retry_log_level(retry_count) do
+      :warning -> Logger.warning(message)
+      :debug -> Logger.debug(message)
     end
   end
 end
