@@ -1,6 +1,7 @@
 defmodule EtherCAT.SimulatorTest do
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureLog
   alias EtherCAT.Bus.Datagram
   alias EtherCAT.Bus.Frame
   import EtherCAT.Integration.Assertions
@@ -127,7 +128,10 @@ defmodule EtherCAT.SimulatorTest do
 
     assert {:ok, _pid} = Simulator.start_link(devices: [])
 
-    assert {:error, {:server_exit, _reason}} = Simulator.process_datagrams(:invalid)
+    capture_log(fn ->
+      assert {:error, {:server_exit, _reason}} = Simulator.process_datagrams(:invalid)
+    end)
+
     assert {:error, :not_found} = Simulator.info()
   end
 

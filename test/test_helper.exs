@@ -149,6 +149,8 @@ defmodule EtherCAT.TestHelper do
 end
 
 ExUnit.start(
+  capture_log: true,
+  formatters: [ExUnit.CLIFormatter, EtherCAT.TestProgressFormatter],
   exclude:
     [:hardware] ++
       EtherCAT.TestHelper.raw_socket_excludes() ++
