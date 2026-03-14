@@ -22,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `95f343d` — DC recovery and configuration validation are stricter, reducing invalid recovery paths and catching bad setup earlier.
 - `c937d53` — redundant transport now merges split logical replies correctly.
 - `d852fd4` — bus transaction aging semantics and diagnostics are now more explicit during retry and timeout handling.
-- raw socket transport no longer drains buffered frames on idx-mismatch rearm, preventing legitimate responses from being lost when rogue EtherCAT traffic is present on the wire.
+- `7055878` — raw socket transport no longer drains buffered frames on idx-mismatch rearm, preventing legitimate responses from being lost when rogue EtherCAT traffic is present on the wire.
 
 ### Docs
 - `8f773d6`, `c42b0c9`, `0248012`, `04b2c5f`, `072119d`, `9b3b4ba`, `ee210fa`, `8eff41c` — README, hardware playbooks, simulator docs, and API guidance were rewritten to better explain transport boundaries, bring-up workflow, release metadata, and fault/recovery scenarios.
