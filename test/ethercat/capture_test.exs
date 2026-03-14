@@ -51,7 +51,7 @@ defmodule EtherCAT.CaptureTest do
   test "writes a capture file and loads it back" do
     boot_dynamic_capture_ring!()
     tmp_dir = tmp_dir!()
-    path = Path.join(tmp_dir, "mailbox_capture.exs")
+    path = Path.join(tmp_dir, "mailbox_capture.capture")
 
     assert {:ok, written_path} =
              Capture.write_capture(
@@ -71,7 +71,7 @@ defmodule EtherCAT.CaptureTest do
   test "generates a simulator scaffold module from an io slave capture" do
     boot_dynamic_capture_ring!()
     tmp_dir = tmp_dir!()
-    capture_path = Path.join([tmp_dir, "captures", "captured_inputs.exs"])
+    capture_path = Path.join([tmp_dir, "captures", "captured_inputs.capture"])
     module_path = Path.join([tmp_dir, "scaffolds", "generated_inputs_simulator.ex"])
 
     module =
@@ -117,6 +117,23 @@ defmodule EtherCAT.CaptureTest do
 
     assert definition.mailbox_config.recv_size == 0
     assert Map.has_key?(definition.signals, :pdo_0x1a00)
+  end
+
+  test "rejects malformed capture files without evaluating them" do
+    tmp_dir = tmp_dir!()
+    capture_path = Path.join(tmp_dir, "malicious.capture")
+    side_effect_path = Path.join(tmp_dir, "executed.txt")
+
+    File.write!(
+      capture_path,
+      """
+      # not a capture payload
+      File.write!(#{inspect(side_effect_path)}, "executed")
+      """
+    )
+
+    assert {:error, {:invalid_capture, :invalid_base64}} = Capture.load_capture(capture_path)
+    refute File.exists?(side_effect_path)
   end
 
   test "generates a best-effort integration driver scaffold for a digital input slave" do

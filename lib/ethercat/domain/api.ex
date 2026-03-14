@@ -8,6 +8,7 @@ defmodule EtherCAT.Domain.API do
   """
 
   alias EtherCAT.Domain.Image
+  alias EtherCAT.Utils
 
   @type domain_id :: EtherCAT.Domain.domain_id()
   @type pdo_key :: EtherCAT.Domain.pdo_key()
@@ -21,7 +22,8 @@ defmodule EtherCAT.Domain.API do
   @spec start_cycling(domain_id()) :: :ok | {:error, term()}
   def start_cycling(domain_id), do: safe_call(domain_id, :start_cycling)
 
-  @spec stop_cycling(domain_id()) :: :ok | {:error, :not_found | :timeout}
+  @spec stop_cycling(domain_id()) ::
+          :ok | {:error, :not_found | :timeout | {:server_exit, term()}}
   def stop_cycling(domain_id), do: safe_call(domain_id, :stop_cycling)
 
   @spec write(domain_id(), pdo_key(), binary()) :: :ok | {:error, :not_found}
@@ -59,10 +61,12 @@ defmodule EtherCAT.Domain.API do
     end
   end
 
-  @spec stats(domain_id()) :: {:ok, map()} | {:error, :not_found | :timeout}
+  @spec stats(domain_id()) ::
+          {:ok, map()} | {:error, :not_found | :timeout | {:server_exit, term()}}
   def stats(domain_id), do: safe_call(domain_id, :stats)
 
-  @spec info(domain_id()) :: {:ok, map()} | {:error, :not_found | :timeout}
+  @spec info(domain_id()) ::
+          {:ok, map()} | {:error, :not_found | :timeout | {:server_exit, term()}}
   def info(domain_id), do: safe_call(domain_id, :info)
 
   @spec update_cycle_time(domain_id(), pos_integer()) :: :ok | {:error, term()}
@@ -75,8 +79,7 @@ defmodule EtherCAT.Domain.API do
     try do
       :gen_statem.call(via(domain_id), msg)
     catch
-      :exit, {:noproc, _} -> {:error, :not_found}
-      :exit, {:timeout, _} -> {:error, :timeout}
+      :exit, reason -> Utils.classify_call_exit(reason, :not_found)
     end
   end
 

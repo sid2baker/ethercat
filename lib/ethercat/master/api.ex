@@ -9,6 +9,7 @@ defmodule EtherCAT.Master.API do
 
   alias EtherCAT.Bus
   alias EtherCAT.DC.API, as: DCAPI
+  alias EtherCAT.Utils
 
   @call_timeout_ms 5_000
   # Wait-style calls are satisfied by later state transitions. Give the local
@@ -20,28 +21,32 @@ defmodule EtherCAT.Master.API do
   @spec start(keyword()) :: :ok | {:error, term()}
   def start(opts \\ []), do: safe_call({:start, opts})
 
-  @spec stop() :: :ok | :already_stopped
+  @spec stop() :: :ok | :already_stopped | {:error, :timeout | {:server_exit, term()}}
   def stop do
     try do
       :gen_statem.call(EtherCAT.Master, :stop)
     catch
-      :exit, {:noproc, _} -> :already_stopped
+      :exit, reason ->
+        case Utils.classify_call_exit(reason, :already_stopped) do
+          {:error, :already_stopped} -> :already_stopped
+          {:error, _} = err -> err
+        end
     end
   end
 
-  @spec slaves() :: list() | {:error, :not_started | :timeout}
+  @spec slaves() :: list() | {:error, :not_started | :timeout | {:server_exit, term()}}
   def slaves, do: safe_call(:slaves)
 
-  @spec domains() :: list() | {:error, :not_started | :timeout}
+  @spec domains() :: list() | {:error, :not_started | :timeout | {:server_exit, term()}}
   def domains, do: safe_call(:domains)
 
-  @spec bus() :: Bus.server() | nil | {:error, :not_started | :timeout}
+  @spec bus() :: Bus.server() | nil | {:error, :not_started | :timeout | {:server_exit, term()}}
   def bus, do: safe_call(:bus)
 
-  @spec last_failure() :: map() | nil | {:error, :not_started | :timeout}
+  @spec last_failure() :: map() | nil | {:error, :not_started | :timeout | {:server_exit, term()}}
   def last_failure, do: safe_call(:last_failure)
 
-  @spec state() :: atom() | {:error, :not_started | :timeout}
+  @spec state() :: atom() | {:error, :not_started | :timeout | {:server_exit, term()}}
   def state, do: safe_call(:state)
 
   @spec configure_slave(atom(), keyword() | EtherCAT.Slave.Config.t()) :: :ok | {:error, term()}
@@ -74,7 +79,8 @@ defmodule EtherCAT.Master.API do
   def await_operational(timeout_ms \\ 10_000),
     do: safe_wait_call(:await_operational, timeout_ms)
 
-  @spec dc_status() :: EtherCAT.DC.Status.t() | {:error, :not_started | :timeout}
+  @spec dc_status() ::
+          EtherCAT.DC.Status.t() | {:error, :not_started | :timeout | {:server_exit, term()}}
   def dc_status, do: safe_call(:dc_status)
 
   @spec reference_clock() ::
@@ -93,8 +99,7 @@ defmodule EtherCAT.Master.API do
     try do
       :gen_statem.call(EtherCAT.Master, msg, @call_timeout_ms)
     catch
-      :exit, {:noproc, _} -> {:error, :not_started}
-      :exit, {:timeout, _} -> {:error, :timeout}
+      :exit, reason -> Utils.classify_call_exit(reason, :not_started)
     end
   end
 
@@ -102,8 +107,7 @@ defmodule EtherCAT.Master.API do
     try do
       :gen_statem.call(EtherCAT.Master, msg, timeout)
     catch
-      :exit, {:noproc, _} -> {:error, :not_started}
-      :exit, {:timeout, _} -> {:error, :timeout}
+      :exit, reason -> Utils.classify_call_exit(reason, :not_started)
     end
   end
 

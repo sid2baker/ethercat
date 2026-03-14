@@ -196,7 +196,7 @@ defmodule EtherCAT do
 
   These are transport-level API failures, not session lifecycle states.
   """
-  @type master_query_error :: {:error, :not_started | :timeout}
+  @type master_query_error :: {:error, :not_started | :timeout | {:server_exit, term()}}
 
   @typedoc """
   Successful query value wrapped with `:ok`, or a local master query error.
@@ -304,8 +304,9 @@ defmodule EtherCAT do
   Returns `{:ok, nil}` if the master process exists but the bus subsystem is
   not currently running, such as after the session has settled back to `:idle`.
 
-  Returns `{:error, :not_started}` if the master does not exist and
-  `{:error, :timeout}` if the local master call itself times out.
+  Returns `{:error, :not_started}` if the master does not exist,
+  `{:error, :timeout}` if the local master call itself times out,
+  and `{:error, {:server_exit, reason}}` if the local master dies mid-call.
   """
   @spec bus() :: master_query_result(EtherCAT.Bus.server() | nil)
   def bus, do: ok_query(MasterAPI.bus())
@@ -346,11 +347,12 @@ defmodule EtherCAT do
 
   Returns `{:error, :already_stopped}` if not running.
   """
-  @spec stop() :: :ok | {:error, :already_stopped}
+  @spec stop() :: :ok | {:error, :already_stopped | :timeout | {:server_exit, term()}}
   def stop do
     case MasterAPI.stop() do
       :ok -> :ok
       :already_stopped -> {:error, :already_stopped}
+      {:error, _} = err -> err
     end
   end
 
@@ -533,7 +535,8 @@ defmodule EtherCAT do
         configuration_error: nil
       }}
   """
-  @spec slave_info(atom()) :: {:ok, slave_info()} | {:error, :not_found | :timeout}
+  @spec slave_info(atom()) ::
+          {:ok, slave_info()} | {:error, :not_found | :timeout | {:server_exit, term()}}
   def slave_info(slave_name), do: SlaveAPI.info(slave_name)
 
   @doc """
@@ -565,7 +568,8 @@ defmodule EtherCAT do
         expected_wkc: 3
       }}
   """
-  @spec domain_info(atom()) :: {:ok, domain_info()} | {:error, :not_found | :timeout}
+  @spec domain_info(atom()) ::
+          {:ok, domain_info()} | {:error, :not_found | :timeout | {:server_exit, term()}}
   def domain_info(domain_id), do: DomainAPI.info(domain_id)
 
   @doc """
@@ -578,7 +582,8 @@ defmodule EtherCAT do
     - a named latch configured through `sync.latches`, delivered as
       `{:ethercat, :latch, slave_name, name, timestamp_ns}`
   """
-  @spec subscribe(atom(), atom(), pid()) :: :ok | {:error, :not_found | :timeout}
+  @spec subscribe(atom(), atom(), pid()) ::
+          :ok | {:error, :not_found | :timeout | {:server_exit, term()}}
   def subscribe(slave_name, name, pid \\ self()),
     do: SlaveAPI.subscribe(slave_name, name, pid)
 

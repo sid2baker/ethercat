@@ -33,11 +33,11 @@ Latest Hex release:
 
 ```elixir
 def deps do
-  [{:ethercat, "~> 0.3.0"}]
+  [{:ethercat, "~> 0.3.1"}]
 end
 ```
 
-For release notes and post-`0.3.0` work, see the
+For release notes and post-`0.3.1` work, see the
 [changelog](https://github.com/sid2baker/ethercat/blob/main/CHANGELOG.md).
 
 If you want the current `main` branch instead of the latest Hex cut:
@@ -156,9 +156,10 @@ EtherCAT.Capture.write_capture(:slave_1, sdos: [{0x1008, 0x00}])
 EtherCAT.Capture.gen_simulator(:slave_1, module: MyApp.EL1809.Simulator)
 ```
 
-This capture flow preserves static structure: identity, mailbox layout, PDO
-shape, and any explicit SDO snapshots you request. It does not infer dynamic
-behavior or a complete object dictionary automatically.
+This capture flow writes a data-only capture artifact, then preserves static
+structure: identity, mailbox layout, PDO shape, and any explicit SDO snapshots
+you request. It does not infer dynamic behavior or a complete object
+dictionary automatically.
 
 ## Mental Model
 

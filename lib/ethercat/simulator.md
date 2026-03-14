@@ -132,8 +132,8 @@ not the C control flow.
 
 ## Fidelity Boundary
 
-These protocol-facing parts should stay aligned with the spec model and the
-bundled SOES-derived notes under `lib/ethercat/simulator/slave/reference/`:
+These protocol-facing parts should stay aligned with the spec model and any
+local simulator reference notes kept outside the tracked repo:
 
 - datagram routing:
   - broadcast
@@ -362,13 +362,8 @@ failures localize cleanly.
 
 ## Reference Material
 
-When you need the deeper simulator design source, use:
-
-- `lib/ethercat/simulator/slave/reference/slave_spec/README.md`
-- `lib/ethercat/simulator/slave/reference/slave_spec/runtime.md`
-- `lib/ethercat/simulator/slave/reference/slave_spec/object_model.md`
-- `lib/ethercat/simulator/slave/reference/slave_spec/process_data.md`
-- `lib/ethercat/simulator/slave/reference/slave_spec/elixir_target.md`
+When you need deeper simulator design notes, use your local helper material
+outside the tracked repo.
 
 Relevant repo integration guides:
 

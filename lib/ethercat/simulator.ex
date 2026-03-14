@@ -15,6 +15,7 @@ defmodule EtherCAT.Simulator do
   alias EtherCAT.Simulator.Slave.Runtime.Device
   alias EtherCAT.Simulator.Runtime.Subscriptions
   alias EtherCAT.Simulator.Runtime.Wiring
+  alias EtherCAT.Utils
 
   @type exchange_fault ::
           :drop_responses
@@ -247,17 +248,8 @@ defmodule EtherCAT.Simulator do
   defp safe_call(message, timeout) do
     GenServer.call(@default_name, message, timeout)
   catch
-    :exit, reason -> classify_call_exit(reason)
+    :exit, reason -> Utils.classify_call_exit(reason, :not_found)
   end
-
-  defp classify_call_exit({:timeout, _}), do: {:error, :timeout}
-  defp classify_call_exit({:noproc, _}), do: {:error, :not_found}
-  defp classify_call_exit({:normal, _}), do: {:error, :not_found}
-
-  defp classify_call_exit({reason, {GenServer, :call, _call_args}}),
-    do: {:error, {:server_exit, reason}}
-
-  defp classify_call_exit(reason), do: {:error, {:server_exit, reason}}
 
   defp maybe_put_default_udp_info(info) do
     case EtherCAT.Simulator.Udp.info() do
