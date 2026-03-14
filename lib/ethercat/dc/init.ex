@@ -9,6 +9,7 @@ defmodule EtherCAT.DC.Init do
   alias EtherCAT.DC.InitStep
   alias EtherCAT.DC.Snapshot
   alias EtherCAT.Slave.ESC.Registers
+  alias EtherCAT.Utils
 
   @ethercat_epoch_offset_ns 946_684_800_000_000_000
 
@@ -30,12 +31,11 @@ defmodule EtherCAT.DC.Init do
   def initialize_clocks(_bus, []), do: {:error, :no_slaves}
 
   defp trigger_recv_latch(bus) do
-    case Bus.transaction(bus, Transaction.bwr(Registers.dc_recv_time_latch())) do
-      {:ok, [%{wkc: wkc}]} when wkc > 0 -> :ok
-      {:ok, [%{wkc: 0}]} -> {:error, :dc_latch_not_acknowledged}
-      {:ok, _results} -> {:error, :dc_latch_unexpected_reply}
-      {:error, _} = err -> err
-    end
+    Utils.expect_positive_wkc(
+      Bus.transaction(bus, Transaction.bwr(Registers.dc_recv_time_latch())),
+      :dc_latch_not_acknowledged,
+      :dc_latch_unexpected_reply
+    )
   end
 
   defp read_snapshots(bus, slave_topology) do

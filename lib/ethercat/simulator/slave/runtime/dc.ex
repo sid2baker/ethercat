@@ -3,6 +3,7 @@ defmodule EtherCAT.Simulator.Slave.Runtime.DC do
 
   alias EtherCAT.Slave.ESC.Registers
   alias EtherCAT.Simulator.Slave.Runtime.Device
+  alias EtherCAT.Simulator.Slave.Runtime.Memory
 
   @ethercat_epoch_offset_ns 946_684_800_000_000_000
   @default_speed_counter_start 0x1000
@@ -105,37 +106,40 @@ defmodule EtherCAT.Simulator.Slave.Runtime.DC do
     system_time_ns = local_time_ns + dc_state.system_time_offset_ns
 
     memory
-    |> put_binary(
+    |> Memory.replace(
       offset(Registers.dc_recv_time(0)),
       <<Map.fetch!(dc_state.latched_port_times, 0)::32-little>>
     )
-    |> put_binary(
+    |> Memory.replace(
       offset(Registers.dc_recv_time(1)),
       <<Map.fetch!(dc_state.latched_port_times, 1)::32-little>>
     )
-    |> put_binary(
+    |> Memory.replace(
       offset(Registers.dc_recv_time(2)),
       <<Map.fetch!(dc_state.latched_port_times, 2)::32-little>>
     )
-    |> put_binary(
+    |> Memory.replace(
       offset(Registers.dc_recv_time(3)),
       <<Map.fetch!(dc_state.latched_port_times, 3)::32-little>>
     )
-    |> put_binary(
+    |> Memory.replace(
       offset(Registers.dc_recv_time_ecat()),
       <<dc_state.latched_ecat_time_ns::64-little>>
     )
-    |> put_binary(offset(Registers.dc_system_time()), <<system_time_ns::64-little>>)
-    |> put_binary(
+    |> Memory.replace(offset(Registers.dc_system_time()), <<system_time_ns::64-little>>)
+    |> Memory.replace(
       offset(Registers.dc_system_time_offset()),
       <<dc_state.system_time_offset_ns::64-signed-little>>
     )
-    |> put_binary(
+    |> Memory.replace(
       offset(Registers.dc_system_time_delay()),
       <<dc_state.system_time_delay_ns::32-little>>
     )
-    |> put_binary(offset(Registers.dc_system_time_diff()), <<dc_state.sync_diff_ns::32-little>>)
-    |> put_binary(
+    |> Memory.replace(
+      offset(Registers.dc_system_time_diff()),
+      <<dc_state.sync_diff_ns::32-little>>
+    )
+    |> Memory.replace(
       offset(Registers.dc_speed_counter_start()),
       <<dc_state.speed_counter_start::16-little>>
     )
@@ -159,14 +163,7 @@ defmodule EtherCAT.Simulator.Slave.Runtime.DC do
   end
 
   defp write_memory(%{memory: memory} = slave, offset, data) do
-    %{slave | memory: put_binary(memory, offset, data)}
-  end
-
-  defp put_binary(binary, offset, value) do
-    prefix = binary_part(binary, 0, offset)
-    suffix_offset = offset + byte_size(value)
-    suffix = binary_part(binary, suffix_offset, byte_size(binary) - suffix_offset)
-    prefix <> value <> suffix
+    %{slave | memory: Memory.replace(memory, offset, data)}
   end
 
   defp offset({offset, _length}), do: offset

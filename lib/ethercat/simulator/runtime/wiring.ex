@@ -1,6 +1,7 @@
 defmodule EtherCAT.Simulator.Runtime.Wiring do
   @moduledoc false
 
+  alias EtherCAT.Simulator.Runtime.Slaves
   alias EtherCAT.Simulator.Slave.Runtime.Device
 
   @type signal_ref :: {atom(), atom()}
@@ -62,11 +63,11 @@ defmodule EtherCAT.Simulator.Runtime.Wiring do
   end
 
   defp ensure_signal_exists(slaves, slave_name, signal_name) do
-    case Enum.find(slaves, &(&1.name == slave_name)) do
-      nil ->
+    case Slaves.fetch(slaves, slave_name) do
+      {:error, :not_found} ->
         {:error, :not_found}
 
-      slave ->
+      {:ok, slave} ->
         case Device.signal_definition(slave, signal_name) do
           {:ok, _definition} -> :ok
           :error -> {:error, :unknown_signal}
@@ -77,7 +78,7 @@ defmodule EtherCAT.Simulator.Runtime.Wiring do
   defp sync_connection(slaves, {source_slave, source_signal}, {target_slave, target_signal}) do
     case get_signal_value(slaves, source_slave, source_signal) do
       {:ok, value} ->
-        case update_named_slave(slaves, target_slave, &Device.set_value(&1, target_signal, value)) do
+        case Slaves.update(slaves, target_slave, &Device.set_value(&1, target_signal, value)) do
           {:ok, updated_slaves} -> updated_slaves
           {:error, _reason} -> slaves
         end
@@ -135,7 +136,7 @@ defmodule EtherCAT.Simulator.Runtime.Wiring do
         {target_slave, target_signal} = connection.target
         before_target = get_signal_value(slaves_acc, target_slave, target_signal)
 
-        case update_named_slave(
+        case Slaves.update(
                slaves_acc,
                target_slave,
                &Device.set_value(&1, target_signal, value)
@@ -152,38 +153,9 @@ defmodule EtherCAT.Simulator.Runtime.Wiring do
   end
 
   defp get_signal_value(slaves, slave_name, signal_name) do
-    case Enum.find(slaves, &(&1.name == slave_name)) do
-      nil -> {:error, :not_found}
-      slave -> Device.get_value(slave, signal_name)
-    end
-  end
-
-  defp update_named_slave(slaves, slave_name, fun) do
-    {entries, matched?} =
-      Enum.map_reduce(slaves, false, fn slave, matched? ->
-        cond do
-          slave.name == slave_name ->
-            case fun.(slave) do
-              {:ok, updated_slave} -> {{:ok, updated_slave}, true}
-              {:error, reason} -> {{:error, reason}, true}
-              updated_slave -> {{:ok, updated_slave}, true}
-            end
-
-          true ->
-            {{:ok, slave}, matched?}
-        end
-      end)
-
-    if matched? do
-      case Enum.find(entries, &match?({:error, _}, &1)) do
-        {:error, reason} ->
-          {:error, reason}
-
-        nil ->
-          {:ok, Enum.map(entries, fn {:ok, slave} -> slave end)}
-      end
-    else
-      {:error, :not_found}
+    case Slaves.fetch(slaves, slave_name) do
+      {:ok, slave} -> Device.get_value(slave, signal_name)
+      {:error, :not_found} -> {:error, :not_found}
     end
   end
 end

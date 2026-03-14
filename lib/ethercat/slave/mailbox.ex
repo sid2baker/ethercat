@@ -7,30 +7,12 @@ defmodule EtherCAT.Slave.Mailbox do
   @spec run_preop_config(%Slave{}) :: {:ok, %Slave{}} | {:error, term()}
   def run_preop_config(%{driver: nil} = data), do: {:ok, data}
 
-  def run_preop_config(data) do
-    data
-    |> mailbox_steps()
-    |> Enum.reduce_while({:ok, data}, fn step, {:ok, current_data} ->
-      case run_step(current_data, step) do
-        {:ok, next_data} -> {:cont, {:ok, next_data}}
-        {:error, _} = err -> {:halt, err}
-      end
-    end)
-  end
+  def run_preop_config(data), do: run_steps(data, mailbox_steps(data))
 
   @spec run_sync_config(%Slave{}) :: {:ok, %Slave{}} | {:error, term()}
   def run_sync_config(%{driver: nil} = data), do: {:ok, data}
 
-  def run_sync_config(data) do
-    data
-    |> sync_mailbox_steps()
-    |> Enum.reduce_while({:ok, data}, fn step, {:ok, current_data} ->
-      case run_step(current_data, step) do
-        {:ok, next_data} -> {:cont, {:ok, next_data}}
-        {:error, _} = err -> {:halt, err}
-      end
-    end)
-  end
+  def run_sync_config(data), do: run_steps(data, sync_mailbox_steps(data))
 
   @spec download_sdo(%Slave{}, non_neg_integer(), non_neg_integer(), binary()) ::
           {:ok, %Slave{}} | {:error, term()}
@@ -96,6 +78,15 @@ defmodule EtherCAT.Slave.Mailbox do
     else
       []
     end
+  end
+
+  defp run_steps(data, steps) do
+    Enum.reduce_while(steps, {:ok, data}, fn step, {:ok, current_data} ->
+      case run_step(current_data, step) do
+        {:ok, next_data} -> {:cont, {:ok, next_data}}
+        {:error, _} = err -> {:halt, err}
+      end
+    end)
   end
 
   defp run_step(

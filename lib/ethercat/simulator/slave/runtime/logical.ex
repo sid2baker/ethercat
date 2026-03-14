@@ -3,6 +3,7 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Logical do
 
   alias EtherCAT.Slave.ESC.Registers
   alias EtherCAT.Simulator.Slave.Runtime.Device
+  alias EtherCAT.Simulator.Slave.Runtime.Memory
   alias EtherCAT.Simulator.Slave.Runtime.ProcessImage
 
   @lrd 10
@@ -163,7 +164,7 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Logical do
     bits
     |> Enum.with_index(bit_offset)
     |> Enum.reduce(binary, fn {bit, current_offset}, current_binary ->
-      write_lsb_bit(current_binary, current_offset, bit)
+      Memory.write_lsb_bit(current_binary, current_offset, bit)
     end)
   end
 
@@ -185,34 +186,7 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Logical do
   end
 
   defp extract_bits(binary, bit_offset, bit_size) do
-    Enum.map(bit_offset..(bit_offset + bit_size - 1), &read_lsb_bit(binary, &1))
-  end
-
-  defp read_lsb_bit(binary, bit_offset) do
-    byte_offset = div(bit_offset, 8)
-    bit_in_byte = rem(bit_offset, 8)
-    <<byte::8>> = binary_part(binary, byte_offset, 1)
-
-    <<_prefix::bitstring-size(7 - bit_in_byte), bit::1, _suffix::bitstring-size(bit_in_byte)>> =
-      <<byte::8>>
-
-    bit
-  end
-
-  defp write_lsb_bit(binary, bit_offset, bit) when bit in [0, 1] do
-    byte_offset = div(bit_offset, 8)
-    bit_in_byte = rem(bit_offset, 8)
-    <<byte::8>> = binary_part(binary, byte_offset, 1)
-
-    <<prefix::bitstring-size(7 - bit_in_byte), _current::1, suffix::bitstring-size(bit_in_byte)>> =
-      <<byte::8>>
-
-    <<updated_byte::8>> = <<prefix::bitstring, bit::1, suffix::bitstring>>
-
-    prefix_binary = binary_part(binary, 0, byte_offset)
-    suffix_offset = byte_offset + 1
-    suffix_binary = binary_part(binary, suffix_offset, byte_size(binary) - suffix_offset)
-    prefix_binary <> <<updated_byte::8>> <> suffix_binary
+    Enum.map(bit_offset..(bit_offset + bit_size - 1), &Memory.read_lsb_bit(binary, &1))
   end
 
   defp read_u8(memory, offset) do

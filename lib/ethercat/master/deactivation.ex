@@ -76,18 +76,14 @@ defmodule EtherCAT.Master.Deactivation do
 
   defp stop_dc_runtime(%{dc_ref: ref} = data) when is_reference(ref) do
     Process.demonitor(ref, [:flush])
-
-    case Process.whereis(DC) do
-      pid when is_pid(pid) ->
-        _ = DynamicSupervisor.terminate_child(EtherCAT.SessionSupervisor, pid)
-        %{data | dc_ref: nil}
-
-      nil ->
-        %{data | dc_ref: nil}
-    end
+    clear_dc_runtime_ref(data)
   end
 
   defp stop_dc_runtime(data) do
+    clear_dc_runtime_ref(data)
+  end
+
+  defp clear_dc_runtime_ref(data) do
     case Process.whereis(DC) do
       pid when is_pid(pid) ->
         _ = DynamicSupervisor.terminate_child(EtherCAT.SessionSupervisor, pid)

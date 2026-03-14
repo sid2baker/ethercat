@@ -2,6 +2,7 @@ defmodule EtherCAT.Simulator.Slave.Runtime.CoE do
   @moduledoc false
 
   alias EtherCAT.Simulator.Slave.Runtime.Mailbox
+  alias EtherCAT.Simulator.Slave.Runtime.Memory
 
   @spec handle_write(map(), non_neg_integer(), binary(), non_neg_integer()) :: map()
   def handle_write(
@@ -51,13 +52,6 @@ defmodule EtherCAT.Simulator.Slave.Runtime.CoE do
   end
 
   defp write_memory(%{memory: memory} = slave, offset, data) do
-    %{slave | memory: replace_binary(memory, offset, data)}
-  end
-
-  defp replace_binary(binary, offset, value) do
-    prefix = binary_part(binary, 0, offset)
-    suffix_offset = offset + byte_size(value)
-    suffix = binary_part(binary, suffix_offset, byte_size(binary) - suffix_offset)
-    prefix <> value <> suffix
+    %{slave | memory: Memory.replace(memory, offset, data)}
   end
 end

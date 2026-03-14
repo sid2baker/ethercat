@@ -443,37 +443,11 @@ defmodule EtherCAT.Master do
   end
 
   def handle_event({:call, from}, :activate, :preop_ready, data) do
-    case Activation.activate_network(data) do
-      {:ok, next_state, active_data} ->
-        maybe_reply_await_operational(active_data.await_operational_callers, next_state)
-
-        {:next_state, next_state, %{active_data | await_operational_callers: []},
-         [{:reply, from, :ok}]}
-
-      {:activation_blocked, blocked_data} ->
-        {:next_state, :activation_blocked, blocked_data, [{:reply, from, :ok}]}
-
-      {:error, reason, _failed_data} ->
-        {:keep_state_and_data, [{:reply, from, {:error, reason}}]}
-    end
+    handle_activate_network(from, data)
   end
 
   def handle_event({:call, from}, :activate, :deactivated, data) do
-    activating = %{data | desired_runtime_target: :op}
-
-    case Activation.activate_network(activating) do
-      {:ok, next_state, active_data} ->
-        maybe_reply_await_operational(active_data.await_operational_callers, next_state)
-
-        {:next_state, next_state, %{active_data | await_operational_callers: []},
-         [{:reply, from, :ok}]}
-
-      {:activation_blocked, blocked_data} ->
-        {:next_state, :activation_blocked, blocked_data, [{:reply, from, :ok}]}
-
-      {:error, reason, _failed_data} ->
-        {:keep_state_and_data, [{:reply, from, {:error, reason}}]}
-    end
+    handle_activate_network(from, %{data | desired_runtime_target: :op})
   end
 
   def handle_event({:call, from}, {:deactivate, :preop}, :preop_ready, data) do
@@ -1074,6 +1048,22 @@ defmodule EtherCAT.Master do
 
   defp stop_session(data) do
     Session.stop(data)
+  end
+
+  defp handle_activate_network(from, data) do
+    case Activation.activate_network(data) do
+      {:ok, next_state, active_data} ->
+        maybe_reply_await_operational(active_data.await_operational_callers, next_state)
+
+        {:next_state, next_state, %{active_data | await_operational_callers: []},
+         [{:reply, from, :ok}]}
+
+      {:activation_blocked, blocked_data} ->
+        {:next_state, :activation_blocked, blocked_data, [{:reply, from, :ok}]}
+
+      {:error, reason, _failed_data} ->
+        {:keep_state_and_data, [{:reply, from, {:error, reason}}]}
+    end
   end
 
   defp maybe_reply_await_operational(callers, :operational) do

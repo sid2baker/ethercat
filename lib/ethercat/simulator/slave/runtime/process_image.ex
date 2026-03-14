@@ -2,6 +2,7 @@ defmodule EtherCAT.Simulator.Slave.Runtime.ProcessImage do
   @moduledoc false
 
   alias EtherCAT.Simulator.Slave.Behaviour
+  alias EtherCAT.Simulator.Slave.Runtime.Memory
   alias EtherCAT.Simulator.Slave.Signals
   alias EtherCAT.Simulator.Slave.Value
 
@@ -70,7 +71,7 @@ defmodule EtherCAT.Simulator.Slave.Runtime.ProcessImage do
   @spec read_bits(map(), non_neg_integer(), pos_integer()) :: [0 | 1]
   def read_bits(%{memory: memory}, bit_offset, bit_size)
       when is_integer(bit_offset) and bit_offset >= 0 and is_integer(bit_size) and bit_size > 0 do
-    Enum.map(bit_offset..(bit_offset + bit_size - 1), &read_lsb_bit(memory, &1))
+    Enum.map(bit_offset..(bit_offset + bit_size - 1), &Memory.read_lsb_bit(memory, &1))
   end
 
   @spec write_bits(map(), non_neg_integer(), [0 | 1]) :: map()
@@ -162,21 +163,7 @@ defmodule EtherCAT.Simulator.Slave.Runtime.ProcessImage do
 
   defp apply_behavior_inputs(slave, values) do
     Enum.reduce(values, slave, fn {signal_name, value}, current_slave ->
-      case Signals.fetch(current_slave.signals, signal_name) do
-        {:ok, %{direction: :input} = definition} ->
-          case Value.encode_binary(definition, value) do
-            {:ok, binary} ->
-              image = signal_image(current_slave, :input)
-              updated = replace_value(image, definition, binary)
-              write_memory(current_slave, current_slave.input_phys, updated)
-
-            {:error, _} ->
-              current_slave
-          end
-
-        _ ->
-          current_slave
-      end
+      apply_input_value(current_slave, signal_name, value)
     end)
   end
 
@@ -199,21 +186,7 @@ defmodule EtherCAT.Simulator.Slave.Runtime.ProcessImage do
 
   defp apply_input_overrides(slave) do
     Enum.reduce(slave.input_overrides, slave, fn {signal_name, value}, current_slave ->
-      case Signals.fetch(current_slave.signals, signal_name) do
-        {:ok, %{direction: :input} = definition} ->
-          case Value.encode_binary(definition, value) do
-            {:ok, binary} ->
-              image = signal_image(current_slave, :input)
-              updated = replace_value(image, definition, binary)
-              write_memory(current_slave, current_slave.input_phys, updated)
-
-            {:error, _} ->
-              current_slave
-          end
-
-        :error ->
-          current_slave
-      end
+      apply_input_value(current_slave, signal_name, value)
     end)
   end
 
@@ -239,7 +212,7 @@ defmodule EtherCAT.Simulator.Slave.Runtime.ProcessImage do
 
   defp replace_value(image, %{bit_offset: bit_offset, bit_size: bit_size}, binary)
        when rem(bit_offset, 8) == 0 and rem(bit_size, 8) == 0 do
-    replace_binary(image, div(bit_offset, 8), binary)
+    Memory.replace(image, div(bit_offset, 8), binary)
   end
 
   defp replace_value(image, %{bit_offset: bit_offset, bit_size: bit_size} = definition, binary) do
@@ -256,7 +229,7 @@ defmodule EtherCAT.Simulator.Slave.Runtime.ProcessImage do
   end
 
   defp write_memory(%{memory: memory} = slave, offset, data) do
-    %{slave | memory: replace_binary(memory, offset, data)}
+    %{slave | memory: Memory.replace(memory, offset, data)}
   end
 
   defp write_memory_bits(%{memory: memory} = slave, bit_offset, bits) do
@@ -264,39 +237,27 @@ defmodule EtherCAT.Simulator.Slave.Runtime.ProcessImage do
       bits
       |> Enum.with_index(bit_offset)
       |> Enum.reduce(memory, fn {bit, current_offset}, current_memory ->
-        write_lsb_bit(current_memory, current_offset, bit)
+        Memory.write_lsb_bit(current_memory, current_offset, bit)
       end)
 
     %{slave | memory: updated_memory}
   end
 
-  defp replace_binary(binary, offset, value) do
-    prefix = binary_part(binary, 0, offset)
-    suffix_offset = offset + byte_size(value)
-    suffix = binary_part(binary, suffix_offset, byte_size(binary) - suffix_offset)
-    prefix <> value <> suffix
-  end
+  defp apply_input_value(current_slave, signal_name, value) do
+    case Signals.fetch(current_slave.signals, signal_name) do
+      {:ok, %{direction: :input} = definition} ->
+        case Value.encode_binary(definition, value) do
+          {:ok, binary} ->
+            image = signal_image(current_slave, :input)
+            updated = replace_value(image, definition, binary)
+            write_memory(current_slave, current_slave.input_phys, updated)
 
-  defp read_lsb_bit(binary, bit_offset) do
-    byte_offset = div(bit_offset, 8)
-    bit_in_byte = rem(bit_offset, 8)
-    <<byte::8>> = binary_part(binary, byte_offset, 1)
+          {:error, _} ->
+            current_slave
+        end
 
-    <<_prefix::bitstring-size(7 - bit_in_byte), bit::1, _suffix::bitstring-size(bit_in_byte)>> =
-      <<byte::8>>
-
-    bit
-  end
-
-  defp write_lsb_bit(binary, bit_offset, bit) when bit in [0, 1] do
-    byte_offset = div(bit_offset, 8)
-    bit_in_byte = rem(bit_offset, 8)
-    <<byte::8>> = binary_part(binary, byte_offset, 1)
-
-    <<prefix::bitstring-size(7 - bit_in_byte), _current::1, suffix::bitstring-size(bit_in_byte)>> =
-      <<byte::8>>
-
-    <<updated_byte::8>> = <<prefix::bitstring, bit::1, suffix::bitstring>>
-    replace_binary(binary, byte_offset, <<updated_byte::8>>)
+      :error ->
+        current_slave
+    end
   end
 end

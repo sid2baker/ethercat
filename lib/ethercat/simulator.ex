@@ -9,6 +9,7 @@ defmodule EtherCAT.Simulator do
   alias EtherCAT.Simulator.Runtime.FaultEngine
   alias EtherCAT.Simulator.Runtime.Faults
   alias EtherCAT.Simulator.Runtime.Router
+  alias EtherCAT.Simulator.Runtime.Slaves
   alias EtherCAT.Simulator.Runtime.Snapshot
   alias EtherCAT.Simulator.Runtime.Topology
   alias EtherCAT.Simulator.State
@@ -366,7 +367,7 @@ defmodule EtherCAT.Simulator do
 
   def handle_call({:signals, slave_name}, _from, %{slaves: slaves} = state) do
     reply =
-      case fetch_named_slave(slaves, slave_name) do
+      case Slaves.fetch(slaves, slave_name) do
         {:ok, slave} -> {:ok, slave |> Device.signals() |> Map.keys()}
         {:error, :not_found} -> {:error, :not_found}
       end
@@ -384,7 +385,7 @@ defmodule EtherCAT.Simulator do
 
   def handle_call({:signal_definitions, slave_name}, _from, %{slaves: slaves} = state) do
     reply =
-      case fetch_named_slave(slaves, slave_name) do
+      case Slaves.fetch(slaves, slave_name) do
         {:ok, slave} -> {:ok, Device.signals(slave)}
         {:error, :not_found} -> {:error, :not_found}
       end
@@ -394,7 +395,7 @@ defmodule EtherCAT.Simulator do
 
   def handle_call({:get_value, slave_name, signal_name}, _from, %{slaves: slaves} = state) do
     reply =
-      case fetch_named_slave(slaves, slave_name) do
+      case Slaves.fetch(slaves, slave_name) do
         {:ok, slave} -> Device.get_value(slave, signal_name)
         {:error, :not_found} -> {:error, :not_found}
       end
@@ -405,7 +406,7 @@ defmodule EtherCAT.Simulator do
   def handle_call({:set_value, slave_name, signal_name, value}, _from, %{slaves: slaves} = state) do
     before_signals = Wiring.capture_signal_values(slaves)
 
-    case update_named_slave(slaves, slave_name, &Device.set_value(&1, signal_name, value)) do
+    case Slaves.update(slaves, slave_name, &Device.set_value(&1, signal_name, value)) do
       {:ok, updated_slaves} ->
         state = %{state | slaves: updated_slaves} |> finalize_signal_changes(before_signals)
 
@@ -488,7 +489,7 @@ defmodule EtherCAT.Simulator do
 
   def handle_call({:output_image, slave_name}, _from, %{slaves: slaves} = state) do
     reply =
-      case fetch_named_slave(slaves, slave_name) do
+      case Slaves.fetch(slaves, slave_name) do
         {:ok, slave} -> {:ok, Device.output_image(slave)}
         {:error, :not_found} -> {:error, :not_found}
       end
@@ -503,42 +504,6 @@ defmodule EtherCAT.Simulator do
 
   def handle_info({:apply_scheduled_fault, id, _fault}, state) do
     {:noreply, FaultEngine.handle_timer(state, id, fault_callbacks())}
-  end
-
-  defp update_named_slave(slaves, slave_name, fun) do
-    {entries, matched?} =
-      Enum.map_reduce(slaves, false, fn slave, matched? ->
-        cond do
-          slave.name == slave_name ->
-            case fun.(slave) do
-              {:ok, updated_slave} -> {{:ok, updated_slave}, true}
-              {:error, reason} -> {{:error, reason}, true}
-              updated_slave -> {{:ok, updated_slave}, true}
-            end
-
-          true ->
-            {{:ok, slave}, matched?}
-        end
-      end)
-
-    if matched? do
-      case Enum.find(entries, &match?({:error, _}, &1)) do
-        {:error, reason} ->
-          {:error, reason}
-
-        nil ->
-          {:ok, Enum.map(entries, fn {:ok, slave} -> slave end)}
-      end
-    else
-      {:error, :not_found}
-    end
-  end
-
-  defp fetch_named_slave(slaves, slave_name) do
-    case Enum.find(slaves, &(&1.name == slave_name)) do
-      nil -> {:error, :not_found}
-      slave -> {:ok, slave}
-    end
   end
 
   defp finalize_signal_changes(
@@ -637,7 +602,7 @@ defmodule EtherCAT.Simulator do
   defp apply_slave_update(state, slave_name, fun) do
     before_signals = Wiring.capture_signal_values(state.slaves)
 
-    case update_named_slave(state.slaves, slave_name, fun) do
+    case Slaves.update(state.slaves, slave_name, fun) do
       {:ok, slaves} ->
         {:ok, %{state | slaves: slaves} |> finalize_signal_changes(before_signals)}
 

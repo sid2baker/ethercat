@@ -53,6 +53,7 @@ defmodule EtherCAT.Slave.Mailbox.CoE do
   alias EtherCAT.Bus.Transaction
   alias EtherCAT.Slave.ESC.Registers
   alias EtherCAT.Slave.Mailbox.CoE.{Download, Upload}
+  alias EtherCAT.Utils
 
   @mailbox_type_coe 0x03
   @mailbox_type_error 0x00
@@ -451,11 +452,11 @@ defmodule EtherCAT.Slave.Mailbox.CoE do
   defp pad_mailbox_frame(_frame, _recv_size), do: {:error, :mailbox_too_small}
 
   defp write_mailbox(bus, station, recv_offset, frame) do
-    case Bus.transaction(bus, Transaction.fpwr(station, {recv_offset, frame})) do
-      {:ok, [%{wkc: wkc}]} when wkc > 0 -> :ok
-      {:ok, [%{wkc: 0}]} -> {:error, :no_response}
-      {:error, _} = err -> err
-    end
+    Utils.expect_positive_wkc(
+      Bus.transaction(bus, Transaction.fpwr(station, {recv_offset, frame})),
+      :no_response,
+      :unexpected_reply
+    )
   end
 
   defp wait_response(bus, station), do: wait_response(bus, station, @poll_limit)

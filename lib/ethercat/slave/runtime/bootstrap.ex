@@ -7,6 +7,7 @@ defmodule EtherCAT.Slave.Runtime.Bootstrap do
   alias EtherCAT.Bus.Transaction
   alias EtherCAT.Slave.ESC.Registers
   alias EtherCAT.Slave.ESC.SII
+  alias EtherCAT.Utils
 
   # ETG.1000 §6.7 SyncManager control byte: mailbox/handshake + PDI IRQ.
   # `0x26` = ECAT writes (master->slave mailbox receive), `0x22` = ECAT reads
@@ -125,7 +126,7 @@ defmodule EtherCAT.Slave.Runtime.Bootstrap do
         {:ok, %{fmmu_count: fmmu_count, sm_count: sm_count}}
 
       {:ok, replies} ->
-        case ensure_expected_wkcs(replies, 1, :esc_info_read_failed) do
+        case Utils.ensure_expected_wkcs(replies, 1, :esc_info_read_failed) do
           :ok -> {:error, {:esc_info_read_failed, :unexpected_reply}}
           {:error, reason} -> {:error, reason}
         end
@@ -171,7 +172,7 @@ defmodule EtherCAT.Slave.Runtime.Bootstrap do
            |> Transaction.fpwr(data.station, Registers.sm_activate(1, 1))
          ) do
       {:ok, replies} ->
-        case ensure_expected_wkcs(replies, 1, :mailbox_sync_manager_setup_failed) do
+        case Utils.ensure_expected_wkcs(replies, 1, :mailbox_sync_manager_setup_failed) do
           :ok -> {:ok, data}
           {:error, reason} -> {:error, reason, data}
         end
@@ -180,15 +181,4 @@ defmodule EtherCAT.Slave.Runtime.Bootstrap do
         {:error, {:mailbox_sync_manager_setup_failed, reason}, data}
     end
   end
-
-  defp ensure_expected_wkcs(replies, expected_wkc, error_tag)
-       when is_list(replies) and replies != [] and is_integer(expected_wkc) and expected_wkc >= 0 do
-    if Enum.all?(replies, &(&1.wkc == expected_wkc)) do
-      :ok
-    else
-      {:error, error_tag}
-    end
-  end
-
-  defp ensure_expected_wkcs(_replies, _expected_wkc, error_tag), do: {:error, error_tag}
 end

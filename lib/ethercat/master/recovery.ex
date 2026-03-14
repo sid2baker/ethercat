@@ -152,15 +152,7 @@ defmodule EtherCAT.Master.Recovery do
 
     if target == :preop do
       recovered_data = clear_tracked_slave_fault(data, name)
-
-      if state == :recovering do
-        case maybe_resume_running(recovered_data) do
-          {:ok, next_state, healed_data} -> {:ok, next_state, healed_data}
-          {:recovering, still_recovering} -> {:keep, still_recovering}
-        end
-      else
-        {:keep, recovered_data}
-      end
+      maybe_resume_recovered_state(state, recovered_data)
     else
       Logger.info("[Master] slave #{name} reconnected and in :preop — requesting :#{target}")
 
@@ -172,14 +164,7 @@ defmodule EtherCAT.Master.Recovery do
             |> maybe_restart_stopped_domains()
             |> maybe_restart_dc_runtime()
 
-          if state == :recovering do
-            case maybe_resume_running(recovered_data) do
-              {:ok, next_state, healed_data} -> {:ok, next_state, healed_data}
-              {:recovering, still_recovering} -> {:keep, still_recovering}
-            end
-          else
-            {:keep, recovered_data}
-          end
+          maybe_resume_recovered_state(state, recovered_data)
 
         {:error, reason} ->
           Logger.warning(
@@ -282,6 +267,15 @@ defmodule EtherCAT.Master.Recovery do
       {:recovering, data}
     end
   end
+
+  defp maybe_resume_recovered_state(:recovering, recovered_data) do
+    case maybe_resume_running(recovered_data) do
+      {:ok, next_state, healed_data} -> {:ok, next_state, healed_data}
+      {:recovering, still_recovering} -> {:keep, still_recovering}
+    end
+  end
+
+  defp maybe_resume_recovered_state(_state, recovered_data), do: {:keep, recovered_data}
 
   @spec maybe_resume_from_activation_blocked(%EtherCAT.Master{}) ::
           {:ok, :deactivated | :operational | :preop_ready, %EtherCAT.Master{}}

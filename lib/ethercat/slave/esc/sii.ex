@@ -25,6 +25,7 @@ defmodule EtherCAT.Slave.ESC.SII do
   alias EtherCAT.Bus
   alias EtherCAT.Bus.Transaction
   alias EtherCAT.Slave.ESC.Registers
+  alias EtherCAT.Utils
 
   # -- Command values (written to bits [10:8] of control register) ------------
 
@@ -480,10 +481,10 @@ defmodule EtherCAT.Slave.ESC.SII do
   end
 
   defp write_reg(bus, station, {addr, _size}, data) do
-    case Bus.transaction(bus, Transaction.fpwr(station, {addr, data})) do
-      {:ok, [%{wkc: wkc}]} when wkc > 0 -> :ok
-      {:ok, [%{wkc: 0}]} -> {:error, :no_response}
-      {:error, _} = err -> err
-    end
+    Utils.expect_positive_wkc(
+      Bus.transaction(bus, Transaction.fpwr(station, {addr, data})),
+      :no_response,
+      :unexpected_reply
+    )
   end
 end

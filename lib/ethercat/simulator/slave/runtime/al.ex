@@ -4,6 +4,7 @@ defmodule EtherCAT.Simulator.Slave.Runtime.AL do
   alias EtherCAT.Slave.ESC.Registers
   alias EtherCAT.Simulator.Slave.Behaviour
   alias EtherCAT.Simulator.Slave.Runtime.Logical
+  alias EtherCAT.Simulator.Slave.Runtime.Memory
 
   @alerr_none 0x0000
   @alerr_invalid_state_change 0x0011
@@ -183,33 +184,12 @@ defmodule EtherCAT.Simulator.Slave.Runtime.AL do
     |> Map.put(:state, state)
     |> Map.put(:al_error?, error?)
     |> Map.put(:al_status_code, status_code)
-    |> write_memory(@al_status, encode_status(state, error?))
+    |> write_memory(@al_status, Memory.encode_al_status(state, error?))
     |> write_memory(@al_status_code, <<status_code::16-little>>)
   end
 
-  defp encode_status(al_state, error?) do
-    state_code =
-      case al_state do
-        :init -> 0x01
-        :preop -> 0x02
-        :bootstrap -> 0x03
-        :safeop -> 0x04
-        :op -> 0x08
-      end
-
-    error_bit = if error?, do: 1, else: 0
-    <<0::3, error_bit::1, state_code::4, 0::8>>
-  end
-
   defp write_memory(%{memory: memory} = slave, offset, data) do
-    %{slave | memory: replace_binary(memory, offset, data)}
-  end
-
-  defp replace_binary(binary, offset, value) do
-    prefix = binary_part(binary, 0, offset)
-    suffix_offset = offset + byte_size(value)
-    suffix = binary_part(binary, suffix_offset, byte_size(binary) - suffix_offset)
-    prefix <> value <> suffix
+    %{slave | memory: Memory.replace(memory, offset, data)}
   end
 
   defp offset({offset, _length}), do: offset

@@ -3,6 +3,7 @@ defmodule EtherCAT.Simulator.Slave.Runtime.ESCImage do
 
   alias EtherCAT.Slave.ESC.Registers
   alias EtherCAT.Simulator.Slave.Definition
+  alias EtherCAT.Simulator.Slave.Runtime.Memory
 
   @memory_size 0x1400
   @category_start 0x40
@@ -18,7 +19,7 @@ defmodule EtherCAT.Simulator.Slave.Runtime.ESCImage do
   def maybe_load_eeprom_data(memory, eeprom, 0x01) when is_binary(memory) and is_binary(eeprom) do
     {eeprom_address, _} = Registers.eeprom_address()
     <<word_address::32-little>> = binary_part(memory, eeprom_address, 4)
-    put_binary(memory, Registers.eeprom_data(), chunk(eeprom, word_address, 8))
+    Memory.replace(memory, Registers.eeprom_data(), chunk(eeprom, word_address, 8))
   end
 
   def maybe_load_eeprom_data(memory, _eeprom, _cmd) when is_binary(memory), do: memory
@@ -41,22 +42,22 @@ defmodule EtherCAT.Simulator.Slave.Runtime.ESCImage do
     {eeprom_address, _} = Registers.eeprom_address()
 
     :binary.copy(<<0>>, @memory_size)
-    |> put_binary(esc_type, <<definition.esc_type::8>>)
-    |> put_binary(fmmu_count, <<definition.fmmu_count::8>>)
-    |> put_binary(sm_count, <<definition.sm_count::8>>)
-    |> put_binary(station_address, <<0::16-little>>)
-    |> put_binary(dl_status, <<0::16-little>>)
-    |> put_binary(al_status, encode_al_status(:init, false))
-    |> put_binary(al_status_code, <<0::16-little>>)
-    |> put_binary(ecat_event_mask, <<0::16-little>>)
-    |> put_binary(rx_error_counter, <<0::64>>)
-    |> put_binary(wdt_divider, <<0::16-little>>)
-    |> put_binary(wdt_sm, <<0::16-little>>)
-    |> put_binary(wdt_status, <<0::16-little>>)
-    |> put_binary(eeprom_ecat_access, <<0x00>>)
-    |> put_binary(eeprom_control, <<1, 0>>)
-    |> put_binary(eeprom_address, <<0::32-little>>)
-    |> put_binary(Registers.eeprom_data(), chunk(eeprom, 0, 8))
+    |> Memory.replace(esc_type, <<definition.esc_type::8>>)
+    |> Memory.replace(fmmu_count, <<definition.fmmu_count::8>>)
+    |> Memory.replace(sm_count, <<definition.sm_count::8>>)
+    |> Memory.replace(station_address, <<0::16-little>>)
+    |> Memory.replace(dl_status, <<0::16-little>>)
+    |> Memory.replace(al_status, Memory.encode_al_status(:init, false))
+    |> Memory.replace(al_status_code, <<0::16-little>>)
+    |> Memory.replace(ecat_event_mask, <<0::16-little>>)
+    |> Memory.replace(rx_error_counter, <<0::64>>)
+    |> Memory.replace(wdt_divider, <<0::16-little>>)
+    |> Memory.replace(wdt_sm, <<0::16-little>>)
+    |> Memory.replace(wdt_status, <<0::16-little>>)
+    |> Memory.replace(eeprom_ecat_access, <<0x00>>)
+    |> Memory.replace(eeprom_control, <<1, 0>>)
+    |> Memory.replace(eeprom_address, <<0::32-little>>)
+    |> Memory.replace(Registers.eeprom_data(), chunk(eeprom, 0, 8))
     |> maybe_put_dc_registers(definition.dc_capable?)
   end
 
@@ -73,15 +74,15 @@ defmodule EtherCAT.Simulator.Slave.Runtime.ESCImage do
 
     header =
       :binary.copy(<<0>>, @category_start * 2)
-      |> put_binary(
+      |> Memory.replace(
         0x08 * 2,
         <<definition.vendor_id::32-little, definition.product_code::32-little>>
       )
-      |> put_binary(
+      |> Memory.replace(
         0x0C * 2,
         <<definition.revision::32-little, definition.serial_number::32-little>>
       )
-      |> put_binary(
+      |> Memory.replace(
         0x18 * 2,
         <<definition.mailbox_config.recv_offset::16-little,
           definition.mailbox_config.recv_size::16-little,
@@ -99,27 +100,27 @@ defmodule EtherCAT.Simulator.Slave.Runtime.ESCImage do
 
   defp maybe_put_dc_registers(memory, true) do
     memory
-    |> put_binary(0x0900, <<10::32-little, 20::32-little, 30::32-little, 40::32-little>>)
-    |> put_binary(0x0910, <<1_000_000::64-little>>)
-    |> put_binary(0x0918, <<1_000_100::64-little>>)
-    |> put_binary(0x0920, <<0::64-little>>)
-    |> put_binary(0x0928, <<0::32-little>>)
-    |> put_binary(0x092C, <<0::32-little>>)
-    |> put_binary(0x0930, <<0::16-little>>)
-    |> put_binary(0x0934, <<0::16-little>>)
-    |> put_binary(0x0980, <<0::16-little>>)
-    |> put_binary(0x0981, <<0::8>>)
-    |> put_binary(0x0982, <<0::16-little>>)
-    |> put_binary(0x0990, <<0::64-little>>)
-    |> put_binary(0x09A0, <<0::32-little>>)
-    |> put_binary(0x09A4, <<0::32-little>>)
-    |> put_binary(0x09A8, <<0::8>>)
-    |> put_binary(0x09A9, <<0::8>>)
-    |> put_binary(0x09AE, <<0::16-little>>)
-    |> put_binary(0x09B0, <<0::64-little>>)
-    |> put_binary(0x09B8, <<0::64-little>>)
-    |> put_binary(0x09C0, <<0::64-little>>)
-    |> put_binary(0x09C8, <<0::64-little>>)
+    |> Memory.replace(0x0900, <<10::32-little, 20::32-little, 30::32-little, 40::32-little>>)
+    |> Memory.replace(0x0910, <<1_000_000::64-little>>)
+    |> Memory.replace(0x0918, <<1_000_100::64-little>>)
+    |> Memory.replace(0x0920, <<0::64-little>>)
+    |> Memory.replace(0x0928, <<0::32-little>>)
+    |> Memory.replace(0x092C, <<0::32-little>>)
+    |> Memory.replace(0x0930, <<0::16-little>>)
+    |> Memory.replace(0x0934, <<0::16-little>>)
+    |> Memory.replace(0x0980, <<0::16-little>>)
+    |> Memory.replace(0x0981, <<0::8>>)
+    |> Memory.replace(0x0982, <<0::16-little>>)
+    |> Memory.replace(0x0990, <<0::64-little>>)
+    |> Memory.replace(0x09A0, <<0::32-little>>)
+    |> Memory.replace(0x09A4, <<0::32-little>>)
+    |> Memory.replace(0x09A8, <<0::8>>)
+    |> Memory.replace(0x09A9, <<0::8>>)
+    |> Memory.replace(0x09AE, <<0::16-little>>)
+    |> Memory.replace(0x09B0, <<0::64-little>>)
+    |> Memory.replace(0x09B8, <<0::64-little>>)
+    |> Memory.replace(0x09C0, <<0::64-little>>)
+    |> Memory.replace(0x09C8, <<0::64-little>>)
   end
 
   defp mailbox_sm_entries(%{recv_offset: 0, recv_size: 0, send_offset: 0, send_size: 0}) do
@@ -198,26 +199,5 @@ defmodule EtherCAT.Simulator.Slave.Runtime.ESCImage do
     take = min(bytes, available)
     padding = bytes - take
     binary_part(binary, offset, take) <> :binary.copy(<<0>>, padding)
-  end
-
-  defp encode_al_status(al_state, error?) do
-    state_code =
-      case al_state do
-        :init -> 0x01
-        :preop -> 0x02
-        :bootstrap -> 0x03
-        :safeop -> 0x04
-        :op -> 0x08
-      end
-
-    error_bit = if error?, do: 1, else: 0
-    <<0::3, error_bit::1, state_code::4, 0::8>>
-  end
-
-  defp put_binary(binary, offset, value) do
-    prefix = binary_part(binary, 0, offset)
-    suffix_offset = offset + byte_size(value)
-    suffix = binary_part(binary, suffix_offset, byte_size(binary) - suffix_offset)
-    prefix <> value <> suffix
   end
 end

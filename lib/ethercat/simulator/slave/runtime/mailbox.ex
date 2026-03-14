@@ -175,17 +175,7 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
        when command in [0x2F, 0x2B, 0x27, 0x23] do
     size = expedited_download_size(command)
     <<data::binary-size(size), _::binary>> = payload
-
-    case Dictionary.write_entry(slave, index, subindex, data) do
-      {:ok, updated_slave} ->
-        {:ok, response(download_ack(index, subindex), index, subindex, :download_init),
-         updated_slave}
-
-      {:error, abort_code, updated_slave} ->
-        {:ok,
-         response(abort_response(index, subindex, abort_code), index, subindex, :download_init),
-         updated_slave}
-    end
+    handle_write_entry(slave, index, subindex, data)
   end
 
   defp handle_sdo_request(
@@ -198,17 +188,7 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
 
     if byte_size(current) >= total_size do
       data = binary_part(current, 0, total_size)
-
-      case Dictionary.write_entry(slave, index, subindex, data) do
-        {:ok, updated_slave} ->
-          {:ok, response(download_ack(index, subindex), index, subindex, :download_init),
-           updated_slave}
-
-        {:error, abort_code, updated_slave} ->
-          {:ok,
-           response(abort_response(index, subindex, abort_code), index, subindex, :download_init),
-           updated_slave}
-      end
+      handle_write_entry(slave, index, subindex, data)
     else
       next_slave = %{
         slave
@@ -248,6 +228,19 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
 
   defp handle_sdo_request(_body, _mailbox_counter, slave) do
     {:ok, response(abort_response(0, 0, @abort_unsupported), 0, 0, :request), slave}
+  end
+
+  defp handle_write_entry(slave, index, subindex, data) do
+    case Dictionary.write_entry(slave, index, subindex, data) do
+      {:ok, updated_slave} ->
+        {:ok, response(download_ack(index, subindex), index, subindex, :download_init),
+         updated_slave}
+
+      {:error, abort_code, updated_slave} ->
+        {:ok,
+         response(abort_response(index, subindex, abort_code), index, subindex, :download_init),
+         updated_slave}
+    end
   end
 
   defp handle_download_segment(_command, _payload, %{mailbox_download: nil} = slave) do

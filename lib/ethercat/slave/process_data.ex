@@ -12,6 +12,7 @@ defmodule EtherCAT.Slave.ProcessData do
   alias EtherCAT.Slave.ProcessData.Plan.DomainAttachment
   alias EtherCAT.Slave.ProcessData.Plan.SmGroup
   alias EtherCAT.Slave.ESC.Registers
+  alias EtherCAT.Utils
 
   @type opts :: [
           run_mailbox_config: (%Slave{} -> {:ok, %Slave{}} | {:error, term()})
@@ -428,7 +429,7 @@ defmodule EtherCAT.Slave.ProcessData do
            |> Transaction.fpwr(data.station, Registers.sm(sm_group.sm_index, sm_reg))
          ) do
       {:ok, replies} ->
-        ensure_expected_wkcs(replies, 1, {:sync_manager_write_failed, sm_group.sm_index})
+        Utils.ensure_expected_wkcs(replies, 1, {:sync_manager_write_failed, sm_group.sm_index})
 
       {:error, reason} ->
         {:error, {:sync_manager_write_failed, sm_group.sm_index, reason}}
@@ -445,7 +446,7 @@ defmodule EtherCAT.Slave.ProcessData do
            Transaction.fpwr(data.station, Registers.fmmu(fmmu_idx, fmmu_reg))
          ) do
       {:ok, replies} ->
-        ensure_expected_wkcs(replies, 1, {:fmmu_write_failed, sm_group.sm_index})
+        Utils.ensure_expected_wkcs(replies, 1, {:fmmu_write_failed, sm_group.sm_index})
 
       {:error, reason} ->
         {:error, {:fmmu_write_failed, sm_group.sm_index, reason}}
@@ -458,23 +459,12 @@ defmodule EtherCAT.Slave.ProcessData do
            Transaction.fpwr(data.station, Registers.sm_activate(sm_group.sm_index, 1))
          ) do
       {:ok, replies} ->
-        ensure_expected_wkcs(replies, 1, {:sync_manager_activate_failed, sm_group.sm_index})
+        Utils.ensure_expected_wkcs(replies, 1, {:sync_manager_activate_failed, sm_group.sm_index})
 
       {:error, reason} ->
         {:error, {:sync_manager_activate_failed, sm_group.sm_index, reason}}
     end
   end
-
-  defp ensure_expected_wkcs(replies, expected_wkc, error_tag)
-       when is_list(replies) and replies != [] and is_integer(expected_wkc) and expected_wkc >= 0 do
-    if Enum.all?(replies, &(&1.wkc == expected_wkc)) do
-      :ok
-    else
-      {:error, error_tag}
-    end
-  end
-
-  defp ensure_expected_wkcs(_replies, _expected_wkc, error_tag), do: {:error, error_tag}
 
   defp call_signal_model(data) do
     Driver.signal_model(data.driver, data.config, data.sii_pdo_configs)

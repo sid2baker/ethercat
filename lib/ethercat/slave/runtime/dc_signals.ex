@@ -9,6 +9,7 @@ defmodule EtherCAT.Slave.Runtime.DCSignals do
   alias EtherCAT.Slave
   alias EtherCAT.Slave.ESC.Registers
   alias EtherCAT.Slave.Sync.Plan
+  alias EtherCAT.Utils
 
   @spec configure(%Slave{}) :: {:ok, %Slave{}} | {:error, term(), %Slave{}}
   def configure(%{dc_cycle_ns: nil} = data), do: {:ok, clear_latch_config(data)}
@@ -23,7 +24,7 @@ defmodule EtherCAT.Slave.Runtime.DCSignals do
              {:ok, plan} <-
                Plan.build(sync_config, data.dc_cycle_ns, local_time_ns, sync_diff_ns),
              {:ok, replies} <- send_sync_plan(data, plan),
-             :ok <- ensure_expected_wkcs(replies, 1, :dc_configuration_failed) do
+             :ok <- Utils.ensure_expected_wkcs(replies, 1, :dc_configuration_failed) do
           next_data = apply_sync_plan(data, plan)
 
           Logger.debug(
@@ -204,17 +205,6 @@ defmodule EtherCAT.Slave.Runtime.DCSignals do
         latch_poll_ms: latch_poll_ms
     }
   end
-
-  defp ensure_expected_wkcs(replies, expected_wkc, error_tag)
-       when is_list(replies) and replies != [] and is_integer(expected_wkc) and expected_wkc >= 0 do
-    if Enum.all?(replies, &(&1.wkc == expected_wkc)) do
-      :ok
-    else
-      {:error, error_tag}
-    end
-  end
-
-  defp ensure_expected_wkcs(_replies, _expected_wkc, error_tag), do: {:error, error_tag}
 
   defp latch_poll_timeout_us(%{latch_poll_ms: poll_ms, dc_cycle_ns: dc_cycle_ns})
        when is_integer(poll_ms) and poll_ms > 0 do
