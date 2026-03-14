@@ -132,6 +132,9 @@ defmodule EtherCAT.BusTest do
     def set_active_once(%__MODULE__{}), do: :ok
 
     @impl true
+    def rearm(%__MODULE__{}), do: :ok
+
+    @impl true
     def match(%__MODULE__{raw: raw}, {:fake_transport_payload, raw, payload, rx_at}) do
       {:ok, payload, rx_at}
     end
