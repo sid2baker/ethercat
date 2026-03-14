@@ -1,6 +1,7 @@
 defmodule EtherCAT.IntegrationSupport.SimulatorRing do
   @moduledoc false
 
+  import ExUnit.CaptureLog
   alias EtherCAT.Domain.Config, as: DomainConfig
 
   alias EtherCAT.IntegrationSupport.Drivers.{
@@ -65,19 +66,23 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
 
   @spec reset!() :: :ok
   def reset! do
-    _ = EtherCAT.stop()
-    _ = Simulator.stop()
-    :ok
+    capture_cleanup_logs(fn ->
+      _ = EtherCAT.stop()
+      _ = Simulator.stop()
+      :ok
+    end)
   end
 
   @spec stop_all!() :: :ok
   def stop_all! do
-    case EtherCAT.stop() do
-      :ok -> :ok
-      {:error, :already_stopped} -> :ok
-    end
+    capture_cleanup_logs(fn ->
+      case EtherCAT.stop() do
+        :ok -> :ok
+        {:error, :already_stopped} -> :ok
+      end
 
-    :ok = Simulator.stop()
+      :ok = Simulator.stop()
+    end)
   end
 
   @spec devices(ring()) :: [struct()]
@@ -264,6 +269,7 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
   defp assert_ok!({:ok, _value}), do: :ok
 
   defp assert_ok!(other) do
+    stop_all!()
     raise ArgumentError, "expected :ok or {:ok, _}, got: #{inspect(other)}"
   end
 
@@ -301,6 +307,14 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
 
   defp raw_simulator_interface(opts) do
     Keyword.get(opts, :simulator_interface, raw_simulator_interface())
+  end
+
+  defp capture_cleanup_logs(fun) do
+    capture_log(fn ->
+      result = fun.()
+      Process.sleep(50)
+      result
+    end)
   end
 
   defp start_master_transport_opts(%{transport: :udp} = endpoint, _transport_override) do
