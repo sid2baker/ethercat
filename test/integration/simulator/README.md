@@ -116,13 +116,13 @@ should keep its `.md` note and matching `_test.exs` file aligned.
 
 The baseline healthy-ring coverage is transport-aware.
 
-- `test/integration/simulator/ring_test.exs` always runs the UDP-backed happy
-  path.
-- The same file also includes raw-socket variants tagged `:raw_socket`.
+- `test/integration/simulator/00_healthy_ring_transport_matrix_test.exs`
+  always runs the UDP-backed happy path.
+- The same scenario also includes raw-socket variants tagged `:raw_socket`.
   Those run when the raw veth pair is available.
-- `test/integration/simulator/redundant_raw_ring_test.exs` covers the
-  redundant raw path and is tagged `:raw_socket_redundant`.
-  It runs when both redundant raw veth pairs are available.
+- The same scenario includes redundant raw variants tagged
+  `:raw_socket_redundant`. Those run when both redundant raw veth pairs are
+  available.
 
 For helper-driven scenarios built on `EtherCAT.IntegrationSupport.SimulatorRing`,
 the default transport comes from `ETHERCAT_INTEGRATION_TRANSPORT`:
