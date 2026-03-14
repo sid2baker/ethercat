@@ -239,5 +239,6 @@ Each subsystem has a co-located module doc / source entry file:
 | `lib/ethercat/dc.ex` | DC runtime — maintenance loop, lock/runtime status, master notifications |
 | `lib/ethercat/simulator.ex` | Public simulator runtime — segment execution, snapshots, deterministic fault scheduling |
 | `lib/ethercat/simulator.md` | Simulator process boundary, fault API, UDP transport split, builder surface |
-| `docs/references/ethercat-esc-technology.md` | ESC hardware: FMMU, SM, DC, ESM, SII, interrupts |
-| `docs/references/ethercat-esc-registers.md` | Full ESC register map (auto-extracted from datasheet) |
+
+Deeper ESC hardware and register background should live in local helper material
+outside the tracked repo, not in project-owned documentation.

@@ -11,14 +11,14 @@
 - `test/` — behavioral truth and regression coverage
 - `ARCHITECTURE.md` — subsystem boundaries and runtime data flow
 
-- `docs/references/` is reference material for LLM/spec alignment, not implementation truth.
-- `docs/references/ethercat-spec/01-llm-reference-index.md` is the primary EtherCAT spec/reference entry point when aligning implementation and review work to the protocol.
+- Local LLM helper material may exist outside the tracked repo; treat it as secondary reference only, never implementation truth.
 
 ## Hard Rules
 
 - **API**: pre-release, prefer clarity over compatibility; no shims
 - **Bitwise**: never `import Bitwise`; use binary pattern matching
 - **`gen_statem` enter callbacks**: side effects only, no state transitions
+- **Changelog**: as soon as a change is release-note-worthy, add it to `CHANGELOG.md` under `[Unreleased]` in the right section. Include the short git hash for the change; if the commit does not exist yet, add the entry immediately and update it with the short hash before handing off or finalizing the work.
 
 ## Design Direction
 

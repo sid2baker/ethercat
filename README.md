@@ -9,7 +9,7 @@
 > into a bachelor’s thesis. If you know a professor, or someone who could help
 > me pursue that, feel free to reach out! :)
 
-![Kino EtherCAT smart cell setup](https://raw.githubusercontent.com/sid2baker/ethercat/main/docs/images/kino-smart-cell-setup.png)
+![Kino EtherCAT smart cell setup](assets/readme/kino-smart-cell-setup.png)
 
 Pure-Elixir EtherCAT master built on OTP.
 

@@ -375,7 +375,6 @@ Relevant repo integration guides:
 - `test/integration/simulator/README.md`
 - `test/integration/hardware/README.md`
 
-Historical implementation plans:
-
-- `docs/exec-plans/completed/simulator-runtime-refactor.md`
-- `docs/exec-plans/completed/simulator-generalization.md`
+Historical planning material may exist in local helper notes outside the tracked
+repo, but the maintained sources here are the current module docs, tests, and
+integration guides.

@@ -22,8 +22,7 @@ erl_crash.dump
 # Ignore package tarball (built via "mix hex.build").
 ethercat-*.tar
 
-docs/references/igh/
-docs/references/soem/
+/.llm-helper/
 symphony/
 lib/ethercat/simulator/slave/reference/soes/
 
