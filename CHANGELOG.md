@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `c937d53` — redundant transport now merges split logical replies correctly.
 - `d852fd4` — bus transaction aging semantics and diagnostics are now more explicit during retry and timeout handling.
 - `7055878` — raw socket transport no longer drains buffered frames on idx-mismatch rearm, preventing legitimate responses from being lost when rogue EtherCAT traffic is present on the wire.
+- `(pending hash)` — redundant link rejoin now drains a reopened port, honors explicit carrier-restore notifications, and keeps the restored leg out of the required reply set for one warm-up transaction so cyclic traffic does not stall when a healthy backup path is already carrying the ring.
 
 ### Docs
 - `8f773d6`, `c42b0c9`, `0248012`, `04b2c5f`, `072119d`, `9b3b4ba`, `ee210fa`, `8eff41c` — README, hardware playbooks, simulator docs, and API guidance were rewritten to better explain transport boundaries, bring-up workflow, release metadata, and fault/recovery scenarios.

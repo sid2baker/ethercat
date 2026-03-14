@@ -47,7 +47,18 @@ defmodule EtherCAT.Bus.Link.Redundant do
   alias EtherCAT.Bus.Frame
   alias EtherCAT.Telemetry
 
-  defstruct [:awaiting, :primary, :primary_opts, :secondary, :secondary_opts, :transport_mod]
+  defstruct [
+    :awaiting,
+    :primary,
+    :primary_opts,
+    :primary_carrier_state,
+    :secondary,
+    :secondary_opts,
+    :secondary_carrier_state,
+    :transport_mod,
+    primary_rejoin_warmup: 0,
+    secondary_rejoin_warmup: 0
+  ]
 
   @type awaiting_t :: %{
           primary?: boolean(),
@@ -63,10 +74,16 @@ defmodule EtherCAT.Bus.Link.Redundant do
           awaiting: awaiting_t | nil,
           primary: EtherCAT.Bus.Transport.t(),
           primary_opts: keyword(),
+          primary_carrier_state: boolean() | :unknown,
+          primary_rejoin_warmup: non_neg_integer(),
           secondary: EtherCAT.Bus.Transport.t(),
           secondary_opts: keyword(),
+          secondary_carrier_state: boolean() | :unknown,
+          secondary_rejoin_warmup: non_neg_integer(),
           transport_mod: module()
         }
+
+  @rejoin_warmup_cycles 1
 
   @impl true
   def open(opts) do
@@ -81,8 +98,12 @@ defmodule EtherCAT.Bus.Link.Redundant do
          awaiting: nil,
          primary: primary,
          primary_opts: primary_opts,
+         primary_carrier_state: :unknown,
+         primary_rejoin_warmup: 0,
          secondary: secondary,
          secondary_opts: secondary_opts,
+         secondary_carrier_state: :unknown,
+         secondary_rejoin_warmup: 0,
          transport_mod: transport_mod
        }}
     else
@@ -94,9 +115,10 @@ defmodule EtherCAT.Bus.Link.Redundant do
   @impl true
   def send(%__MODULE__{} = link, payload) do
     link = reconnect(link)
+    send_ports = send_ports(link)
 
     {link, sent_ports, first_error} =
-      [:primary, :secondary]
+      send_ports
       |> Enum.reduce({link, [], nil}, fn port, {acc, sent, first_error} ->
         case maybe_send_port(acc, port, payload) do
           {:sent, updated} -> {updated, [port | sent], first_error}
@@ -104,6 +126,7 @@ defmodule EtherCAT.Bus.Link.Redundant do
           {:failed, updated, reason} -> {updated, sent, first_error || reason}
         end
       end)
+      |> then(fn {updated, sent, error} -> {advance_rejoin_warmup(updated), sent, error} end)
 
     sent_ports = Enum.reverse(sent_ports)
 
@@ -198,7 +221,12 @@ defmodule EtherCAT.Bus.Link.Redundant do
     end
   end
 
-  def carrier(%__MODULE__{} = link, _ifname, true), do: {:ok, link}
+  def carrier(%__MODULE__{} = link, ifname, true) do
+    {:ok,
+     link
+     |> maybe_mark_carrier(:primary, ifname, true)
+     |> maybe_mark_carrier(:secondary, ifname, true)}
+  end
 
   @impl true
   def reconnect(%__MODULE__{} = link) do
@@ -299,7 +327,7 @@ defmodule EtherCAT.Bus.Link.Redundant do
   defp maybe_close_for_interface(%__MODULE__{} = link, port, ifname) do
     if open_port?(link, port) and port_interface(link, port) == ifname do
       Telemetry.link_down(name(link), ifname, :carrier_lost)
-      {close_port(link, port), true}
+      {link |> close_port(port) |> put_carrier_state(port, false), true}
     else
       {link, false}
     end
@@ -308,9 +336,17 @@ defmodule EtherCAT.Bus.Link.Redundant do
   defp maybe_close_for_interface({%__MODULE__{} = link, closed?}, port, ifname) do
     if open_port?(link, port) and port_interface(link, port) == ifname do
       Telemetry.link_down(name(link), ifname, :carrier_lost)
-      {close_port(link, port), true}
+      {link |> close_port(port) |> put_carrier_state(port, false), true}
     else
       {link, closed?}
+    end
+  end
+
+  defp maybe_mark_carrier(%__MODULE__{} = link, port, ifname, state) do
+    if port_interface(link, port) == ifname do
+      put_carrier_state(link, port, state)
+    else
+      link
     end
   end
 
@@ -320,13 +356,17 @@ defmodule EtherCAT.Bus.Link.Redundant do
     else
       interface = port_interface(link, port)
 
-      if interface && carrier_up?(interface) do
+      if interface && reopen_allowed?(link, port, interface) do
         opts = port_open_opts(link, port)
 
         case link.transport_mod.open(opts) do
           {:ok, reopened} ->
+            link.transport_mod.drain(reopened)
             Telemetry.link_reconnected(name(link), link.transport_mod.name(reopened))
-            put_port_transport(link, port, reopened)
+
+            link
+            |> put_port_transport(port, reopened)
+            |> arm_rejoin_warmup(port)
 
           {:error, _} ->
             link
@@ -535,6 +575,17 @@ defmodule EtherCAT.Bus.Link.Redundant do
     usable?(link) or response_available?(link.awaiting)
   end
 
+  defp send_ports(%__MODULE__{} = link) do
+    open_ports =
+      [:primary, :secondary]
+      |> Enum.filter(&open_port?(link, &1))
+
+    case Enum.reject(open_ports, &warming_up?(link, &1)) do
+      [] -> open_ports
+      ready_ports -> ready_ports
+    end
+  end
+
   defp response_available?(nil), do: false
 
   defp response_available?(awaiting) do
@@ -560,11 +611,11 @@ defmodule EtherCAT.Bus.Link.Redundant do
   end
 
   defp close_port(%__MODULE__{} = link, :primary) do
-    %{link | primary: link.transport_mod.close(link.primary)}
+    %{link | primary: link.transport_mod.close(link.primary), primary_rejoin_warmup: 0}
   end
 
   defp close_port(%__MODULE__{} = link, :secondary) do
-    %{link | secondary: link.transport_mod.close(link.secondary)}
+    %{link | secondary: link.transport_mod.close(link.secondary), secondary_rejoin_warmup: 0}
   end
 
   defp put_port_transport(%__MODULE__{} = link, :primary, transport),
@@ -572,6 +623,12 @@ defmodule EtherCAT.Bus.Link.Redundant do
 
   defp put_port_transport(%__MODULE__{} = link, :secondary, transport),
     do: %{link | secondary: transport}
+
+  defp put_carrier_state(%__MODULE__{} = link, :primary, state),
+    do: %{link | primary_carrier_state: state}
+
+  defp put_carrier_state(%__MODULE__{} = link, :secondary, state),
+    do: %{link | secondary_carrier_state: state}
 
   defp open_port?(%__MODULE__{} = link, :primary), do: link.transport_mod.open?(link.primary)
   defp open_port?(%__MODULE__{} = link, :secondary), do: link.transport_mod.open?(link.secondary)
@@ -590,7 +647,49 @@ defmodule EtherCAT.Bus.Link.Redundant do
     link.transport_mod.name(port_transport(link, port))
   end
 
+  defp reopen_allowed?(%__MODULE__{} = link, :primary, interface) do
+    case link.primary_carrier_state do
+      true -> true
+      false -> false
+      :unknown -> carrier_up?(interface)
+    end
+  end
+
+  defp reopen_allowed?(%__MODULE__{} = link, :secondary, interface) do
+    case link.secondary_carrier_state do
+      true -> true
+      false -> false
+      :unknown -> carrier_up?(interface)
+    end
+  end
+
   defp carrier_up?(interface) do
     InterfaceInfo.carrier_up?(interface)
   end
+
+  defp arm_rejoin_warmup(%__MODULE__{} = link, :primary),
+    do: %{link | primary_rejoin_warmup: @rejoin_warmup_cycles}
+
+  defp arm_rejoin_warmup(%__MODULE__{} = link, :secondary),
+    do: %{link | secondary_rejoin_warmup: @rejoin_warmup_cycles}
+
+  defp advance_rejoin_warmup(%__MODULE__{} = link) do
+    link
+    |> decrement_rejoin_warmup(:primary)
+    |> decrement_rejoin_warmup(:secondary)
+  end
+
+  defp decrement_rejoin_warmup(%__MODULE__{} = link, :primary) do
+    %{link | primary_rejoin_warmup: decrement_rejoin_counter(link.primary_rejoin_warmup)}
+  end
+
+  defp decrement_rejoin_warmup(%__MODULE__{} = link, :secondary) do
+    %{link | secondary_rejoin_warmup: decrement_rejoin_counter(link.secondary_rejoin_warmup)}
+  end
+
+  defp decrement_rejoin_counter(counter) when counter > 0, do: counter - 1
+  defp decrement_rejoin_counter(counter), do: counter
+
+  defp warming_up?(%__MODULE__{primary_rejoin_warmup: counter}, :primary), do: counter > 0
+  defp warming_up?(%__MODULE__{secondary_rejoin_warmup: counter}, :secondary), do: counter > 0
 end

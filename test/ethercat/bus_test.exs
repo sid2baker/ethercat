@@ -453,6 +453,41 @@ defmodule EtherCAT.BusTest do
     assert {:ok, [%{data: <<0x44, 0x44>>, wkc: 1}]} = Task.await(next)
   end
 
+  test "redundant link does not wait on a freshly restored port before rejoining it" do
+    {:ok, bus} = start_redundant_bus()
+
+    degraded = Task.async(fn -> Bus.transaction(bus, Transaction.fprd(0x1000, {0x0130, 2})) end)
+
+    assert_sent_transport("pri")
+    secondary = assert_sent_transport("sec")
+
+    send(bus, {:ethercat_link, "pri", true, false})
+    reply_transport(bus, secondary, fn dg -> %{dg | data: <<0x55, 0x55>>, wkc: 1} end)
+
+    assert {:ok, [%{data: <<0x55, 0x55>>, wkc: 1}]} = Task.await(degraded)
+
+    send(bus, {:ethercat_link, "pri", false, true})
+
+    warmup = Task.async(fn -> Bus.transaction(bus, Transaction.fprd(0x1001, {0x0130, 2})) end)
+
+    warmup_secondary = assert_sent_transport("sec")
+    refute_receive {:fake_transport_sent, "pri", _, _, _}, 20
+
+    reply_transport(bus, warmup_secondary, fn dg -> %{dg | data: <<0x66, 0x66>>, wkc: 1} end)
+
+    assert {:ok, [%{data: <<0x66, 0x66>>, wkc: 1}]} = Task.await(warmup, 30)
+
+    rejoined = Task.async(fn -> Bus.transaction(bus, Transaction.fprd(0x1002, {0x0130, 2})) end)
+
+    rejoined_primary = assert_sent_transport("pri")
+    rejoined_secondary = assert_sent_transport("sec")
+
+    reply_transport(bus, rejoined_primary, fn dg -> %{dg | wkc: 0} end)
+    reply_transport(bus, rejoined_secondary, fn dg -> %{dg | data: <<0x77, 0x77>>, wkc: 1} end)
+
+    assert {:ok, [%{data: <<0x77, 0x77>>, wkc: 1}]} = Task.await(rejoined)
+  end
+
   test "named buses are reachable through their registered server ref" do
     name = :"bus_test_#{System.unique_integer([:positive, :monotonic])}"
 
