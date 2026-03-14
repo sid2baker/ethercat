@@ -230,6 +230,73 @@ defmodule EtherCAT.CaptureTest do
     assert Keyword.fetch!(opts, :mailbox_config).recv_size > 0
   end
 
+  test "renders concise driver source with signal overrides" do
+    boot_dynamic_capture_ring!()
+
+    module =
+      Module.concat([
+        EtherCAT,
+        CaptureRendered,
+        "RenderedEL1809#{System.unique_integer([:positive])}"
+      ])
+
+    simulator_module = Module.concat(module, Simulator)
+
+    assert {:ok, source} =
+             Capture.render_driver(
+               :slave_1,
+               module: module,
+               simulator_module: simulator_module,
+               signal_names: %{{:input, 0x1A00} => "left_input"}
+             )
+
+    assert source =~ "defmodule #{inspect(module)} do"
+    assert source =~ "defmodule #{inspect(simulator_module)} do"
+    assert source =~ "left_input: 0x1A00"
+    refute source =~ "EtherCAT.Capture.capture("
+    refute source =~ "EtherCAT.Capture.load_capture!"
+
+    compiled_modules =
+      source
+      |> Code.compile_string()
+      |> Enum.map(&elem(&1, 0))
+
+    assert module in compiled_modules
+    assert simulator_module in compiled_modules
+    assert {:left_input, 0x1A00} = hd(module.signal_model(%{}))
+
+    assert Keyword.fetch!(simulator_module.definition_options(%{}), :input_names) |> hd() ==
+             :left_input
+  end
+
+  test "renders capture-backed simulator source without writing files" do
+    boot_dynamic_capture_ring!()
+
+    module =
+      Module.concat([
+        EtherCAT,
+        CaptureRendered,
+        "RenderedSimulator#{System.unique_integer([:positive])}"
+      ])
+
+    tmp_dir = tmp_dir!()
+    capture_path = Path.join([tmp_dir, "captures", "captured_inputs.capture"])
+    module_path = Path.join([tmp_dir, "scaffolds", "rendered_inputs_simulator.ex"])
+
+    assert {:ok, source} =
+             Capture.render_simulator(
+               :slave_1,
+               module: module,
+               capture_path: capture_path,
+               module_path: module_path
+             )
+
+    assert source =~ "defmodule #{inspect(module)} do"
+    assert source =~ "EtherCAT.Capture.load_capture!()"
+    assert source =~ "@capture_path"
+    refute source =~ "EtherCAT.Capture.capture("
+  end
+
   test "applies the EL3202 template and emits mailbox startup steps from capture data" do
     tmp_dir = tmp_dir!()
     driver_path = Path.join([tmp_dir, "drivers", "generated_el3202_driver.ex"])

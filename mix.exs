@@ -36,7 +36,8 @@ defmodule EtherCAT.MixProject do
     [
       {:telemetry, "~> 1.0"},
       {:ex_doc, "~> 0.36", only: :dev, runtime: false},
-      {:usage_rules, "~> 1.1", only: [:dev]}
+      {:usage_rules, "~> 1.1", only: [:dev]},
+      {:ex_dna, "~> 1.1", only: [:dev, :test], runtime: false}
     ]
   end
 
