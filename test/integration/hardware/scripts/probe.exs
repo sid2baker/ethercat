@@ -24,7 +24,7 @@ defmodule Probe do
   @ethertype 0x88A4
   @broadcast_mac <<0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF>>
 
-  alias EtherCAT.Bus.{InterfaceInfo, LinkMonitor}
+  alias EtherCAT.Bus.InterfaceInfo
 
   def run(interface, opts \\ []) do
     frames = Keyword.get(opts, :frames, 20)
@@ -35,10 +35,8 @@ defmodule Probe do
 
     # --- interface info -------------------------------------------------------
     lower_up = InterfaceInfo.carrier_up?(interface)
-    link_monitor_mode = link_monitor_mode(interface)
     {:ok, mac_str} = InterfaceInfo.mac_address_string(interface)
     IO.puts("  lower_up : #{inspect(lower_up)}")
-    IO.puts("  link_mon : #{inspect(link_monitor_mode)}")
     IO.puts("  mac      : #{inspect(mac_str)}")
 
     unless lower_up == true do
@@ -95,18 +93,6 @@ defmodule Probe do
     end
 
     :ok
-  end
-
-  defp link_monitor_mode(interface) do
-    case LinkMonitor.start_link(self(), [interface]) do
-      {:ok, pid} ->
-        mode = LinkMonitor.mode(pid)
-        GenServer.stop(pid)
-        mode
-
-      {:error, _reason} ->
-        :unavailable
-    end
   end
 
   # Poll with recvmsg until data arrives or timeout. Cancels the select on

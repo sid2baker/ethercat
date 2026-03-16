@@ -34,8 +34,7 @@ defmodule EtherCAT.Integration.Hardware.RingTest do
         assert :ok = EtherCAT.await_operational(5_000)
         assert {:ok, :operational} = EtherCAT.state()
 
-        assert {:ok, %{link: expected_link, carrier_up: true}} =
-                 EtherCAT.Bus.info(EtherCAT.Bus)
+        assert {:ok, %{circuit: expected_link}} = EtherCAT.Bus.info(EtherCAT.Bus)
 
         assert expected_link == Hardware.expected_bus_link(profile)
         assert {:ok, %{station: 0x1000, al_state: :op}} = EtherCAT.slave_info(:coupler)
@@ -49,8 +48,7 @@ defmodule EtherCAT.Integration.Hardware.RingTest do
         assert :ok = start_ring(profile)
         assert :ok = EtherCAT.await_operational(5_000)
 
-        assert {:ok, %{link: expected_link, carrier_up: true}} =
-                 EtherCAT.Bus.info(EtherCAT.Bus)
+        assert {:ok, %{circuit: expected_link}} = EtherCAT.Bus.info(EtherCAT.Bus)
 
         assert expected_link == Hardware.expected_bus_link(profile)
 

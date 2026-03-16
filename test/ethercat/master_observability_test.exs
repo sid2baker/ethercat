@@ -41,7 +41,7 @@ defmodule EtherCAT.MasterObservabilityTest do
        [
          name: EtherCAT.Bus,
          responses: [{:ok, [%{data: <<>>, wkc: 32_770, circular: false, irq: 0}]}],
-         info: %{state: :idle, carrier_up: true, link_monitor_mode: :disabled}
+         info: %{state: :idle}
        ]}
     )
 
@@ -78,7 +78,7 @@ defmodule EtherCAT.MasterObservabilityTest do
        [
          name: EtherCAT.Bus,
          responses: [{:ok, [%{wkc: 1}]}],
-         info: %{state: :idle, carrier_up: true, link_monitor_mode: :disabled}
+         info: %{state: :idle}
        ]}
     )
 

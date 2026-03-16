@@ -28,7 +28,7 @@ defmodule EtherDiag do
   @ethertype_ecat 0x88A4
   @broadcast_mac <<0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF>>
 
-  alias EtherCAT.Bus.{InterfaceInfo, LinkMonitor}
+  alias EtherCAT.Bus.InterfaceInfo
 
   # ETH_P_ALL in network byte order (htons(0x0003) = 0x0300).
   # AF_PACKET socket() expects protocol in NBO; we pass it directly.
@@ -67,7 +67,6 @@ defmodule EtherDiag do
     """)
 
     lower_up = InterfaceInfo.carrier_up?(interface)
-    link_monitor_mode = link_monitor_mode(interface)
     {:ok, mac_str} = InterfaceInfo.mac_address_string(interface)
     {:ok, idx} = :net.if_name2index(String.to_charlist(interface))
     mac = decode_mac(mac_str)
@@ -75,7 +74,6 @@ defmodule EtherDiag do
     IO.puts("""
     [2] Interface #{interface}
       lower_up : #{inspect(lower_up)}
-      link_mon : #{inspect(link_monitor_mode)}
       mac      : #{inspect(mac_str)}
       ifindex  : #{idx}
     """)
@@ -84,18 +82,6 @@ defmodule EtherDiag do
       do: IO.puts("  *** carrier DOWN — no frames can be sent or received ***\n")
 
     {idx, mac}
-  end
-
-  defp link_monitor_mode(interface) do
-    case LinkMonitor.start_link(self(), [interface]) do
-      {:ok, pid} ->
-        mode = LinkMonitor.mode(pid)
-        GenServer.stop(pid)
-        mode
-
-      {:error, _reason} ->
-        :unavailable
-    end
   end
 
   # ---------------------------------------------------------------------------

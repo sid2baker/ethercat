@@ -1,6 +1,7 @@
 defmodule EtherCAT.IntegrationSupport.RedundantSimulatorRing do
   @moduledoc false
 
+  alias EtherCAT.IntegrationSupport.LinkToggle
   alias EtherCAT.IntegrationSupport.SimulatorRing
   alias EtherCAT.Simulator
   alias EtherCAT.Simulator.Slave
@@ -39,16 +40,37 @@ defmodule EtherCAT.IntegrationSupport.RedundantSimulatorRing do
   @spec stop_all!() :: :ok
   def stop_all!, do: SimulatorRing.stop_all!()
 
+  @spec disconnect_primary!() :: :ok
+  def disconnect_primary! do
+    assert_ok!(Simulator.set_topology({:redundant, master_break: :primary}))
+    LinkToggle.set_down!(master_primary_interface())
+  end
+
+  @spec reconnect_primary!() :: :ok
+  def reconnect_primary! do
+    LinkToggle.set_up!(master_primary_interface())
+    assert_ok!(Simulator.set_topology(:redundant))
+  end
+
   @spec start_simulator!(keyword()) :: endpoint()
   def start_simulator!(opts \\ []) do
     ring = Keyword.get(opts, :ring, :default)
     devices = Keyword.get(opts, :devices, SimulatorRing.devices(ring))
     connections = Keyword.get(opts, :connections, SimulatorRing.connections(ring))
     topology = Keyword.get(opts, :topology, :redundant)
+    raw_endpoint_opts = Keyword.get(opts, :raw_endpoint_opts, [])
 
     raw_opts = [
-      primary: [interface: simulator_primary_interface()],
-      secondary: [interface: simulator_secondary_interface()]
+      primary:
+        Keyword.merge(
+          [interface: simulator_primary_interface()],
+          Keyword.get(raw_endpoint_opts, :primary, [])
+        ),
+      secondary:
+        Keyword.merge(
+          [interface: simulator_secondary_interface()],
+          Keyword.get(raw_endpoint_opts, :secondary, [])
+        )
     ]
 
     {:ok, _supervisor} = Simulator.start(devices: devices, raw: raw_opts, topology: topology)

@@ -17,9 +17,10 @@ EtherCAT.Application
 │
 ├── EtherCAT.SessionSupervisor   (dynamic supervisor for session-scoped runtime processes)
 │   ├── EtherCAT.Bus             (bus scheduler — all frame I/O goes here)
-│   │   └── EtherCAT.Bus.Link    (topology adapter selected by Bus)
-│   │       ├── EtherCAT.Bus.Link.SinglePort
-│   │       └── EtherCAT.Bus.Link.Redundant
+│   │   ├── EtherCAT.Bus.Circuit.Single
+│   │   ├── EtherCAT.Bus.Circuit.Redundant
+│   │   ├── EtherCAT.Bus.Circuit.Port
+│   │   └── EtherCAT.Bus.Transport.*      (raw/UDP transport boundary)
 │   ├── EtherCAT.DC              (gen_statem — DC maintenance + lock/status monitor)
 │   └── EtherCAT.Domain          (gen_statem per domain — cyclic LRW exchange)
 │
@@ -150,9 +151,83 @@ Callers define transaction boundaries with `EtherCAT.Bus.Transaction`; the bus d
 frame boundaries. This prevents multiple gen_statems from racing on the socket while
 keeping frame packing policy out of slave/domain/master call sites.
 
-`Bus` delegates topology-specific wire behavior to `EtherCAT.Bus.Link`:
-- `EtherCAT.Bus.Link.SinglePort` for one interface
-- `EtherCAT.Bus.Link.Redundant` for duplicated send + merged receive across two interfaces
+`Bus` delegates exchange execution to `EtherCAT.Bus.Circuit`:
+- `EtherCAT.Bus.Circuit.Single` for one interface
+- `EtherCAT.Bus.Circuit.Redundant` for duplicated send + observed redundant-path interpretation
+
+### Bus execution layers
+
+The bus runtime no longer uses the old `Bus.Link` split. That model mixed three
+concerns that should not live at the same level:
+
+- queueing and caller reply policy
+- socket/transport I/O
+- topology inference and cable-fault interpretation
+
+The current design splits those concerns more cleanly:
+
+- `EtherCAT.Bus` remains the single scheduler and caller-facing serialization point
+- `EtherCAT.Bus.Transport.*` stays the low-level socket boundary (`RawSocket`, `UdpSocket`)
+- `EtherCAT.Bus.Circuit` executes one EtherCAT exchange over one or more transports
+- one exchange produces an `EtherCAT.Bus.Observation`
+- rolling `Bus.info/1` topology/fault state becomes a smoothed `EtherCAT.Bus.Assessment`
+
+The important design change is that topology is derived from observed frame
+returns, not controlled from OS carrier events.
+
+Target module shape:
+
+```
+EtherCAT.Bus
+├── EtherCAT.Bus.Observation
+├── EtherCAT.Bus.Assessment
+├── EtherCAT.Bus.Circuit
+│   ├── EtherCAT.Bus.Circuit.Exchange
+│   ├── EtherCAT.Bus.Circuit.Port
+│   ├── EtherCAT.Bus.Circuit.Single
+│   └── EtherCAT.Bus.Circuit.Redundant
+├── EtherCAT.Bus.Circuit.RedundantMerge
+└── EtherCAT.Bus.Transport
+    ├── EtherCAT.Bus.Transport.RawSocket
+    └── EtherCAT.Bus.Transport.UdpSocket
+```
+
+Conceptual boundaries:
+
+- `Transport` — one socket/device transport, no topology ownership
+- `Port` — one named transport instance plus local send-error/backoff state
+- `Circuit` — execute one exchange over one or more ports
+- `Observation` — per-exchange truth (`path_shape`, per-port send/receive result, payload)
+- `Assessment` — smoothed public view used by `Bus.info/1`
+
+Per-exchange `path_shape` values:
+
+- `:single`
+- `:full_redundancy`
+- `:primary_only`
+- `:secondary_only`
+- `:complementary_partials`
+- `:no_valid_return`
+- `:invalid`
+
+Public `topology` values:
+
+- `:single`
+- `:redundant`
+- `:degraded_primary_leg`
+- `:degraded_secondary_leg`
+- `:segment_break`
+- `:unknown`
+
+`Assessment` should degrade quickly and recover conservatively. A single strong
+degraded observation may change the assessed topology immediately, while
+promotion back to `:redundant` should require several consecutive
+`full_redundancy` observations. This replaces the current explicit healing
+state machine with traffic-observed proof.
+
+OS link state is intentionally outside the bus runtime model. Interface status
+is a separate diagnostic concern and is not part of the correctness path for
+bus exchange execution.
 
 ### ETS hot path for I/O
 
@@ -196,7 +271,7 @@ configuration with the real driver's declared identity.
 
 ## Startup Sequence Detail
 
-1. `Bus.start_link/1` — starts the bus scheduler and opens the selected `Bus.Link` + `Bus.Transport`
+1. `Bus.start_link/1` — starts the bus scheduler and opens the selected `Bus.Circuit` + `Bus.Transport`
 2. `DC.initialize_clocks/2` — BWR latch, read per-slave DC snapshots, build chain init plan, write offsets and delays
 3. `Domain.start_link` per config — creates ETS tables, enters `:open`
 4. `Slave.start_link` per config — starts SII read, checked mailbox SM setup in INIT, auto-advances to `:preop`, then runs explicit PREOP-local mailbox/process-data configuration

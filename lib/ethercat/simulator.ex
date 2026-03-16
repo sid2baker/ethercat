@@ -130,6 +130,12 @@ defmodule EtherCAT.Simulator do
   def process_datagrams(datagrams, opts) when is_list(opts),
     do: safe_call({:process_datagrams, datagrams, opts}, 5_000)
 
+  @doc false
+  @spec process_datagrams_with_routing([Datagram.t()], keyword()) ::
+          {:ok, [Datagram.t()], Topology.ingress()} | {:error, :no_response | call_error_reason()}
+  def process_datagrams_with_routing(datagrams, opts \\ []) when is_list(opts),
+    do: safe_call({:process_datagrams_with_routing, datagrams, opts}, 5_000)
+
   @spec info() :: {:ok, map()} | {:error, call_error_reason()}
   def info do
     with {:ok, info} <- safe_call(:info, 5_000) do
@@ -326,6 +332,21 @@ defmodule EtherCAT.Simulator do
         )
 
       {:reply, {:ok, responses}, state}
+    end
+  end
+
+  def handle_call(
+        {:process_datagrams_with_routing, datagrams, opts},
+        from,
+        %{topology: topology} = state
+      ) do
+    case handle_call({:process_datagrams, datagrams, opts}, from, state) do
+      {:reply, {:ok, responses}, next_state} ->
+        ingress = Keyword.get(opts, :ingress)
+        {:reply, {:ok, responses, Topology.response_egress(topology, ingress)}, next_state}
+
+      {:reply, {:error, reason}, next_state} ->
+        {:reply, {:error, reason}, next_state}
     end
   end
 

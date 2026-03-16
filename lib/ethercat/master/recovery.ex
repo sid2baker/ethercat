@@ -3,7 +3,6 @@ defmodule EtherCAT.Master.Recovery do
 
   require Logger
 
-  alias EtherCAT.Bus
   alias EtherCAT.Domain.API, as: DomainAPI
   alias EtherCAT.Master.Activation
   alias EtherCAT.Master.Status
@@ -268,7 +267,7 @@ defmodule EtherCAT.Master.Recovery do
 
   @spec maybe_restart_stopped_domains(%EtherCAT.Master{}) :: %EtherCAT.Master{}
   def maybe_restart_stopped_domains(%{runtime_faults: runtime_faults} = data) do
-    if Status.desired_runtime_target(data) != :op or bus_down?() do
+    if Status.desired_runtime_target(data) != :op do
       data
     else
       Enum.reduce(runtime_faults, data, fn
@@ -620,14 +619,6 @@ defmodule EtherCAT.Master.Recovery do
 
   defp dc_running? do
     is_pid(Process.whereis(EtherCAT.DC))
-  end
-
-  defp bus_down? do
-    case Bus.info(Bus) do
-      {:ok, %{link_monitor_mode: :disabled}} -> false
-      {:ok, %{carrier_up: false}} -> true
-      _other -> false
-    end
   end
 
   defp clear_tracked_slave_fault(data, name) do

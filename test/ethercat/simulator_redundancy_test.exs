@@ -36,6 +36,18 @@ defmodule EtherCAT.SimulatorRedundancyTest do
              Simulator.process_datagrams([datagram], ingress: :primary)
   end
 
+  test "healthy redundant routing returns processed reply on the opposite leg" do
+    assert :ok = Simulator.set_topology(:redundant)
+
+    datagram = station_read_datagram(0x1002)
+
+    assert {:ok, [%{data: <<0x02, 0x10>>, wkc: 1}], :secondary} =
+             Simulator.process_datagrams_with_routing([datagram], ingress: :primary)
+
+    assert {:ok, [%{data: <<0x00, 0x00>>, wkc: 0}], :primary} =
+             Simulator.process_datagrams_with_routing([datagram], ingress: :secondary)
+  end
+
   test "single break makes right-side station traffic reachable only from secondary ingress" do
     assert :ok = Simulator.set_topology({:redundant, break_after: 2})
 
@@ -46,6 +58,30 @@ defmodule EtherCAT.SimulatorRedundancyTest do
 
     assert {:ok, [%{data: <<0x02, 0x10>>, wkc: 1}]} =
              Simulator.process_datagrams([datagram], ingress: :secondary)
+  end
+
+  test "broken redundant routing keeps replies on the same leg" do
+    assert :ok = Simulator.set_topology({:redundant, break_after: 2})
+
+    datagram = station_read_datagram(0x1002)
+
+    assert {:ok, [%{data: <<0x00, 0x00>>, wkc: 0}], :primary} =
+             Simulator.process_datagrams_with_routing([datagram], ingress: :primary)
+
+    assert {:ok, [%{data: <<0x02, 0x10>>, wkc: 1}], :secondary} =
+             Simulator.process_datagrams_with_routing([datagram], ingress: :secondary)
+  end
+
+  test "master primary break makes secondary ingress the only working full-ring path" do
+    assert :ok = Simulator.set_topology({:redundant, master_break: :primary})
+
+    datagram = station_read_datagram(0x1002)
+
+    assert {:ok, [%{data: <<0x00, 0x00>>, wkc: 0}], :primary} =
+             Simulator.process_datagrams_with_routing([datagram], ingress: :primary)
+
+    assert {:ok, [%{data: <<0x02, 0x10>>, wkc: 1}], :secondary} =
+             Simulator.process_datagrams_with_routing([datagram], ingress: :secondary)
   end
 
   defp station_read_datagram(station) do

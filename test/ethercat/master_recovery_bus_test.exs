@@ -6,7 +6,7 @@ defmodule EtherCAT.MasterRecoveryBusTest do
   alias EtherCAT.Domain.API, as: DomainAPI
   alias EtherCAT.TestSupport.FakeBus
 
-  test "recovering retry does not restart stopped domains while the bus is down" do
+  test "recovering retry restarts stopped domains even if bus info still carries a transport fault" do
     domain_id = :"master_domain_retry_#{System.unique_integer([:positive, :monotonic])}"
 
     bus =
@@ -15,7 +15,7 @@ defmodule EtherCAT.MasterRecoveryBusTest do
          [
            name: EtherCAT.Bus,
            responses: List.duplicate({:ok, [%{data: <<0>>, wkc: 1, circular: false, irq: 0}]}, 8),
-           info: %{state: :idle, carrier_up: false}
+           info: %{topology: :unknown, fault: %{kind: :transport_fault}}
          ]}
       )
 
@@ -37,7 +37,7 @@ defmodule EtherCAT.MasterRecoveryBusTest do
              EtherCAT.Master.handle_event({:timeout, :retry}, nil, :recovering, data)
 
     assert recovering_data.runtime_faults == %{{:domain, domain_id} => {:stopped, :down}}
-    assert {:ok, %{state: :stopped}} = DomainAPI.info(domain_id)
+    assert {:ok, %{state: :cycling}} = DomainAPI.info(domain_id)
   end
 
   test "recovering retry keeps the DC runtime fault until the restarted worker proves success" do
@@ -47,7 +47,7 @@ defmodule EtherCAT.MasterRecoveryBusTest do
          [
            name: EtherCAT.Bus,
            responses: List.duplicate({:ok, [%{wkc: 1}]}, 8),
-           info: %{state: :idle, carrier_up: true, link_monitor_mode: :disabled}
+           info: %{state: :idle}
          ]}
       )
 

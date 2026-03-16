@@ -16,19 +16,23 @@ defmodule EtherCAT.Bus.Transport.RawSocket do
   import Kernel, except: [send: 2]
 
   alias EtherCAT.Bus.InterfaceInfo
+  alias EtherCAT.Telemetry
 
   @af_packet 17
   @ethertype 0x88A4
   @broadcast_mac <<0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF>>
+  @zero_mac <<0, 0, 0, 0, 0, 0>>
   @min_frame_size 60
+  @select_receive_retries 3
 
-  defstruct [:raw, :ifindex, :interface, :src_mac]
+  defstruct [:raw, :ifindex, :interface, :src_mac, drop_outgoing_echo?: false]
 
   @type t :: %__MODULE__{
           raw: :socket.socket() | nil,
           ifindex: non_neg_integer(),
           interface: String.t(),
-          src_mac: <<_::48>>
+          src_mac: <<_::48>>,
+          drop_outgoing_echo?: boolean()
         }
 
   @impl true
@@ -49,7 +53,8 @@ defmodule EtherCAT.Bus.Transport.RawSocket do
          raw: raw,
          ifindex: idx,
          interface: interface,
-         src_mac: src_mac
+         src_mac: src_mac,
+         drop_outgoing_echo?: Keyword.get(opts, :drop_outgoing_echo?, false)
        }}
     end
   end
@@ -57,6 +62,8 @@ defmodule EtherCAT.Bus.Transport.RawSocket do
   @impl true
   @doc "Send an EtherCAT payload wrapped in an Ethernet frame."
   @spec send(t(), binary()) :: {:ok, integer()} | {:error, term()}
+  def send(%__MODULE__{raw: nil}, _ecat_payload), do: {:error, :closed}
+
   def send(%__MODULE__{raw: raw, ifindex: idx, src_mac: src}, ecat_payload) do
     tx_at = System.monotonic_time()
     dest = sockaddr_ll(idx, @broadcast_mac)
@@ -80,11 +87,14 @@ defmodule EtherCAT.Bus.Transport.RawSocket do
   @impl true
   @doc "Arm for one async receive via `:socket` select mechanism."
   @spec set_active_once(t()) :: :ok
-  def set_active_once(%__MODULE__{} = sock), do: recv_async(sock)
+  def set_active_once(%__MODULE__{raw: nil}), do: :ok
+  def set_active_once(%__MODULE__{} = sock), do: arm_receive_once(sock)
 
   @impl true
   @doc "Re-arm without draining — self-sends a select notification."
   @spec rearm(t()) :: :ok
+  def rearm(%__MODULE__{raw: nil}), do: :ok
+
   def rearm(%__MODULE__{raw: raw}) do
     Kernel.send(self(), {:"$socket", raw, :select, :buffered})
     :ok
@@ -95,39 +105,29 @@ defmodule EtherCAT.Bus.Transport.RawSocket do
   Match a `{:"$socket", raw, :select, _}` message from this socket.
 
   When matched, calls `recvmsg` internally to read the frame, strips the
-  Ethernet headers, and returns the EtherCAT payload with an rx timestamp.
+  Ethernet headers, and returns the EtherCAT payload with an rx timestamp
+  and the frame's source MAC address (6 bytes).
   Returns `:ignore` for all other messages or non-EtherCAT frames.
   """
-  @spec match(t(), term()) :: {:ok, binary(), integer()} | :ignore
-  def match(%__MODULE__{raw: raw} = sock, {:"$socket", raw, :select, _}) do
-    case :socket.recvmsg(raw, 0, 0, :nowait) do
-      {:ok, msg} ->
-        rx_at = extract_timestamp(msg)
-        raw_frame = msg_data(msg)
+  @spec match(t(), term()) :: {:ok, binary(), integer(), binary()} | :ignore
+  def match(%__MODULE__{raw: raw} = sock, {:"$socket", raw, :select, _}),
+    do: recv_ethercat_payload(sock, @select_receive_retries)
 
-        case strip_ethernet_headers(raw_frame) do
-          {:ok, ecat_payload} ->
-            {:ok, ecat_payload, rx_at}
-
-          # Not an EtherCAT frame — self-notify to retry without draining
-          {:error, _} ->
-            rearm(sock)
-            :ignore
-        end
-
-      {:select, _} ->
-        :ignore
-
-      {:error, _} ->
-        :ignore
-    end
-  end
+  def match(%__MODULE__{raw: raw}, {:ethercat_raw_payload, raw, payload, rx_at, frame_src_mac}),
+    do: {:ok, payload, rx_at, frame_src_mac}
 
   def match(%__MODULE__{}, _msg), do: :ignore
 
   @impl true
+  @doc "Returns this NIC's source MAC address (6 bytes)."
+  @spec src_mac(t()) :: <<_::48>>
+  def src_mac(%__MODULE__{src_mac: mac}), do: mac
+
+  @impl true
   @doc "Drain all frames in the socket buffer; cancel any lingering select."
   @spec drain(t()) :: :ok
+  def drain(%__MODULE__{raw: nil}), do: :ok
+
   def drain(%__MODULE__{raw: raw} = sock) do
     case :socket.recvmsg(raw, 0, 0, :nowait) do
       {:ok, _} -> drain(sock)
@@ -164,34 +164,100 @@ defmodule EtherCAT.Bus.Transport.RawSocket do
 
   # -- private ----------------------------------------------------------------
 
-  defp recv_async(%__MODULE__{raw: raw} = sock) do
+  defp arm_receive_once(%__MODULE__{raw: raw} = sock) do
     case :socket.recvmsg(raw, 0, 0, :nowait) do
-      {:select, _} -> :ok
-      {:ok, _} -> recv_async(sock)
-      {:error, _} -> :ok
+      {:select, _} ->
+        :ok
+
+      {:ok, msg} ->
+        case extract_buffered_payload(sock, msg) do
+          {:ok, payload, rx_at, frame_src_mac} ->
+            Kernel.send(self(), {:ethercat_raw_payload, raw, payload, rx_at, frame_src_mac})
+            :ok
+
+          :ignore ->
+            arm_receive_once(sock)
+        end
+
+      {:error, _} ->
+        :ok
     end
   end
 
+  defp recv_ethercat_payload(%__MODULE__{raw: raw} = sock, retries_left) do
+    case :socket.recvmsg(raw, 0, 0, :nowait) do
+      {:ok, msg} ->
+        case extract_buffered_payload(sock, msg) do
+          {:ok, ecat_payload, rx_at, frame_src_mac} ->
+            {:ok, ecat_payload, rx_at, frame_src_mac}
+
+          :ignore ->
+            recv_ethercat_payload(sock, retries_left)
+        end
+
+      {:select, _} when retries_left > 0 ->
+        recv_ethercat_payload(sock, retries_left - 1)
+
+      {:select, _} ->
+        :ignore
+
+      {:error, _reason} when retries_left > 0 ->
+        recv_ethercat_payload(sock, retries_left - 1)
+
+      {:error, _reason} ->
+        :ignore
+    end
+  end
+
+  defp extract_buffered_payload(%__MODULE__{} = sock, msg) do
+    if outgoing_echo?(sock, msg) do
+      :ignore
+    else
+      rx_at = extract_timestamp(msg)
+      raw_frame = msg_data(msg)
+
+      case strip_ethernet_headers(raw_frame) do
+        {:ok, ecat_payload, frame_src_mac} ->
+          {:ok, ecat_payload, rx_at, frame_src_mac}
+
+        {:error, reason} ->
+          Telemetry.frame_dropped(sock.interface, byte_size(raw_frame), reason)
+          :ignore
+      end
+    end
+  end
+
+  defp outgoing_echo?(%__MODULE__{drop_outgoing_echo?: true}, %{
+         addr: %{family: :packet, pkttype: :outgoing}
+       }),
+       do: true
+
+  defp outgoing_echo?(%__MODULE__{}, _msg), do: false
+
   defp strip_ethernet_headers(<<
          _dst::binary-size(6),
-         _src::binary-size(6),
+         src::binary-size(6),
          0x88A4::big-unsigned-16,
          rest::binary
-       >>),
-       do: {:ok, rest}
+       >>) do
+    if valid_source_mac?(src), do: {:ok, rest, src}, else: {:error, :invalid_source_mac}
+  end
 
   # VLAN-tagged frame (802.1Q)
   defp strip_ethernet_headers(<<
          _dst::binary-size(6),
-         _src::binary-size(6),
+         src::binary-size(6),
          0x8100::big-unsigned-16,
          _vlan::binary-size(2),
          0x88A4::big-unsigned-16,
          rest::binary
-       >>),
-       do: {:ok, rest}
+       >>) do
+    if valid_source_mac?(src), do: {:ok, rest, src}, else: {:error, :invalid_source_mac}
+  end
 
   defp strip_ethernet_headers(_), do: {:error, :not_ethercat}
+
+  defp valid_source_mac?(mac), do: mac not in [@broadcast_mac, @zero_mac]
 
   # -- timestamp support ------------------------------------------------------
 

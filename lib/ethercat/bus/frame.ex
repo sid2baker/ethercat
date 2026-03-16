@@ -19,7 +19,7 @@ defmodule EtherCAT.Bus.Frame do
 
   # EtherCAT header length field is 11 bits → protocol max 2047 bytes.
   # The practical network limit (~1400 bytes for datagrams) is enforced
-  # upstream in SinglePort/Redundant via @max_datagram_bytes.
+  # upstream in Bus/Circuit via @max_datagram_bytes.
   @max_payload 2047
 
   @spec encode([Datagram.t()]) :: {:ok, binary()} | {:error, :frame_too_large}

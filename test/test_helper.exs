@@ -17,6 +17,21 @@ defmodule EtherCAT.TestHelper do
     exclusion_for(:raw_socket_redundant, "redundant raw simulator", redundant_raw_interfaces())
   end
 
+  def raw_socket_redundant_toggle_excludes do
+    case raw_socket_redundant_excludes() do
+      [] ->
+        if can_toggle_redundant_raw_links?() do
+          []
+        else
+          warn_toggle_excluded()
+          [:raw_socket_redundant_toggle]
+        end
+
+      _other ->
+        [:raw_socket_redundant_toggle]
+    end
+  end
+
   defp redundant_raw_interfaces do
     [
       System.get_env("ETHERCAT_REDUNDANT_RAW_MASTER_PRIMARY_INTERFACE") || "veth-m0",
@@ -146,6 +161,38 @@ defmodule EtherCAT.TestHelper do
     ]
     |> Enum.join("\n")
   end
+
+  defp can_toggle_redundant_raw_links? do
+    System.find_executable("ip") &&
+      (running_as_root?() or passwordless_sudo_available?())
+  end
+
+  defp running_as_root? do
+    case System.cmd("id", ["-u"], stderr_to_stdout: true) do
+      {"0\n", 0} -> true
+      _other -> false
+    end
+  end
+
+  defp passwordless_sudo_available? do
+    case System.find_executable("sudo") do
+      nil ->
+        false
+
+      _sudo ->
+        case System.cmd("sudo", ["-n", "true"], stderr_to_stdout: true) do
+          {_output, 0} -> true
+          _other -> false
+        end
+    end
+  end
+
+  defp warn_toggle_excluded do
+    IO.puts(
+      :stderr,
+      "warning: excluding :raw_socket_redundant_toggle tests because `ip link set` is not available without interactive privileges."
+    )
+  end
 end
 
 ExUnit.start(
@@ -154,5 +201,6 @@ ExUnit.start(
   exclude:
     [:hardware] ++
       EtherCAT.TestHelper.raw_socket_excludes() ++
-      EtherCAT.TestHelper.raw_socket_redundant_excludes()
+      EtherCAT.TestHelper.raw_socket_redundant_excludes() ++
+      EtherCAT.TestHelper.raw_socket_redundant_toggle_excludes()
 )

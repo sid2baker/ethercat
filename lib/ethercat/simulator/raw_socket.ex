@@ -15,21 +15,27 @@ defmodule EtherCAT.Simulator.RawSocket do
   require Logger
 
   alias EtherCAT.Bus.Frame
+  alias EtherCAT.Bus.InterfaceInfo
   alias EtherCAT.Simulator
   alias EtherCAT.Utils
 
   @af_packet 17
   @ethertype 0x88A4
+  @broadcast_mac <<0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF>>
   @default_name __MODULE__
   @echo_retention_ms 100
 
   @type ingress :: :primary | :secondary
+  @type frame_envelope :: :plain | {:vlan, binary()}
   @type state :: %{
           socket: :socket.socket(),
           interface: String.t(),
           ifindex: non_neg_integer(),
+          src_mac: <<_::48>>,
           ingress: ingress(),
-          recent_tx_frames: [{binary(), integer()}]
+          recent_tx_frames: [{binary(), integer()}],
+          response_delay_ms: non_neg_integer(),
+          response_delay_from_ingress: ingress() | :all
         }
 
   @spec child_spec(keyword()) :: Supervisor.child_spec()
@@ -59,6 +65,16 @@ defmodule EtherCAT.Simulator.RawSocket do
     :exit, _reason -> {:error, :not_found}
   end
 
+  @spec set_response_delay(GenServer.server(), non_neg_integer(), ingress() | :all) ::
+          :ok | {:error, :not_found}
+  def set_response_delay(name, delay_ms, from_ingress \\ :all)
+      when is_integer(delay_ms) and delay_ms >= 0 and from_ingress in [:all, :primary, :secondary] do
+    GenServer.call(name, {:set_response_delay, delay_ms, from_ingress})
+  catch
+    :exit, {:noproc, _} -> {:error, :not_found}
+    :exit, _reason -> {:error, :not_found}
+  end
+
   @spec infos() :: {:ok, map()} | {:error, :not_found}
   def infos do
     case info() do
@@ -74,8 +90,11 @@ defmodule EtherCAT.Simulator.RawSocket do
   def init(opts) do
     interface = Keyword.fetch!(opts, :interface)
     ingress = Keyword.get(opts, :ingress, :primary)
+    response_delay_ms = Keyword.get(opts, :response_delay_ms, 0)
+    response_delay_from_ingress = Keyword.get(opts, :response_delay_from_ingress, :all)
 
     with {:ok, ifindex} <- :net.if_name2index(String.to_charlist(interface)),
+         {:ok, src_mac} <- InterfaceInfo.mac_address(interface),
          {:ok, socket} <- :socket.open(@af_packet, :raw, {:raw, @ethertype}),
          :ok <- :socket.bind(socket, sockaddr_ll(ifindex)) do
       Logger.metadata(
@@ -83,7 +102,8 @@ defmodule EtherCAT.Simulator.RawSocket do
         transport: :raw_socket,
         interface: interface,
         ingress: ingress,
-        ifindex: ifindex
+        ifindex: ifindex,
+        response_delay_ms: response_delay_ms
       )
 
       :ok = arm_receive(socket)
@@ -93,8 +113,11 @@ defmodule EtherCAT.Simulator.RawSocket do
          socket: socket,
          interface: interface,
          ifindex: ifindex,
+         src_mac: src_mac,
          ingress: ingress,
-         recent_tx_frames: []
+         recent_tx_frames: [],
+         response_delay_ms: response_delay_ms,
+         response_delay_from_ingress: response_delay_from_ingress
        }}
     else
       {:error, reason} ->
@@ -110,13 +133,37 @@ defmodule EtherCAT.Simulator.RawSocket do
         interface: state.interface,
         ifindex: state.ifindex,
         ingress: state.ingress,
-        recent_tx_frame_count: length(state.recent_tx_frames)
+        recent_tx_frame_count: length(state.recent_tx_frames),
+        response_delay_ms: state.response_delay_ms,
+        response_delay_from_ingress: state.response_delay_from_ingress
       }}, state}
+  end
+
+  def handle_call({:set_response_delay, delay_ms, from_ingress}, _from, state) do
+    {:reply, :ok,
+     %{
+       state
+       | response_delay_ms: delay_ms,
+         response_delay_from_ingress: from_ingress
+     }}
+  end
+
+  @impl true
+  def handle_cast(
+        {:send_response_frame, source_ingress, envelope, response_payload, padding},
+        state
+      ) do
+    {:noreply,
+     dispatch_response_frame(state, source_ingress, envelope, response_payload, padding)}
   end
 
   @impl true
   def handle_info({:"$socket", socket, :select, _}, %{socket: socket} = state) do
     {:noreply, receive_ready_frames(state)}
+  end
+
+  def handle_info({:emit_response_frame, envelope, response_payload, padding}, state) do
+    {:noreply, emit_response_frame(state, envelope, response_payload, padding)}
   end
 
   def handle_info(_msg, state), do: {:noreply, state}
@@ -143,7 +190,7 @@ defmodule EtherCAT.Simulator.RawSocket do
     end
   end
 
-  defp process_raw_message(%{socket: socket} = state, msg) do
+  defp process_raw_message(state, msg) do
     state = prune_recent_tx_frames(state)
     raw_frame = msg_data(msg)
 
@@ -152,16 +199,22 @@ defmodule EtherCAT.Simulator.RawSocket do
         updated
 
       :miss ->
-        with {:ok, response_header, payload, padding, requester_mac} <-
+        with {:ok, envelope, payload, padding, _requester_mac} <-
                split_ethercat_frame(raw_frame),
              {:ok, datagrams} <- Frame.decode(payload),
              :request <- classify_payload(datagrams),
-             {:ok, response_datagrams} <-
-               Simulator.process_datagrams(datagrams, ingress: state.ingress),
+             {:ok, response_datagrams, egress} <-
+               Simulator.process_datagrams_with_routing(datagrams, ingress: state.ingress),
              {:ok, response_payload} <- Frame.encode(response_datagrams),
-             reply_frame <- <<response_header::binary, response_payload::binary, padding::binary>>,
-             :ok <- :socket.sendto(socket, reply_frame, sockaddr_ll(state.ifindex, requester_mac)) do
-          remember_tx_frame(state, reply_frame)
+             {:ok, state} <-
+               emit_or_forward_response(
+                 state,
+                 egress,
+                 envelope,
+                 response_payload,
+                 padding
+               ) do
+          state
         else
           :ignore ->
             state
@@ -190,23 +243,20 @@ defmodule EtherCAT.Simulator.RawSocket do
   end
 
   defp split_ethercat_frame(
-         <<destination_mac::binary-size(6), source_mac::binary-size(6),
+         <<_destination_mac::binary-size(6), source_mac::binary-size(6),
            @ethertype::big-unsigned-16, payload_with_padding::binary>>
        ) do
     with {:ok, payload, padding} <- split_payload_and_padding(payload_with_padding) do
-      {:ok, <<source_mac::binary, destination_mac::binary, @ethertype::big-unsigned-16>>, payload,
-       padding, source_mac}
+      {:ok, :plain, payload, padding, source_mac}
     end
   end
 
   defp split_ethercat_frame(
-         <<destination_mac::binary-size(6), source_mac::binary-size(6), 0x8100::big-unsigned-16,
+         <<_destination_mac::binary-size(6), source_mac::binary-size(6), 0x8100::big-unsigned-16,
            vlan_tag::binary-size(2), @ethertype::big-unsigned-16, payload_with_padding::binary>>
        ) do
     with {:ok, payload, padding} <- split_payload_and_padding(payload_with_padding) do
-      {:ok,
-       <<source_mac::binary, destination_mac::binary, 0x8100::big-unsigned-16, vlan_tag::binary,
-         @ethertype::big-unsigned-16>>, payload, padding, source_mac}
+      {:ok, {:vlan, vlan_tag}, payload, padding, source_mac}
     end
   end
 
@@ -230,6 +280,105 @@ defmodule EtherCAT.Simulator.RawSocket do
   end
 
   defp split_payload_and_padding(_payload), do: {:error, :truncated_payload}
+
+  defp emit_or_forward_response(
+         state,
+         egress,
+         envelope,
+         response_payload,
+         padding
+       )
+
+  defp emit_or_forward_response(
+         %{ingress: ingress} = state,
+         ingress,
+         envelope,
+         response_payload,
+         padding
+       ) do
+    {:ok, dispatch_response_frame(state, ingress, envelope, response_payload, padding)}
+  end
+
+  defp emit_or_forward_response(state, egress, envelope, response_payload, padding) do
+    if pid = Process.whereis(endpoint_name(egress)) do
+      GenServer.cast(
+        pid,
+        {:send_response_frame, state.ingress, envelope, response_payload, padding}
+      )
+
+      {:ok, state}
+    else
+      {:error, :egress_unavailable}
+    end
+  end
+
+  defp dispatch_response_frame(
+         %{response_delay_ms: delay_ms} = state,
+         source_ingress,
+         envelope,
+         response_payload,
+         padding
+       )
+       when is_integer(delay_ms) and delay_ms > 0 do
+    if delay_response?(state, source_ingress) do
+      Process.send_after(
+        self(),
+        {:emit_response_frame, envelope, response_payload, padding},
+        delay_ms
+      )
+
+      state
+    else
+      emit_response_frame(state, envelope, response_payload, padding)
+    end
+  end
+
+  defp dispatch_response_frame(state, _source_ingress, envelope, response_payload, padding) do
+    emit_response_frame(state, envelope, response_payload, padding)
+  end
+
+  defp delay_response?(
+         %{response_delay_from_ingress: :all},
+         source_ingress
+       )
+       when source_ingress in [:primary, :secondary],
+       do: true
+
+  defp delay_response?(
+         %{response_delay_from_ingress: expected_ingress},
+         source_ingress
+       ),
+       do: expected_ingress == source_ingress
+
+  defp emit_response_frame(
+         %{socket: socket, ifindex: ifindex, src_mac: src_mac} = state,
+         envelope,
+         response_payload,
+         padding
+       ) do
+    reply_frame = build_reply_frame(@broadcast_mac, src_mac, envelope, response_payload, padding)
+
+    case :socket.sendto(socket, reply_frame, sockaddr_ll(ifindex, @broadcast_mac)) do
+      :ok -> remember_tx_frame(state, reply_frame)
+      {:error, _reason} -> state
+    end
+  end
+
+  defp build_reply_frame(destination_mac, source_mac, :plain, response_payload, padding) do
+    <<destination_mac::binary, source_mac::binary, @ethertype::big-unsigned-16,
+      response_payload::binary, padding::binary>>
+  end
+
+  defp build_reply_frame(
+         destination_mac,
+         source_mac,
+         {:vlan, vlan_tag},
+         response_payload,
+         padding
+       ) do
+    <<destination_mac::binary, source_mac::binary, 0x8100::big-unsigned-16, vlan_tag::binary,
+      @ethertype::big-unsigned-16, response_payload::binary, padding::binary>>
+  end
 
   defp remember_tx_frame(%{recent_tx_frames: recent_tx_frames} = state, frame) do
     timestamp_ms = System.monotonic_time(:millisecond)

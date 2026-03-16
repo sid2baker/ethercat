@@ -4,6 +4,7 @@ defmodule EtherCAT.APIResilienceTest do
   alias EtherCAT.Domain.API, as: DomainAPI
   alias EtherCAT.Slave.API, as: SlaveAPI
   alias EtherCAT.Utils
+  alias EtherCAT.Bus
 
   defmodule DummyStatem do
     @behaviour :gen_statem
@@ -78,6 +79,12 @@ defmodule EtherCAT.APIResilienceTest do
 
     assert {:error, {:server_exit, _reason}} =
              crash_during_call(pid, fn -> SlaveAPI.info(slave_name) end)
+  end
+
+  test "bus singleton queries return not_started when the bus is not running" do
+    assert {:error, :not_started} = Bus.info()
+    assert {:error, :not_started} = Bus.settle()
+    assert {:error, :not_started} = Bus.quiesce()
   end
 
   defp crash_during_call(pid, fun) do

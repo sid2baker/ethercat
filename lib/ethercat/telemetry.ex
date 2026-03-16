@@ -249,6 +249,21 @@ defmodule EtherCAT.Telemetry do
   end
 
   @doc false
+  def bus_topology_changed(circuit, from, to, observation) do
+    execute(
+      [:ethercat, :bus, :topology, :changed],
+      %{observed_at: observation.completed_at},
+      %{
+        circuit: circuit,
+        from: from,
+        to: to,
+        path_shape: observation.path_shape,
+        status: observation.status
+      }
+    )
+  end
+
+  @doc false
   def frame_dropped(link, size, reason) do
     execute(
       [:ethercat, :bus, :frame, :dropped],

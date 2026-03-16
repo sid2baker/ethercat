@@ -1,0 +1,78 @@
+# Redundant Replug Watch
+
+This Livebook attaches to an already-running EtherCAT master in the current
+runtime.
+
+Expected setup:
+
+- master is already `:operational`
+- slave names: `:coupler`, `:inputs`, `:outputs`
+- signal names: `:ch1 .. :ch8` on both `:inputs` and `:outputs`
+- redundant bus link: primary `eth1`, secondary `eth0`
+- `outputs.ch1..ch8` are looped back to `inputs.ch1..ch8`
+
+The watcher continuously writes an 8-bit counter to `outputs.ch1..ch8`,
+waits for `inputs.ch1..ch8` to match, and prints:
+
+- `app` lines with the written pattern, observed input pattern, and latency
+- `telemetry` lines for link loss/restore, master state changes, domain faults,
+  and slave faults
+
+## Load the watcher
+
+Run this notebook in the same runtime that already owns the master.
+
+```elixir
+System.put_env("ETHERCAT_REPLUG_WATCH_NOAUTORUN", "1")
+
+project_root = "/home/n0gg1n/Development/Work/opencode/ethercat"
+
+Code.require_file(
+  Path.join(project_root, "test/integration/hardware/scripts/redundant_replug_watch.exs")
+)
+```
+
+## Configure
+
+These defaults match your current bench setup.
+
+```elixir
+watch_opts = %{
+  primary_interface: "eth1",
+  backup_interface: "eth0",
+  step_ms: 20,
+  match_timeout_ms: 200,
+  poll_ms: 1,
+  steps: nil
+}
+```
+
+## Start the watcher
+
+This runs in a task so the notebook stays responsive. Let it stream output, then
+disconnect and reconnect the primary cable.
+
+```elixir
+watch_task =
+  Task.async(fn ->
+    EtherCAT.HardwareScripts.RedundantReplugWatch.run(watch_opts)
+  end)
+```
+
+## Stop the watcher
+
+Run this when you are done.
+
+```elixir
+Task.shutdown(watch_task, 5_000)
+```
+
+## Short bounded run
+
+Useful if you want a finite sample instead of an endless stream.
+
+```elixir
+short_watch_opts = %{watch_opts | steps: 300}
+
+EtherCAT.HardwareScripts.RedundantReplugWatch.run(short_watch_opts)
+```

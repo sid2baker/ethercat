@@ -84,12 +84,13 @@ defmodule EtherCAT.Bus.Transport.UdpSocket do
   @doc """
   Match a `{:udp, raw, _ip, _port, data}` message from this socket.
 
-  Returns `{:ok, ecat_payload, rx_at}` when the message belongs to this socket.
+  Returns `{:ok, ecat_payload, rx_at, nil}` when the message belongs to this
+  socket. `src_mac` is always `nil` for UDP (no Ethernet headers).
   The UDP checksum is cleared by the ESC (spec §2.6) — no validation needed.
   """
-  @spec match(t(), term()) :: {:ok, binary(), integer()} | :ignore
+  @spec match(t(), term()) :: {:ok, binary(), integer(), nil} | :ignore
   def match(%__MODULE__{raw: sock}, {:udp, sock, _ip, _port, data}) do
-    {:ok, data, System.monotonic_time()}
+    {:ok, data, System.monotonic_time(), nil}
   end
 
   def match(%__MODULE__{}, _msg), do: :ignore
@@ -111,6 +112,11 @@ defmodule EtherCAT.Bus.Transport.UdpSocket do
     :gen_udp.close(raw)
     %{sock | raw: nil}
   end
+
+  @impl true
+  @doc "Returns `nil` — UDP has no Ethernet-level source MAC."
+  @spec src_mac(t()) :: nil
+  def src_mac(%__MODULE__{}), do: nil
 
   @impl true
   @doc "Returns `true` when the socket is open."

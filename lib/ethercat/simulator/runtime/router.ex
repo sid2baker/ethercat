@@ -76,7 +76,12 @@ defmodule EtherCAT.Simulator.Runtime.Router do
         process_register_command(slave, datagram, offset)
       end)
 
-    {%{datagram | data: response_data, wkc: wkc}, slaves}
+    # Spec §2.4.1: each reachable slave decrements the position field by 1
+    reachable_count = Enum.count(slaves, &(not MapSet.member?(disconnected, &1.name)))
+    response_position = position - reachable_count
+    response_address = <<response_position::little-signed-16, offset::little-unsigned-16>>
+
+    {%{datagram | address: response_address, data: response_data, wkc: wkc}, slaves}
   end
 
   defp process_datagram(
@@ -107,7 +112,7 @@ defmodule EtherCAT.Simulator.Runtime.Router do
          _logical_wkc_offsets
        )
        when cmd in [@brd, @bwr, @brw] do
-    <<_zero::little-signed-16, offset::little-unsigned-16>> = datagram.address
+    <<position::little-signed-16, offset::little-unsigned-16>> = datagram.address
 
     {slaves, response_data, wkc} =
       Enum.reduce(slaves, {[], datagram.data, 0}, fn slave, {acc, _response_data, wkc} ->
@@ -121,7 +126,12 @@ defmodule EtherCAT.Simulator.Runtime.Router do
         end
       end)
 
-    {%{datagram | data: response_data, wkc: wkc}, Enum.reverse(slaves)}
+    # Spec §2.4.1: each reachable slave decrements the position field by 1
+    reachable_count = Enum.count(slaves, &(not MapSet.member?(disconnected, &1.name)))
+    response_position = position - reachable_count
+    response_address = <<response_position::little-signed-16, offset::little-unsigned-16>>
+
+    {%{datagram | address: response_address, data: response_data, wkc: wkc}, Enum.reverse(slaves)}
   end
 
   defp process_datagram(%Datagram{cmd: cmd} = datagram, slaves, disconnected, logical_wkc_offsets)
