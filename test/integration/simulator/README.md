@@ -113,6 +113,7 @@ plan -> fix -> verify -> commit.
 - `39`: redundant primary veth restore must not invalidate domain cycles or trigger master recovery after degraded single-port operation
 - `40`: redundant bus accepts a degraded processed reply when the redundant copy from the opposite direction is delayed beyond the merge window
 - `41`: multi-datagram BWR transactions in redundant mode must return wkc > 0 despite AF_PACKET outgoing echo race
+- `42`: redundant primary port reconnection causes transient frame loss when slave PHY link-up timing differs from master NIC auto-negotiation (hardware-only, no simulator test)
 
 These are the current regression scenarios, not just backlog items. Each one
 should keep its `.md` note and matching `_test.exs` file aligned.
