@@ -82,6 +82,7 @@
 ## Testing
 - Run tests in a specific file with `mix test test/my_test.exs` and a specific test with the line number `mix test path/to/test.exs:123`
 - Limit the number of failed tests with `mix test --max-failures n`
+- After a full test run, use `mix test --failed` to re-run only the failures
 - Use `@tag` to tag specific tests, and `mix test --only tag` to run only those tests
 - Use `assert_raise` for testing expected exceptions: `assert_raise ArgumentError, fn -> invalid_function() end`
 - Use `mix help test` to for full documentation on running tests

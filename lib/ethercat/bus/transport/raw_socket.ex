@@ -228,7 +228,7 @@ defmodule EtherCAT.Bus.Transport.RawSocket do
   end
 
   defp outgoing_echo?(%__MODULE__{drop_outgoing_echo?: true}, %{
-         addr: %{family: :packet, pkttype: :outgoing}
+         addr: %{pkttype: :outgoing}
        }),
        do: true
 

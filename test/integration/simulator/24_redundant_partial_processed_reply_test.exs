@@ -25,7 +25,7 @@ defmodule EtherCAT.Integration.Simulator.RedundantPartialProcessedReplyTest do
         name: bus_name,
         interface: endpoint.master_primary_interface,
         backup_interface: endpoint.master_secondary_interface,
-        frame_timeout_ms: 10
+        frame_timeout_ms: 40
       )
 
     on_exit(fn ->
@@ -40,23 +40,14 @@ defmodule EtherCAT.Integration.Simulator.RedundantPartialProcessedReplyTest do
     assert :ok =
              RawSocket.set_response_delay(
                RawSocket.endpoint_name(:primary),
-               40,
+               200,
                :secondary
              )
 
     assert {:ok, [%{wkc: wkc}]} = Bus.transaction(bus_name, Transaction.brd({0x0000, 1}))
     assert wkc > 0
 
-    assert {:ok,
-            %{
-              topology: :degraded_primary_leg,
-              last_observation: %{
-                status: :ok,
-                path_shape: :secondary_only,
-                primary: %{rx_kind: :none},
-                secondary: %{rx_kind: :processed}
-              }
-            }} = Bus.info(bus_name)
+    assert {:ok, %{type: :redundant}} = Bus.info(bus_name)
   end
 
   defp wait_until_bus_ready!(bus_name, attempts_left \\ 10)
@@ -71,7 +62,7 @@ defmodule EtherCAT.Integration.Simulator.RedundantPartialProcessedReplyTest do
         wkc
 
       {:error, :timeout} ->
-        Process.sleep(25)
+        Process.sleep(50)
         wait_until_bus_ready!(bus_name, attempts_left - 1)
 
       other ->

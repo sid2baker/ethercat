@@ -25,7 +25,8 @@ defmodule EtherCAT.Bus do
   available for internal callers and tests.
   """
 
-  alias EtherCAT.Bus.{FSM, Result, Transaction}
+  alias EtherCAT.Bus.Link
+  alias EtherCAT.Bus.{Result, Transaction}
   alias EtherCAT.{Telemetry, Utils}
 
   @type server :: :gen_statem.server_ref()
@@ -44,7 +45,10 @@ defmodule EtherCAT.Bus do
   end
 
   @spec start_link(keyword()) :: :gen_statem.start_ret()
-  def start_link(opts), do: FSM.start_link(opts)
+  def start_link(opts) do
+    link_mod = if opts[:backup_interface], do: Link.Redundant, else: Link.Single
+    link_mod.start_link(opts)
+  end
 
   @doc """
   Execute a reliable transaction.

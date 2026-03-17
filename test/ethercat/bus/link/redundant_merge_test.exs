@@ -1,8 +1,8 @@
-defmodule EtherCAT.Bus.Circuit.RedundantMergeTest do
+defmodule EtherCAT.Bus.Link.RedundantMergeTest do
   use ExUnit.Case, async: true
 
   alias EtherCAT.Bus.{Frame, Transaction}
-  alias EtherCAT.Bus.Circuit.RedundantMerge
+  alias EtherCAT.Bus.Link.RedundantMerge
 
   test "interprets healthy redundant replies as passthrough plus processed" do
     sent = stamped_datagrams(Transaction.fprd(0x1000, {0x0130, 2}), 1)

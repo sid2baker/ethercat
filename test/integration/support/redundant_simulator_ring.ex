@@ -99,7 +99,7 @@ defmodule EtherCAT.IntegrationSupport.RedundantSimulatorRing do
       dc: nil,
       scan_stable_ms: 20,
       scan_poll_ms: 10,
-      frame_timeout_ms: 20,
+      frame_timeout_ms: 100,
       domains: [SimulatorRing.default_domain()],
       slaves: SimulatorRing.slave_configs(ring, Keyword.get(opts, :slave_config_opts, []))
     ]

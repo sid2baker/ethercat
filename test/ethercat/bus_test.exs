@@ -2,7 +2,6 @@ defmodule EtherCAT.BusTest do
   use ExUnit.Case, async: true
 
   alias EtherCAT.Bus
-  alias EtherCAT.Bus.Circuit.Single
   alias EtherCAT.Bus.{Datagram, Frame, Transaction}
 
   @submission_enqueued_event [:ethercat, :bus, :submission, :enqueued]
@@ -29,17 +28,25 @@ defmodule EtherCAT.BusTest do
 
     import Kernel, except: [send: 2]
 
-    defstruct [:fail_send, :interface, :raw, :test_pid]
+    defstruct [:fail_send, :interface, :raw, :test_pid, :src_mac]
 
     @impl true
     def open(opts) do
+      interface = Keyword.fetch!(opts, :interface)
+
       {:ok,
        %__MODULE__{
          fail_send: Keyword.get(opts, :fail_send, %{}),
-         interface: Keyword.fetch!(opts, :interface),
+         interface: interface,
          raw: make_ref(),
-         test_pid: Keyword.fetch!(opts, :test_pid)
+         test_pid: Keyword.fetch!(opts, :test_pid),
+         src_mac: Keyword.get(opts, :src_mac, generate_mac(interface))
        }}
+    end
+
+    defp generate_mac(interface) do
+      hash = :erlang.phash2(interface, 0xFFFFFF)
+      <<0x02, 0x00, hash::24>>
     end
 
     @impl true
@@ -71,10 +78,17 @@ defmodule EtherCAT.BusTest do
       {:ok, payload, rx_at, nil}
     end
 
+    def match(
+          %__MODULE__{raw: raw},
+          {:fake_transport_payload, raw, payload, rx_at, frame_src_mac}
+        ) do
+      {:ok, payload, rx_at, frame_src_mac}
+    end
+
     def match(%__MODULE__{}, _msg), do: :ignore
 
     @impl true
-    def src_mac(%__MODULE__{}), do: nil
+    def src_mac(%__MODULE__{src_mac: mac}), do: mac
 
     @impl true
     def drain(%__MODULE__{test_pid: test_pid}) do
@@ -100,7 +114,6 @@ defmodule EtherCAT.BusTest do
   test "start_link boots an idle single-circuit bus" do
     {:ok, bus} =
       Bus.start_link(
-        circuit_mod: Single,
         interface: "eth-test",
         test_pid: self(),
         frame_timeout_ms: 10,
@@ -110,12 +123,12 @@ defmodule EtherCAT.BusTest do
     assert {:ok,
             %{
               state: :idle,
-              topology: :unknown,
+              type: :single,
+              topology: :single,
               fault: nil,
               frame_timeout_ms: 10,
               timeout_count: 0,
-              in_flight: nil,
-              circuit_info: %{type: :single}
+              in_flight: nil
             }} = Bus.info(bus)
   end
 
@@ -325,25 +338,30 @@ defmodule EtherCAT.BusTest do
 
   test "redundant link keeps the processed forward-path reply over the reverse passthrough copy" do
     {:ok, bus} = start_redundant_circuit_bus()
+    pri_mac = fake_mac("pri")
+    sec_mac = fake_mac("sec")
 
     read = Task.async(fn -> Bus.transaction(bus, Transaction.fprd(0x1000, {0x0130, 2})) end)
 
     primary = assert_sent_transport("pri")
     secondary = assert_sent_transport("sec")
 
-    # In a healthy ring, the primary port receives the secondary-originated
-    # reverse-path copy unchanged, while the secondary port receives the
-    # processed forward-path reply.
-    reply_transport(bus, primary, fn dg -> %{dg | wkc: 0} end)
+    # Healthy ring: secondary's frame arrives on primary (reverse cross),
+    # primary's frame arrives on secondary (forward cross = authoritative).
+    reply_transport(bus, primary, fn dg -> %{dg | wkc: 0} end, src_mac: sec_mac)
     refute_receive {:fake_transport_sent, _, _, _, _}, 20
 
-    reply_transport(bus, secondary, fn dg -> %{dg | data: <<0x22, 0x22>>, wkc: 1} end)
+    reply_transport(bus, secondary, fn dg -> %{dg | data: <<0x22, 0x22>>, wkc: 1} end,
+      src_mac: pri_mac
+    )
 
     assert {:ok, [%{data: <<0x22, 0x22>>, wkc: 1}]} = Task.await(read)
   end
 
   test "redundant link merges complementary logical data from both sides of a break" do
     {:ok, bus} = start_redundant_circuit_bus()
+    pri_mac = fake_mac("pri")
+    sec_mac = fake_mac("sec")
 
     original = <<0xF0, 0xF1, 0xF2, 0xF3>>
 
@@ -355,14 +373,105 @@ defmodule EtherCAT.BusTest do
     primary = assert_sent_transport("pri")
     secondary = assert_sent_transport("sec")
 
-    # Primary-originated frame processes the left half and bounces back to
-    # primary. Secondary-originated frame reaches the break in reverse, then
-    # processes the right half on the way back to secondary.
-    reply_transport(bus, primary, fn dg -> %{dg | data: <<0x10, 0x11, 0xF2, 0xF3>>, wkc: 2} end)
+    # Ring break: primary's frame bounces back to primary (pri_bounce),
+    # secondary's frame bounces back to secondary (sec_bounce).
+    # Each side processed a different half of the slaves.
+    reply_transport(bus, primary, fn dg -> %{dg | data: <<0x10, 0x11, 0xF2, 0xF3>>, wkc: 2} end,
+      src_mac: pri_mac
+    )
+
     refute_receive {:fake_transport_sent, _, _, _, _}, 20
-    reply_transport(bus, secondary, fn dg -> %{dg | data: <<0xF0, 0xF1, 0x12, 0x13>>, wkc: 2} end)
+
+    reply_transport(bus, secondary, fn dg -> %{dg | data: <<0xF0, 0xF1, 0x12, 0x13>>, wkc: 2} end,
+      src_mac: sec_mac
+    )
 
     assert {:ok, [%{data: <<0x10, 0x11, 0x12, 0x13>>, wkc: 4}]} = Task.await(read)
+  end
+
+  test "redundant multi-datagram BWR returns cross-delivery data when echoes arrive first (bounce MAC)" do
+    # Echoes classified as bounces (own MAC on own port) — link layer must not
+    # complete on merged wkc=0 bounces before real cross-deliveries arrive.
+    {:ok, bus} = start_redundant_circuit_bus(frame_timeout_ms: 100)
+    pri_mac = fake_mac("pri")
+    sec_mac = fake_mac("sec")
+
+    tx =
+      Enum.reduce(1..13, Transaction.new(), fn i, tx ->
+        Transaction.bwr(tx, {0x0100 + i, <<0::8>>})
+      end)
+
+    read = Task.async(fn -> Bus.transaction(bus, tx) end)
+
+    primary = assert_sent_transport("pri")
+    secondary = assert_sent_transport("sec")
+    assert length(primary.datagrams) == 13
+
+    # Echoes arrive first as bounces (own MAC, wkc=0)
+    reply_transport(bus, primary, fn dg -> dg end, src_mac: pri_mac)
+    reply_transport(bus, secondary, fn dg -> dg end, src_mac: sec_mac)
+
+    # Real forward cross arrives later with wkc=3
+    Process.sleep(5)
+    reply_transport(bus, secondary, fn dg -> %{dg | wkc: 3} end, src_mac: pri_mac)
+
+    assert {:ok, results} = Task.await(read)
+    assert length(results) == 13
+    assert Enum.all?(results, fn r -> r.wkc == 3 end)
+  end
+
+  test "redundant multi-datagram BWR returns cross-delivery data when echoes arrive first (unknown MAC)" do
+    # Reproduces the actual hardware bug: AF_PACKET outgoing echoes arrive with
+    # a source MAC that matches neither NIC (e.g. slave ASIC rewrites src MAC,
+    # or pkttype detection unavailable). Both echoes are classified as :unknown
+    # with wkc=0. Without the wkc=0 guard, interpret/3 completes the exchange
+    # immediately with wkc=0 data before the real cross-delivery arrives.
+    {:ok, bus} = start_redundant_circuit_bus(frame_timeout_ms: 100)
+    slave_mac = <<0xEA, 0x0C, 0xE6, 0xE4, 0xB2, 0xB0>>
+
+    tx =
+      Enum.reduce(1..13, Transaction.new(), fn i, tx ->
+        Transaction.bwr(tx, {0x0100 + i, <<0::8>>})
+      end)
+
+    read = Task.async(fn -> Bus.transaction(bus, tx) end)
+
+    primary = assert_sent_transport("pri")
+    secondary = assert_sent_transport("sec")
+    assert length(primary.datagrams) == 13
+
+    # Echoes arrive with unknown MAC (doesn't match pri or sec NIC) and wkc=0
+    reply_transport(bus, primary, fn dg -> dg end, src_mac: slave_mac)
+    reply_transport(bus, secondary, fn dg -> dg end, src_mac: slave_mac)
+
+    # Real cross-delivery arrives later with wkc=3
+    Process.sleep(5)
+    reply_transport(bus, secondary, fn dg -> %{dg | wkc: 3} end, src_mac: slave_mac)
+
+    assert {:ok, results} = Task.await(read)
+    assert length(results) == 13
+    assert Enum.all?(results, fn r -> r.wkc == 3 end)
+  end
+
+  test "redundant single-datagram BRD returns cross-delivery data when echoes arrive first" do
+    # Same echo race with single BRD — unknown MAC variant.
+    {:ok, bus} = start_redundant_circuit_bus(frame_timeout_ms: 100)
+    slave_mac = <<0xEA, 0x0C, 0xE6, 0xE4, 0xB2, 0xB0>>
+
+    read = Task.async(fn -> Bus.transaction(bus, Transaction.brd({0x0000, 1})) end)
+
+    primary = assert_sent_transport("pri")
+    secondary = assert_sent_transport("sec")
+
+    # Echoes with unknown MAC, wkc=0
+    reply_transport(bus, primary, fn dg -> dg end, src_mac: slave_mac)
+    reply_transport(bus, secondary, fn dg -> dg end, src_mac: slave_mac)
+
+    # Real cross-delivery
+    Process.sleep(5)
+    reply_transport(bus, secondary, fn dg -> %{dg | wkc: 3} end, src_mac: slave_mac)
+
+    assert {:ok, [%{wkc: 3}]} = Task.await(read)
   end
 
   test "named buses are reachable through their registered server ref" do
@@ -406,7 +515,7 @@ defmodule EtherCAT.BusTest do
             }} = Bus.info(bus)
   end
 
-  test "built-in single circuit reports transport failure without entering a bus-down state" do
+  test "built-in single circuit reports transport failure" do
     {:ok, bus} = start_single_circuit_bus(fail_send: %{"eth0" => :enetdown})
 
     assert {:error, :enetdown} =
@@ -414,31 +523,32 @@ defmodule EtherCAT.BusTest do
 
     assert {:ok,
             %{
-              state: :idle,
-              topology: :unknown,
-              fault: %{kind: :transport_fault, port: :primary, confidence: :low},
-              last_error_reason: :enetdown,
-              last_observation: %{
-                status: :transport_error,
-                primary: %{send_result: {:error, :enetdown}}
-              }
+              state: :unhealthy,
+              fault: %{kind: :transport_fault},
+              last_error_reason: :transport_unavailable
             }} = Bus.info(bus)
   end
 
   test "built-in redundant circuit executes a healthy redundant exchange" do
     {:ok, bus} = start_redundant_circuit_bus()
+    pri_mac = fake_mac("pri")
+    sec_mac = fake_mac("sec")
 
     read = Task.async(fn -> Bus.transaction(bus, Transaction.fprd(0x1000, {0x0130, 2})) end)
 
     primary = assert_sent_transport("pri")
     secondary = assert_sent_transport("sec")
 
-    reply_transport(bus, primary, fn dg -> %{dg | wkc: 0} end)
-    reply_transport(bus, secondary, fn dg -> %{dg | data: <<0x21, 0x43>>, wkc: 1} end)
+    # Healthy ring: reverse cross on primary, forward cross on secondary
+    reply_transport(bus, primary, fn dg -> %{dg | wkc: 0} end, src_mac: sec_mac)
+
+    reply_transport(bus, secondary, fn dg -> %{dg | data: <<0x21, 0x43>>, wkc: 1} end,
+      src_mac: pri_mac
+    )
 
     assert {:ok, [%{data: <<0x21, 0x43>>, wkc: 1}]} = Task.await(read)
 
-    assert {:ok, %{state: :idle, topology: :redundant, fault: nil, in_flight: nil}} =
+    assert {:ok, %{state: :idle, type: :redundant, in_flight: nil}} =
              Bus.info(bus)
   end
 
@@ -454,14 +564,13 @@ defmodule EtherCAT.BusTest do
 
     assert {:ok, [%{data: <<0x32, 0x32>>, wkc: 1}]} = Task.await(degraded)
 
-    assert {:ok,
-            %{
-              topology: :degraded_primary_leg,
-              fault: %{kind: :master_leg_fault, port: :primary, confidence: :high}
-            }} = Bus.info(bus)
+    # Bus reopens closed transports eagerly — primary is open again but
+    # the transaction still completed using secondary-only data
+    assert {:ok, %{type: :redundant}} = Bus.info(bus)
   end
 
   test "built-in redundant circuit accepts a processed one-sided timeout as degraded success" do
+    pri_mac = fake_mac("pri")
     {:ok, bus} = start_redundant_circuit_bus(frame_timeout_ms: 10)
 
     read = Task.async(fn -> Bus.transaction(bus, Transaction.brd({0x0000, 1})) end)
@@ -469,30 +578,25 @@ defmodule EtherCAT.BusTest do
     _primary = assert_sent_transport("pri")
     secondary = assert_sent_transport("sec")
 
-    reply_transport(bus, secondary, fn dg -> %{dg | wkc: 3} end)
+    # Forward cross on secondary (primary's frame crossed) — authoritative reply
+    reply_transport(bus, secondary, fn dg -> %{dg | wkc: 3} end, src_mac: pri_mac)
 
+    # Forward cross completes immediately — primary's path is proven healthy,
+    # secondary's reply status is inconclusive (completed early)
     assert {:ok, [%{wkc: 3}]} = Task.await(read)
 
-    assert {:ok,
-            %{
-              topology: :degraded_primary_leg,
-              last_observation: %{
-                status: :ok,
-                path_shape: :secondary_only,
-                primary: %{rx_kind: :none},
-                secondary: %{rx_kind: :processed}
-              }
-            }} = Bus.info(bus)
+    assert {:ok, %{type: :redundant}} = Bus.info(bus)
   end
 
-  test "single-port bus reports runtime info without link monitor state" do
+  test "single-port bus reports runtime info" do
     {:ok, bus, link_name} = start_bus()
 
     assert {:ok,
             %{
               state: :idle,
-              circuit: ^link_name,
-              topology: :unknown,
+              link: ^link_name,
+              type: :single,
+              topology: :single,
               fault: nil,
               frame_timeout_ms: 50,
               timeout_count: 0,
@@ -573,8 +677,9 @@ defmodule EtherCAT.BusTest do
     assert_receive :fake_transport_drained
   end
 
-  test "redundant partial drains both transports before the next dispatch" do
-    {:ok, bus} = start_redundant_circuit_bus(frame_timeout_ms: 10, reply_grace_ms: 0)
+  test "redundant passthrough-only reply is discarded as echo copy and times out" do
+    pri_mac = fake_mac("pri")
+    {:ok, bus} = start_redundant_circuit_bus(frame_timeout_ms: 10)
 
     txn = Task.async(fn -> Bus.transaction(bus, Transaction.brd({0x0000, 1})) end)
 
@@ -584,12 +689,16 @@ defmodule EtherCAT.BusTest do
     assert primary.interface == "pri"
     assert secondary.interface == "sec"
 
+    # A frame with wkc=0 and unchanged data is indistinguishable from an
+    # outgoing echo — the content-based filter discards it. No slave
+    # processed the frame, so timeout is the correct outcome.
     send(
       bus,
-      {:fake_transport_payload, primary.raw, primary_payload(primary), System.monotonic_time()}
+      {:fake_transport_payload, primary.raw, primary_payload(primary), System.monotonic_time(),
+       pri_mac}
     )
 
-    assert {:error, :partial} = Task.await(txn)
+    assert {:error, :timeout} = Task.await(txn)
     assert_receive :fake_transport_drained
     assert_receive :fake_transport_drained
   end
@@ -667,6 +776,11 @@ defmodule EtherCAT.BusTest do
     %{datagrams: datagrams, interface: interface, raw: raw}
   end
 
+  defp fake_mac(interface) do
+    hash = :erlang.phash2(interface, 0xFFFFFF)
+    <<0x02, 0x00, hash::24>>
+  end
+
   defp primary_payload(%{datagrams: datagrams}) do
     {:ok, payload} = Frame.encode(datagrams)
     payload
@@ -682,10 +796,16 @@ defmodule EtherCAT.BusTest do
     send(bus, {:fake_transport_payload, raw, payload, System.monotonic_time()})
   end
 
-  defp reply_transport(bus, %{datagrams: datagrams, raw: raw}, fun) do
+  defp reply_transport(bus, sent, fun, opts \\ [])
+
+  defp reply_transport(bus, %{datagrams: datagrams, raw: raw}, fun, opts) do
     response_datagrams = Enum.map(datagrams, fun)
     {:ok, payload} = Frame.encode(response_datagrams)
-    send(bus, {:fake_transport_payload, raw, payload, System.monotonic_time()})
+
+    case Keyword.get(opts, :src_mac) do
+      nil -> send(bus, {:fake_transport_payload, raw, payload, System.monotonic_time()})
+      mac -> send(bus, {:fake_transport_payload, raw, payload, System.monotonic_time(), mac})
+    end
   end
 
   defp reply_data_for_station(%Datagram{

@@ -86,6 +86,10 @@ defmodule EtherCAT.Telemetry do
         measurements: %{}
         metadata:     %{link: String.t(), endpoint: String.t()}
 
+      [:ethercat, :bus, :link, :health, :changed]
+        measurements: %{}
+        metadata:     %{link: String.t(), port: :primary | :secondary, from: term(), to: term()}
+
   ### DC maintenance and lock monitoring
 
       [:ethercat, :dc, :tick]
@@ -287,6 +291,15 @@ defmodule EtherCAT.Telemetry do
       [:ethercat, :bus, :link, :reconnected],
       %{},
       %{link: link, endpoint: endpoint}
+    )
+  end
+
+  @doc false
+  def link_health_changed(link, port, from, to) do
+    execute(
+      [:ethercat, :bus, :link, :health, :changed],
+      %{},
+      %{link: link, port: port, from: from, to: to}
     )
   end
 
@@ -526,6 +539,7 @@ defmodule EtherCAT.Telemetry do
     [:ethercat, :bus, :frame, :dropped],
     [:ethercat, :bus, :link, :down],
     [:ethercat, :bus, :link, :reconnected],
+    [:ethercat, :bus, :link, :health, :changed],
     [:ethercat, :dc, :tick],
     [:ethercat, :dc, :sync_diff, :observed],
     [:ethercat, :dc, :lock, :changed],

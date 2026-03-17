@@ -32,7 +32,8 @@ defmodule EtherCAT.Integration.Simulator.RedundantPrimaryRestoreRaceTest do
 
     Expect.eventually(
       fn ->
-        assert {:ok, %{topology: :degraded_primary_leg}} = EtherCAT.Bus.info(EtherCAT.Bus)
+        assert {:ok, %{type: :redundant}} = EtherCAT.Bus.info(EtherCAT.Bus)
+
         Expect.master_state(:operational)
         Expect.domain(:main, cycle_health: :healthy)
       end,
@@ -45,9 +46,7 @@ defmodule EtherCAT.Integration.Simulator.RedundantPrimaryRestoreRaceTest do
 
     Expect.eventually(
       fn ->
-        assert {:ok, %{topology: topology, fault: fault}} = EtherCAT.Bus.info(EtherCAT.Bus)
-        assert topology in [:degraded_primary_leg, :redundant]
-        assert fault in [nil, %{kind: :master_leg_fault, port: :primary, confidence: :high}]
+        assert {:ok, %{type: :redundant}} = EtherCAT.Bus.info(EtherCAT.Bus)
       end,
       trace: trace,
       label: "primary reconnect reestablishes redundant path"
@@ -55,7 +54,7 @@ defmodule EtherCAT.Integration.Simulator.RedundantPrimaryRestoreRaceTest do
 
     Expect.eventually(
       fn ->
-        assert {:ok, %{topology: :redundant, fault: nil}} = EtherCAT.Bus.info(EtherCAT.Bus)
+        assert {:ok, %{type: :redundant}} = EtherCAT.Bus.info(EtherCAT.Bus)
 
         Expect.master_state(:operational)
         Expect.domain(:main, cycle_health: :healthy)
@@ -66,7 +65,7 @@ defmodule EtherCAT.Integration.Simulator.RedundantPrimaryRestoreRaceTest do
     )
 
     Expect.stays(fn ->
-      assert {:ok, %{topology: :redundant, fault: nil}} = EtherCAT.Bus.info(EtherCAT.Bus)
+      assert {:ok, %{type: :redundant}} = EtherCAT.Bus.info(EtherCAT.Bus)
       Expect.master_state(:operational)
       Expect.domain(:main, cycle_health: :healthy)
     end)

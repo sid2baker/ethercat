@@ -15,7 +15,7 @@ defmodule EtherCAT.MasterRecoveryBusTest do
          [
            name: EtherCAT.Bus,
            responses: List.duplicate({:ok, [%{data: <<0>>, wkc: 1, circular: false, irq: 0}]}, 8),
-           info: %{topology: :unknown, fault: %{kind: :transport_fault}}
+           info: %{topology: :single, fault: %{kind: :transport_fault}}
          ]}
       )
 

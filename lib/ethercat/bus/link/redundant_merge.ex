@@ -1,34 +1,36 @@
-defmodule EtherCAT.Bus.Circuit.RedundantMerge do
+defmodule EtherCAT.Bus.Link.RedundantMerge do
   @moduledoc """
   Pure helpers for redundant exchange interpretation.
 
-  This module is the future home for:
+  Given sent datagrams and the replies from primary and secondary ports,
+  classifies the rx pattern and merges both replies into a best-effort
+  result with combined WKC.
 
-  - per-port return classification
-  - path-shape inference
-  - complementary-partial merge logic
-
-  Keeping those helpers pure makes the hardest redundant-path logic testable
-  without involving a live bus or transports.
+  All functions are deterministic and side-effect free — the hardest
+  redundant-path logic is testable without a live bus or transports.
   """
 
   alias EtherCAT.Bus.Datagram
-  alias EtherCAT.Bus.Observation
+
+  @type rx_kind_t :: :processed | :passthrough | :partial | :none | :invalid
+
+  @type path_shape_t ::
+          :single
+          | :full_redundancy
+          | :primary_only
+          | :secondary_only
+          | :complementary_partials
+          | :no_valid_return
+          | :invalid
 
   @type interpretation_t :: %{
           status: :ok | :partial | :timeout,
           redundancy: :full | :degraded | :none,
-          path_shape: Observation.path_shape_t(),
-          primary_rx_kind: Observation.rx_kind_t(),
-          secondary_rx_kind: Observation.rx_kind_t(),
+          path_shape: path_shape_t(),
+          primary_rx_kind: rx_kind_t(),
+          secondary_rx_kind: rx_kind_t(),
           datagrams: [Datagram.t()] | nil
         }
-
-  @spec classify_path_shape(Observation.port_observation_t(), Observation.port_observation_t()) ::
-          Observation.path_shape_t()
-  def classify_path_shape(primary, secondary) when is_map(primary) and is_map(secondary) do
-    do_classify(primary.rx_kind, secondary.rx_kind)
-  end
 
   @spec interpret([Datagram.t()], [Datagram.t()] | nil, [Datagram.t()] | nil) ::
           interpretation_t()
@@ -150,20 +152,6 @@ defmodule EtherCAT.Bus.Circuit.RedundantMerge do
     end
   end
 
-  defp do_classify(:processed, :passthrough), do: :full_redundancy
-  defp do_classify(:passthrough, :processed), do: :full_redundancy
-  defp do_classify(:partial, :partial), do: :complementary_partials
-  defp do_classify(:processed, :none), do: :primary_only
-  defp do_classify(:none, :processed), do: :secondary_only
-  defp do_classify(:partial, :none), do: :primary_only
-  defp do_classify(:none, :partial), do: :secondary_only
-  defp do_classify(:none, :none), do: :no_valid_return
-  defp do_classify(:invalid, :none), do: :invalid
-  defp do_classify(:none, :invalid), do: :invalid
-  defp do_classify(:invalid, :invalid), do: :invalid
-  defp do_classify(:processed, :processed), do: :full_redundancy
-  defp do_classify(_primary, _secondary), do: :invalid
-
   defp classify_single_side(sent_datagrams, response_datagrams) do
     if passthrough_copy?(sent_datagrams, response_datagrams), do: :passthrough, else: :processed
   end
@@ -177,6 +165,18 @@ defmodule EtherCAT.Bus.Circuit.RedundantMerge do
 
   @spec total_wkc([Datagram.t()]) :: non_neg_integer()
   defp total_wkc(datagrams), do: Enum.sum(Enum.map(datagrams, & &1.wkc))
+
+  @doc """
+  Merge two bounced replies from a broken ring.
+
+  When both ports receive their own frame back (bounce-back), each side only
+  processed the slaves reachable from that port. This function merges the
+  complementary data using byte-level logical merge for commands 10/11/12.
+  """
+  @spec merge_bounces([Datagram.t()], [Datagram.t()], [Datagram.t()]) :: [Datagram.t()]
+  def merge_bounces(sent_datagrams, primary_bounced, secondary_bounced) do
+    merge_datagrams(sent_datagrams, primary_bounced, secondary_bounced)
+  end
 
   @spec merge_datagrams([Datagram.t()], [Datagram.t()], [Datagram.t()]) :: [Datagram.t()]
   defp merge_datagrams(sent_datagrams, primary_datagrams, secondary_datagrams) do
