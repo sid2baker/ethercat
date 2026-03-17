@@ -109,6 +109,10 @@ plan -> fix -> verify -> commit.
 - `35`: retained reconnect PREOP mailbox failure that arms a later counted PDO disconnect whose recovery entry then arms a follow-up `SAFEOP` retreat on another PDO slave
 - `36`: captured `EL3202` reconnect-time PREOP timeout on a real startup SDO map that later arms a counted PDO disconnect while typed RTD decode must still recover cleanly
 - `37`: split-domain captured `EL3202` reconnect-time PREOP timeout where the digital loopback domain must stay healthy while the RTD retry path heals independently
+- `38`: redundant passthrough-only reply (wkc=0, data unchanged) is discarded by the echo filter when the processed cross-delivery is delayed beyond the frame timeout
+- `39`: redundant primary veth restore must not invalidate domain cycles or trigger master recovery after degraded single-port operation
+- `40`: redundant bus accepts a degraded processed reply when the redundant copy from the opposite direction is delayed beyond the merge window
+- `41`: multi-datagram BWR transactions in redundant mode must return wkc > 0 despite AF_PACKET outgoing echo race
 
 These are the current regression scenarios, not just backlog items. Each one
 should keep its `.md` note and matching `_test.exs` file aligned.
