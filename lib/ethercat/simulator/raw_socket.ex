@@ -150,11 +150,19 @@ defmodule EtherCAT.Simulator.RawSocket do
 
   @impl true
   def handle_cast(
-        {:send_response_frame, source_ingress, envelope, response_payload, padding},
+        {:send_response_frame, source_ingress, envelope, response_payload, padding,
+         requester_mac},
         state
       ) do
     {:noreply,
-     dispatch_response_frame(state, source_ingress, envelope, response_payload, padding)}
+     dispatch_response_frame(
+       state,
+       source_ingress,
+       envelope,
+       response_payload,
+       padding,
+       requester_mac
+     )}
   end
 
   @impl true
@@ -162,8 +170,11 @@ defmodule EtherCAT.Simulator.RawSocket do
     {:noreply, receive_ready_frames(state)}
   end
 
-  def handle_info({:emit_response_frame, envelope, response_payload, padding}, state) do
-    {:noreply, emit_response_frame(state, envelope, response_payload, padding)}
+  def handle_info(
+        {:emit_response_frame, envelope, response_payload, padding, requester_mac},
+        state
+      ) do
+    {:noreply, emit_response_frame(state, envelope, response_payload, padding, requester_mac)}
   end
 
   def handle_info(_msg, state), do: {:noreply, state}
@@ -199,7 +210,7 @@ defmodule EtherCAT.Simulator.RawSocket do
         updated
 
       :miss ->
-        with {:ok, envelope, payload, padding, _requester_mac} <-
+        with {:ok, envelope, payload, padding, requester_mac} <-
                split_ethercat_frame(raw_frame),
              {:ok, datagrams} <- Frame.decode(payload),
              :request <- classify_payload(datagrams),
@@ -212,7 +223,8 @@ defmodule EtherCAT.Simulator.RawSocket do
                  egress,
                  envelope,
                  response_payload,
-                 padding
+                 padding,
+                 requester_mac
                ) do
           state
         else
@@ -286,7 +298,8 @@ defmodule EtherCAT.Simulator.RawSocket do
          egress,
          envelope,
          response_payload,
-         padding
+         padding,
+         requester_mac
        )
 
   defp emit_or_forward_response(
@@ -294,16 +307,18 @@ defmodule EtherCAT.Simulator.RawSocket do
          ingress,
          envelope,
          response_payload,
-         padding
+         padding,
+         requester_mac
        ) do
-    {:ok, dispatch_response_frame(state, ingress, envelope, response_payload, padding)}
+    {:ok,
+     dispatch_response_frame(state, ingress, envelope, response_payload, padding, requester_mac)}
   end
 
-  defp emit_or_forward_response(state, egress, envelope, response_payload, padding) do
+  defp emit_or_forward_response(state, egress, envelope, response_payload, padding, requester_mac) do
     if pid = Process.whereis(endpoint_name(egress)) do
       GenServer.cast(
         pid,
-        {:send_response_frame, state.ingress, envelope, response_payload, padding}
+        {:send_response_frame, state.ingress, envelope, response_payload, padding, requester_mac}
       )
 
       {:ok, state}
@@ -317,24 +332,32 @@ defmodule EtherCAT.Simulator.RawSocket do
          source_ingress,
          envelope,
          response_payload,
-         padding
+         padding,
+         requester_mac
        )
        when is_integer(delay_ms) and delay_ms > 0 do
     if delay_response?(state, source_ingress) do
       Process.send_after(
         self(),
-        {:emit_response_frame, envelope, response_payload, padding},
+        {:emit_response_frame, envelope, response_payload, padding, requester_mac},
         delay_ms
       )
 
       state
     else
-      emit_response_frame(state, envelope, response_payload, padding)
+      emit_response_frame(state, envelope, response_payload, padding, requester_mac)
     end
   end
 
-  defp dispatch_response_frame(state, _source_ingress, envelope, response_payload, padding) do
-    emit_response_frame(state, envelope, response_payload, padding)
+  defp dispatch_response_frame(
+         state,
+         _source_ingress,
+         envelope,
+         response_payload,
+         padding,
+         requester_mac
+       ) do
+    emit_response_frame(state, envelope, response_payload, padding, requester_mac)
   end
 
   defp delay_response?(
@@ -351,12 +374,17 @@ defmodule EtherCAT.Simulator.RawSocket do
        do: expected_ingress == source_ingress
 
   defp emit_response_frame(
-         %{socket: socket, ifindex: ifindex, src_mac: src_mac} = state,
+         %{socket: socket, ifindex: ifindex} = state,
          envelope,
          response_payload,
-         padding
+         padding,
+         requester_mac
        ) do
-    reply_frame = build_reply_frame(@broadcast_mac, src_mac, envelope, response_payload, padding)
+    # Use the requester's MAC as the source — real EtherCAT slaves don't
+    # modify the Ethernet source MAC, so the frame returns with the
+    # original sender's address.
+    reply_frame =
+      build_reply_frame(@broadcast_mac, requester_mac, envelope, response_payload, padding)
 
     case :socket.sendto(socket, reply_frame, sockaddr_ll(ifindex, @broadcast_mac)) do
       :ok -> remember_tx_frame(state, reply_frame)
