@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `8eff41c` — capture snapshots now write portable `.capture` data files instead of executable Elixir source, and generated simulator scaffolds load those data-only artifacts safely.
 - `b57763a` — telemetry and logging now follow a stricter observability contract: transaction spans use stable stop metadata, link/frame events distinguish aggregate links from concrete endpoints, repeated startup/recovery retries are less noisy in logs, and new DC runtime plus slave-startup retry events improve machine-readable introspection.
 - `af5192e` — telemetry now separates invalid domain cycles from transport misses, master startup/activation/DC-lock decisions emit bounded lifecycle events, slave fault/down signals carry richer detail, and long-lived master/bus/domain/DC/slave/simulator processes now stamp consistent structured metadata onto high-signal logs.
-- `(pending hash)` — `EtherCAT.Master`, `EtherCAT.Slave`, `EtherCAT.Domain`, and `EtherCAT.DC` now own the public API directly, while their `gen_statem` implementations live behind internal `*.FSM` modules and the old `*.API` facade split is gone.
+- `9f1342a` — `EtherCAT.Master`, `EtherCAT.Slave`, `EtherCAT.Domain`, and `EtherCAT.DC` now own the public API directly, while their `gen_statem` implementations live behind internal `*.FSM` modules and the old `*.API` facade split is gone.
 
 ### Fixed
 - `95f343d` — DC recovery and configuration validation are stricter, reducing invalid recovery paths and catching bad setup earlier.
