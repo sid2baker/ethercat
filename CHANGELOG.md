@@ -27,7 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `7055878` — raw socket transport no longer drains buffered frames on idx-mismatch rearm, preventing legitimate responses from being lost when rogue EtherCAT traffic is present on the wire.
 - `1b2211f` — redundant link rejoin now drains a reopened port, honors explicit carrier-restore notifications, and only promotes the restored leg after a run of successful probe cycles so cyclic traffic does not stall when a healthy backup path is already carrying the ring.
 - `68f6c20` — the bus runtime now executes built-in single and redundant traffic exclusively through `Bus.Circuit`, the legacy `Bus.Link` path is gone, OS link state is no longer part of bus correctness, and `Bus.info/1` reports smoothed topology/fault assessment from observed exchange results rather than carrier-driven healing state.
-- `(pending hash)` — redundant link send failures now surface as degraded-port topology/fault state plus link-health telemetry, simulator power-cycle faults clear volatile mailbox state before reconfiguration, and slave AL health polling defaults to `250ms` unless explicitly disabled.
+- `4b1ac0f` — redundant link send failures now surface as degraded-port topology/fault state plus link-health telemetry, simulator power-cycle faults clear volatile mailbox state before reconfiguration, and slave AL health polling defaults to `250ms` unless explicitly disabled.
 
 ### Docs
 - `8f773d6`, `c42b0c9`, `0248012`, `04b2c5f`, `072119d`, `9b3b4ba`, `ee210fa`, `8eff41c` — README, hardware playbooks, simulator docs, and API guidance were rewritten to better explain transport boundaries, bring-up workflow, release metadata, and fault/recovery scenarios.
