@@ -153,9 +153,12 @@ defmodule EtherCAT.SimulatorSlaveDeviceTest do
   end
 
   test "power_cycle clears volatile mailbox state and process-data mappings" do
+    {station_address, _} = Registers.station_address()
+
     slave =
-      Definition.build(:mailbox_device)
+      Definition.build(:mailbox_device, dc_capable?: true)
       |> Device.new(0)
+      |> Device.write_register(station_address, <<0x34, 0x12>>)
       |> configure_operational_layout()
       |> Device.inject_mailbox_abort(0x2000, 0x01, 0x0601_0002)
       |> Device.inject_mailbox_protocol_fault(0x2000, 0x01, :upload_init, :invalid_coe_payload)
@@ -173,12 +176,14 @@ defmodule EtherCAT.SimulatorSlaveDeviceTest do
     {sm_activate, _} = Registers.sm_activate(2)
 
     assert reset.state == :init
+    assert reset.station == 0
     refute reset.al_error?
     assert reset.al_status_code == 0
     assert reset.mailbox_upload == nil
     assert reset.mailbox_download == nil
     assert reset.mailbox_abort_rules == []
     assert reset.mailbox_protocol_fault_rules == []
+    assert Device.read_register(reset, station_address, 2) == <<0::16-little>>
     assert Device.read_register(reset, 0x0130, 2) == <<0x01, 0x00>>
     assert Device.read_register(reset, 0x0134, 2) == <<0x00, 0x00>>
     assert Device.read_register(reset, fmmu_activate, 1) == <<0x00>>

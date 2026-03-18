@@ -27,7 +27,8 @@ defmodule EtherCAT.MasterRecoveryBusTest do
         %{
           name: name,
           test_pid: Keyword.fetch!(opts, :test_pid),
-          authorize_reply: Keyword.get(opts, :authorize_reply, :ok)
+          authorize_reply: Keyword.get(opts, :authorize_reply, :ok),
+          state: Keyword.get(opts, :state, :down)
         },
         []
       )
@@ -37,12 +38,16 @@ defmodule EtherCAT.MasterRecoveryBusTest do
     def callback_mode, do: :handle_event_function
 
     @impl true
-    def init(data), do: {:ok, :down, data}
+    def init(%{state: state} = data), do: {:ok, state, data}
 
     @impl true
     def handle_event({:call, from}, :authorize_reconnect, :down, data) do
       send(data.test_pid, {:authorize_reconnect, data.name})
       {:keep_state, data, [{:reply, from, data.authorize_reply}]}
+    end
+
+    def handle_event({:call, from}, :authorize_reconnect, _state, data) do
+      {:keep_state, data, [{:reply, from, {:error, :not_down}}]}
     end
 
     def handle_event({:call, from}, _event, _state, data) do
@@ -164,5 +169,59 @@ defmodule EtherCAT.MasterRecoveryBusTest do
 
     assert_receive {:authorize_reconnect, ^slave_name}
     assert retried_data.slave_faults == %{slave_name => {:reconnecting, :authorized}}
+  end
+
+  test "recovering retry leaves an in-flight reconnect alone when the slave is already not down" do
+    slave_name = :"recovering_slave_booting_#{System.unique_integer([:positive, :monotonic])}"
+
+    start_supervised!({ReconnectStubSlave, name: slave_name, test_pid: self(), state: :preop})
+
+    data = %EtherCAT.Master{
+      desired_runtime_target: :op,
+      slave_faults: %{slave_name => {:reconnecting, :authorized}},
+      runtime_faults: %{{:slave, slave_name} => {:down, :no_response}}
+    }
+
+    assert {:keep_state, %EtherCAT.Master{} = recovering_data, _actions} =
+             EtherCAT.Master.handle_event({:timeout, :retry}, nil, :recovering, data)
+
+    refute_receive {:authorize_reconnect, ^slave_name}
+    assert recovering_data.slave_faults == %{slave_name => {:reconnecting, :authorized}}
+    assert recovering_data.runtime_faults == %{{:slave, slave_name} => {:down, :no_response}}
+  end
+
+  test "recovering retry falls back to rediscovery when topology is back but a slave still cannot reconnect" do
+    bus =
+      start_supervised!(
+        {FakeBus,
+         [
+           name: EtherCAT.Bus,
+           responses: [{:ok, [%{data: <<0>>, wkc: 3, circular: false, irq: 0}]}],
+           default_reply: {:error, :unexpected_transaction}
+         ]}
+      )
+
+    data = %EtherCAT.Master{
+      bus_ref: Process.monitor(bus),
+      desired_runtime_target: :op,
+      slave_count: 3,
+      slaves: [coupler: 0x1000, inputs: 0x1001, outputs: 0x1002],
+      slave_faults: %{outputs: {:reconnect_failed, :not_reconnected}},
+      runtime_faults: %{
+        {:domain, :main} => {:cycle_invalid, :timeout},
+        {:slave, :outputs} => {:reconnect_failed, :not_reconnected}
+      }
+    }
+
+    assert {:next_state, :discovering, %EtherCAT.Master{} = rediscovering} =
+             EtherCAT.Master.handle_event({:timeout, :retry}, nil, :recovering, data)
+
+    assert rediscovering.bus_ref == data.bus_ref
+    assert rediscovering.slaves == []
+    assert rediscovering.pending_preop == MapSet.new()
+    assert rediscovering.runtime_faults == %{}
+    assert rediscovering.slave_faults == %{}
+    assert Process.alive?(bus)
+    assert [_scan_tx] = FakeBus.calls(EtherCAT.Bus)
   end
 end

@@ -663,6 +663,18 @@ defmodule EtherCAT.Master do
       {:ok, next_state, healed_data} ->
         {:next_state, next_state, healed_data}
 
+      {:rediscover, reason, rediscovery_data} ->
+        Logger.warning(
+          "[Master] recovery escalated to topology rediscovery: #{inspect(reason)}",
+          component: :master,
+          event: :recovery_rediscovering,
+          reason_kind: Utils.reason_kind(reason)
+        )
+
+        stop_runtime_session(rediscovery_data)
+
+        {:next_state, :discovering, reset_for_rediscovery(rediscovery_data)}
+
       {:recovering, still_recovering} ->
         case Recovery.unrecoverable_recovery_reason(still_recovering) do
           nil ->
@@ -1385,6 +1397,31 @@ defmodule EtherCAT.Master do
 
   defp stop_session(data) do
     Session.stop(data)
+  end
+
+  defp stop_runtime_session(data) do
+    Session.stop_runtime(data)
+  end
+
+  defp reset_for_rediscovery(data) do
+    %{
+      data
+      | dc_ref: nil,
+        dc_ref_station: nil,
+        dc_stations: [],
+        activatable_slaves: [],
+        slaves: [],
+        scan_window: [],
+        slave_count: nil,
+        pending_preop: MapSet.new(),
+        activation_failures: %{},
+        runtime_faults: %{},
+        slave_faults: %{},
+        await_callers: [],
+        await_operational_callers: [],
+        domain_refs: %{},
+        slave_refs: %{}
+    }
   end
 
   defp handle_activate_network(from, data) do

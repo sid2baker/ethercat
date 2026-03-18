@@ -251,8 +251,8 @@ and secondary reachability.
 Runtime fault injection supports:
 
 - exchange-scoped faults such as dropped replies, WKC skew, and disconnects
-- slave-local faults such as `SAFEOP` retreat, AL error latch, mailbox aborts,
-  and mailbox protocol faults
+- slave-local faults such as `SAFEOP` retreat, power-cycle resets, AL error
+  latch, mailbox aborts, and mailbox protocol faults
 - queued windows through `Fault.next/2`
 - scripted sequences through `Fault.script/1`
 - delayed activation through `Fault.after_ms/2`
@@ -272,13 +272,16 @@ Current milestones:
 - `{:healthy_polls, slave_name, count}`
 - `{:mailbox_step, slave_name, step, count}`
 
-Mailbox-local response faults include:
+Current slave-local fault injections include:
 
+- `{:power_cycle, slave_name}` — reset the slave to `INIT`, clear volatile
+  runtime state, and clear its fixed station address so the master must
+  rediscover or readdress it
 - `{:mailbox_abort, slave_name, index, subindex, abort_code}`
 - `{:mailbox_abort, slave_name, index, subindex, abort_code, stage}`
 - `{:mailbox_protocol_fault, slave_name, index, subindex, stage, fault_kind}`
 
-Direct mailbox-local injections stay active until `clear_faults/0`. The same
+Direct slave-local injections stay active until `clear_faults/0`. The same
 mailbox protocol fault injected as a step inside `Fault.script/1` is consumed
 on first match so reconnect/retry scenarios can fail once and self-heal on a
 later master retry.

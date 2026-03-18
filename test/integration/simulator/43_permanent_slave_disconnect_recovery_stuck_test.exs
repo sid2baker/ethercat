@@ -121,25 +121,16 @@ defmodule EtherCAT.Integration.Simulator.PermanentSlaveDisconnectRecoveryStuckTe
     |> Scenario.run()
   end
 
-  test "master recovers after a power-cycled slave comes back at :init" do
-    # Models a hardware power cycle where the slave briefly loses power and
-    # comes back at :init BEFORE the health poll notices it was gone. The
-    # slave is always reachable (FPRD returns wkc>0), but its AL state is
-    # :init and its FMMU/SM config is gone.
-    #
-    # Expected: the health poll (or recovery loop) detects the slave is at
-    # :init, triggers a full re-initialization (init → preop → safeop → op),
-    # and the master returns to :operational.
+  test "master rediscovers a slave that returns anonymous after a full disconnect" do
+    # Models the real hardware case: the slave disappears completely, then
+    # comes back without its old fixed station address. The returning slave is
+    # visible again on the ring, but the slave worker is still polling the old
+    # station and cannot self-heal without a topology rediscovery.
 
     Scenario.new()
     |> Scenario.trace()
-    |> Scenario.act("power cycle the slave (no disconnect)", fn _ctx ->
-      # Immediately reset the simulated slave to :init with cleared
-      # FMMU/SM config. The slave stays reachable on the ring — it
-      # responds to FPRD (wkc>0) but can't process LRW (no FMMUs).
-      assert :ok = Simulator.inject_fault(Fault.power_cycle(:outputs))
-    end)
-    |> Scenario.act("master enters recovering via domain wkc_mismatch", fn _ctx ->
+    |> Scenario.inject_fault(Fault.disconnect(:outputs) |> Fault.next(@disconnect_steps * 2))
+    |> Scenario.act("master enters recovering after slave disconnect", fn _ctx ->
       Expect.eventually(
         fn ->
           Expect.master_state(:recovering)
@@ -148,18 +139,73 @@ defmodule EtherCAT.Integration.Simulator.PermanentSlaveDisconnectRecoveryStuckTe
         label: "master enters recovering"
       )
     end)
-    |> Scenario.act("master returns to operational after slave is reconfigured", fn _ctx ->
+    |> Scenario.act("power cycle the disconnected slave so it returns anonymous", fn _ctx ->
+      assert :ok = Simulator.inject_fault(Fault.power_cycle(:outputs))
+      assert {:ok, %{station: 0, state: :init}} = Simulator.device_snapshot(:outputs)
+    end)
+    |> Scenario.act("master returns to operational after rediscovery", fn _ctx ->
       Expect.eventually(
         fn ->
           Expect.master_state(:operational)
           Expect.domain(:main, cycle_health: :healthy)
+          Expect.simulator_queue_empty()
+        end,
+        attempts: 400,
+        label: "master returns to operational"
+      )
+    end)
+    |> Scenario.act("slave is healthy and loopback I/O works", fn _ctx ->
+      assert {:ok, %{al_state: :op, station: 0x1002}} = EtherCAT.slave_info(:outputs)
+      assert nil == SimulatorRing.fault_for(:outputs)
+
+      assert :ok = EtherCAT.write_output(:outputs, :ch1, 1)
+
+      Expect.eventually(
+        fn ->
+          assert {:ok, {1, updated_at_us}} = EtherCAT.read_input(:inputs, :ch1)
+          assert is_integer(updated_at_us)
+        end,
+        label: "loopback I/O works after recovery"
+      )
+    end)
+    |> Scenario.run()
+  end
+
+  test "master rediscovers a power-cycled slave after fixed station loss" do
+    # Models a powered slave that resets in place and loses its fixed station
+    # address. The slave stays physically present on the ring, but FPRD on the
+    # old station now returns wkc=0, so runtime recovery must fall back to a
+    # fresh discovery pass.
+
+    Scenario.new()
+    |> Scenario.trace()
+    |> Scenario.act("power cycle the slave (no disconnect)", fn _ctx ->
+      assert :ok = Simulator.inject_fault(Fault.power_cycle(:outputs))
+      assert {:ok, %{station: 0, state: :init}} = Simulator.device_snapshot(:outputs)
+    end)
+    |> Scenario.act("master enters recovering", fn _ctx ->
+      Expect.eventually(
+        fn ->
+          Expect.master_state(:recovering)
+        end,
+        attempts: 80,
+        label: "master enters recovering"
+      )
+    end)
+    |> Scenario.act("master returns to operational after rediscovery", fn _ctx ->
+      Expect.eventually(
+        fn ->
+          Expect.master_state(:operational)
+          Expect.domain(:main, cycle_health: :healthy)
+          Expect.simulator_queue_empty()
         end,
         attempts: 300,
         label: "master returns to operational"
       )
     end)
     |> Scenario.act("slave is healthy and loopback I/O works", fn _ctx ->
-      assert {:ok, %{al_state: :op}} = EtherCAT.slave_info(:outputs)
+      assert {:ok, %{al_state: :op, station: 0x1002}} = EtherCAT.slave_info(:outputs)
+      assert nil == SimulatorRing.fault_for(:outputs)
 
       assert :ok = EtherCAT.write_output(:outputs, :ch1, 1)
 

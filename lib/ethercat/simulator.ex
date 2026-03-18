@@ -46,6 +46,7 @@ defmodule EtherCAT.Simulator do
              :upload_init | :upload_segment | :download_init | :download_segment, pos_integer()}
   @type slave_fault ::
           {:retreat_to_safeop, atom()}
+          | {:power_cycle, atom()}
           | {:latch_al_error, atom(), non_neg_integer()}
           | {:mailbox_abort, atom(), non_neg_integer(), non_neg_integer(), non_neg_integer()}
           | {:mailbox_abort, atom(), non_neg_integer(), non_neg_integer(), non_neg_integer(),

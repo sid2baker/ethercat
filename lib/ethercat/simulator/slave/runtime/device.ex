@@ -182,10 +182,12 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Device do
   @spec power_cycle(t()) :: t()
   def power_cycle(%__MODULE__{} = slave) do
     slave
+    |> clear_fixed_station_address()
     |> Map.put(:mailbox_upload, nil)
     |> Map.put(:mailbox_download, nil)
     |> Map.put(:mailbox_abort_rules, [])
     |> Map.put(:mailbox_protocol_fault_rules, [])
+    |> reset_dc_runtime()
     |> AL.reset_to_init()
     |> clear_fmmu_configuration()
     |> clear_sm_configuration()
@@ -385,6 +387,20 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Device do
       end
     end)
   end
+
+  defp clear_fixed_station_address(%__MODULE__{} = slave) do
+    slave
+    |> Map.put(:station, 0)
+    |> write_memory(@station_address, <<0::16-little>>)
+  end
+
+  defp reset_dc_runtime(%__MODULE__{dc_capable?: true, position: position} = slave) do
+    slave
+    |> Map.put(:dc_state, DC.new(position))
+    |> DC.refresh_memory()
+  end
+
+  defp reset_dc_runtime(%__MODULE__{} = slave), do: slave
 
   defp load_eeprom_data(%__MODULE__{memory: memory, eeprom: eeprom} = slave, cmd) do
     %{slave | memory: ESCImage.maybe_load_eeprom_data(memory, eeprom, cmd)}

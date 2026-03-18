@@ -3,9 +3,12 @@ defmodule EtherCAT.Master.Recovery do
 
   require Logger
 
+  alias EtherCAT.Bus
+  alias EtherCAT.Bus.Transaction
   alias EtherCAT.Domain.API, as: DomainAPI
   alias EtherCAT.Master.Activation
   alias EtherCAT.Master.Status
+  alias EtherCAT.Slave.ESC.Registers
   alias EtherCAT.Slave.API, as: SlaveAPI
   alias EtherCAT.Telemetry
   alias EtherCAT.Utils
@@ -56,13 +59,23 @@ defmodule EtherCAT.Master.Recovery do
   @spec retry_recovering_state(%EtherCAT.Master{}) ::
           {:ok, :deactivated | :operational | :preop_ready, %EtherCAT.Master{}}
           | {:recovering, %EtherCAT.Master{}}
+          | {:rediscover, term(), %EtherCAT.Master{}}
   def retry_recovering_state(data) do
-    data
-    |> retry_slave_faults()
-    |> retry_recovering_slaves()
-    |> maybe_restart_stopped_domains()
-    |> maybe_restart_dc_runtime()
-    |> maybe_resume_running()
+    retried_data =
+      data
+      |> retry_slave_faults()
+      |> retry_recovering_slaves()
+
+    case maybe_request_topology_rediscovery(retried_data) do
+      {:rediscover, reason, rediscovery_data} ->
+        {:rediscover, reason, rediscovery_data}
+
+      :continue ->
+        retried_data
+        |> maybe_restart_stopped_domains()
+        |> maybe_restart_dc_runtime()
+        |> maybe_resume_running()
+    end
   end
 
   @spec authorize_activation_reconnect(%EtherCAT.Master{}, atom()) ::
@@ -556,6 +569,9 @@ defmodule EtherCAT.Master.Recovery do
       :ok ->
         put_slave_fault_entry(slave_faults, name, {:reconnecting, :authorized})
 
+      {:error, :not_down} ->
+        slave_faults
+
       {:error, reason} ->
         Logger.debug(
           "[Master] slave reconnect authorization retry failed for #{inspect(name)}: #{inspect(reason)}",
@@ -575,6 +591,9 @@ defmodule EtherCAT.Master.Recovery do
       :ok ->
         put_tracked_runtime_slave_fault(data, name, {:reconnecting, :authorized})
 
+      {:error, :not_down} ->
+        data
+
       {:error, reason} ->
         Logger.debug(
           "[Master] recovery retry: slave reconnect authorization still failing for #{inspect(name)}: #{inspect(reason)}",
@@ -589,10 +608,42 @@ defmodule EtherCAT.Master.Recovery do
     end
   end
 
+  defp maybe_request_topology_rediscovery(%{slave_count: expected_count} = data)
+       when is_integer(expected_count) and expected_count > 0 do
+    reconnect_failed =
+      data.runtime_faults
+      |> Enum.reduce([], fn
+        {{:slave, name}, {:reconnect_failed, _reason}}, acc -> [name | acc]
+        _other, acc -> acc
+      end)
+      |> Enum.sort()
+
+    if reconnect_failed != [] and topology_visible_count() == {:ok, expected_count} do
+      {:rediscover,
+       {:topology_rediscovery_required,
+        %{slaves: reconnect_failed, visible_slave_count: expected_count}}, data}
+    else
+      :continue
+    end
+  end
+
+  defp maybe_request_topology_rediscovery(_data), do: :continue
+
+  defp topology_visible_count do
+    case Bus.transaction(Bus, Transaction.brd(Registers.esc_type())) do
+      {:ok, [%{wkc: wkc}]} when is_integer(wkc) and wkc >= 0 -> {:ok, wkc}
+      {:ok, replies} -> {:error, {:unexpected_replies, replies}}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
   defp retry_activation_reconnect_authorization(activation_failures, name) do
     case SlaveAPI.authorize_reconnect(name) do
       :ok ->
         Map.put(activation_failures, name, {:reconnecting, :authorized})
+
+      {:error, :not_down} ->
+        activation_failures
 
       {:error, reason} ->
         Logger.debug(

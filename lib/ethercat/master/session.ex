@@ -4,8 +4,8 @@ defmodule EtherCAT.Master.Session do
   alias EtherCAT.{Bus, DC}
   alias EtherCAT.Master.Config
 
-  @spec stop(%EtherCAT.Master{}) :: :ok
-  def stop(data) do
+  @spec stop_runtime(%EtherCAT.Master{}) :: :ok
+  def stop_runtime(data) do
     Enum.each(data.domain_refs, fn {ref, _id} -> Process.demonitor(ref, [:flush]) end)
     Enum.each(data.slave_refs, fn {ref, _name} -> Process.demonitor(ref, [:flush]) end)
     demonitor_dc(data.dc_ref)
@@ -19,7 +19,11 @@ defmodule EtherCAT.Master.Session do
     Enum.each(Config.domain_ids(data.domain_configs || []), fn domain_id ->
       terminate_domain(domain_id)
     end)
+  end
 
+  @spec stop(%EtherCAT.Master{}) :: :ok
+  def stop(data) do
+    stop_runtime(data)
     stop_bus()
   end
 
