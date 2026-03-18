@@ -3,6 +3,9 @@ defmodule EtherCAT.Integration.ExpectTest do
 
   alias EtherCAT.Integration.Expect
   alias EtherCAT.Integration.Trace
+  alias EtherCAT.IntegrationSupport.SimulatorRing
+  alias EtherCAT.Simulator.Udp
+  alias EtherCAT.Simulator.Udp.Fault, as: UdpFault
 
   test "trace_sequence/2 asserts notes and telemetry in order" do
     trace = Trace.start_capture()
@@ -27,5 +30,20 @@ defmodule EtherCAT.Integration.ExpectTest do
     after
       Trace.stop(trace)
     end
+  end
+
+  test "simulator_queue_empty/0 treats queued UDP faults as non-empty" do
+    on_exit(fn -> SimulatorRing.stop_all!() end)
+
+    _endpoint = SimulatorRing.start_simulator!(transport: :udp)
+
+    assert :ok = Udp.inject_fault(UdpFault.truncate())
+
+    assert_raise ExUnit.AssertionError, fn ->
+      Expect.simulator_queue_empty()
+    end
+
+    assert :ok = Udp.clear_faults()
+    assert :ok = Expect.simulator_queue_empty()
   end
 end

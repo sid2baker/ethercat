@@ -37,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Docs
 - `8f773d6`, `c42b0c9`, `0248012`, `04b2c5f`, `072119d`, `9b3b4ba`, `ee210fa`, `8eff41c` — README, hardware playbooks, simulator docs, and API guidance were rewritten to better explain transport boundaries, bring-up workflow, release metadata, and fault/recovery scenarios.
 - `4a9a4ad` — public master, slave, domain, and DC moduledocs now live inline with their runtime modules, and the public module-level APIs are documented directly at the function boundary.
+- `(pending hash)` — the simulator integration README now reflects scenario `43`, distinguishes numbered regression scenarios from standalone transport-resilience checks, and documents the current fault-builder surface more accurately.
 
 ## [0.3.1] - 2026-03-12
 

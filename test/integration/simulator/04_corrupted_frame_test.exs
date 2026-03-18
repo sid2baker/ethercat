@@ -70,7 +70,7 @@ defmodule EtherCAT.Integration.Simulator.CorruptedFrameTest do
 
     Expect.eventually(
       fn ->
-        assert {:ok, %{next_fault: nil, pending_faults: []}} = Udp.info()
+        Expect.simulator_queue_empty()
       end,
       attempts: 80
     )
@@ -112,7 +112,7 @@ defmodule EtherCAT.Integration.Simulator.CorruptedFrameTest do
 
     Expect.eventually(
       fn ->
-        assert {:ok, %{next_fault: nil, pending_faults: []}} = Udp.info()
+        Expect.simulator_queue_empty()
         Expect.master_state(:operational)
         Expect.domain(:main, cycle_health: :healthy)
       end,
@@ -145,7 +145,7 @@ defmodule EtherCAT.Integration.Simulator.CorruptedFrameTest do
 
     Expect.eventually(
       fn ->
-        assert {:ok, %{next_fault: nil, pending_faults: []}} = Udp.info()
+        Expect.simulator_queue_empty()
       end,
       attempts: 80
     )

@@ -61,8 +61,13 @@ defmodule EtherCAT.Integration.Expect do
 
   @spec simulator_queue_empty() :: :ok
   def simulator_queue_empty do
-    assert {:ok, %{next_fault: nil, pending_faults: [], scheduled_faults: []}} =
-             EtherCAT.Simulator.info()
+    assert {:ok, info} = EtherCAT.Simulator.info()
+
+    assert %{next_fault: nil, pending_faults: [], scheduled_faults: []} = info
+
+    udp_info = Map.get(info, :udp, %{next_fault: nil, pending_faults: []})
+
+    assert %{next_fault: nil, pending_faults: []} = udp_info
 
     :ok
   end

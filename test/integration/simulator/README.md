@@ -114,9 +114,16 @@ plan -> fix -> verify -> commit.
 - `40`: redundant bus accepts a degraded processed reply when the redundant copy from the opposite direction is delayed beyond the merge window
 - `41`: multi-datagram BWR transactions in redundant mode must return wkc > 0 despite AF_PACKET outgoing echo race
 - `42`: redundant primary port reconnection causes transient frame loss when slave PHY link-up timing differs from master NIC auto-negotiation (hardware-only, no simulator test)
+- `43`: permanent PDO-slave disconnect should drive `:down` via health polling, allow reconnect healing, and force rediscovery if the returning slave lost its fixed station address
 
 These are the current regression scenarios, not just backlog items. Each one
 should keep its `.md` note and matching `_test.exs` file aligned.
+
+The folder also contains a few transport-resilience checks that are not part of
+the numbered scenario ladder. For example,
+`raw_socket_noise_resilience_test.exs` is a focused raw-wire validation that
+rogue EtherCAT frames do not break startup, not a scenario note with a
+simulator repair loop.
 
 ## Transport Baseline Coverage
 
@@ -140,6 +147,12 @@ Use an explicit `transport:` option in the test when the transport is part of
 the regression story. Leave it implicit when the scenario is transport-agnostic
 and should follow the suite default.
 
+Redundant raw scenarios do not use that environment switch. Build those on
+`EtherCAT.IntegrationSupport.RedundantSimulatorRing`, which always starts the
+explicit dual-interface raw topology and exposes helpers such as
+`disconnect_primary!/0`, `reconnect_primary!/0`, `set_break_after!/1`, and
+`heal!/0` for ring-specific transport stories.
+
 ## Current Fault Shapes
 
 For datagram/runtime faults, prefer the builder surface on
@@ -153,13 +166,27 @@ For datagram/runtime faults, prefer the builder surface on
 - nested scheduling such as
   `Fault.disconnect(:outputs) |> Fault.next(30) |> Fault.after_ms(250) |> Fault.after_milestone(milestone)`
 
-Current exchange-scoped faults:
+Current datagram/runtime fault effects:
 
 - `:drop_responses`
 - `{:wkc_offset, delta}`
 - `{:command_wkc_offset, command_name, delta}`
 - `{:logical_wkc_offset, slave_name, delta}`
 - `{:disconnect, slave_name}`
+- `{:retreat_to_safeop, slave_name}`
+- `{:power_cycle, slave_name}`
+- `{:latch_al_error, slave_name, code}`
+
+These can be built through `EtherCAT.Simulator.Fault`, for example:
+
+- `Fault.drop_responses()`
+- `Fault.wkc_offset(delta)`
+- `Fault.command_wkc_offset(:lrw, delta)`
+- `Fault.logical_wkc_offset(:outputs, delta)`
+- `Fault.disconnect(:outputs)`
+- `Fault.retreat_to_safeop(:inputs)`
+- `Fault.power_cycle(:outputs)`
+- `Fault.latch_al_error(:inputs, code)`
 
 Current milestones:
 
@@ -207,10 +234,25 @@ Current mailbox protocol fault kinds:
 - `:invalid_segment_padding`
 - `{:segment_command, command}`
 
-Direct mailbox fault injections remain sticky until `Simulator.clear_faults/0`.
-The same mailbox protocol fault used as a step inside `Fault.script/1` is
-consumed on first match, which is the preferred way to model "first retry
-fails, later retry self-heals" reconnect scenarios.
+Current mailbox stages accepted by `Fault.mailbox_abort/5` and
+`Fault.mailbox_protocol_fault/5`:
+
+- `:request`
+- `:upload_init`
+- `:upload_segment`
+- `:download_init`
+- `:download_segment`
+
+Use the mailbox-specific builders when the scenario is about CoE/mailbox
+protocol semantics rather than generic datagram loss:
+
+- `Fault.mailbox_abort(slave_name, index, subindex, abort_code, opts)`
+- `Fault.mailbox_protocol_fault(slave_name, index, subindex, stage, fault_kind)`
+
+Direct mailbox and slave-local fault injections remain sticky until
+`Simulator.clear_faults/0`. The same mailbox protocol fault used as a step
+inside `Fault.script/1` is consumed on first match, which is the preferred way
+to model "first retry fails, later retry self-heals" reconnect scenarios.
 
 ## Cyclic Scenario Rules
 
@@ -262,6 +304,7 @@ Prefer the new test helpers for new scenarios:
 - `EtherCAT.Integration.Expect`
   - standalone assertion helpers for plain ExUnit tests
   - `Expect.eventually/2`
+  - `Expect.stays/2`
   - `Expect.master_state/1`
   - `Expect.domain/2`
   - `Expect.slave/2`
@@ -269,16 +312,31 @@ Prefer the new test helpers for new scenarios:
   - `Expect.signal/3`
   - `Expect.trace_event/3`
   - `Expect.trace_note/3`
+  - `Expect.trace_sequence/2`
   - `Expect.simulator_queue_empty/0`
+    this checks the simulator-core fault queue and active UDP pending faults
+    when the UDP endpoint is running
 - `EtherCAT.Integration.Trace`
   - telemetry-backed timeline capture for failure diagnostics
   - uses `EtherCAT.Telemetry.events/0`, including master state transitions
   - prefer this over bespoke `:telemetry.attach` code in scenario tests
+- `EtherCAT.IntegrationSupport.SimulatorRing`
+  - boots the maintained UDP or single-link raw ring around the shared driver fixtures
+  - honors `ETHERCAT_INTEGRATION_TRANSPORT` unless the test passes an explicit
+    `transport:` override
+- `EtherCAT.IntegrationSupport.RedundantSimulatorRing`
+  - boots the maintained redundant raw ring on the dual-interface topology
+  - use this when the regression is about redundant-path behavior, primary-link
+    toggling, or deterministic ring-break choreography
 - `EtherCAT.Integration.Scenario`
   - optional multi-phase runner for longer recovery cases
+  - `Scenario.trace/1` enables timeline capture for the whole scenario
   - keep `ctx` for scenario-owned assigns only; prefer `Expect` for live queries
   - `Scenario.inject_fault_on_event/4` arms telemetry-triggered follow-up faults
     without pushing master-observed milestones into simulator core
+  - `Scenario.inject_fault/2`, `Scenario.clear_faults/1`, and
+    `Scenario.capture/3` keep longer scenarios readable without bespoke setup
+    processes
   - telemetry-triggered injections complete before the matching callback returns,
     so follow-up assertions do not depend on spawned-process races
 
@@ -309,7 +367,8 @@ test code.
 ## Next Directions
 
 The split-domain captured-device follow-up to scenario `36` is now covered by
-scenario `37`.
+scenario `37`, and the full disconnect/reconnect-healing story now has an
+address-loss variant in scenario `43`.
 
 Only add a new "next" placeholder here when there is a concrete captured fault
 story to name. Until then, use the checklist below to decide whether the next
