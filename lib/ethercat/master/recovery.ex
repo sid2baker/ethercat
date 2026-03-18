@@ -394,6 +394,12 @@ defmodule EtherCAT.Master.Recovery do
     target = transition_request_target(data)
 
     Enum.reduce(runtime_faults, data, fn
+      {{:slave, name}, {:down, _reason}}, acc ->
+        retry_recovering_slave_reconnect_authorization(acc, name)
+
+      {{:slave, name}, {:reconnect_failed, _reason}}, acc ->
+        retry_recovering_slave_reconnect_authorization(acc, name)
+
       {{:slave, name}, {:retreated, _target_state}}, acc ->
         retry_recovering_slave_request(acc, name, target)
 
@@ -423,6 +429,9 @@ defmodule EtherCAT.Master.Recovery do
             acc
           else
             case reason do
+              {:down, _down_reason} ->
+                retry_slave_reconnect_authorization(acc, name)
+
               {:retreated, _target_state} ->
                 retry_slave_request(acc, name, target)
 
@@ -451,6 +460,7 @@ defmodule EtherCAT.Master.Recovery do
   @spec retryable_slave_faults?(%EtherCAT.Master{}) :: boolean()
   def retryable_slave_faults?(%{slave_faults: slave_faults}) do
     Enum.any?(slave_faults, fn
+      {_name, {:down, _reason}} -> true
       {_name, {:retreated, _target_state}} -> true
       {_name, {:preop, {:preop_configuration_failed, _reason}}} -> true
       {_name, {:preop, reason}} -> retryable_runtime_slave_fault?(reason)
@@ -557,6 +567,25 @@ defmodule EtherCAT.Master.Recovery do
         )
 
         put_slave_fault_entry(slave_faults, name, {:reconnect_failed, reason})
+    end
+  end
+
+  defp retry_recovering_slave_reconnect_authorization(data, name) do
+    case SlaveAPI.authorize_reconnect(name) do
+      :ok ->
+        put_tracked_runtime_slave_fault(data, name, {:reconnecting, :authorized})
+
+      {:error, reason} ->
+        Logger.debug(
+          "[Master] recovery retry: slave reconnect authorization still failing for #{inspect(name)}: #{inspect(reason)}",
+          component: :master,
+          event: :slave_reconnect_authorization_retry_failed,
+          phase: :recovery,
+          slave: name,
+          reason_kind: Utils.reason_kind(reason)
+        )
+
+        put_tracked_runtime_slave_fault(data, name, {:reconnect_failed, reason})
     end
   end
 

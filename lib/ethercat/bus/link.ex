@@ -15,7 +15,13 @@ defmodule EtherCAT.Bus.Link do
   @max_datagram_bytes 1_400
 
   defmodule Submission do
-    @moduledoc false
+    @moduledoc """
+    Internal queue item used by `EtherCAT.Bus.Link` scheduling helpers.
+
+    This struct is shared between the single-link and redundant-link
+    implementations. It is documented so generated docs can resolve public
+    specs in `EtherCAT.Bus.Link`, but it is not intended as a user-facing API.
+    """
 
     @type t :: %__MODULE__{
             from: :gen_statem.from(),
