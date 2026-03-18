@@ -3,11 +3,9 @@ defmodule EtherCAT.Master.Deactivation do
 
   require Logger
 
-  alias EtherCAT.DC
-  alias EtherCAT.Domain.API, as: DomainAPI
+  alias EtherCAT.{DC, Domain, Slave}
   alias EtherCAT.Master.Config
   alias EtherCAT.Master.Status
-  alias EtherCAT.Slave.API, as: SlaveAPI
   alias EtherCAT.Utils
 
   @spec deactivate_network(%EtherCAT.Master{}, :safeop | :preop) ::
@@ -33,7 +31,7 @@ defmodule EtherCAT.Master.Deactivation do
       Enum.reduce(stopped_data.activatable_slaves, {%{}, stopped_data.slave_faults}, fn name,
                                                                                         {failures,
                                                                                          faults} ->
-        case SlaveAPI.request(name, target) do
+        case Slave.request(name, target) do
           :ok ->
             {failures, Map.delete(faults, name)}
 
@@ -66,7 +64,7 @@ defmodule EtherCAT.Master.Deactivation do
 
   defp stop_domain_cycles(data) do
     Enum.each(Config.domain_ids(data.domain_configs || []), fn domain_id ->
-      case DomainAPI.stop_cycling(domain_id) do
+      case Domain.stop_cycling(domain_id) do
         :ok ->
           :ok
 

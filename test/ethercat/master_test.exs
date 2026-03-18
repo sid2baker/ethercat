@@ -4,7 +4,7 @@ defmodule EtherCAT.MasterTest do
   alias EtherCAT.DC.Config, as: DCConfig
   alias EtherCAT.DC.Status, as: DCStatus
   alias EtherCAT.Domain
-  alias EtherCAT.Domain.API, as: DomainAPI
+  alias EtherCAT.Domain, as: DomainAPI
   alias EtherCAT.Master.Config.DomainPlan
   alias EtherCAT.Slave.Config, as: SlaveConfig
   alias EtherCAT.TestSupport.FakeBus
@@ -125,7 +125,7 @@ defmodule EtherCAT.MasterTest do
     from = {self(), make_ref()}
 
     assert {:keep_state_and_data, [{:reply, ^from, :preop_ready}]} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                {:call, from},
                :state,
                :preop_ready,
@@ -133,7 +133,7 @@ defmodule EtherCAT.MasterTest do
              )
 
     assert {:keep_state_and_data, [{:reply, ^from, :deactivated}]} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                {:call, from},
                :state,
                :deactivated,
@@ -141,7 +141,7 @@ defmodule EtherCAT.MasterTest do
              )
 
     assert {:keep_state_and_data, [{:reply, ^from, :operational}]} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                {:call, from},
                :state,
                :operational,
@@ -149,7 +149,7 @@ defmodule EtherCAT.MasterTest do
              )
 
     assert {:keep_state_and_data, [{:reply, ^from, :activation_blocked}]} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                {:call, from},
                :state,
                :activation_blocked,
@@ -157,7 +157,7 @@ defmodule EtherCAT.MasterTest do
              )
 
     assert {:keep_state_and_data, [{:reply, ^from, :recovering}]} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                {:call, from},
                :state,
                :recovering,
@@ -169,7 +169,7 @@ defmodule EtherCAT.MasterTest do
     from = {self(), make_ref()}
 
     assert {:keep_state, %EtherCAT.Master{await_operational_callers: [^from]}} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                {:call, from},
                :await_operational,
                :preop_ready,
@@ -177,7 +177,7 @@ defmodule EtherCAT.MasterTest do
              )
 
     assert {:keep_state, %EtherCAT.Master{await_operational_callers: [^from]}} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                {:call, from},
                :await_operational,
                :deactivated,
@@ -185,7 +185,7 @@ defmodule EtherCAT.MasterTest do
              )
 
     assert {:keep_state_and_data, [{:reply, ^from, :ok}]} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                {:call, from},
                :await_operational,
                :operational,
@@ -206,7 +206,7 @@ defmodule EtherCAT.MasterTest do
     }
 
     assert {:next_state, :idle, %EtherCAT.Master{}, [{:reply, ^stop_from, :ok}]} =
-             EtherCAT.Master.handle_event({:call, stop_from}, :stop, :discovering, data)
+             EtherCAT.Master.FSM.handle_event({:call, stop_from}, :stop, :discovering, data)
 
     assert_receive {^await_running_ref, {:error, :stopped}}
     assert_receive {^await_operational_ref, {:error, :stopped}}
@@ -217,7 +217,7 @@ defmodule EtherCAT.MasterTest do
     failures = %{sensor: {:op, :no_response}}
 
     assert {:keep_state_and_data, [{:reply, ^from, {:error, {:activation_failed, ^failures}}}]} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                {:call, from},
                :await_operational,
                :activation_blocked,
@@ -230,7 +230,7 @@ defmodule EtherCAT.MasterTest do
     faults = %{{:domain, :main} => {:cycle_invalid, {:wkc_mismatch, %{expected: 2, actual: 1}}}}
 
     assert {:keep_state_and_data, [{:reply, ^from, {:error, {:runtime_degraded, ^faults}}}]} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                {:call, from},
                :await_operational,
                :recovering,
@@ -252,7 +252,7 @@ defmodule EtherCAT.MasterTest do
     }
 
     assert {:next_state, :recovering, %EtherCAT.Master{} = updated, _actions} =
-             EtherCAT.Master.handle_event({:timeout, :retry}, nil, :activation_blocked, data)
+             EtherCAT.Master.FSM.handle_event({:timeout, :retry}, nil, :activation_blocked, data)
 
     assert updated.activation_failures == %{}
     assert updated.runtime_faults == faults
@@ -264,7 +264,7 @@ defmodule EtherCAT.MasterTest do
     }
 
     assert {:keep_state, %EtherCAT.Master{} = updated, _actions} =
-             EtherCAT.Master.handle_event({:timeout, :retry}, nil, :activation_blocked, data)
+             EtherCAT.Master.FSM.handle_event({:timeout, :retry}, nil, :activation_blocked, data)
 
     assert updated.activation_failures == %{sensor: {:op, :not_found}}
   end
@@ -282,7 +282,7 @@ defmodule EtherCAT.MasterTest do
     }
 
     assert {:keep_state, %EtherCAT.Master{} = authorized, _actions} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                :info,
                {:slave_reconnected, :sensor},
                :activation_blocked,
@@ -292,7 +292,7 @@ defmodule EtherCAT.MasterTest do
     assert authorized.activation_failures == %{sensor: {:reconnecting, :authorized}}
 
     assert {:next_state, :operational, %EtherCAT.Master{} = healed} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                :info,
                {:slave_ready, :sensor, :preop},
                :activation_blocked,
@@ -316,7 +316,7 @@ defmodule EtherCAT.MasterTest do
     }
 
     assert {:keep_state, %EtherCAT.Master{} = authorized, _actions} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                :info,
                {:slave_reconnected, :sensor},
                :activation_blocked,
@@ -326,7 +326,7 @@ defmodule EtherCAT.MasterTest do
     assert authorized.activation_failures == %{sensor: {:reconnecting, :authorized}}
 
     assert {:next_state, :deactivated, %EtherCAT.Master{} = settled} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                :info,
                {:slave_ready, :sensor, :preop},
                :activation_blocked,
@@ -352,7 +352,7 @@ defmodule EtherCAT.MasterTest do
     }
 
     assert {:next_state, :deactivated, %EtherCAT.Master{} = updated, [{:reply, ^from, :ok}]} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                {:call, from},
                {:deactivate, :safeop},
                :operational,
@@ -378,7 +378,7 @@ defmodule EtherCAT.MasterTest do
     }
 
     assert {:next_state, :preop_ready, %EtherCAT.Master{} = updated, [{:reply, ^from, :ok}]} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                {:call, from},
                {:deactivate, :preop},
                :operational,
@@ -395,7 +395,7 @@ defmodule EtherCAT.MasterTest do
     }
 
     assert :keep_state_and_data =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                :info,
                {:slave_reconnected, :other_slave},
                :activation_blocked,
@@ -407,7 +407,7 @@ defmodule EtherCAT.MasterTest do
     reason = {:wkc_mismatch, %{expected: 2, actual: 1}}
 
     assert {:next_state, :recovering, %EtherCAT.Master{} = recovering_data} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                :info,
                {:domain_cycle_invalid, :main, reason},
                :operational,
@@ -417,7 +417,7 @@ defmodule EtherCAT.MasterTest do
     assert recovering_data.runtime_faults == %{{:domain, :main} => {:cycle_invalid, reason}}
 
     assert {:next_state, :operational, %EtherCAT.Master{runtime_faults: %{}}} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                :info,
                {:domain_cycle_recovered, :main},
                :recovering,
@@ -449,7 +449,7 @@ defmodule EtherCAT.MasterTest do
     data = %EtherCAT.Master{runtime_faults: %{{:domain, domain_id} => {:stopped, :down}}}
 
     assert {:keep_state, %EtherCAT.Master{} = recovering_data, _actions} =
-             EtherCAT.Master.handle_event({:timeout, :retry}, nil, :recovering, data)
+             EtherCAT.Master.FSM.handle_event({:timeout, :retry}, nil, :recovering, data)
 
     assert recovering_data.runtime_faults == %{{:domain, domain_id} => {:stopped, :down}}
     assert {:ok, %{state: :cycling}} = DomainAPI.info(domain_id)
@@ -463,7 +463,7 @@ defmodule EtherCAT.MasterTest do
     }
 
     assert {:next_state, :operational, %EtherCAT.Master{} = op_data} =
-             EtherCAT.Master.handle_event({:timeout, :retry}, nil, :recovering, data)
+             EtherCAT.Master.FSM.handle_event({:timeout, :retry}, nil, :recovering, data)
 
     assert %{outputs: _} = op_data.slave_faults
   end
@@ -483,12 +483,22 @@ defmodule EtherCAT.MasterTest do
       }
 
     assert {:keep_state, %EtherCAT.Master{} = updated} =
-             EtherCAT.Master.handle_event(:info, {:slave_reconnected, :sensor}, :recovering, data)
+             EtherCAT.Master.FSM.handle_event(
+               :info,
+               {:slave_reconnected, :sensor},
+               :recovering,
+               data
+             )
 
     assert updated.slave_faults == %{sensor: {:reconnecting, :authorized}}
 
     assert {:keep_state_and_data, [{:reply, ^from, {:error, {:runtime_degraded, _faults}}}]} =
-             EtherCAT.Master.handle_event({:call, from}, :await_operational, :recovering, updated)
+             EtherCAT.Master.FSM.handle_event(
+               {:call, from},
+               :await_operational,
+               :recovering,
+               updated
+             )
   end
 
   test "reconnect-time OP request failures replace stale critical disconnect faults in recovering" do
@@ -508,7 +518,7 @@ defmodule EtherCAT.MasterTest do
     }
 
     assert {:keep_state, %EtherCAT.Master{} = updated} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                :info,
                {:slave_ready, :sensor, :preop},
                :recovering,
@@ -525,7 +535,7 @@ defmodule EtherCAT.MasterTest do
     data = %EtherCAT.Master{slaves: [{:sensor, 0x1001}]}
 
     assert {:keep_state, %EtherCAT.Master{} = updated, _actions} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                :info,
                {:slave_retreated, :sensor, :safeop},
                :operational,
@@ -535,7 +545,7 @@ defmodule EtherCAT.MasterTest do
     assert updated.slave_faults == %{sensor: {:retreated, :safeop}}
 
     assert {:keep_state_and_data, [{:reply, ^from, :ok}]} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                {:call, from},
                :await_operational,
                :operational,
@@ -544,7 +554,7 @@ defmodule EtherCAT.MasterTest do
 
     assert {:keep_state_and_data,
             [{:reply, ^from, [%{name: :sensor, station: 0x1001, fault: {:retreated, :safeop}}]}]} =
-             EtherCAT.Master.handle_event({:call, from}, :slaves, :operational, updated)
+             EtherCAT.Master.FSM.handle_event({:call, from}, :slaves, :operational, updated)
   end
 
   test "slave down for a PDO-participating slave enters recovering and tracks the slave fault" do
@@ -554,7 +564,7 @@ defmodule EtherCAT.MasterTest do
     }
 
     assert {:next_state, :recovering, %EtherCAT.Master{} = updated} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                :info,
                {:slave_down, :sensor, :no_response},
                :operational,
@@ -581,7 +591,7 @@ defmodule EtherCAT.MasterTest do
     }
 
     assert {:keep_state, %EtherCAT.Master{} = updated, _actions} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                :info,
                {:slave_down, :diag, :server_exit},
                :operational,
@@ -610,7 +620,12 @@ defmodule EtherCAT.MasterTest do
     data = %EtherCAT.Master{slave_faults: %{sensor: {:retreated, :safeop}}}
 
     assert {:keep_state, %EtherCAT.Master{} = updated, _actions} =
-             EtherCAT.Master.handle_event({:timeout, :slave_fault_retry}, nil, :operational, data)
+             EtherCAT.Master.FSM.handle_event(
+               {:timeout, :slave_fault_retry},
+               nil,
+               :operational,
+               data
+             )
 
     assert updated.slave_faults == %{}
   end
@@ -627,7 +642,7 @@ defmodule EtherCAT.MasterTest do
     }
 
     assert {:next_state, :operational, %EtherCAT.Master{} = healed} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                :info,
                {:slave_ready, :sensor, :preop},
                :recovering,
@@ -642,7 +657,7 @@ defmodule EtherCAT.MasterTest do
     data = %EtherCAT.Master{}
 
     assert {:next_state, :recovering, %EtherCAT.Master{} = recovering} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                :info,
                {:dc_runtime_failed, :timeout},
                :operational,
@@ -652,7 +667,7 @@ defmodule EtherCAT.MasterTest do
     assert recovering.runtime_faults == %{{:dc, :runtime} => {:failed, :timeout}}
 
     assert {:next_state, :operational, %EtherCAT.Master{runtime_faults: %{}}} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                :info,
                {:dc_runtime_recovered},
                :recovering,
@@ -664,7 +679,7 @@ defmodule EtherCAT.MasterTest do
     data = %EtherCAT.Master{dc_config: %DCConfig{cycle_ns: 1_000_000, lock_policy: :advisory}}
 
     assert :keep_state_and_data =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                :info,
                {:dc_lock_lost, :locking, 250},
                :operational,
@@ -687,7 +702,7 @@ defmodule EtherCAT.MasterTest do
     }
 
     assert {:next_state, :recovering, %EtherCAT.Master{} = recovering} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                :info,
                {:dc_lock_lost, :locking, 250},
                :operational,
@@ -706,7 +721,7 @@ defmodule EtherCAT.MasterTest do
                     }}
 
     assert {:next_state, :operational, %EtherCAT.Master{runtime_faults: %{}}} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                :info,
                {:dc_lock_regained, 42},
                :recovering,
@@ -727,7 +742,7 @@ defmodule EtherCAT.MasterTest do
     data = %EtherCAT.Master{dc_config: %DCConfig{cycle_ns: 1_000_000, lock_policy: :fatal}}
 
     assert {:next_state, :idle, %EtherCAT.Master{last_failure: failure}} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                :info,
                {:dc_lock_lost, :locking, 250},
                :operational,
@@ -754,7 +769,7 @@ defmodule EtherCAT.MasterTest do
     }
 
     assert {:keep_state_and_data, [{:reply, ^from, :ok}]} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                {:call, from},
                {:update_domain_cycle_time, domain_id, 10_000},
                :operational,
@@ -769,7 +784,7 @@ defmodule EtherCAT.MasterTest do
     from = {self(), make_ref()}
 
     assert {:keep_state_and_data, [{:reply, ^from, {:error, {:unknown_domain, :missing}}}]} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                {:call, from},
                {:update_domain_cycle_time, :missing, 10_000},
                :operational,
@@ -789,7 +804,7 @@ defmodule EtherCAT.MasterTest do
     :ok = DomainAPI.update_cycle_time(domain_id, 10_000)
 
     assert {:keep_state_and_data, [{:reply, ^from, [{^domain_id, 10_000, _pid}]}]} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                {:call, from},
                :domains,
                :operational,
@@ -811,7 +826,7 @@ defmodule EtherCAT.MasterTest do
     failure = %{kind: :configuration_failed, reason: :no_response, at_ms: 123}
 
     assert {:keep_state_and_data, [{:reply, ^from, ^failure}]} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                {:call, from},
                :last_failure,
                :idle,
@@ -819,7 +834,7 @@ defmodule EtherCAT.MasterTest do
              )
 
     assert {:keep_state_and_data, [{:reply, ^from, ^failure}]} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                {:call, from},
                :last_failure,
                :discovering,
@@ -835,7 +850,7 @@ defmodule EtherCAT.MasterTest do
               {:reply, ^from,
                %DCStatus{lock_state: :disabled, await_lock?: false, lock_policy: nil}}
             ]} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                {:call, from},
                :dc_status,
                :idle,
@@ -866,7 +881,7 @@ defmodule EtherCAT.MasterTest do
                  lock_state: :inactive
                }}
             ]} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                {:call, from},
                :dc_status,
                :operational,
@@ -884,7 +899,7 @@ defmodule EtherCAT.MasterTest do
     }
 
     assert {:keep_state_and_data, [{:reply, ^from, {:ok, %{name: :thermo, station: 0x1002}}}]} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                {:call, from},
                :reference_clock,
                :operational,
@@ -892,7 +907,7 @@ defmodule EtherCAT.MasterTest do
              )
 
     assert {:keep_state_and_data, [{:reply, ^from, {:error, :dc_inactive}}]} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                {:call, from},
                :dc_runtime,
                :operational,
@@ -941,7 +956,7 @@ defmodule EtherCAT.MasterTest do
                  lock_state: :locked
                }}
             ]} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                {:call, from},
                :dc_status,
                :operational,
@@ -972,7 +987,7 @@ defmodule EtherCAT.MasterTest do
                  }
                ]}
             ]} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                {:call, from},
                :slaves,
                :operational,
@@ -1000,7 +1015,7 @@ defmodule EtherCAT.MasterTest do
                  }
                ]}
             ]} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                {:call, from},
                :slaves,
                :operational,
@@ -1031,7 +1046,7 @@ defmodule EtherCAT.MasterTest do
                  }
                ]}
             ]} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                {:call, from},
                :slaves,
                :operational,
@@ -1043,7 +1058,7 @@ defmodule EtherCAT.MasterTest do
     from = {self(), make_ref()}
 
     assert {:keep_state_and_data, [{:reply, ^from, {:error, :dc_disabled}}]} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                {:call, from},
                :dc_runtime,
                :preop_ready,
@@ -1056,7 +1071,7 @@ defmodule EtherCAT.MasterTest do
     })
 
     assert {:keep_state_and_data, [{:reply, ^from, {:ok, EtherCAT.DC}}]} =
-             EtherCAT.Master.handle_event(
+             EtherCAT.Master.FSM.handle_event(
                {:call, from},
                :dc_runtime,
                :preop_ready,

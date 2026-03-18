@@ -204,7 +204,7 @@ end)
 # ---------------------------------------------------------------------------
 
 IO.puts("Collecting #{samples} samples...")
-{:ok, stats_before} = EtherCAT.Domain.API.stats(:main)
+{:ok, stats_before} = EtherCAT.Domain.stats(:main)
 
 intervals =
   CycleJitter.Collector.collect(samples, period_ms,
@@ -212,7 +212,7 @@ intervals =
     output_channel: output_channel
   )
 
-{:ok, stats_after} = EtherCAT.Domain.API.stats(:main)
+{:ok, stats_after} = EtherCAT.Domain.stats(:main)
 miss_delta = stats_after.total_miss_count - stats_before.total_miss_count
 
 # ---------------------------------------------------------------------------

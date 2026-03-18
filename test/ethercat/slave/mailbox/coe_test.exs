@@ -407,7 +407,7 @@ defmodule EtherCAT.Slave.Mailbox.CoETest do
       })
 
     assert {:keep_state, %EtherCAT.Slave{} = updated, [{:reply, ^from, :ok}]} =
-             EtherCAT.Slave.handle_event(
+             EtherCAT.Slave.FSM.handle_event(
                {:call, from},
                {:configure, []},
                :preop,
@@ -445,7 +445,7 @@ defmodule EtherCAT.Slave.Mailbox.CoETest do
       })
 
     assert {:keep_state, %EtherCAT.Slave{} = updated, [{:reply, ^from, :ok}]} =
-             EtherCAT.Slave.handle_event(
+             EtherCAT.Slave.FSM.handle_event(
                {:call, from},
                {:configure, []},
                :preop,

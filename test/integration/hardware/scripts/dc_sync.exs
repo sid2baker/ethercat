@@ -427,7 +427,7 @@ jitter_result =
   if primed == :ok do
     IO.puts("  Collecting #{jitter_samples} half-cycles...")
 
-    {:ok, stats_before} = EtherCAT.Domain.API.stats(:main)
+    {:ok, stats_before} = EtherCAT.Domain.stats(:main)
     t_collect_start = System.monotonic_time(:microsecond)
 
     {intervals, _} =
@@ -447,7 +447,7 @@ jitter_result =
         {now - prev_t, now}
       end)
 
-    {:ok, stats_after} = EtherCAT.Domain.API.stats(:main)
+    {:ok, stats_after} = EtherCAT.Domain.stats(:main)
 
     wall_us = System.monotonic_time(:microsecond) - t_collect_start
     miss_delta = stats_after.total_miss_count - stats_before.total_miss_count

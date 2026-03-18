@@ -1,21 +1,21 @@
 Cyclic process image for one logical EtherCAT domain.
 
-One Domain runs per configured domain ID. Slaves register their PDOs during
+One domain runs per configured domain ID. Slaves register their PDOs during
 PREOP, then the domain runs a self-timed LRW exchange each cycle.
 
-`EtherCAT.Domain` is intentionally the `gen_statem` state-machine module for
-the domain lifecycle. Direct ETS access and low-level control calls live in
-`EtherCAT.Domain.API`, while cycle execution, image handling, and telemetry
-assembly live in internal domain helpers.
+`EtherCAT.Domain` is the public boundary for the domain lifecycle. Its
+internal `EtherCAT.Domain.FSM` process owns the `gen_statem` states, while
+direct ETS access, cycle execution, image handling, and telemetry assembly
+live behind the public module and internal domain helpers.
 
 ## State-Machine Boundary
 
-`EtherCAT.Domain` owns only the actual domain states and their transitions:
-open, cycling, and stopped. The state-machine module should not inline cycle execution,
-process-image reads/writes, or telemetry assembly.
+`EtherCAT.Domain.FSM` owns only the actual domain states and their
+transitions: open, cycling, and stopped. The state-machine module should not
+inline cycle execution, process-image reads/writes, or telemetry assembly.
 
-Those mechanics live in internal domain helpers. `EtherCAT.Domain.API`
-provides the direct ETS-backed low-level facade.
+Those mechanics live in internal domain helpers, surfaced through the public
+`EtherCAT.Domain` module.
 
 ## States
 
@@ -43,10 +43,10 @@ That health classification is runtime data, not a separate `gen_statem` state.
 ## Hot Path (Direct ETS)
 
     # Write output
-    Domain.API.write(:my_domain, {:valve, :ch1}, <<0xFF>>)
+    Domain.write(:my_domain, {:valve, :ch1}, <<0xFF>>)
 
     # Read current value
-    Domain.API.read(:my_domain, {:sensor, :ch1})
+    Domain.read(:my_domain, {:sensor, :ch1})
     # => {:ok, binary} | {:error, :not_found | :not_ready}
 
 Both bypass the gen_statem entirely via direct ETS access.

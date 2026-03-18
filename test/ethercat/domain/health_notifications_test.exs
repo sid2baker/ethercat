@@ -23,7 +23,7 @@ defmodule EtherCAT.Domain.HealthNotificationsTest do
     data = build_cycling_data(bus, key)
 
     assert {:keep_state, invalid_data, _actions} =
-             Domain.handle_event(:state_timeout, :tick, :cycling, data)
+             Domain.FSM.handle_event(:state_timeout, :tick, :cycling, data)
 
     assert_master_message(
       master_pid,
@@ -32,7 +32,7 @@ defmodule EtherCAT.Domain.HealthNotificationsTest do
     )
 
     assert {:keep_state, _recovered_data, _actions} =
-             Domain.handle_event(:state_timeout, :tick, :cycling, invalid_data)
+             Domain.FSM.handle_event(:state_timeout, :tick, :cycling, invalid_data)
 
     assert_master_message(master_pid, owns_master_name?, {:domain_cycle_recovered, :main})
   end
@@ -47,7 +47,7 @@ defmodule EtherCAT.Domain.HealthNotificationsTest do
     data = build_cycling_data(bus, key, miss_threshold: 2)
 
     assert {:keep_state, once_missed, _actions} =
-             Domain.handle_event(:state_timeout, :tick, :cycling, data)
+             Domain.FSM.handle_event(:state_timeout, :tick, :cycling, data)
 
     assert once_missed.miss_count == 1
     assert once_missed.cycle_health == {:invalid, :timeout}
@@ -55,7 +55,7 @@ defmodule EtherCAT.Domain.HealthNotificationsTest do
     assert_master_message(master_pid, owns_master_name?, {:domain_cycle_invalid, :main, :timeout})
 
     assert {:next_state, :stopped, stopped_data} =
-             Domain.handle_event(:state_timeout, :tick, :cycling, once_missed)
+             Domain.FSM.handle_event(:state_timeout, :tick, :cycling, once_missed)
 
     assert stopped_data.miss_count == 2
 
@@ -72,7 +72,7 @@ defmodule EtherCAT.Domain.HealthNotificationsTest do
     data = build_cycling_data(bus, key)
 
     assert {:next_state, :stopped, stopped_data} =
-             Domain.handle_event(:state_timeout, :tick, :cycling, data)
+             Domain.FSM.handle_event(:state_timeout, :tick, :cycling, data)
 
     assert stopped_data.miss_count == 1
     assert stopped_data.cycle_health == {:invalid, :down}

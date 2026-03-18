@@ -45,14 +45,13 @@ EtherCAT.Simulator
 Registry: `EtherCAT.Registry` (local). Slaves register as `{:slave, name}`;
 Domains register as `{:domain, id}`.
 
-The state-machine modules `EtherCAT.Master`, `EtherCAT.Slave`,
-`EtherCAT.Domain`, and `EtherCAT.DC` are intentionally small `gen_statem`
-entry points. They own state
-transitions, subsystem event routing, and public lifecycle/status replies.
-Low-level mechanics live in helper namespaces (`EtherCAT.Master.*`,
-`EtherCAT.Slave.Runtime.*`, `EtherCAT.Domain.*`, `EtherCAT.DC.*`) so the
-state-machine files can be checked against the EtherCAT model without mixing in all
-operational detail inline.
+The public runtime boundaries are `EtherCAT.Master`, `EtherCAT.Slave`,
+`EtherCAT.Domain`, and `EtherCAT.DC`. Their internal `*.FSM` modules are the
+small `gen_statem` entry points that own state transitions and subsystem event
+routing. Low-level mechanics live in helper namespaces
+(`EtherCAT.Master.*`, `EtherCAT.Slave.Runtime.*`, `EtherCAT.Domain.*`,
+`EtherCAT.DC.*`) so the FSM files can be checked against the EtherCAT model
+without mixing in all operational detail inline.
 
 `EtherCAT.Simulator` follows the same boundary rule on the test/runtime side:
 the public simulator process owns segment state, datagram execution, snapshots,
@@ -280,8 +279,8 @@ configuration with the real driver's declared identity.
 7. If activatable slaves exist: `DC.start_link` — starts DC maintenance plus lock/status monitoring (after all slaves are in PREOP)
 8. If activatable slaves exist: `Domain.start_cycling` per domain — begins self-timed LRW
 9. If activatable slaves exist and `dc.await_lock? == true`: wait for the DC monitor to report `:locked`
-10. If activatable slaves exist: `Slave.API.request(:safeop)` per slave — SAFEOP transition completes first, then checked ESC sync/latch configuration runs as explicit post-transition work (`0x0910/0x092C` snapshot, aligned start-time plan, `0x0980`, `0x0981`)
-11. If activatable slaves exist: `Slave.API.request(:op)` per slave — full process data exchange active
+10. If activatable slaves exist: `Slave.request(:safeop)` per slave — SAFEOP transition completes first, then checked ESC sync/latch configuration runs as explicit post-transition work (`0x0910/0x092C` snapshot, aligned start-time plan, `0x0980`, `0x0981`)
+11. If activatable slaves exist: `Slave.request(:op)` per slave — full process data exchange active
 12. Public startup settles in `:preop_ready`, `:operational`, or `:activation_blocked` depending on whether activation was requested and whether any activation/runtime faults remain
 
 ---

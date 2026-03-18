@@ -1,7 +1,7 @@
 defmodule EtherCAT.Slave.Runtime.Signals do
   @moduledoc false
 
-  alias EtherCAT.Domain.API, as: DomainAPI
+  alias EtherCAT.Domain
 
   @spec attachment_summaries(map() | nil) :: [map()]
   def attachment_summaries(nil), do: []
@@ -77,7 +77,7 @@ defmodule EtherCAT.Slave.Runtime.Signals do
         bit_size: bit_size,
         direction: :input
       } ->
-        case DomainAPI.sample(domain_id, {data.name, sm_key}) do
+        case Domain.sample(domain_id, {data.name, sm_key}) do
           {:error, _} = err ->
             err
 

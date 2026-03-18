@@ -24,7 +24,7 @@
 #     and the later `DomainAPI.read(:main, {:out, ...})` lookup together
 
 alias EtherCAT.{Bus, Domain}
-alias EtherCAT.Domain.API, as: DomainAPI
+alias EtherCAT.Domain, as: DomainAPI
 alias EtherCAT.Bus.Transaction
 alias EtherCAT.Slave.ESC.{Registers, SII}
 alias EtherCAT.IntegrationSupport.Hardware

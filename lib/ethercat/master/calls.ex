@@ -2,7 +2,7 @@ defmodule EtherCAT.Master.Calls do
   @moduledoc false
 
   alias EtherCAT.DC
-  alias EtherCAT.Domain.API, as: DomainAPI
+  alias EtherCAT.Domain
   alias EtherCAT.Master.Status
 
   @spec handle_active(term(), term(), atom(), %EtherCAT.Master{}) ::
@@ -67,7 +67,7 @@ defmodule EtherCAT.Master.Calls do
 
   defp update_domain_cycle_time(%{domain_configs: domain_configs}, domain_id, cycle_time_us) do
     if Enum.any?(domain_configs || [], &(&1.id == domain_id)) do
-      DomainAPI.update_cycle_time(domain_id, cycle_time_us)
+      Domain.update_cycle_time(domain_id, cycle_time_us)
     else
       {:error, :unknown_domain}
     end

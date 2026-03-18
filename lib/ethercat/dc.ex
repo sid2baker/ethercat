@@ -1,12 +1,10 @@
 defmodule EtherCAT.DC do
   @moduledoc File.read!(Path.join(__DIR__, "dc.md"))
 
-  @behaviour :gen_statem
-  require Logger
-
   alias EtherCAT.Bus
+  alias EtherCAT.DC.FSM
+  alias EtherCAT.DC.Init
   alias EtherCAT.DC.Runtime
-  alias EtherCAT.DC.State
 
   @type server :: :gen_statem.server_ref()
 
@@ -53,49 +51,32 @@ defmodule EtherCAT.DC do
   def child_spec(opts) do
     %{
       id: __MODULE__,
-      start: {__MODULE__, :start_link, [opts]},
+      start: {FSM, :start_link, [opts]},
       restart: :temporary,
       shutdown: 5000
     }
   end
 
-  @doc """
-  Start the DC runtime maintenance process.
-
-  Options:
-    - `:bus` (required)
-    - `:ref_station` (required)
-    - `:config` (required) — `%EtherCAT.DC.Config{}`
-    - `:monitored_stations` — ordered DC-capable stations for `0x092C` diagnostics
-    - `:tick_interval_ms` — optional runtime tick override for tests/debugging
-    - `:diagnostic_interval_cycles` — optional diagnostic cadence override for tests/debugging
-  """
+  @doc false
   @spec start_link(keyword()) :: :gen_statem.start_ret()
-  def start_link(opts) do
-    :gen_statem.start_link({:local, __MODULE__}, __MODULE__, opts, [])
+  def start_link(opts), do: FSM.start_link(opts)
+
+  @spec initialize_clocks(Bus.server(), [{non_neg_integer(), binary()}]) ::
+          {:ok, non_neg_integer(), [non_neg_integer()]} | {:error, term()}
+  def initialize_clocks(bus, slave_topology), do: Init.initialize_clocks(bus, slave_topology)
+
+  @spec status(server()) :: EtherCAT.DC.Status.t() | {:error, :not_running}
+  def status(server \\ __MODULE__) do
+    try do
+      :gen_statem.call(server, :status)
+    catch
+      :exit, _reason -> {:error, :not_running}
+    end
   end
 
-  @impl true
-  def callback_mode, do: [:handle_event_function, :state_enter]
-
-  @impl true
-  def init(opts) do
-    Logger.metadata(component: :dc, ref_station: Keyword.fetch!(opts, :ref_station))
-    {:ok, :running, State.new(opts)}
+  @spec await_locked(server(), pos_integer()) :: :ok | {:error, term()}
+  def await_locked(server \\ __MODULE__, timeout_ms \\ 5_000)
+      when is_integer(timeout_ms) and timeout_ms > 0 do
+    Runtime.await_locked(server, timeout_ms, &status/1)
   end
-
-  @impl true
-  def handle_event(:enter, _old, :running, data) do
-    {:keep_state_and_data, Runtime.enter_actions(data)}
-  end
-
-  def handle_event({:call, from}, :status, :running, data) do
-    Runtime.status_reply(from, data)
-  end
-
-  def handle_event(:state_timeout, :tick, :running, data) do
-    Runtime.handle_tick(data)
-  end
-
-  def handle_event(_type, _event, _state, _data), do: :keep_state_and_data
 end

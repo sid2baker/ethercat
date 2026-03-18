@@ -3,13 +3,11 @@ defmodule EtherCAT.Master.Recovery do
 
   require Logger
 
-  alias EtherCAT.Bus
+  alias EtherCAT.{Bus, Domain, Slave}
   alias EtherCAT.Bus.Transaction
-  alias EtherCAT.Domain.API, as: DomainAPI
   alias EtherCAT.Master.Activation
   alias EtherCAT.Master.Status
   alias EtherCAT.Slave.ESC.Registers
-  alias EtherCAT.Slave.API, as: SlaveAPI
   alias EtherCAT.Telemetry
   alias EtherCAT.Utils
 
@@ -35,7 +33,7 @@ defmodule EtherCAT.Master.Recovery do
           retry_activation_reconnect_authorization(acc, name)
 
         {name, _last_failure}, acc ->
-          case SlaveAPI.request(name, transition_request_target(data)) do
+          case Slave.request(name, transition_request_target(data)) do
             :ok ->
               acc
 
@@ -94,7 +92,7 @@ defmodule EtherCAT.Master.Recovery do
       slave: name
     )
 
-    case SlaveAPI.authorize_reconnect(name) do
+    case Slave.authorize_reconnect(name) do
       :ok ->
         {:ok, put_activation_failure(data, name, {:reconnecting, :authorized})}
 
@@ -142,7 +140,7 @@ defmodule EtherCAT.Master.Recovery do
         target_state: target
       )
 
-      case SlaveAPI.request(name, target) do
+      case Slave.request(name, target) do
         :ok ->
           next_data =
             data
@@ -177,7 +175,7 @@ defmodule EtherCAT.Master.Recovery do
       slave: name
     )
 
-    case SlaveAPI.authorize_reconnect(name) do
+    case Slave.authorize_reconnect(name) do
       :ok ->
         put_slave_fault(data, name, {:reconnecting, :authorized})
 
@@ -214,7 +212,7 @@ defmodule EtherCAT.Master.Recovery do
         target_state: target
       )
 
-      case SlaveAPI.request(name, target) do
+      case Slave.request(name, target) do
         :ok ->
           recovered_data =
             data
@@ -483,7 +481,7 @@ defmodule EtherCAT.Master.Recovery do
   end
 
   defp retry_recovering_slave_request(data, name, target) do
-    case SlaveAPI.request(name, target) do
+    case Slave.request(name, target) do
       :ok ->
         clear_tracked_slave_fault(data, name)
 
@@ -503,7 +501,7 @@ defmodule EtherCAT.Master.Recovery do
   end
 
   defp retry_slave_request(slave_faults, name, target) do
-    case SlaveAPI.request(name, target) do
+    case Slave.request(name, target) do
       :ok ->
         delete_slave_fault_entry(slave_faults, name)
 
@@ -523,7 +521,7 @@ defmodule EtherCAT.Master.Recovery do
   end
 
   defp retry_recovering_slave_preop_configuration(data, name, target) do
-    case SlaveAPI.retry_preop_configuration(name) do
+    case Slave.retry_preop_configuration(name) do
       :ok ->
         maybe_finish_runtime_preop_retry(data, name, target)
 
@@ -546,7 +544,7 @@ defmodule EtherCAT.Master.Recovery do
   end
 
   defp retry_slave_preop_configuration(slave_faults, name, target) do
-    case SlaveAPI.retry_preop_configuration(name) do
+    case Slave.retry_preop_configuration(name) do
       :ok ->
         maybe_finish_slave_preop_retry(slave_faults, name, target)
 
@@ -565,7 +563,7 @@ defmodule EtherCAT.Master.Recovery do
   end
 
   defp retry_slave_reconnect_authorization(slave_faults, name) do
-    case SlaveAPI.authorize_reconnect(name) do
+    case Slave.authorize_reconnect(name) do
       :ok ->
         put_slave_fault_entry(slave_faults, name, {:reconnecting, :authorized})
 
@@ -587,7 +585,7 @@ defmodule EtherCAT.Master.Recovery do
   end
 
   defp retry_recovering_slave_reconnect_authorization(data, name) do
-    case SlaveAPI.authorize_reconnect(name) do
+    case Slave.authorize_reconnect(name) do
       :ok ->
         put_tracked_runtime_slave_fault(data, name, {:reconnecting, :authorized})
 
@@ -638,7 +636,7 @@ defmodule EtherCAT.Master.Recovery do
   end
 
   defp retry_activation_reconnect_authorization(activation_failures, name) do
-    case SlaveAPI.authorize_reconnect(name) do
+    case Slave.authorize_reconnect(name) do
       :ok ->
         Map.put(activation_failures, name, {:reconnecting, :authorized})
 
@@ -669,7 +667,7 @@ defmodule EtherCAT.Master.Recovery do
   defp retryable_runtime_slave_fault?(_reason), do: true
 
   defp restart_stopped_domain(data, domain_id, reason) do
-    case DomainAPI.start_cycling(domain_id) do
+    case Domain.start_cycling(domain_id) do
       :ok ->
         Logger.info(
           "[Master] restarted domain #{domain_id} after stop caused by #{inspect(reason)}",

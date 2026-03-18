@@ -5,7 +5,7 @@ defmodule EtherCAT.Slave.ProcessData do
 
   alias EtherCAT.Bus
   alias EtherCAT.Bus.Transaction
-  alias EtherCAT.Domain.API, as: DomainAPI
+  alias EtherCAT.Domain
   alias EtherCAT.Slave
   alias EtherCAT.Slave.Driver
   alias EtherCAT.Slave.ProcessData.Plan
@@ -87,8 +87,8 @@ defmodule EtherCAT.Slave.ProcessData do
     key = {data.name, sm_key}
 
     Enum.reduce_while(domain_ids, :ok, fn attached_domain_id, :ok ->
-      with :ok <- DomainAPI.write(attached_domain_id, key, next_value),
-           {:ok, ^next_value} <- DomainAPI.read(attached_domain_id, key) do
+      with :ok <- Domain.write(attached_domain_id, key, next_value),
+           {:ok, ^next_value} <- Domain.read(attached_domain_id, key) do
         {:cont, :ok}
       else
         {:ok, _other} -> {:halt, {:error, {:staging_verification_failed, attached_domain_id}}}
@@ -372,7 +372,7 @@ defmodule EtherCAT.Slave.ProcessData do
     key = {data.name, sm_key}
 
     Enum.find_value(domain_ids, :binary.copy(<<0>>, sm_size), fn domain_id ->
-      case DomainAPI.read(domain_id, key) do
+      case Domain.read(domain_id, key) do
         {:ok, image} -> binary_pad(image, sm_size)
         {:error, _} -> nil
       end
@@ -380,7 +380,7 @@ defmodule EtherCAT.Slave.ProcessData do
   end
 
   defp read_output_sm_image_from_domain(data, domain_id, sm_key, sm_size) do
-    case DomainAPI.read(domain_id, {data.name, sm_key}) do
+    case Domain.read(domain_id, {data.name, sm_key}) do
       {:ok, image} -> {:ok, binary_pad(image, sm_size)}
       {:error, _} = err -> err
     end
@@ -443,7 +443,7 @@ defmodule EtherCAT.Slave.ProcessData do
   end
 
   defp register_process_data_domain(data, %SmGroup{} = sm_group, %DomainAttachment{} = attachment) do
-    case DomainAPI.register_pdo(
+    case Domain.register_pdo(
            attachment.domain_id,
            {data.name, sm_group.sm_key},
            sm_group.total_sm_size,

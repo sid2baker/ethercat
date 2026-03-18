@@ -1,10 +1,8 @@
 defmodule EtherCAT.Master.Status do
   @moduledoc false
 
-  alias EtherCAT.{Bus, DC}
-  alias EtherCAT.DC.API, as: DCAPI
+  alias EtherCAT.{Bus, DC, Domain}
   alias EtherCAT.DC.Status, as: DCStatus
-  alias EtherCAT.Domain.API, as: DomainAPI
 
   @spec desired_runtime_target(%EtherCAT.Master{}) :: :op | :safeop | :preop
   def desired_runtime_target(%{desired_runtime_target: target})
@@ -78,7 +76,7 @@ defmodule EtherCAT.Master.Status do
     }
 
     if dc_running?() do
-      case DCAPI.status(DC) do
+      case DC.status(DC) do
         %DCStatus{} = status ->
           %{status | reference_clock: reference_clock_name(data)}
 
@@ -129,7 +127,7 @@ defmodule EtherCAT.Master.Status do
     |> Enum.flat_map(fn config ->
       case Registry.lookup(EtherCAT.Registry, {:domain, config.id}) do
         [{pid, _}] ->
-          case DomainAPI.info(config.id) do
+          case Domain.info(config.id) do
             {:ok, %{cycle_time_us: cycle_time_us}} -> [{config.id, cycle_time_us, pid}]
             _ -> []
           end

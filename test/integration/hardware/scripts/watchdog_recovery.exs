@@ -23,12 +23,12 @@
 #
 #   1. Start → OP: confirm all slaves reach OP state
 #   2. Assert outputs: drive a known pattern on EL2809 ch1..ch16
-#   3. STOP cycling: call Domain.API.stop_cycling/1, record t0
+#   3. STOP cycling: call Domain.stop_cycling/1, record t0
 #   4. Poll AL status via raw FPRD: detect when EL2809 transitions OP→SAFEOP
 #      (watchdog tripped, outputs go to safe state)
 #      Record trip_ms = time from stop to SAFEOP
 #   5. Verify loopback: read EL1809 inputs to confirm outputs went low (safe)
-#   6. RESTART cycling: call Domain.API.start_cycling/1, record t1
+#   6. RESTART cycling: call Domain.start_cycling/1, record t1
 #   7. Poll until EL2809 returns to OP, record recover_ms = t1 → OP
 #   8. Verify loopback restored: drive all outputs high again and check inputs
 #
@@ -257,10 +257,10 @@ IO.puts("  #{on_count}/16 loopback inputs confirmed HIGH")
 # ---------------------------------------------------------------------------
 
 IO.puts("\n── 3. Stop cycling — measuring watchdog trip ─────────────────────")
-IO.puts("  Calling Domain.API.stop_cycling(:main)...")
+IO.puts("  Calling Domain.stop_cycling(:main)...")
 
 t_stop = System.monotonic_time(:millisecond)
-:ok = EtherCAT.Domain.API.stop_cycling(:main)
+:ok = EtherCAT.Domain.stop_cycling(:main)
 
 # Poll until AL status goes to SAFEOP
 result =
@@ -306,9 +306,9 @@ IO.puts("  Restarting cycling briefly to refresh input image...")
 
 # Cycling stopped → ETS frozen at last values.  Restart for a few ticks
 # to get a fresh input snapshot reflecting the watchdog safe state.
-EtherCAT.Domain.API.start_cycling(:main)
+EtherCAT.Domain.start_cycling(:main)
 Process.sleep(period_ms * 5)
-EtherCAT.Domain.API.stop_cycling(:main)
+EtherCAT.Domain.stop_cycling(:main)
 
 off_count =
   Enum.count(1..16, fn i ->
@@ -334,9 +334,9 @@ end
 IO.puts("\n── 5. Restart cycling — measuring OP recovery ────────────────────")
 
 t_restart = System.monotonic_time(:millisecond)
-:ok = EtherCAT.Domain.API.start_cycling(:main)
+:ok = EtherCAT.Domain.start_cycling(:main)
 
-IO.puts("  Domain.API.start_cycling(:main) called, waiting for :outputs → OP...")
+IO.puts("  Domain.start_cycling(:main) called, waiting for :outputs → OP...")
 
 recovery_result =
   poll_until_state.(bus, outputs_station, :op, poll_ms, op_timeout, al_state_name)

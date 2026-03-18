@@ -2,7 +2,7 @@ defmodule EtherCAT.Master.Preop do
   @moduledoc false
 
   alias EtherCAT.Master.Config
-  alias EtherCAT.Slave.API, as: SlaveAPI
+  alias EtherCAT.Slave
 
   @spec configure_discovered_slave(
           %EtherCAT.Master{},
@@ -39,7 +39,7 @@ defmodule EtherCAT.Master.Preop do
   end
 
   defp ensure_slave_in_preop(slave_name) do
-    case SlaveAPI.state(slave_name) do
+    case Slave.state(slave_name) do
       :preop -> :ok
       {:error, _} = err -> err
       other -> {:error, {:slave_not_preop, other}}
@@ -48,7 +48,7 @@ defmodule EtherCAT.Master.Preop do
 
   defp maybe_apply_slave_configuration(slave_name, current_config, updated_config) do
     if Config.local_config_changed?(current_config, updated_config) do
-      SlaveAPI.configure(
+      Slave.configure(
         slave_name,
         driver: updated_config.driver,
         config: updated_config.config,

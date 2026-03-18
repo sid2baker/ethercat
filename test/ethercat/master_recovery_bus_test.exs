@@ -3,7 +3,7 @@ defmodule EtherCAT.MasterRecoveryBusTest do
 
   alias EtherCAT.DC.Config, as: DCConfig
   alias EtherCAT.Domain
-  alias EtherCAT.Domain.API, as: DomainAPI
+  alias EtherCAT.Domain, as: DomainAPI
   alias EtherCAT.TestSupport.FakeBus
 
   defmodule ReconnectStubSlave do
@@ -85,7 +85,7 @@ defmodule EtherCAT.MasterRecoveryBusTest do
     }
 
     assert {:keep_state, %EtherCAT.Master{} = recovering_data, _actions} =
-             EtherCAT.Master.handle_event({:timeout, :retry}, nil, :recovering, data)
+             EtherCAT.Master.FSM.handle_event({:timeout, :retry}, nil, :recovering, data)
 
     assert recovering_data.runtime_faults == %{{:domain, domain_id} => {:stopped, :down}}
     assert {:ok, %{state: :cycling}} = DomainAPI.info(domain_id)
@@ -124,7 +124,7 @@ defmodule EtherCAT.MasterRecoveryBusTest do
     end)
 
     assert {:keep_state, %EtherCAT.Master{} = recovering_data, _actions} =
-             EtherCAT.Master.handle_event({:timeout, :retry}, nil, :recovering, data)
+             EtherCAT.Master.FSM.handle_event({:timeout, :retry}, nil, :recovering, data)
 
     assert recovering_data.runtime_faults == %{{:dc, :runtime} => {:failed, :timeout}}
     assert is_pid(Process.whereis(EtherCAT.DC))
@@ -142,7 +142,7 @@ defmodule EtherCAT.MasterRecoveryBusTest do
     }
 
     assert {:keep_state, %EtherCAT.Master{} = recovering_data, _actions} =
-             EtherCAT.Master.handle_event({:timeout, :retry}, nil, :recovering, data)
+             EtherCAT.Master.FSM.handle_event({:timeout, :retry}, nil, :recovering, data)
 
     assert_receive {:authorize_reconnect, ^slave_name}
 
@@ -165,7 +165,12 @@ defmodule EtherCAT.MasterRecoveryBusTest do
     assert EtherCAT.Master.Recovery.retryable_slave_faults?(data)
 
     assert {:keep_state, %EtherCAT.Master{} = retried_data, _actions} =
-             EtherCAT.Master.handle_event({:timeout, :slave_fault_retry}, nil, :operational, data)
+             EtherCAT.Master.FSM.handle_event(
+               {:timeout, :slave_fault_retry},
+               nil,
+               :operational,
+               data
+             )
 
     assert_receive {:authorize_reconnect, ^slave_name}
     assert retried_data.slave_faults == %{slave_name => {:reconnecting, :authorized}}
@@ -183,7 +188,7 @@ defmodule EtherCAT.MasterRecoveryBusTest do
     }
 
     assert {:keep_state, %EtherCAT.Master{} = recovering_data, _actions} =
-             EtherCAT.Master.handle_event({:timeout, :retry}, nil, :recovering, data)
+             EtherCAT.Master.FSM.handle_event({:timeout, :retry}, nil, :recovering, data)
 
     refute_receive {:authorize_reconnect, ^slave_name}
     assert recovering_data.slave_faults == %{slave_name => {:reconnecting, :authorized}}
@@ -214,7 +219,7 @@ defmodule EtherCAT.MasterRecoveryBusTest do
     }
 
     assert {:next_state, :discovering, %EtherCAT.Master{} = rediscovering} =
-             EtherCAT.Master.handle_event({:timeout, :retry}, nil, :recovering, data)
+             EtherCAT.Master.FSM.handle_event({:timeout, :retry}, nil, :recovering, data)
 
     assert rediscovering.bus_ref == data.bus_ref
     assert rediscovering.slaves == []

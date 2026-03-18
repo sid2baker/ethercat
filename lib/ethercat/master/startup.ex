@@ -3,9 +3,8 @@ defmodule EtherCAT.Master.Startup do
 
   require Logger
 
-  alias EtherCAT.{Bus, Domain, Slave, Telemetry, Utils}
+  alias EtherCAT.{Bus, DC, Domain, Slave, Telemetry, Utils}
   alias EtherCAT.Bus.Transaction
-  alias EtherCAT.DC.API, as: DCAPI
   alias EtherCAT.Master.Config
   alias EtherCAT.Master.Config.DomainPlan
   alias EtherCAT.Master.Status
@@ -410,7 +409,7 @@ defmodule EtherCAT.Master.Startup do
   end
 
   defp initialize_distributed_clocks(_data, slave_topology) do
-    case classify_dc_init_result(DCAPI.initialize_clocks(Bus, slave_topology)) do
+    case classify_dc_init_result(DC.initialize_clocks(Bus, slave_topology)) do
       {:ok, nil, []} ->
         Logger.debug(
           "[Master] no DC-capable slaves found - running without DC",

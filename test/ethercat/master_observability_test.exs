@@ -55,7 +55,7 @@ defmodule EtherCAT.MasterObservabilityTest do
     }
 
     assert {:next_state, :idle, %Master{last_failure: failure}} =
-             Master.handle_event({:timeout, :scan_poll}, nil, :discovering, data)
+             Master.FSM.handle_event({:timeout, :scan_poll}, nil, :discovering, data)
 
     assert failure.kind == :configuration_failed
 

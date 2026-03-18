@@ -3,12 +3,9 @@ defmodule EtherCAT.Master.Activation do
 
   require Logger
 
-  alias EtherCAT.{Bus, DC, Telemetry, Utils}
-  alias EtherCAT.DC.API, as: DCAPI
-  alias EtherCAT.Domain.API, as: DomainAPI
+  alias EtherCAT.{Bus, DC, Domain, Slave, Telemetry, Utils}
   alias EtherCAT.Master.Config
   alias EtherCAT.Master.Status
-  alias EtherCAT.Slave.API, as: SlaveAPI
 
   @activation_quiet_ms 2
 
@@ -137,7 +134,7 @@ defmodule EtherCAT.Master.Activation do
 
   defp start_domain_cycles(data) do
     Enum.reduce_while(Config.domain_ids(data.domain_configs || []), :ok, fn id, :ok ->
-      case DomainAPI.start_cycling(id) do
+      case Domain.start_cycling(id) do
         :ok ->
           {:cont, :ok}
 
@@ -155,7 +152,7 @@ defmodule EtherCAT.Master.Activation do
     timeout_ms = data.dc_config.lock_timeout_ms
 
     if dc_running?() do
-      case DCAPI.await_locked(DC, timeout_ms) do
+      case DC.await_locked(DC, timeout_ms) do
         :ok ->
           :ok
 
@@ -173,7 +170,7 @@ defmodule EtherCAT.Master.Activation do
   defp activate_required_slaves(slave_names) do
     {safeop_ready, safeop_failures} =
       Enum.reduce(slave_names, {[], %{}}, fn name, {ready, failures} ->
-        case SlaveAPI.request(name, :safeop) do
+        case Slave.request(name, :safeop) do
           :ok ->
             {[name | ready], failures}
 
@@ -191,7 +188,7 @@ defmodule EtherCAT.Master.Activation do
       end)
 
     Enum.reduce(safeop_ready, safeop_failures, fn name, failures ->
-      case SlaveAPI.request(name, :op) do
+      case Slave.request(name, :op) do
         :ok ->
           failures
 
@@ -211,7 +208,7 @@ defmodule EtherCAT.Master.Activation do
 
   defp preop_activation_failures(slave_names) do
     Enum.reduce(slave_names, %{}, fn name, failures ->
-      case SlaveAPI.info(name) do
+      case Slave.info(name) do
         {:ok, %{al_state: :preop, configuration_error: reason}} when not is_nil(reason) ->
           Logger.warning(
             "[Master] slave #{inspect(name)} blocked in PREOP: #{inspect(reason)}",

@@ -1,13 +1,10 @@
 defmodule EtherCAT.Domain do
   @moduledoc File.read!(Path.join(__DIR__, "domain.md"))
 
-  @behaviour :gen_statem
-  require Logger
-
-  alias EtherCAT.Domain.Calls
-  alias EtherCAT.Domain.Cycle
+  alias EtherCAT.Domain.FSM
+  alias EtherCAT.Domain.Image
   alias EtherCAT.Domain.Layout
-  alias EtherCAT.Domain.State
+  alias EtherCAT.Utils
 
   @type domain_id :: atom()
   @type pdo_key :: {slave_name :: atom(), pdo_name :: atom()}
@@ -39,63 +36,85 @@ defmodule EtherCAT.Domain do
 
     %{
       id: {__MODULE__, id},
-      start: {__MODULE__, :start_link, [opts]},
+      start: {FSM, :start_link, [opts]},
       restart: :temporary,
       shutdown: 5000
     }
   end
 
+  @doc false
   @spec start_link(keyword()) :: :gen_statem.start_ret()
-  def start_link(opts) do
-    :gen_statem.start_link(__MODULE__, opts, [])
+  def start_link(opts), do: FSM.start_link(opts)
+
+  @spec register_pdo(domain_id(), pdo_key(), pos_integer(), :input | :output) ::
+          {:ok, non_neg_integer()} | {:error, term()}
+  def register_pdo(domain_id, key, size, direction) do
+    safe_call(domain_id, {:register_pdo, key, size, direction})
   end
 
-  @impl true
-  def callback_mode, do: [:handle_event_function, :state_enter]
+  @spec start_cycling(domain_id()) :: :ok | {:error, term()}
+  def start_cycling(domain_id), do: safe_call(domain_id, :start_cycling)
 
-  @impl true
-  def init(opts) do
-    Logger.metadata(component: :domain, domain: Keyword.fetch!(opts, :id))
-    {:ok, :open, State.new(opts)}
+  @spec stop_cycling(domain_id()) ::
+          :ok | {:error, :not_found | :timeout | {:server_exit, term()}}
+  def stop_cycling(domain_id), do: safe_call(domain_id, :stop_cycling)
+
+  @spec write(domain_id(), pdo_key(), binary()) :: :ok | {:error, :not_found}
+  def write(domain_id, key, binary) when is_atom(domain_id) and is_binary(binary) do
+    updated_at_us = System.monotonic_time(:microsecond)
+
+    try do
+      Image.write(domain_id, key, binary, updated_at_us)
+    rescue
+      ArgumentError -> {:error, :not_found}
+    end
   end
 
-  @impl true
-  def handle_event(:enter, _old, :open, _data), do: :keep_state_and_data
-
-  def handle_event(:enter, _old, :cycling, data),
-    do: {:keep_state_and_data, Cycle.enter_actions(data)}
-
-  def handle_event(:enter, _old, :stopped, _data), do: :keep_state_and_data
-
-  def handle_event({:call, from}, {:register_pdo, key, size, direction}, :open, data) do
-    Calls.register_pdo(from, key, size, direction, data)
+  @spec read(domain_id(), pdo_key()) :: {:ok, binary()} | {:error, :not_found | :not_ready}
+  def read(domain_id, key) when is_atom(domain_id) do
+    try do
+      case Image.read(domain_id, key) do
+        {:ok, :unset} -> {:error, :not_ready}
+        {:ok, value} -> {:ok, value}
+        :error -> {:error, :not_found}
+      end
+    rescue
+      ArgumentError -> {:error, :not_found}
+    end
   end
 
-  def handle_event({:call, from}, {:register_pdo, _, _, _}, _state, _data) do
-    {:keep_state_and_data, [{:reply, from, {:error, :not_open}}]}
+  @spec sample(domain_id(), pdo_key()) ::
+          {:ok, %{value: binary(), updated_at_us: integer() | nil}}
+          | {:error, :not_found | :not_ready}
+  def sample(domain_id, key) when is_atom(domain_id) do
+    try do
+      Image.sample(domain_id, key)
+    rescue
+      ArgumentError -> {:error, :not_found}
+    end
   end
 
-  def handle_event({:call, from}, :start_cycling, state, data)
-      when state in [:open, :stopped, :cycling],
-      do: Calls.start_cycling(from, state, data)
+  @spec stats(domain_id()) ::
+          {:ok, map()} | {:error, :not_found | :timeout | {:server_exit, term()}}
+  def stats(domain_id), do: safe_call(domain_id, :stats)
 
-  def handle_event({:call, from}, :stop_cycling, state, data)
-      when state in [:open, :stopped, :cycling],
-      do: Calls.stop_cycling(from, state, data)
+  @spec info(domain_id()) ::
+          {:ok, map()} | {:error, :not_found | :timeout | {:server_exit, term()}}
+  def info(domain_id), do: safe_call(domain_id, :info)
 
-  def handle_event(:state_timeout, :tick, :cycling, data), do: Cycle.handle_tick(data)
-
-  def handle_event({:call, from}, :stats, state, data) do
-    Calls.stats(from, state, data)
+  @spec update_cycle_time(domain_id(), pos_integer()) :: :ok | {:error, term()}
+  def update_cycle_time(domain_id, cycle_time_us)
+      when is_integer(cycle_time_us) and cycle_time_us > 0 do
+    safe_call(domain_id, {:update_cycle_time, cycle_time_us})
   end
 
-  def handle_event({:call, from}, :info, state, data) do
-    Calls.info(from, state, data)
+  defp safe_call(domain_id, msg) do
+    try do
+      :gen_statem.call(via(domain_id), msg)
+    catch
+      :exit, reason -> Utils.classify_call_exit(reason, :not_found)
+    end
   end
 
-  def handle_event({:call, from}, {:update_cycle_time, new_us}, _state, data) do
-    Calls.update_cycle_time(from, new_us, data)
-  end
-
-  def handle_event(_type, _event, _state, _data), do: :keep_state_and_data
+  defp via(domain_id), do: {:via, Registry, {EtherCAT.Registry, {:domain, domain_id}}}
 end

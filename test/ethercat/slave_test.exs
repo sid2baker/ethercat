@@ -139,7 +139,7 @@ defmodule EtherCAT.SlaveTest do
     }
 
     assert :keep_state_and_data =
-             EtherCAT.Slave.handle_event(
+             EtherCAT.Slave.FSM.handle_event(
                :info,
                {:domain_inputs, :main, [{{:sensor, {:sm, 0}}, :unset, <<0>>}]},
                :op,
@@ -151,7 +151,7 @@ defmodule EtherCAT.SlaveTest do
     refute_receive _
 
     assert :keep_state_and_data =
-             EtherCAT.Slave.handle_event(
+             EtherCAT.Slave.FSM.handle_event(
                :info,
                {:domain_inputs, :main, [{{:sensor, {:sm, 0}}, <<0>>, <<2>>}]},
                :op,
@@ -163,7 +163,7 @@ defmodule EtherCAT.SlaveTest do
     refute_receive _
 
     assert :keep_state_and_data =
-             EtherCAT.Slave.handle_event(
+             EtherCAT.Slave.FSM.handle_event(
                :info,
                {:domain_inputs, :main, [{{:sensor, {:sm, 0}}, <<2>>, <<2>>}]},
                :op,
@@ -173,7 +173,7 @@ defmodule EtherCAT.SlaveTest do
     refute_receive _
 
     assert :keep_state_and_data =
-             EtherCAT.Slave.handle_event(
+             EtherCAT.Slave.FSM.handle_event(
                :info,
                {:domain_inputs, :main, [{{:sensor, {:sm, 0}}, <<2>>, <<3>>}]},
                :op,
@@ -201,7 +201,7 @@ defmodule EtherCAT.SlaveTest do
     }
 
     assert :keep_state_and_data =
-             EtherCAT.Slave.handle_event(
+             EtherCAT.Slave.FSM.handle_event(
                :info,
                {:domain_inputs, :fast, [{{:sensor, {:sm, 3}}, <<0>>, <<1>>}]},
                :op,
@@ -212,7 +212,7 @@ defmodule EtherCAT.SlaveTest do
     refute_receive {:ethercat, :signal, :sensor, :slow_ch2, _}
 
     assert :keep_state_and_data =
-             EtherCAT.Slave.handle_event(
+             EtherCAT.Slave.FSM.handle_event(
                :info,
                {:domain_inputs, :slow, [{{:sensor, {:sm, 3}}, <<0>>, <<2>>}]},
                :op,
@@ -247,7 +247,7 @@ defmodule EtherCAT.SlaveTest do
     from = {self(), make_ref()}
 
     assert {:keep_state_and_data, [{:reply, ^from, {:ok, {1, 1234}}}]} =
-             EtherCAT.Slave.handle_event(
+             EtherCAT.Slave.FSM.handle_event(
                {:call, from},
                {:read_input, :ch1},
                :op,
@@ -260,7 +260,7 @@ defmodule EtherCAT.SlaveTest do
 
     assert {:keep_state_and_data,
             [{:reply, ^from, {:error, {:preop_configuration_failed, :bad_pdo}}}]} =
-             EtherCAT.Slave.handle_event(
+             EtherCAT.Slave.FSM.handle_event(
                {:call, from},
                {:request, :safeop},
                :preop,
@@ -269,7 +269,7 @@ defmodule EtherCAT.SlaveTest do
 
     assert {:keep_state_and_data,
             [{:reply, ^from, {:error, {:preop_configuration_failed, :bad_pdo}}}]} =
-             EtherCAT.Slave.handle_event(
+             EtherCAT.Slave.FSM.handle_event(
                {:call, from},
                {:request, :op},
                :preop,
@@ -281,7 +281,7 @@ defmodule EtherCAT.SlaveTest do
     from = {self(), make_ref()}
 
     assert {:keep_state, %EtherCAT.Slave{driver: TestDriver} = updated, [{:reply, ^from, :ok}]} =
-             EtherCAT.Slave.handle_event(
+             EtherCAT.Slave.FSM.handle_event(
                {:call, from},
                {:configure, [driver: TestDriver]},
                :preop,
@@ -296,7 +296,7 @@ defmodule EtherCAT.SlaveTest do
     assert updated.signal_registrations == %{ch1: %{domain_id: :main}}
 
     assert {:keep_state_and_data, [{:reply, ^from, {:error, :not_preop}}]} =
-             EtherCAT.Slave.handle_event(
+             EtherCAT.Slave.FSM.handle_event(
                {:call, from},
                {:configure, [driver: TestDriver]},
                :safeop,
@@ -304,7 +304,7 @@ defmodule EtherCAT.SlaveTest do
              )
 
     assert {:keep_state, _data, [{:reply, ^from, {:error, :already_configured}}]} =
-             EtherCAT.Slave.handle_event(
+             EtherCAT.Slave.FSM.handle_event(
                {:call, from},
                {:configure, [process_data: {:all, :main}]},
                :preop,
@@ -322,7 +322,7 @@ defmodule EtherCAT.SlaveTest do
 
     assert {:keep_state, %EtherCAT.Slave{} = updated,
             [{:reply, ^from, {:error, {:invalid_mailbox_step, :bad_step}}}]} =
-             EtherCAT.Slave.handle_event(
+             EtherCAT.Slave.FSM.handle_event(
                {:call, from},
                {:configure, []},
                :preop,
@@ -375,7 +375,7 @@ defmodule EtherCAT.SlaveTest do
     }
 
     assert {:keep_state_and_data, [{:reply, ^from, {:ok, info}}]} =
-             EtherCAT.Slave.handle_event({:call, from}, :info, :preop, data)
+             EtherCAT.Slave.FSM.handle_event({:call, from}, :info, :preop, data)
 
     assert info.esc == %{fmmu_count: 3, sm_count: 4}
     assert info.available_fmmus == 3
@@ -407,7 +407,7 @@ defmodule EtherCAT.SlaveTest do
     from = {self(), make_ref()}
 
     assert {:keep_state_and_data, [{:reply, ^from, {:error, {:not_output, :ch1}}}]} =
-             EtherCAT.Slave.handle_event(
+             EtherCAT.Slave.FSM.handle_event(
                {:call, from},
                {:write_output, :ch1, 1},
                :op,
@@ -429,7 +429,7 @@ defmodule EtherCAT.SlaveTest do
     from = {self(), make_ref()}
 
     assert {:keep_state_and_data, [{:reply, ^from, {:error, {:not_input, :ch1}}}]} =
-             EtherCAT.Slave.handle_event(
+             EtherCAT.Slave.FSM.handle_event(
                {:call, from},
                {:read_input, :ch1},
                :op,
@@ -462,7 +462,7 @@ defmodule EtherCAT.SlaveTest do
 
     assert {:keep_state, %EtherCAT.Slave{output_sm_images: %{{:sm, 1} => <<1>>}},
             [{:reply, ^from, :ok}]} =
-             EtherCAT.Slave.handle_event(
+             EtherCAT.Slave.FSM.handle_event(
                {:call, from},
                {:write_output, :ch1, 1},
                :op,
@@ -500,7 +500,7 @@ defmodule EtherCAT.SlaveTest do
 
     assert {:keep_state, %EtherCAT.Slave{output_sm_images: %{{:sm, 1} => <<3>>}},
             [{:reply, ^from, :ok}]} =
-             EtherCAT.Slave.handle_event(
+             EtherCAT.Slave.FSM.handle_event(
                {:call, from},
                {:write_output, :ch2, 1},
                :op,
@@ -542,7 +542,7 @@ defmodule EtherCAT.SlaveTest do
     pid = self()
 
     assert {:keep_state, subscribed, [{:reply, ^from, :ok}]} =
-             EtherCAT.Slave.handle_event(
+             EtherCAT.Slave.FSM.handle_event(
                {:call, from},
                {:subscribe, :ch1, pid},
                :preop,
@@ -555,7 +555,7 @@ defmodule EtherCAT.SlaveTest do
     ref = Map.fetch!(subscribed.subscriber_refs, pid)
 
     assert {:keep_state, subscribed_again, [{:reply, ^from, :ok}]} =
-             EtherCAT.Slave.handle_event(
+             EtherCAT.Slave.FSM.handle_event(
                {:call, from},
                {:subscribe, :ch1, pid},
                :preop,
@@ -565,7 +565,7 @@ defmodule EtherCAT.SlaveTest do
     assert Map.fetch!(subscribed_again.subscriptions, :ch1) == MapSet.new([pid])
 
     assert {:keep_state, cleaned} =
-             EtherCAT.Slave.handle_event(
+             EtherCAT.Slave.FSM.handle_event(
                :info,
                {:DOWN, ref, :process, pid, :normal},
                :preop,
@@ -581,7 +581,7 @@ defmodule EtherCAT.SlaveTest do
     sync = %EtherCAT.Slave.Sync.Config{mode: :sync0, sync0: %{pulse_ns: 5_000, shift_ns: 0}}
 
     assert {:keep_state, %EtherCAT.Slave{} = updated, [{:reply, ^from, :ok}]} =
-             EtherCAT.Slave.handle_event(
+             EtherCAT.Slave.FSM.handle_event(
                {:call, from},
                {:configure, [sync: sync]},
                :preop,
@@ -601,7 +601,7 @@ defmodule EtherCAT.SlaveTest do
     from = {self(), make_ref()}
 
     assert {:keep_state, %EtherCAT.Slave{} = updated, [{:reply, ^from, :ok}]} =
-             EtherCAT.Slave.handle_event(
+             EtherCAT.Slave.FSM.handle_event(
                {:call, from},
                {:configure, [health_poll_ms: 250]},
                :preop,
@@ -637,7 +637,7 @@ defmodule EtherCAT.SlaveTest do
     assert {:keep_state,
             %EtherCAT.Slave{configuration_error: {:fmmu_limit_reached, 2, 1}} = updated,
             [{:reply, ^from, {:error, {:fmmu_limit_reached, 2, 1}}}]} =
-             EtherCAT.Slave.handle_event(
+             EtherCAT.Slave.FSM.handle_event(
                {:call, from},
                {:configure, [process_data: [ch1: :fast, ch2: :slow]]},
                :preop,
@@ -774,7 +774,7 @@ defmodule EtherCAT.SlaveTest do
 
     assert {:keep_state, unchanged,
             [{:reply, ^from, {:error, {:invalid_mailbox_step, :bad_step}}}]} =
-             EtherCAT.Slave.handle_event(
+             EtherCAT.Slave.FSM.handle_event(
                {:call, from},
                {:configure, [sync: sync]},
                :preop,
@@ -786,7 +786,7 @@ defmodule EtherCAT.SlaveTest do
 
   test "entering op only arms latch polling and does not invoke on_op twice" do
     assert {:keep_state_and_data, []} =
-             EtherCAT.Slave.handle_event(
+             EtherCAT.Slave.FSM.handle_event(
                :enter,
                :safeop,
                :op,
@@ -819,12 +819,12 @@ defmodule EtherCAT.SlaveTest do
     }
 
     assert {:keep_state, %EtherCAT.Slave{reconnect_ready?: true}, _actions} =
-             EtherCAT.Slave.handle_event({:timeout, :health_poll}, nil, :down, data)
+             EtherCAT.Slave.FSM.handle_event({:timeout, :health_poll}, nil, :down, data)
 
     from = {self(), make_ref()}
 
     assert {:keep_state_and_data, [{:reply, ^from, {:error, :not_reconnected}}]} =
-             EtherCAT.Slave.handle_event(
+             EtherCAT.Slave.FSM.handle_event(
                {:call, from},
                :authorize_reconnect,
                :down,
@@ -836,7 +836,7 @@ defmodule EtherCAT.SlaveTest do
     from = {self(), make_ref()}
 
     assert {:keep_state_and_data, [{:reply, ^from, {:error, :mailbox_not_ready}}]} =
-             EtherCAT.Slave.handle_event(
+             EtherCAT.Slave.FSM.handle_event(
                {:call, from},
                {:download_sdo, 0x2000, 0x01, <<1, 2, 3>>},
                :init,
@@ -844,7 +844,7 @@ defmodule EtherCAT.SlaveTest do
              )
 
     assert {:keep_state_and_data, [{:reply, ^from, {:error, :mailbox_not_ready}}]} =
-             EtherCAT.Slave.handle_event(
+             EtherCAT.Slave.FSM.handle_event(
                {:call, from},
                {:upload_sdo, 0x2000, 0x01},
                :init,

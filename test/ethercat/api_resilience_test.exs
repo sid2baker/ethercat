@@ -1,8 +1,8 @@
 defmodule EtherCAT.APIResilienceTest do
   use ExUnit.Case, async: false
 
-  alias EtherCAT.Domain.API, as: DomainAPI
-  alias EtherCAT.Slave.API, as: SlaveAPI
+  alias EtherCAT.Domain, as: DomainAPI
+  alias EtherCAT.Slave, as: SlaveAPI
   alias EtherCAT.Utils
   alias EtherCAT.Bus
 
