@@ -49,6 +49,29 @@ defmodule EtherCAT.TelemetryTest do
                     %{link: "eth0|eth1", endpoint: "eth0"}}
   end
 
+  test "redundant_exchange_timeout/6 emits the bounded link timeout event" do
+    event_name = [:ethercat, :bus, :link, :exchange, :timeout]
+    attach_event(event_name, self())
+
+    Telemetry.redundant_exchange_timeout(
+      "eth0|eth1",
+      :partial_arrivals,
+      [:pri_bounce],
+      true,
+      true,
+      2
+    )
+
+    assert_receive {:telemetry_event, ^event_name, %{arrival_count: 1, consecutive_timeouts: 2},
+                    %{
+                      link: "eth0|eth1",
+                      detail: :partial_arrivals,
+                      arrival_classes: [:pri_bounce],
+                      pri_sent: true,
+                      sec_sent: true
+                    }}
+  end
+
   test "dc_tick/2 emits the DC tick telemetry event" do
     event_name = [:ethercat, :dc, :tick]
     attach_event(event_name, self())

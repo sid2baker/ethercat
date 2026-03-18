@@ -109,7 +109,9 @@ defmodule EtherCAT.Bus.Link.Redundant do
     sec_health: :up,
     sec_last_error_reason: nil,
     timeout_count: 0,
-    settle_callers: []
+    settle_callers: [],
+    timeout_pattern: nil,
+    timeout_pattern_count: 0
   ]
 
   # -- Public API --
@@ -615,6 +617,7 @@ defmodule EtherCAT.Bus.Link.Redundant do
       :mismatch -> Link.reply_awaiting(exchange.awaiting, {:error, :mismatch})
     end
 
+    data = clear_timeout_pattern(data)
     dispatch_next(%{data | exchange: nil, timeout_count: 0})
   end
 
@@ -636,16 +639,18 @@ defmodule EtherCAT.Bus.Link.Redundant do
       )
     end
 
-    data = drain_transports(data)
+    data =
+      data
+      |> drain_transports()
+      |> Map.put(:timeout_count, timeouts)
+      |> record_timeout_observation(exchange, timeout_detail(exchange))
 
     # Reply with best-effort data from partial arrivals, or error
     case exchange.arrivals do
       [] ->
-        log_timeout(data, :no_arrivals)
         Link.reply_awaiting(exchange.awaiting, {:error, :timeout})
 
       arrivals ->
-        log_timeout(data, :partial_arrivals)
         best_datagrams = best_effort_datagrams(arrivals, exchange)
 
         case Link.match_and_reply(best_datagrams, exchange.awaiting) do
@@ -654,7 +659,7 @@ defmodule EtherCAT.Bus.Link.Redundant do
         end
     end
 
-    dispatch_next(%{data | exchange: nil, timeout_count: timeouts})
+    dispatch_next(%{data | exchange: nil})
   end
 
   defp best_effort_datagrams(arrivals, exchange) do
@@ -682,19 +687,70 @@ defmodule EtherCAT.Bus.Link.Redundant do
     end
   end
 
-  defp log_timeout(data, detail) do
-    exchange = data.exchange
+  defp timeout_detail(%{arrivals: []}), do: :no_arrivals
+  defp timeout_detail(_exchange), do: :partial_arrivals
+
+  defp record_timeout_observation(data, exchange, detail) do
     arrival_classes = Enum.map(exchange.arrivals, & &1.class)
 
+    Telemetry.redundant_exchange_timeout(
+      data.link_name,
+      detail,
+      arrival_classes,
+      exchange.pri_sent?,
+      exchange.sec_sent?,
+      data.timeout_count
+    )
+
+    observation = %{
+      detail: detail,
+      arrival_classes: arrival_classes,
+      pri_sent?: exchange.pri_sent?,
+      sec_sent?: exchange.sec_sent?
+    }
+
+    case data.timeout_pattern do
+      ^observation ->
+        %{data | timeout_pattern_count: data.timeout_pattern_count + 1}
+
+      _ ->
+        log_timeout_observation(data.link_name, observation)
+        %{data | timeout_pattern: observation, timeout_pattern_count: 1}
+    end
+  end
+
+  defp log_timeout_observation(link_name, observation) do
     Logger.warning(
-      "[Link.Redundant] exchange timeout detail=#{detail} arrivals=#{inspect(arrival_classes)} " <>
-        "pri_sent=#{exchange.pri_sent?} sec_sent=#{exchange.sec_sent?}",
+      "[Link.Redundant] exchange timeout detail=#{observation.detail} " <>
+        "arrivals=#{inspect(observation.arrival_classes)} " <>
+        "pri_sent=#{observation.pri_sent?} sec_sent=#{observation.sec_sent?}",
       component: :bus,
       event: :redundant_exchange_timeout,
-      link: data.link_name,
-      detail: detail,
-      arrival_classes: arrival_classes
+      link: link_name,
+      detail: observation.detail,
+      arrival_classes: observation.arrival_classes
     )
+  end
+
+  defp clear_timeout_pattern(%{timeout_pattern: nil} = data), do: data
+
+  defp clear_timeout_pattern(data) do
+    observation = data.timeout_pattern
+
+    Logger.info(
+      "[Link.Redundant] exchange timeout pattern cleared detail=#{observation.detail} " <>
+        "arrivals=#{inspect(observation.arrival_classes)} " <>
+        "pri_sent=#{observation.pri_sent?} sec_sent=#{observation.sec_sent?} " <>
+        "after=#{data.timeout_pattern_count}",
+      component: :bus,
+      event: :redundant_exchange_timeout_cleared,
+      link: data.link_name,
+      detail: observation.detail,
+      arrival_classes: observation.arrival_classes,
+      occurrence_count: data.timeout_pattern_count
+    )
+
+    %{data | timeout_pattern: nil, timeout_pattern_count: 0}
   end
 
   # -- Port matching --

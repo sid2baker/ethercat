@@ -90,6 +90,10 @@ defmodule EtherCAT.Telemetry do
         measurements: %{}
         metadata:     %{link: String.t(), port: :primary | :secondary, from: term(), to: term()}
 
+      [:ethercat, :bus, :link, :exchange, :timeout]
+        measurements: %{arrival_count: non_neg_integer(), consecutive_timeouts: pos_integer()}
+        metadata:     %{link: String.t(), detail: :no_arrivals | :partial_arrivals, arrival_classes: [atom()], pri_sent: boolean(), sec_sent: boolean()}
+
   ### DC maintenance and lock monitoring
 
       [:ethercat, :dc, :tick]
@@ -300,6 +304,31 @@ defmodule EtherCAT.Telemetry do
       [:ethercat, :bus, :link, :health, :changed],
       %{},
       %{link: link, port: port, from: from, to: to}
+    )
+  end
+
+  @doc false
+  def redundant_exchange_timeout(
+        link,
+        detail,
+        arrival_classes,
+        pri_sent?,
+        sec_sent?,
+        consecutive_timeouts
+      ) do
+    execute(
+      [:ethercat, :bus, :link, :exchange, :timeout],
+      %{
+        arrival_count: length(arrival_classes),
+        consecutive_timeouts: consecutive_timeouts
+      },
+      %{
+        link: link,
+        detail: detail,
+        arrival_classes: arrival_classes,
+        pri_sent: pri_sent?,
+        sec_sent: sec_sent?
+      }
     )
   end
 
@@ -540,6 +569,7 @@ defmodule EtherCAT.Telemetry do
     [:ethercat, :bus, :link, :down],
     [:ethercat, :bus, :link, :reconnected],
     [:ethercat, :bus, :link, :health, :changed],
+    [:ethercat, :bus, :link, :exchange, :timeout],
     [:ethercat, :dc, :tick],
     [:ethercat, :dc, :sync_diff, :observed],
     [:ethercat, :dc, :lock, :changed],

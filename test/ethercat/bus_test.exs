@@ -1,10 +1,13 @@
 defmodule EtherCAT.BusTest do
   use ExUnit.Case, async: true
 
+  import ExUnit.CaptureLog
+
   alias EtherCAT.Bus
   alias EtherCAT.Bus.{Datagram, Frame, Transaction}
 
   @submission_enqueued_event [:ethercat, :bus, :submission, :enqueued]
+  @redundant_exchange_timeout_event [:ethercat, :bus, :link, :exchange, :timeout]
   @transaction_stop_event [:ethercat, :bus, :transact, :stop]
 
   setup do
@@ -602,6 +605,69 @@ defmodule EtherCAT.BusTest do
     assert {:ok, %{type: :redundant}} = Bus.info(bus)
   end
 
+  test "redundant partial-arrival timeout detail is rate-limited and clears on healthy exchange" do
+    pri_mac = fake_mac("pri")
+    handler_id = attach_telemetry_event(@redundant_exchange_timeout_event)
+    on_exit(fn -> :telemetry.detach(handler_id) end)
+    {:ok, bus} = start_redundant_circuit_bus(frame_timeout_ms: 10)
+
+    log =
+      capture_log(fn ->
+        degraded_one = Task.async(fn -> Bus.transaction(bus, Transaction.brd({0x0000, 1})) end)
+
+        primary_one = assert_sent_transport("pri")
+        _secondary_one = assert_sent_transport("sec")
+        reply_transport(bus, primary_one, &%{&1 | wkc: 1}, src_mac: pri_mac)
+
+        assert {:ok, [%{wkc: 1}]} = Task.await(degraded_one)
+
+        assert_receive {:telemetry_event, @redundant_exchange_timeout_event,
+                        %{arrival_count: 1, consecutive_timeouts: 1},
+                        %{
+                          detail: :partial_arrivals,
+                          arrival_classes: [:pri_bounce],
+                          pri_sent: true,
+                          sec_sent: true
+                        }}
+
+        degraded_two = Task.async(fn -> Bus.transaction(bus, Transaction.brd({0x0000, 1})) end)
+
+        primary_two = assert_sent_transport("pri")
+        _secondary_two = assert_sent_transport("sec")
+        reply_transport(bus, primary_two, &%{&1 | wkc: 1}, src_mac: pri_mac)
+
+        assert {:ok, [%{wkc: 1}]} = Task.await(degraded_two)
+
+        assert_receive {:telemetry_event, @redundant_exchange_timeout_event,
+                        %{arrival_count: 1, consecutive_timeouts: 2},
+                        %{
+                          detail: :partial_arrivals,
+                          arrival_classes: [:pri_bounce],
+                          pri_sent: true,
+                          sec_sent: true
+                        }}
+
+        healthy = Task.async(fn -> Bus.transaction(bus, Transaction.brd({0x0000, 1})) end)
+
+        _primary_three = assert_sent_transport("pri")
+        secondary_three = assert_sent_transport("sec")
+        reply_transport(bus, secondary_three, &%{&1 | wkc: 3}, src_mac: pri_mac)
+
+        assert {:ok, [%{wkc: 3}]} = Task.await(healthy)
+      end)
+
+    assert length(
+             Regex.scan(
+               ~r/exchange timeout detail=partial_arrivals arrivals=\[:pri_bounce\]/,
+               log
+             )
+           ) ==
+             1
+
+    assert log =~
+             "exchange timeout pattern cleared detail=partial_arrivals arrivals=[:pri_bounce]"
+  end
+
   test "single-port bus reports runtime info" do
     {:ok, bus, link_name} = start_bus()
 
@@ -834,6 +900,12 @@ defmodule EtherCAT.BusTest do
 
   def handle_telemetry_event(event, measurements, metadata, pid) do
     send(pid, {:telemetry_event, event, measurements, metadata})
+  end
+
+  defp attach_telemetry_event(event_name) do
+    handler_id = "bus-test-telemetry-#{System.unique_integer([:positive, :monotonic])}"
+    :ok = :telemetry.attach(handler_id, event_name, &__MODULE__.handle_telemetry_event/4, self())
+    handler_id
   end
 
   defp assert_submission_enqueued(expected, link_name, timeout \\ 500)
