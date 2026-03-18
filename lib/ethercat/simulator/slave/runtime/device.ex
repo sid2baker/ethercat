@@ -179,6 +179,19 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Device do
   @spec retreat_to_safeop(t()) :: t()
   def retreat_to_safeop(%__MODULE__{} = slave), do: AL.retreat_to_safeop(slave)
 
+  @spec power_cycle(t()) :: t()
+  def power_cycle(%__MODULE__{} = slave) do
+    slave
+    |> Map.put(:mailbox_upload, nil)
+    |> Map.put(:mailbox_download, nil)
+    |> Map.put(:mailbox_abort_rules, [])
+    |> Map.put(:mailbox_protocol_fault_rules, [])
+    |> AL.reset_to_init()
+    |> clear_fmmu_configuration()
+    |> clear_sm_configuration()
+    |> ProcessImage.refresh_inputs()
+  end
+
   @spec latch_al_error(t(), non_neg_integer()) :: t()
   def latch_al_error(%__MODULE__{} = slave, status_code)
       when is_integer(status_code) and status_code >= 0 do
@@ -342,6 +355,35 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Device do
           {t(), binary(), non_neg_integer()}
   def logical_read_write(%__MODULE__{} = slave, cmd, logical_start, request_data) do
     Logical.read_write(slave, cmd, logical_start, request_data)
+  end
+
+  # Maximum number of FMMU entries in a typical ESC (16 bytes each, starting at 0x0600)
+  @max_fmmu_entries 8
+  # Maximum number of SyncManager entries (8 bytes each, starting at 0x0800)
+  @max_sm_entries 8
+
+  defp clear_fmmu_configuration(%__MODULE__{} = slave) do
+    Enum.reduce(0..(@max_fmmu_entries - 1), slave, fn index, acc ->
+      {activate_offset, _} = Registers.fmmu_activate(index)
+
+      if activate_offset + 1 <= byte_size(acc.memory) do
+        write_memory(acc, activate_offset, <<0x00>>)
+      else
+        acc
+      end
+    end)
+  end
+
+  defp clear_sm_configuration(%__MODULE__{} = slave) do
+    Enum.reduce(0..(@max_sm_entries - 1), slave, fn index, acc ->
+      {activate_offset, _} = Registers.sm_activate(index)
+
+      if activate_offset + 1 <= byte_size(acc.memory) do
+        write_memory(acc, activate_offset, <<0x00>>)
+      else
+        acc
+      end
+    end)
   end
 
   defp load_eeprom_data(%__MODULE__{memory: memory, eeprom: eeprom} = slave, cmd) do

@@ -24,6 +24,7 @@ ethercat-*.tar
 
 /.llm-helper/
 symphony/
+todo/
 
 # Local AI assistant settings
 .claude/settings.local.json

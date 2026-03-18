@@ -30,6 +30,11 @@ defmodule EtherCAT.Simulator.Slave.Runtime.AL do
     commit_state(slave, :safeop, false, @alerr_none)
   end
 
+  @spec reset_to_init(map()) :: map()
+  def reset_to_init(slave) do
+    commit_state(slave, :init, false, @alerr_none)
+  end
+
   @spec latch_error(map(), non_neg_integer()) :: map()
   def latch_error(slave, status_code) when is_integer(status_code) and status_code >= 0 do
     commit_state(slave, slave.state, true, status_code)

@@ -102,6 +102,24 @@ defmodule EtherCAT.Master.ConfigTest do
              )
   end
 
+  test "normalize_start_options defaults health_poll_ms and still allows explicit disable" do
+    assert {:ok, defaulted} =
+             Config.normalize_start_options(
+               interface: "eth0",
+               slaves: [[name: :sensor]]
+             )
+
+    assert [%SlaveConfig{health_poll_ms: 250}] = defaulted.slave_config
+
+    assert {:ok, disabled} =
+             Config.normalize_start_options(
+               interface: "eth0",
+               slaves: [[name: :sensor, health_poll_ms: nil]]
+             )
+
+    assert [%SlaveConfig{health_poll_ms: nil}] = disabled.slave_config
+  end
+
   test "effective_slave_config synthesizes dynamic slaves when none are configured" do
     assert {:ok, [%SlaveConfig{name: :coupler}, %SlaveConfig{name: :slave_1}]} =
              Config.effective_slave_config([], 2)

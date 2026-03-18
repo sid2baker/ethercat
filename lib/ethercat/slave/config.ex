@@ -20,8 +20,10 @@ defmodule EtherCAT.Slave.Config do
     - `:health_poll_ms` — interval in milliseconds to poll AL Status after reaching `:op`.
       When set, the slave periodically reads register `0x0130` and emits a
       `[:ethercat, :slave, :health, :fault]` telemetry event if the slave has faulted
-      or dropped out of Op. Defaults to `nil` (disabled).
+      or dropped out of Op. Defaults to `250`; set it to `nil` to disable polling.
   """
+
+  @default_health_poll_ms 250
 
   @type process_data_request :: :none | {:all, atom()} | [{atom(), atom()}]
   @type target_state :: :preop | :op
@@ -35,6 +37,9 @@ defmodule EtherCAT.Slave.Config do
           health_poll_ms: pos_integer() | nil
         }
 
+  @spec default_health_poll_ms() :: pos_integer()
+  def default_health_poll_ms, do: @default_health_poll_ms
+
   @enforce_keys [:name]
   defstruct name: nil,
             driver: EtherCAT.Slave.Driver.Default,
@@ -42,5 +47,5 @@ defmodule EtherCAT.Slave.Config do
             process_data: :none,
             target_state: :op,
             sync: nil,
-            health_poll_ms: nil
+            health_poll_ms: @default_health_poll_ms
 end

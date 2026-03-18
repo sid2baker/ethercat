@@ -548,7 +548,14 @@ defmodule EtherCAT.BusTest do
 
     assert {:ok, [%{data: <<0x21, 0x43>>, wkc: 1}]} = Task.await(read)
 
-    assert {:ok, %{state: :idle, type: :redundant, in_flight: nil}} =
+    assert {:ok,
+            %{
+              state: :idle,
+              type: :redundant,
+              topology: :redundant,
+              fault: nil,
+              in_flight: nil
+            }} =
              Bus.info(bus)
   end
 
@@ -564,9 +571,16 @@ defmodule EtherCAT.BusTest do
 
     assert {:ok, [%{data: <<0x32, 0x32>>, wkc: 1}]} = Task.await(degraded)
 
-    # Bus reopens closed transports eagerly — primary is open again but
-    # the transaction still completed using secondary-only data
-    assert {:ok, %{type: :redundant}} = Bus.info(bus)
+    assert {:ok,
+            %{
+              type: :redundant,
+              topology: :degraded_primary_leg,
+              fault: %{
+                kind: :transport_fault,
+                degraded_ports: [:primary],
+                reasons: %{primary: :enetdown}
+              }
+            }} = Bus.info(bus)
   end
 
   test "built-in redundant circuit accepts a processed one-sided timeout as degraded success" do

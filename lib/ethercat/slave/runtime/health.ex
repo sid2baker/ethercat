@@ -50,17 +50,12 @@ defmodule EtherCAT.Slave.Runtime.Health do
               send(EtherCAT.Master, {:slave_retreated, data.name, :safeop})
               {:next_state, :safeop, new_data}
 
-            {:error, reason, new_data} ->
-              Logger.error(
-                "[Slave #{data.name}] SafeOp retreat failed: #{inspect(reason)}",
-                component: :slave,
-                slave: data.name,
-                station: data.station,
-                event: :safeop_retreat_failed,
-                reason_kind: Utils.reason_kind(reason)
+            {:error, reason, _new_data} ->
+              report_down(
+                data,
+                {:safeop_retreat_failed, reason},
+                "safeop retreat failed: #{inspect(reason)}"
               )
-
-              {:keep_state, new_data, [health_poll_action(data.health_poll_ms)]}
           end
         else
           {:keep_state_and_data, [health_poll_action(data.health_poll_ms)]}

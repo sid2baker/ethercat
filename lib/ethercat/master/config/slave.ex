@@ -129,7 +129,7 @@ defmodule EtherCAT.Master.Config.Slave do
         process_data: Keyword.get(opts, :process_data, :none),
         target_state: Keyword.get(opts, :target_state, :op),
         sync: Keyword.get(opts, :sync),
-        health_poll_ms: Keyword.get(opts, :health_poll_ms)
+        health_poll_ms: Keyword.get(opts, :health_poll_ms, SlaveConfig.default_health_poll_ms())
       })
     else
       :error -> {:error, :missing_name}

@@ -119,6 +119,10 @@ defmodule EtherCAT.Slave.Runtime.Calls do
     {:keep_state, Signals.subscribe_pid(data, signal_name, pid), [{:reply, from, :ok}]}
   end
 
+  def handle(from, {:write_output, _signal_name, _value}, :down, _data, _opts) do
+    {:keep_state_and_data, [{:reply, from, {:error, :slave_down}}]}
+  end
+
   def handle(from, {:write_output, signal_name, value}, _state, data, _opts) do
     case Outputs.write_signal(data, signal_name, value) do
       {:ok, new_data} ->

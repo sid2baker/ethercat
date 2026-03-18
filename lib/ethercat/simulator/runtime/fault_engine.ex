@@ -436,6 +436,7 @@ defmodule EtherCAT.Simulator.Runtime.FaultEngine do
   defp valid_exchange_fault?(_fault), do: false
 
   defp valid_slave_fault?({:retreat_to_safeop, slave_name}) when is_atom(slave_name), do: true
+  defp valid_slave_fault?({:power_cycle, slave_name}) when is_atom(slave_name), do: true
 
   defp valid_slave_fault?({:latch_al_error, slave_name, code})
        when is_atom(slave_name) and is_integer(code) and code >= 0,

@@ -4,6 +4,7 @@ defmodule EtherCAT.SimulatorSlaveDeviceTest do
   alias EtherCAT.Simulator.Slave.Definition
   alias EtherCAT.Simulator.Slave.Runtime.Device
   alias EtherCAT.Simulator.Slave.Object
+  alias EtherCAT.Slave.ESC.Registers
 
   test "AL control enforces basic transition discipline" do
     slave = Device.new(Definition.build(:digital_io), 0)
@@ -149,6 +150,39 @@ defmodule EtherCAT.SimulatorSlaveDeviceTest do
 
     assert <<10::16-little, _::16, _::8, 0x13::8, 0x3000::16-little, 0x4B, 0x00, 0x20, 0x01, 0x34,
              0x12, 0x00, 0x00, _::binary>> = once_second
+  end
+
+  test "power_cycle clears volatile mailbox state and process-data mappings" do
+    slave =
+      Definition.build(:mailbox_device)
+      |> Device.new(0)
+      |> configure_operational_layout()
+      |> Device.inject_mailbox_abort(0x2000, 0x01, 0x0601_0002)
+      |> Device.inject_mailbox_protocol_fault(0x2000, 0x01, :upload_init, :invalid_coe_payload)
+      |> Device.latch_al_error(0x001D)
+      |> then(fn configured ->
+        %{
+          configured
+          | mailbox_upload: %{index: 0x2000, subindex: 0x01},
+            mailbox_download: %{index: 0x2000, subindex: 0x01, expected_toggle: 0}
+        }
+      end)
+
+    reset = Device.power_cycle(slave)
+    {fmmu_activate, _} = Registers.fmmu_activate(0)
+    {sm_activate, _} = Registers.sm_activate(2)
+
+    assert reset.state == :init
+    refute reset.al_error?
+    assert reset.al_status_code == 0
+    assert reset.mailbox_upload == nil
+    assert reset.mailbox_download == nil
+    assert reset.mailbox_abort_rules == []
+    assert reset.mailbox_protocol_fault_rules == []
+    assert Device.read_register(reset, 0x0130, 2) == <<0x01, 0x00>>
+    assert Device.read_register(reset, 0x0134, 2) == <<0x00, 0x00>>
+    assert Device.read_register(reset, fmmu_activate, 1) == <<0x00>>
+    assert Device.read_register(reset, sm_activate, 1) == <<0x00>>
   end
 
   test "signal access can get and set named input and output values" do

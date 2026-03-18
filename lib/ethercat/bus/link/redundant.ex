@@ -104,6 +104,10 @@ defmodule EtherCAT.Bus.Link.Redundant do
     frame_timeout_ms: 25,
 
     # Stats
+    pri_health: :up,
+    pri_last_error_reason: nil,
+    sec_health: :up,
+    sec_last_error_reason: nil,
     timeout_count: 0,
     settle_callers: []
   ]
@@ -360,16 +364,24 @@ defmodule EtherCAT.Bus.Link.Redundant do
 
   defp send_on_port(data, port_id, payload) do
     transport = port_transport(data, port_id)
-    data.transport_mod.set_active_once(transport)
+    endpoint = data.transport_mod.name(transport)
 
-    case data.transport_mod.send(transport, payload) do
-      {:ok, tx_at} ->
-        endpoint = data.transport_mod.name(transport)
-        Telemetry.frame_sent(data.link_name, endpoint, port_id, byte_size(payload), tx_at)
-        {data, true, tx_at}
+    cond do
+      not data.transport_mod.open?(transport) ->
+        {mark_port_down(data, port_id, endpoint, :transport_closed), false, nil}
 
-      {:error, _reason} ->
-        {data, false, nil}
+      true ->
+        data.transport_mod.set_active_once(transport)
+
+        case data.transport_mod.send(transport, payload) do
+          {:ok, tx_at} ->
+            data = mark_port_up(data, port_id, endpoint)
+            Telemetry.frame_sent(data.link_name, endpoint, port_id, byte_size(payload), tx_at)
+            {data, true, tx_at}
+
+          {:error, reason} ->
+            {mark_port_down(data, port_id, endpoint, reason), false, nil}
+        end
     end
   end
 
@@ -776,13 +788,20 @@ defmodule EtherCAT.Bus.Link.Redundant do
       state: state,
       link: data.link_name,
       type: :redundant,
+      topology: current_topology(data),
+      fault: current_fault(data),
       frame_timeout_ms: data.frame_timeout_ms,
       timeout_count: data.timeout_count,
+      last_error_reason: last_error_reason(data),
       primary: %{
-        interface: data.transport_mod.name(data.pri_transport)
+        interface: data.transport_mod.name(data.pri_transport),
+        health: data.pri_health,
+        last_error_reason: data.pri_last_error_reason
       },
       secondary: %{
-        interface: data.transport_mod.name(data.sec_transport)
+        interface: data.transport_mod.name(data.sec_transport),
+        health: data.sec_health,
+        last_error_reason: data.sec_last_error_reason
       },
       queue_depths: %{
         realtime: :queue.len(data.realtime),
@@ -813,6 +832,76 @@ defmodule EtherCAT.Bus.Link.Redundant do
   end
 
   # -- Config helpers --
+
+  defp current_topology(%{pri_health: :up, sec_health: :up}), do: :redundant
+  defp current_topology(%{pri_health: :down, sec_health: :up}), do: :degraded_primary_leg
+  defp current_topology(%{pri_health: :up, sec_health: :down}), do: :degraded_secondary_leg
+  defp current_topology(%{pri_health: :down, sec_health: :down}), do: :offline
+
+  defp current_fault(%{pri_health: :up, sec_health: :up}), do: nil
+
+  defp current_fault(data) do
+    %{
+      kind: :transport_fault,
+      degraded_ports:
+        []
+        |> maybe_add_degraded_port(:primary, data.pri_health)
+        |> maybe_add_degraded_port(:secondary, data.sec_health),
+      reasons:
+        %{}
+        |> maybe_put_reason(:primary, data.pri_last_error_reason)
+        |> maybe_put_reason(:secondary, data.sec_last_error_reason)
+    }
+  end
+
+  defp last_error_reason(%{pri_last_error_reason: nil, sec_last_error_reason: nil}), do: nil
+
+  defp last_error_reason(data) do
+    %{}
+    |> maybe_put_reason(:primary, data.pri_last_error_reason)
+    |> maybe_put_reason(:secondary, data.sec_last_error_reason)
+  end
+
+  defp mark_port_down(data, port_id, endpoint, reason) do
+    previous = port_health(data, port_id)
+    data = put_port_status(data, port_id, :down, reason)
+
+    if previous != :down do
+      Telemetry.link_down(data.link_name, endpoint, reason)
+      Telemetry.link_health_changed(data.link_name, port_id, previous, :down)
+    end
+
+    data
+  end
+
+  defp mark_port_up(data, port_id, endpoint) do
+    previous = port_health(data, port_id)
+    data = put_port_status(data, port_id, :up, nil)
+
+    if previous != :up do
+      Telemetry.link_reconnected(data.link_name, endpoint)
+      Telemetry.link_health_changed(data.link_name, port_id, previous, :up)
+    end
+
+    data
+  end
+
+  defp port_health(data, :primary), do: data.pri_health
+  defp port_health(data, :secondary), do: data.sec_health
+
+  defp put_port_status(data, :primary, health, reason) do
+    %{data | pri_health: health, pri_last_error_reason: reason}
+  end
+
+  defp put_port_status(data, :secondary, health, reason) do
+    %{data | sec_health: health, sec_last_error_reason: reason}
+  end
+
+  defp maybe_add_degraded_port(acc, _port_id, :up), do: acc
+  defp maybe_add_degraded_port(acc, port_id, :down), do: acc ++ [port_id]
+
+  defp maybe_put_reason(map, _port_id, nil), do: map
+  defp maybe_put_reason(map, port_id, reason), do: Map.put(map, port_id, reason)
 
   defp earliest_timestamp(nil, other), do: other
   defp earliest_timestamp(other, nil), do: other

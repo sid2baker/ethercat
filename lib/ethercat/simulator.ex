@@ -564,6 +564,10 @@ defmodule EtherCAT.Simulator do
     apply_slave_update(state, slave_name, &Device.retreat_to_safeop/1)
   end
 
+  defp apply_immediate_fault(state, {:power_cycle, slave_name}) do
+    apply_slave_update(state, slave_name, &Device.power_cycle/1)
+  end
+
   defp apply_immediate_fault(state, {:latch_al_error, slave_name, code})
        when is_integer(code) and code >= 0 do
     apply_slave_update(state, slave_name, &Device.latch_al_error(&1, code))

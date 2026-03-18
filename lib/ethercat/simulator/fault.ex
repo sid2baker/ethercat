@@ -73,6 +73,7 @@ defmodule EtherCAT.Simulator.Fault do
           | {:logical_wkc_offset, atom(), integer()}
           | {:disconnect, atom()}
           | {:retreat_to_safeop, atom()}
+          | {:power_cycle, atom()}
           | {:latch_al_error, atom(), non_neg_integer()}
           | {:mailbox_abort, atom(), non_neg_integer(), non_neg_integer(), non_neg_integer(),
              mailbox_step() | nil}
@@ -114,6 +115,10 @@ defmodule EtherCAT.Simulator.Fault do
   @spec retreat_to_safeop(atom()) :: t()
   def retreat_to_safeop(slave_name) when is_atom(slave_name),
     do: %__MODULE__{effect: {:retreat_to_safeop, slave_name}}
+
+  @spec power_cycle(atom()) :: t()
+  def power_cycle(slave_name) when is_atom(slave_name),
+    do: %__MODULE__{effect: {:power_cycle, slave_name}}
 
   @spec latch_al_error(atom(), non_neg_integer()) :: t()
   def latch_al_error(slave_name, code)
@@ -217,6 +222,7 @@ defmodule EtherCAT.Simulator.Fault do
 
   def describe({:disconnect, slave_name}), do: "disconnect #{slave_name}"
   def describe({:retreat_to_safeop, slave_name}), do: "retreat #{slave_name} to SAFEOP"
+  def describe({:power_cycle, slave_name}), do: "power cycle #{slave_name}"
 
   def describe({:latch_al_error, slave_name, code}),
     do: "latch AL error #{hex(code, 4)} on #{slave_name}"
@@ -271,6 +277,10 @@ defmodule EtherCAT.Simulator.Fault do
 
   defp normalize_effect({:retreat_to_safeop, slave_name}) when is_atom(slave_name) do
     {:ok, {:retreat_to_safeop, slave_name}}
+  end
+
+  defp normalize_effect({:power_cycle, slave_name}) when is_atom(slave_name) do
+    {:ok, {:power_cycle, slave_name}}
   end
 
   defp normalize_effect({:latch_al_error, slave_name, code})
