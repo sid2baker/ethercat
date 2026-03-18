@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `b57763a` — telemetry and logging now follow a stricter observability contract: transaction spans use stable stop metadata, link/frame events distinguish aggregate links from concrete endpoints, repeated startup/recovery retries are less noisy in logs, and new DC runtime plus slave-startup retry events improve machine-readable introspection.
 - `af5192e` — telemetry now separates invalid domain cycles from transport misses, master startup/activation/DC-lock decisions emit bounded lifecycle events, slave fault/down signals carry richer detail, and long-lived master/bus/domain/DC/slave/simulator processes now stamp consistent structured metadata onto high-signal logs.
 - `9f1342a` — `EtherCAT.Master`, `EtherCAT.Slave`, `EtherCAT.Domain`, and `EtherCAT.DC` now own the public API directly, while their `gen_statem` implementations live behind internal `*.FSM` modules and the old `*.API` facade split is gone.
-- `(pending hash)` — redundant-link per-exchange timeout detail now emits bounded telemetry, repeated identical timeout patterns no longer warn on every cycle, and recovery logs report once when the degraded timeout pattern clears.
+- `2d97faf` — redundant-link per-exchange timeout detail now emits bounded telemetry, repeated identical timeout patterns no longer warn on every cycle, and recovery logs report once when the degraded timeout pattern clears.
 
 ### Fixed
 - `95f343d` — DC recovery and configuration validation are stricter, reducing invalid recovery paths and catching bad setup earlier.
