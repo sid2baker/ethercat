@@ -3,8 +3,9 @@ defmodule EtherCAT.Master.Deactivation do
 
   require Logger
 
-  alias EtherCAT.{DC, Domain, Slave}
+  alias EtherCAT.{Domain, Slave}
   alias EtherCAT.Master.Config
+  alias EtherCAT.Master.Session
   alias EtherCAT.Master.Status
   alias EtherCAT.Utils
 
@@ -22,7 +23,7 @@ defmodule EtherCAT.Master.Deactivation do
     stopped_data =
       data
       |> stop_domain_cycles()
-      |> stop_dc_runtime()
+      |> Session.stop_dc_runtime()
       |> Map.put(:desired_runtime_target, target)
       |> Map.put(:runtime_faults, %{})
       |> Map.put(:activation_failures, %{})
@@ -83,25 +84,5 @@ defmodule EtherCAT.Master.Deactivation do
     end)
 
     data
-  end
-
-  defp stop_dc_runtime(%{dc_ref: ref} = data) when is_reference(ref) do
-    Process.demonitor(ref, [:flush])
-    clear_dc_runtime_ref(data)
-  end
-
-  defp stop_dc_runtime(data) do
-    clear_dc_runtime_ref(data)
-  end
-
-  defp clear_dc_runtime_ref(data) do
-    case Process.whereis(DC) do
-      pid when is_pid(pid) ->
-        _ = DynamicSupervisor.terminate_child(EtherCAT.SessionSupervisor, pid)
-        %{data | dc_ref: nil}
-
-      nil ->
-        %{data | dc_ref: nil}
-    end
   end
 end

@@ -547,6 +547,7 @@ defmodule EtherCAT.SlaveTest do
                {:subscribe, :ch1, pid},
                :preop,
                %EtherCAT.Slave{
+                 signal_registrations: %{ch1: %{domain_id: :main}},
                  subscriptions: %{},
                  subscriber_refs: %{}
                }
@@ -574,6 +575,44 @@ defmodule EtherCAT.SlaveTest do
 
     assert cleaned.subscriptions == %{}
     assert cleaned.subscriber_refs == %{}
+  end
+
+  test "subscribe rejects unknown signal and latch names" do
+    from = {self(), make_ref()}
+
+    assert {:keep_state_and_data, [{:reply, ^from, {:error, {:not_registered, :missing}}}]} =
+             EtherCAT.Slave.FSM.handle_event(
+               {:call, from},
+               {:subscribe, :missing, self()},
+               :preop,
+               %EtherCAT.Slave{
+                 signal_registrations: %{},
+                 latch_names: %{},
+                 subscriptions: %{},
+                 subscriber_refs: %{}
+               }
+             )
+  end
+
+  test "subscribe accepts configured latch names" do
+    from = {self(), make_ref()}
+    pid = self()
+
+    assert {:keep_state, subscribed, [{:reply, ^from, :ok}]} =
+             EtherCAT.Slave.FSM.handle_event(
+               {:call, from},
+               {:subscribe, :rise, pid},
+               :preop,
+               %EtherCAT.Slave{
+                 signal_registrations: %{},
+                 latch_names: %{{0, :pos} => :rise},
+                 subscriptions: %{},
+                 subscriber_refs: %{}
+               }
+             )
+
+    assert Map.fetch!(subscribed.subscriptions, :rise) == MapSet.new([pid])
+    assert Map.has_key?(subscribed.subscriber_refs, pid)
   end
 
   test "preop configure allows sync updates after process-data registration" do

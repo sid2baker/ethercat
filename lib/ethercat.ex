@@ -580,9 +580,12 @@ defmodule EtherCAT do
       `{:ethercat, :signal, slave_name, name, value}`
     - a named latch configured through `sync.latches`, delivered as
       `{:ethercat, :latch, slave_name, name, timestamp_ns}`
+
+  Unknown names are rejected with `{:error, {:not_registered, name}}`.
   """
   @spec subscribe(atom(), atom(), pid()) ::
-          :ok | {:error, :not_found | :timeout | {:server_exit, term()}}
+          :ok
+          | {:error, {:not_registered, atom()} | :not_found | :timeout | {:server_exit, term()}}
   def subscribe(slave_name, name, pid \\ self()),
     do: Slave.subscribe(slave_name, name, pid)
 

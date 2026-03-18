@@ -1383,8 +1383,8 @@ defmodule EtherCAT.Master.FSM do
       {:activation_blocked, blocked_data} ->
         {:next_state, :activation_blocked, blocked_data, [{:reply, from, :ok}]}
 
-      {:error, reason, _failed_data} ->
-        {:keep_state_and_data, [{:reply, from, {:error, reason}}]}
+      {:error, reason, failed_data} ->
+        {:keep_state, failed_data, [{:reply, from, {:error, reason}}]}
     end
   end
 

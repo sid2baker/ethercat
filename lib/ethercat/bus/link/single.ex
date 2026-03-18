@@ -337,7 +337,7 @@ defmodule EtherCAT.Bus.Link.Single do
   defp handle_rx(data, ecat_payload, rx_at) do
     case Frame.decode(ecat_payload) do
       {:ok, datagrams} ->
-        if all_expected_present?(data.exchange, datagrams) do
+        if Link.all_expected_present?(data.exchange, datagrams) do
           Telemetry.frame_received(
             data.link_name,
             data.link_name,
@@ -445,19 +445,6 @@ defmodule EtherCAT.Bus.Link.Single do
 
   defp go_unhealthy(data) do
     %{data | last_error_reason: :transport_unavailable}
-  end
-
-  defp all_expected_present?(exchange, response_datagrams) do
-    expected = exchange.datagrams
-    response_by_idx = Map.new(response_datagrams, &{&1.idx, &1})
-
-    length(expected) == length(response_datagrams) and
-      Enum.all?(expected, fn dg ->
-        case Map.fetch(response_by_idx, dg.idx) do
-          {:ok, resp} -> dg.cmd == resp.cmd and byte_size(dg.data) == byte_size(resp.data)
-          :error -> false
-        end
-      end)
   end
 
   defp queue_total(data), do: :queue.len(data.realtime) + :queue.len(data.reliable)

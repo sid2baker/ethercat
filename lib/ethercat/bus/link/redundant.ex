@@ -409,7 +409,7 @@ defmodule EtherCAT.Bus.Link.Redundant do
   defp handle_rx(data, port_id, ecat_payload, rx_at, frame_src_mac) do
     case Frame.decode(ecat_payload) do
       {:ok, datagrams} ->
-        if all_expected_present?(data.exchange, datagrams) do
+        if Link.all_expected_present?(data.exchange, datagrams) do
           # Content-based echo filter: if the received frame is byte-for-byte
           # identical to the sent frame (all wkc=0, data unchanged), it's an
           # outgoing echo that slipped through the transport-level pkttype
@@ -742,19 +742,6 @@ defmodule EtherCAT.Bus.Link.Redundant do
   defp rearm_port(data, port_id) do
     transport = port_transport(data, port_id)
     data.transport_mod.rearm(transport)
-  end
-
-  defp all_expected_present?(exchange, response_datagrams) do
-    expected = exchange.datagrams
-    response_by_idx = Map.new(response_datagrams, &{&1.idx, &1})
-
-    length(expected) == length(response_datagrams) and
-      Enum.all?(expected, fn dg ->
-        case Map.fetch(response_by_idx, dg.idx) do
-          {:ok, resp} -> dg.cmd == resp.cmd and byte_size(dg.data) == byte_size(resp.data)
-          :error -> false
-        end
-      end)
   end
 
   # An echo copy is a frame that is byte-for-byte identical to what was sent:

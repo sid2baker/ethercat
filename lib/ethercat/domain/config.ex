@@ -12,8 +12,8 @@ defmodule EtherCAT.Domain.Config do
   threshold) and the master assigns non-overlapping logical windows before
   slaves program their FMMUs.
 
-  If you bypass the master and use `EtherCAT.Domain.start_link/1` directly, that
-  low-level API still accepts an explicit `:logical_base` option.
+  If you bypass the master and start a domain directly through the low-level
+  runtime API, that path still accepts an explicit `:logical_base` option.
   """
 
   @type t :: %__MODULE__{

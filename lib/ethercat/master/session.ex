@@ -27,6 +27,13 @@ defmodule EtherCAT.Master.Session do
     stop_bus()
   end
 
+  @spec stop_dc_runtime(%EtherCAT.Master{}) :: %EtherCAT.Master{}
+  def stop_dc_runtime(data) do
+    demonitor_dc(data.dc_ref)
+    stop_dc_runtime()
+    %{data | dc_ref: nil}
+  end
+
   defp stop_bus do
     case Process.whereis(Bus) do
       pid when is_pid(pid) -> DynamicSupervisor.terminate_child(EtherCAT.SessionSupervisor, pid)

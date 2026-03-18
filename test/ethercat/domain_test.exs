@@ -97,6 +97,15 @@ defmodule EtherCAT.DomainTest do
     assert is_integer(updated_at_us)
   end
 
+  test "write, read, and sample return not_found for missing domains" do
+    missing_domain_id = :"missing_domain_#{System.unique_integer([:positive, :monotonic])}"
+    key = {:sensor, {:sm, 0}}
+
+    assert {:error, :not_found} = DomainAPI.write(missing_domain_id, key, <<1>>)
+    assert {:error, :not_found} = DomainAPI.read(missing_domain_id, key)
+    assert {:error, :not_found} = DomainAPI.sample(missing_domain_id, key)
+  end
+
   test "start_cycling fails fast for oversized LRW images", %{domain_id: domain_id} do
     assert {:ok, 0} = DomainAPI.register_pdo(domain_id, {:big, :pdo}, 2036, :output)
 

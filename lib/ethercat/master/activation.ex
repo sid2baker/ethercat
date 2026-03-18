@@ -5,6 +5,7 @@ defmodule EtherCAT.Master.Activation do
 
   alias EtherCAT.{Bus, DC, Domain, Slave, Telemetry, Utils}
   alias EtherCAT.Master.Config
+  alias EtherCAT.Master.Session
   alias EtherCAT.Master.Status
 
   @activation_quiet_ms 2
@@ -96,7 +97,7 @@ defmodule EtherCAT.Master.Activation do
               end
             else
               {:error, reason} ->
-                {:error, reason, data}
+                {:error, reason, rollback_started_runtime(dc_data)}
             end
 
           {:error, reason} ->
@@ -229,6 +230,42 @@ defmodule EtherCAT.Master.Activation do
   defp dc_running? do
     is_pid(Process.whereis(DC))
   end
+
+  defp rollback_started_runtime(data) do
+    data
+    |> stop_started_domain_cycles()
+    |> stop_started_dc_runtime()
+  end
+
+  defp stop_started_domain_cycles(data) do
+    Enum.each(Config.domain_ids(data.domain_configs || []), fn domain_id ->
+      case Domain.stop_cycling(domain_id) do
+        :ok ->
+          :ok
+
+        {:error, :not_found} ->
+          :ok
+
+        {:error, reason} ->
+          Logger.warning(
+            "[Master] failed to stop domain #{domain_id} during activation rollback: #{inspect(reason)}",
+            component: :master,
+            event: :activation_rollback_domain_stop_failed,
+            domain: domain_id,
+            reason_kind: Utils.reason_kind(reason)
+          )
+      end
+    end)
+
+    data
+  end
+
+  defp stop_started_dc_runtime(%{dc_ref: ref} = data) when is_reference(ref) do
+    Process.demonitor(ref, [:flush])
+    stop_started_dc_runtime(%{data | dc_ref: nil})
+  end
+
+  defp stop_started_dc_runtime(data), do: Session.stop_dc_runtime(data)
 
   defp quiesce_bus do
     Bus.quiesce(Bus, @activation_quiet_ms)

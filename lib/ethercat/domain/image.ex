@@ -3,14 +3,24 @@ defmodule EtherCAT.Domain.Image do
 
   alias EtherCAT.Domain
 
-  @spec insert_registration_entry(atom(), Domain.pdo_key(), pos_integer(), :input | :output) ::
+  @type table :: atom() | :ets.tid()
+
+  @spec lookup_table(Domain.domain_id()) :: {:ok, table()} | {:error, :not_found}
+  def lookup_table(domain_id) when is_atom(domain_id) do
+    case :ets.whereis(domain_id) do
+      :undefined -> {:error, :not_found}
+      table -> {:ok, table}
+    end
+  end
+
+  @spec insert_registration_entry(table(), Domain.pdo_key(), pos_integer(), :input | :output) ::
           true
   def insert_registration_entry(table, key, size, direction) do
     value = if direction == :input, do: :unset, else: :binary.copy(<<0>>, size)
     :ets.insert(table, {key, value, initial_sample_meta(direction)})
   end
 
-  @spec write(atom(), Domain.pdo_key(), binary(), integer()) :: :ok | {:error, :not_found}
+  @spec write(table(), Domain.pdo_key(), binary(), integer()) :: :ok | {:error, :not_found}
   def write(table, key, binary, updated_at_us) do
     case :ets.update_element(table, key, [{2, binary}, {3, updated_at_us}]) do
       true -> :ok
@@ -18,10 +28,10 @@ defmodule EtherCAT.Domain.Image do
     end
   end
 
-  @spec read(atom(), Domain.pdo_key()) :: {:ok, binary() | :unset} | :error
+  @spec read(table(), Domain.pdo_key()) :: {:ok, binary() | :unset} | {:error, :not_found}
   def read(table, key), do: stored_value(table, key)
 
-  @spec sample(atom(), Domain.pdo_key()) ::
+  @spec sample(table(), Domain.pdo_key()) ::
           {:ok, %{value: binary(), updated_at_us: integer() | nil}}
           | {:error, :not_found | :not_ready}
   def sample(table, key) do
@@ -32,7 +42,7 @@ defmodule EtherCAT.Domain.Image do
       {:ok, value, meta} ->
         {:ok, %{value: value, updated_at_us: sample_updated_at_us(meta)}}
 
-      :error ->
+      {:error, :not_found} ->
         {:error, :not_found}
     end
   end
@@ -49,28 +59,28 @@ defmodule EtherCAT.Domain.Image do
     :erlang.iolist_to_binary(iodata)
   end
 
-  @spec stored_entry(atom(), Domain.pdo_key()) ::
-          {:ok, binary() | :unset, term()} | :error
+  @spec stored_entry(table(), Domain.pdo_key()) ::
+          {:ok, binary() | :unset, term()} | {:error, :not_found}
   def stored_entry(table, key) do
     case :ets.lookup(table, key) do
       [{^key, value, meta}] -> {:ok, value, meta}
-      [] -> :error
+      [] -> {:error, :not_found}
     end
   end
 
-  @spec stored_value(atom(), Domain.pdo_key()) :: {:ok, binary() | :unset} | :error
+  @spec stored_value(table(), Domain.pdo_key()) :: {:ok, binary() | :unset} | {:error, :not_found}
   def stored_value(table, key) do
     case stored_entry(table, key) do
       {:ok, value, _meta} -> {:ok, value}
-      :error -> :error
+      {:error, :not_found} -> {:error, :not_found}
     end
   end
 
-  @spec stored_value(atom(), Domain.pdo_key(), term()) :: term()
+  @spec stored_value(table(), Domain.pdo_key(), term()) :: term()
   def stored_value(table, key, default) do
     case stored_value(table, key) do
       {:ok, value} -> value
-      :error -> default
+      {:error, :not_found} -> default
     end
   end
 
@@ -78,7 +88,7 @@ defmodule EtherCAT.Domain.Image do
   def sample_updated_at_us(updated_at_us) when is_integer(updated_at_us), do: updated_at_us
   def sample_updated_at_us(_meta), do: nil
 
-  @spec update_input(atom(), Domain.pdo_key(), binary(), integer()) :: true
+  @spec update_input(table(), Domain.pdo_key(), binary(), integer()) :: true
   def update_input(table, key, new_val, updated_at_us) do
     :ets.update_element(table, key, [{2, new_val}, {3, updated_at_us}])
   end
@@ -102,7 +112,7 @@ defmodule EtherCAT.Domain.Image do
   end
 
   defp replacement_value({:ok, value}, size), do: binary_pad(value, size)
-  defp replacement_value(:error, size), do: :binary.copy(<<0>>, size)
+  defp replacement_value({:error, :not_found}, size), do: :binary.copy(<<0>>, size)
 
   defp binary_pad(data, size) when byte_size(data) >= size, do: binary_part(data, 0, size)
   defp binary_pad(data, size), do: data <> :binary.copy(<<0>>, size - byte_size(data))

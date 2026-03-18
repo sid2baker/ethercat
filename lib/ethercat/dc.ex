@@ -1,5 +1,36 @@
 defmodule EtherCAT.DC do
-  @moduledoc File.read!(Path.join(__DIR__, "dc.md"))
+  @moduledoc """
+  Distributed Clocks initialization and runtime maintenance.
+
+  `EtherCAT.DC` is the public boundary for network-wide Distributed Clocks.
+  One-time clock initialization and periodic FRMW/diagnostic maintenance are
+  exposed here, while the internal runtime loop owns the active lock state.
+
+  ## Initialization
+
+  `initialize_clocks/2` performs the one-time synchronization sequence used
+  during startup:
+
+  1. trigger receive-time latches on all slaves
+  2. read one DC snapshot per slave
+  3. pick the first DC-capable slave as the reference clock
+  4. build the deterministic offset and propagation-delay plan
+  5. write offsets and delays back to all DC-capable slaves
+  6. reset PLL filters
+
+  The current topology model is intentionally limited to a linear bus ordered
+  by scan position.
+
+  ## Runtime lock states
+
+  The DC runtime reports lock state as ordinary runtime data:
+
+  - `:disabled` - no DC config
+  - `:inactive` - DC configured but runtime not started
+  - `:unavailable` - runtime active with no monitorable stations
+  - `:locking` - runtime active and converging
+  - `:locked` - sync diffs are within threshold
+  """
 
   alias EtherCAT.Bus
   alias EtherCAT.DC.FSM
@@ -61,10 +92,19 @@ defmodule EtherCAT.DC do
   @spec start_link(keyword()) :: :gen_statem.start_ret()
   def start_link(opts), do: FSM.start_link(opts)
 
+  @doc """
+  Perform one-time DC clock initialization for the given scanned slave
+  topology.
+  """
   @spec initialize_clocks(Bus.server(), [{non_neg_integer(), binary()}]) ::
           {:ok, non_neg_integer(), [non_neg_integer()]} | {:error, term()}
   def initialize_clocks(bus, slave_topology), do: Init.initialize_clocks(bus, slave_topology)
 
+  @doc """
+  Return the current Distributed Clocks runtime status.
+
+  Returns `{:error, :not_running}` when the DC runtime process is not active.
+  """
   @spec status(server()) :: EtherCAT.DC.Status.t() | {:error, :not_running}
   def status(server \\ __MODULE__) do
     try do
@@ -74,6 +114,9 @@ defmodule EtherCAT.DC do
     end
   end
 
+  @doc """
+  Wait until the DC runtime reports a locked status.
+  """
   @spec await_locked(server(), pos_integer()) :: :ok | {:error, term()}
   def await_locked(server \\ __MODULE__, timeout_ms \\ 5_000)
       when is_integer(timeout_ms) and timeout_ms > 0 do

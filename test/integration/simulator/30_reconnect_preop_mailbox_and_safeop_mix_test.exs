@@ -28,6 +28,14 @@ defmodule EtherCAT.Integration.Simulator.ReconnectPreopMailboxAndSafeopMixTest d
             0x01,
             :download_segment,
             :drop_response
+          ),
+          Fault.wait_for(Fault.mailbox_step(:mailbox, :download_segment, 1)),
+          Fault.mailbox_protocol_fault(
+            :mailbox,
+            0x2003,
+            0x01,
+            :download_segment,
+            :drop_response
           )
         ]
 

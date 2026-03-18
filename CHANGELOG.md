@@ -31,9 +31,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `4b1ac0f` — redundant link send failures now surface as degraded-port topology/fault state plus link-health telemetry, simulator power-cycle faults clear volatile mailbox state before reconfiguration, and slave AL health polling defaults to `250ms` unless explicitly disabled.
 - `2bc2185` — slave reconnect recovery now retries reconnect authorization for tracked `:down` faults, so a physically restored slave does not remain stuck in `:down` if the first reconnect authorization window is missed.
 - `75609a6` — recovering masters now fall back to fresh topology rediscovery when a PDO slave returns without its old fixed station address, and simulator power-cycle faults now clear fixed station identity so reconnect tests match real hardware more closely.
+- `(pending hash)` — failed activation now rolls back any DC/domain runtime that was started before the error, `Slave.subscribe/3` rejects unknown signal/latch names instead of silently accepting them, and `Domain.write/read/sample` now use explicit ETS table lookup instead of exception-driven control flow.
 
 ### Docs
 - `8f773d6`, `c42b0c9`, `0248012`, `04b2c5f`, `072119d`, `9b3b4ba`, `ee210fa`, `8eff41c` — README, hardware playbooks, simulator docs, and API guidance were rewritten to better explain transport boundaries, bring-up workflow, release metadata, and fault/recovery scenarios.
+- `(pending hash)` — public master, slave, domain, and DC moduledocs now live inline with their runtime modules, and the public module-level APIs are documented directly at the function boundary.
 
 ## [0.3.1] - 2026-03-12
 

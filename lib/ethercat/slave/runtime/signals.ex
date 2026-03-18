@@ -34,20 +34,26 @@ defmodule EtherCAT.Slave.Runtime.Signals do
     |> Enum.sort_by(&{&1.sm_index, &1.domain})
   end
 
-  @spec subscribe_pid(%EtherCAT.Slave{}, atom(), pid()) :: %EtherCAT.Slave{}
+  @spec subscribe_pid(%EtherCAT.Slave{}, atom(), pid()) ::
+          {:ok, %EtherCAT.Slave{}} | {:error, {:not_registered, atom()}}
   def subscribe_pid(data, signal_name, pid) do
-    {subscriber_refs, pid_set} =
-      ensure_subscriber_monitor(
-        data.subscriber_refs,
-        Map.get(data.subscriptions, signal_name, MapSet.new()),
-        pid
-      )
+    if subscribable_name?(data, signal_name) do
+      {subscriber_refs, pid_set} =
+        ensure_subscriber_monitor(
+          data.subscriber_refs,
+          Map.get(data.subscriptions, signal_name, MapSet.new()),
+          pid
+        )
 
-    %{
-      data
-      | subscriber_refs: subscriber_refs,
-        subscriptions: Map.put(data.subscriptions, signal_name, pid_set)
-    }
+      {:ok,
+       %{
+         data
+         | subscriber_refs: subscriber_refs,
+           subscriptions: Map.put(data.subscriptions, signal_name, pid_set)
+       }}
+    else
+      {:error, {:not_registered, signal_name}}
+    end
   end
 
   @spec drop_subscriber(%EtherCAT.Slave{}, pid()) :: %EtherCAT.Slave{}
@@ -181,5 +187,10 @@ defmodule EtherCAT.Slave.Runtime.Signals do
 
   defp ceil_div(value, divisor) when is_integer(value) and is_integer(divisor) and divisor > 0 do
     div(value + divisor - 1, divisor)
+  end
+
+  defp subscribable_name?(data, signal_name) do
+    Map.has_key?(data.signal_registrations || %{}, signal_name) or
+      Enum.any?(Map.values(data.latch_names || %{}), &(&1 == signal_name))
   end
 end

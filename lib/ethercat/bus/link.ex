@@ -215,6 +215,21 @@ defmodule EtherCAT.Bus.Link do
     Enum.each(callers, &:gen_statem.reply(&1, reply))
   end
 
+  @doc false
+  @spec all_expected_present?(map(), [Datagram.t()]) :: boolean()
+  def all_expected_present?(exchange, response_datagrams) do
+    expected = exchange.datagrams
+    response_by_idx = Map.new(response_datagrams, &{&1.idx, &1})
+
+    length(expected) == length(response_datagrams) and
+      Enum.all?(expected, fn dg ->
+        case Map.fetch(response_by_idx, dg.idx) do
+          {:ok, resp} -> dg.cmd == resp.cmd and byte_size(dg.data) == byte_size(resp.data)
+          :error -> false
+        end
+      end)
+  end
+
   # -- Query helpers --
 
   @doc "Classify a submission as `:realtime` or `:reliable`."
