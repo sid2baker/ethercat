@@ -246,6 +246,43 @@ defmodule EtherCAT.DomainTest do
     assert invalid_at_us == missed_data.last_invalid_cycle_at_us
   end
 
+  test "expired realtime cycle work is normalized to timeout in domain health" do
+    handler_id = attach_telemetry_event(@domain_cycle_transport_miss_event)
+    on_exit(fn -> :telemetry.detach(handler_id) end)
+
+    bus = start_bus!([{:error, :expired}])
+
+    table = :ets.new(:"domain_table_#{System.unique_integer([:positive])}", [:set, :public])
+    key = {:sensor, {:sm, 0}}
+    :ets.insert(table, {key, :unset, self()})
+
+    {_, layout} = Layout.register(Layout.new(), key, 1, :input)
+    {:ok, cycle_plan} = Layout.prepare(layout)
+
+    data = %Domain{
+      id: :main,
+      bus: bus,
+      period_us: 1_000,
+      logical_base: 0,
+      next_cycle_at: System.monotonic_time(:microsecond) + 1_000,
+      layout: layout,
+      cycle_plan: cycle_plan,
+      cycle_health: :healthy,
+      table: table
+    }
+
+    assert {:keep_state, missed_data, _actions} =
+             Domain.FSM.handle_event(:state_timeout, :tick, :cycling, data)
+
+    assert missed_data.cycle_health == {:invalid, :timeout}
+    assert missed_data.last_invalid_reason == :timeout
+    assert missed_data.miss_count == 1
+
+    assert_receive {:telemetry_event, @domain_cycle_transport_miss_event,
+                    %{consecutive_miss_count: 1, total_invalid_count: 1},
+                    %{domain: :main, reason: :timeout}}
+  end
+
   test "input dispatch resolves the current slave pid from the registry on each change" do
     bus =
       start_bus!([

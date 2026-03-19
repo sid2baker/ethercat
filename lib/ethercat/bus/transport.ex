@@ -57,7 +57,7 @@ defmodule EtherCAT.Bus.Transport do
 
   `frame_src_mac` is the 6-byte source MAC address from the Ethernet header
   of the received frame, or `nil` for transports that don't expose it (UDP).
-  The redundant circuit uses this to distinguish cross-over frames (sent by the
+  The redundant link uses this to distinguish cross-over frames (sent by the
   other port's NIC) from own-port loopback frames.
 
   - `RawSocket`: matches `{:"$socket", raw, :select, _}`, calls `recvmsg`
@@ -91,7 +91,7 @@ defmodule EtherCAT.Bus.Transport do
   @doc """
   Returns the transport's own source MAC address (6 bytes), or `nil`.
 
-  Used by the redundant circuit to identify whether a received frame
+  Used by the redundant link to identify whether a received frame
   originated from this port's NIC or crossed over from the other port.
   Returns `nil` for transports without MAC addresses (e.g. UDP).
   """

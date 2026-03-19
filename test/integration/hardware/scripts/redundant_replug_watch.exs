@@ -154,17 +154,15 @@ defmodule EtherCAT.HardwareScripts.RedundantReplugWatch do
       expected_link = "#{opts.primary_interface}|#{opts.backup_interface}"
 
       cond do
-        bus_info.circuit != expected_link ->
+        bus_info.link != expected_link ->
           {:error,
-           {:unexpected_bus_link, expected_link, bus_info.circuit,
+           {:unexpected_bus_link, expected_link, bus_info.link,
             "run this watcher in the same runtime as the redundant master"}}
 
         bus_info.topology not in [
           :redundant,
           :degraded_primary_leg,
-          :degraded_secondary_leg,
-          :segment_break,
-          :unknown
+          :degraded_secondary_leg
         ] ->
           {:error, {:unexpected_topology, bus_info.topology}}
 
@@ -293,7 +291,7 @@ defmodule EtherCAT.HardwareScripts.RedundantReplugWatch do
     log(
       sink,
       :info,
-      "attached to existing master circuit=#{inspect(bus_info.circuit)} topology=#{inspect(bus_info.topology)} " <>
+      "attached to existing master link=#{inspect(bus_info.link)} topology=#{inspect(bus_info.topology)} " <>
         "cycle_time_us=#{domain_info.cycle_time_us} step_ms=#{opts.step_ms} " <>
         "match_timeout_ms=#{opts.match_timeout_ms} poll_ms=#{opts.poll_ms}"
     )

@@ -39,7 +39,10 @@ defmodule EtherCAT.Bus.Link.Redundant do
   timeout, partial arrivals are converted into a best-effort reply when they
   still match the awaiting datagrams; pure reverse-path copies are not used
   as authoritative data, so only processed or merged bounce data can rescue
-  a timed-out exchange.
+  a timed-out exchange. Reliable non-logical one-sided bounces may also
+  complete immediately when only a tiny remainder of the original frame-time
+  budget is left, avoiding a spurious extra millisecond timer hop near the
+  deadline.
 
   ```mermaid
   flowchart TD
@@ -93,6 +96,7 @@ defmodule EtherCAT.Bus.Link.Redundant do
   @max_dispatch_errors 3
   @merge_window_ms 25
   @realtime_bounce_merge_wait_ms 1
+  @late_bounce_complete_threshold_ms 3
 
   defstruct [
     # Transport (required)
@@ -499,7 +503,7 @@ defmodule EtherCAT.Bus.Link.Redundant do
   # -- Completion logic --
 
   defp maybe_complete(data) do
-    case resolve_arrivals(data.exchange) do
+    case resolve_arrivals(data.exchange, data.frame_timeout_ms) do
       {:done, datagrams} ->
         complete_exchange(data, datagrams)
 
@@ -520,18 +524,18 @@ defmodule EtherCAT.Bus.Link.Redundant do
     end
   end
 
-  defp resolve_arrivals(%{arrivals: arrivals} = exchange) do
+  defp resolve_arrivals(%{arrivals: arrivals} = exchange, frame_timeout_ms) do
     # Forward cross is authoritative — instant completion
     case find_class(arrivals, :forward_cross) do
       %{datagrams: datagrams} ->
         {:done, datagrams}
 
       nil ->
-        resolve_non_forward(arrivals, exchange)
+        resolve_non_forward(arrivals, exchange, frame_timeout_ms)
     end
   end
 
-  defp resolve_non_forward(arrivals, exchange) do
+  defp resolve_non_forward(arrivals, exchange, frame_timeout_ms) do
     expected_count = expected_reply_count(exchange)
 
     case arrivals do
@@ -542,6 +546,18 @@ defmodule EtherCAT.Bus.Link.Redundant do
         cond do
           wait_for_complementary_realtime_bounce?(single, expected_count, exchange) ->
             :waiting_realtime_bounce_merge
+
+          complete_late_processed_bounce?(
+            single,
+            expected_count,
+            exchange,
+            frame_timeout_ms
+          ) ->
+            # Reliable non-logical bounces do not carry complementary merge
+            # data. If only a tiny remainder of the frame budget is left,
+            # complete now instead of depending on a coarse millisecond timer
+            # to fire before the original timeout has effectively expired.
+            {:done, single.datagrams}
 
           authoritative_single_arrival?(single, expected_count, exchange) ->
             # Only one port sent — this single reply completes the exchange
@@ -607,6 +623,22 @@ defmodule EtherCAT.Bus.Link.Redundant do
   end
 
   defp wait_for_complementary_realtime_bounce?(_arrival, _expected_count, _exchange), do: false
+
+  defp complete_late_processed_bounce?(
+         %{class: class, datagrams: datagrams},
+         expected_count,
+         exchange,
+         frame_timeout_ms
+       )
+       when expected_count > 1 and class in [:pri_bounce, :sec_bounce] do
+    exchange.tx_class == :reliable and
+      not logical_exchange?(exchange) and
+      frame_processed?(datagrams) and
+      merge_timeout_ms(exchange, frame_timeout_ms) <= @late_bounce_complete_threshold_ms
+  end
+
+  defp complete_late_processed_bounce?(_arrival, _expected_count, _exchange, _frame_timeout_ms),
+    do: false
 
   defp resolve_two_arrivals(a, b, exchange) do
     classes = MapSet.new([a.class, b.class])

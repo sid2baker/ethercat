@@ -159,6 +159,12 @@ defmodule EtherCAT.Domain.Cycle do
 
   # Bus errors and unusable replies count as consecutive transport misses and
   # drive the miss threshold that stops the domain.
+  #
+  # Domain health keeps timeout-class misses stable as `:timeout` even when the
+  # underlying realtime bus submission expires in the queue. The bus still
+  # exposes `:expired` through its own telemetry, but cyclic domain health is
+  # about whether the cycle missed its transport window, not which scheduler
+  # edge produced that miss.
   defp handle_consecutive_cycle_miss(data, reason, next_at, next_timeout) do
     new_data =
       record_cycle_fault(data, :transport_miss, reason, next_at,
@@ -279,8 +285,11 @@ defmodule EtherCAT.Domain.Cycle do
   end
 
   defp classify_cycle_result({:error, reason}, _expected_wkc) do
-    {:transport_miss, reason}
+    {:transport_miss, normalize_transport_miss_reason(reason)}
   end
+
+  defp normalize_transport_miss_reason(:expired), do: :timeout
+  defp normalize_transport_miss_reason(reason), do: reason
 
   defp maybe_notify_cycle_degraded(
          %{degraded?: false, id: id},

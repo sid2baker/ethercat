@@ -242,6 +242,7 @@ Recommended first stops:
 - `test/integration/hardware/scripts/wiring_map.exs`
 - `test/integration/hardware/scripts/dc_sync.exs`
 - `test/integration/hardware/scripts/fault_tolerance.exs`
+- `test/integration/hardware/scripts/redundant_replug_watch.exs` for live redundant-link topology and reconnect watching
 
 ### Deeper architecture
 

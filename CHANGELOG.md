@@ -94,6 +94,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   complementary bounce replies before accepting a single processed bounce, so
   split-ring raw topology breaks merge back to full WKC instead of triggering
   false domain recovery (`1a80d39`).
+- Redundant links now complete late degraded reliable one-sided bounces within
+  the original frame budget, domain timeout-class misses stay stable even when
+  queued realtime work expires, and the maintained redundant replug watcher now
+  matches the current `Bus.info/1` link/topology surface (`pending hash`).
 - Slaves held in `:preop` or `:safeop` now keep health polling active and
   still transition into recovery on disconnect or lower-state regressions
   instead of staying stranded in stale held states (`efbc8da`).

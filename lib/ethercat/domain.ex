@@ -31,6 +31,10 @@ defmodule EtherCAT.Domain do
 
   - `:healthy` - the latest LRW cycle was valid
   - `{:invalid, reason}` - the latest LRW cycle had a transport miss or unusable reply
+
+  Timeout-class misses remain `:timeout` in domain health even when the bus
+  dropped a stale realtime cycle request as `:expired`; the finer queue-expiry
+  distinction stays in bus telemetry.
   """
 
   alias EtherCAT.Domain.FSM
