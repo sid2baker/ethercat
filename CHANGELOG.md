@@ -26,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - `95f343d` — DC recovery and configuration validation are stricter, reducing invalid recovery paths and catching bad setup earlier.
-- `(pending hash)` — raw simulator EEPROM window reads now zero-pad out-of-range offsets instead of crashing `EtherCAT.Simulator` during startup, which restores the healthy raw transport matrix path.
+- `35ebde7` — raw simulator EEPROM window reads now zero-pad out-of-range offsets instead of crashing `EtherCAT.Simulator` during startup, which restores the healthy raw transport matrix path.
 - `c937d53` — redundant transport now merges split logical replies correctly.
 - `d852fd4` — bus transaction aging semantics and diagnostics are now more explicit during retry and timeout handling.
 - `7055878` — raw socket transport no longer drains buffered frames on idx-mismatch rearm, preventing legitimate responses from being lost when rogue EtherCAT traffic is present on the wire.
