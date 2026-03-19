@@ -12,13 +12,14 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
     SegmentedConfiguredMailboxDevice
   }
 
-  alias EtherCAT.IntegrationSupport.Hardware
+  alias EtherCAT.IntegrationSupport.{Hardware, RawSocketGuard}
   alias EtherCAT.Simulator
   alias EtherCAT.Simulator.Slave
   alias EtherCAT.Slave.Config, as: SlaveConfig
 
   @master_ip {127, 0, 0, 1}
   @simulator_ip {127, 0, 0, 2}
+  @raw_boot_attempts 3
   @default_connections [
     {{:outputs, :ch1}, {:inputs, :ch1}},
     {{:outputs, :ch16}, {:inputs, :ch16}}
@@ -171,6 +172,11 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
           }
 
         {:raw, transport_opts} ->
+          RawSocketGuard.assert_available!([
+            raw_master_interface(transport_opts),
+            raw_simulator_interface(transport_opts)
+          ])
+
           raw_opts =
             Keyword.merge(
               [interface: raw_simulator_interface(transport_opts)],
@@ -198,6 +204,11 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
 
   @spec start_master!(endpoint() | :inet.port_number(), keyword()) :: :ok
   def start_master!(endpoint, opts \\ []) do
+    assert_ok!(start_master(endpoint, opts))
+  end
+
+  @spec start_master(endpoint() | :inet.port_number(), keyword()) :: :ok | {:error, term()}
+  def start_master(endpoint, opts \\ []) do
     ring = Keyword.get(opts, :ring, :default)
 
     default_start_opts = [
@@ -214,45 +225,17 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
       |> Keyword.merge(start_master_transport_opts(endpoint, Keyword.get(opts, :transport)))
       |> Keyword.merge(Keyword.get(opts, :start_opts, []))
 
-    assert_ok!(start_master_with_retry(start_opts, 5))
+    start_master_with_retry(start_opts, 5)
   end
 
   @spec boot_operational!(keyword()) :: endpoint()
   def boot_operational!(opts \\ []) do
-    reset!()
-
-    simulator =
-      opts
-      |> Keyword.get(:simulator_opts, [])
-      |> Keyword.put_new(:ring, Keyword.get(opts, :ring, :default))
-      |> maybe_put_transport(opts)
-      |> start_simulator!()
-
-    start_master!(simulator, opts)
-
-    await_timeout_ms = Keyword.get(opts, :await_operational_ms, 2_000)
-    assert_ok!(EtherCAT.await_operational(await_timeout_ms))
-
-    simulator
+    boot_operational_with_retry(opts, boot_attempts(opts))
   end
 
   @spec boot_preop_ready!(keyword()) :: endpoint()
   def boot_preop_ready!(opts \\ []) do
-    reset!()
-
-    simulator =
-      opts
-      |> Keyword.get(:simulator_opts, [])
-      |> Keyword.put_new(:ring, Keyword.get(opts, :ring, :default))
-      |> maybe_put_transport(opts)
-      |> start_simulator!()
-
-    start_master!(simulator, opts)
-
-    await_timeout_ms = Keyword.get(opts, :await_running_ms, 2_000)
-    assert_ok!(EtherCAT.await_running(await_timeout_ms))
-
-    simulator
+    boot_preop_ready_with_retry(opts, boot_attempts(opts))
   end
 
   @spec default_domain() :: DomainConfig.t()
@@ -291,6 +274,96 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
   end
 
   defp start_master_with_retry(start_opts, _attempts_left), do: EtherCAT.start(start_opts)
+
+  defp boot_operational_with_retry(opts, attempts_left) when attempts_left > 0 do
+    reset!()
+
+    simulator =
+      opts
+      |> Keyword.get(:simulator_opts, [])
+      |> Keyword.put_new(:ring, Keyword.get(opts, :ring, :default))
+      |> maybe_put_transport(opts)
+      |> start_simulator!()
+
+    await_timeout_ms = Keyword.get(opts, :await_operational_ms, 2_000)
+
+    case start_master(simulator, opts) do
+      :ok ->
+        case EtherCAT.await_operational(await_timeout_ms) do
+          :ok ->
+            simulator
+
+          {:error, reason} ->
+            retry_or_raise_boot(:operational, opts, attempts_left, reason)
+        end
+
+      {:error, reason} ->
+        retry_or_raise_boot(:operational, opts, attempts_left, reason)
+    end
+  end
+
+  defp boot_preop_ready_with_retry(opts, attempts_left) when attempts_left > 0 do
+    reset!()
+
+    simulator =
+      opts
+      |> Keyword.get(:simulator_opts, [])
+      |> Keyword.put_new(:ring, Keyword.get(opts, :ring, :default))
+      |> maybe_put_transport(opts)
+      |> start_simulator!()
+
+    await_timeout_ms = Keyword.get(opts, :await_running_ms, 2_000)
+
+    case start_master(simulator, opts) do
+      :ok ->
+        case EtherCAT.await_running(await_timeout_ms) do
+          :ok ->
+            simulator
+
+          {:error, reason} ->
+            retry_or_raise_boot(:running, opts, attempts_left, reason)
+        end
+
+      {:error, reason} ->
+        retry_or_raise_boot(:running, opts, attempts_left, reason)
+    end
+  end
+
+  defp retry_or_raise_boot(_target, _opts, 1, reason) do
+    stop_all!()
+    raise ArgumentError, "expected :ok or {:ok, _}, got: #{inspect({:error, reason})}"
+  end
+
+  defp retry_or_raise_boot(target, opts, attempts_left, reason) do
+    stop_all!()
+    Process.sleep(20)
+    boot_retry_log(target, attempts_left, reason)
+
+    case target do
+      :operational -> boot_operational_with_retry(opts, attempts_left - 1)
+      :running -> boot_preop_ready_with_retry(opts, attempts_left - 1)
+    end
+  end
+
+  defp boot_attempts(opts) do
+    if raw_boot?(opts), do: @raw_boot_attempts, else: 1
+  end
+
+  defp raw_boot?(opts) do
+    case Keyword.get(opts, :transport, default_transport()) do
+      :raw -> true
+      {:raw, _opts} -> true
+      _other -> false
+    end
+  end
+
+  defp boot_retry_log(target, attempts_left, reason) do
+    IO.puts(
+      :stderr,
+      "[SimulatorRing] retrying raw #{target} boot after transient failure " <>
+        "(attempts_left=#{attempts_left - 1}): #{inspect(reason)}"
+    )
+  end
 
   defp normalize_transport({transport, opts}) when transport in [:udp, :raw] and is_list(opts),
     do: {transport, opts}

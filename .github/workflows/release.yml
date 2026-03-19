@@ -6,12 +6,14 @@ on:
       - "v*.*.*"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release:
-    name: Release
+  publish:
+    name: Publish Hex release
     runs-on: ubuntu-24.04
+    env:
+      HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
 
     steps:
       - name: Checkout
@@ -30,6 +32,13 @@ jobs:
 
       - name: Install dependencies
         run: mix deps.get
+
+      - name: Check Hex API key is configured
+        run: |
+          if [ -z "$HEX_API_KEY" ]; then
+            echo "HEX_API_KEY secret is not configured" >&2
+            exit 1
+          fi
 
       - name: Check tag matches package version
         env:
@@ -66,36 +75,14 @@ jobs:
       - name: Build docs
         env:
           MIX_ENV: dev
-        run: mix docs.fresh
+        run: mix docs --warnings-as-errors --formatter html
 
-      - name: Build Hex package
+      - name: Dry-run Hex publish
         env:
           MIX_ENV: dev
-        run: mix hex.build
+        run: mix hex.publish --dry-run
 
-      - name: Extract release notes from changelog
+      - name: Publish package and docs to Hex
         env:
-          TAG_NAME: ${{ github.ref_name }}
-        run: |
-          version="${TAG_NAME#v}"
-
-          awk -v version="$version" '
-            $0 ~ "^## \\[" version "\\]" {in_section=1; next}
-            in_section && $0 ~ "^## \\[" {exit}
-            in_section {print}
-          ' CHANGELOG.md > release-notes.md
-
-          if ! grep -q '[^[:space:]]' release-notes.md; then
-            echo "No changelog section found for ${version}" >&2
-            exit 1
-          fi
-
-      - name: Create draft GitHub release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release create \
-            "${GITHUB_REF_NAME}" \
-            --draft \
-            --title "${GITHUB_REF_NAME}" \
-            --notes-file release-notes.md
+          MIX_ENV: dev
+        run: mix hex.publish --yes
