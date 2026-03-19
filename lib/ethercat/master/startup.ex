@@ -6,7 +6,6 @@ defmodule EtherCAT.Master.Startup do
   alias EtherCAT.{Bus, DC, Domain, Slave, Telemetry, Utils}
   alias EtherCAT.Bus.Transaction
   alias EtherCAT.Master.Config
-  alias EtherCAT.Master.Config.DomainPlan
   alias EtherCAT.Master.Status
   alias EtherCAT.Master.Startup.InitRecovery
   alias EtherCAT.Master.Startup.Reset, as: InitReset
@@ -15,7 +14,7 @@ defmodule EtherCAT.Master.Startup do
 
   @frame_timeout_base_us 200
   @frame_timeout_per_slave_us 40
-  @frame_timeout_host_floor_ms 2
+  @frame_timeout_raw_floor_ms 5
   @frame_timeout_max_ms 10
   @init_poll_limit 100
   @init_poll_interval_ms 10
@@ -30,11 +29,12 @@ defmodule EtherCAT.Master.Startup do
       case Bus.set_frame_timeout(Bus, target_ms) do
         :ok ->
           Logger.info(
-            "[Master] bus frame timeout set to #{target_ms}ms (slaves=#{slave_count}, dc_cycle_ns=#{inspect(dc_cycle_ns(data))})",
+            "[Master] bus frame timeout set to #{target_ms}ms (slaves=#{slave_count}, floor=#{frame_timeout_floor_ms(data)}ms, dc_cycle_ns=#{inspect(dc_cycle_ns(data))})",
             component: :master,
             event: :frame_timeout_tuned,
             slave_count: slave_count,
             frame_timeout_ms: target_ms,
+            frame_timeout_floor_ms: frame_timeout_floor_ms(data),
             dc_cycle_ns: dc_cycle_ns(data)
           )
 
@@ -151,18 +151,12 @@ defmodule EtherCAT.Master.Startup do
       |> Kernel.+(slave_count * @frame_timeout_per_slave_us)
       |> ceil_div(1_000)
 
-    cycle_cap_ms = cycle_relative_timeout_cap_ms(data)
-    floor_ms = min(@frame_timeout_host_floor_ms, cycle_cap_ms)
-
     topology_timeout_ms
-    |> max(floor_ms)
-    |> min(cycle_cap_ms)
+    |> max(frame_timeout_floor_ms(data))
     |> min(@frame_timeout_max_ms)
   end
 
-  def recommended_frame_timeout_ms(data, _slave_count) do
-    min(@frame_timeout_host_floor_ms, cycle_relative_timeout_cap_ms(data))
-  end
+  def recommended_frame_timeout_ms(data, _slave_count), do: frame_timeout_floor_ms(data)
 
   @doc false
   @spec validate_topology_addressing(%EtherCAT.Master{}, non_neg_integer()) ::
@@ -189,39 +183,12 @@ defmodule EtherCAT.Master.Startup do
     div(value + divisor - 1, divisor)
   end
 
-  defp cycle_relative_timeout_cap_ms(%{domain_configs: domain_configs})
-       when is_list(domain_configs) and domain_configs != [] do
-    domain_configs
-    |> Enum.map(&domain_cycle_time_us/1)
-    |> Enum.min()
-    |> half_cycle_timeout_ms()
-    |> min(@frame_timeout_max_ms)
-    |> max(1)
+  defp frame_timeout_floor_ms(%{frame_timeout_floor_ms: floor_ms})
+       when is_integer(floor_ms) and floor_ms > 0 do
+    min(floor_ms, @frame_timeout_max_ms)
   end
 
-  defp cycle_relative_timeout_cap_ms(data) do
-    case dc_cycle_ns(data) do
-      cycle_ns when is_integer(cycle_ns) and cycle_ns > 0 ->
-        cycle_ns
-        |> div(1_000)
-        |> half_cycle_timeout_ms()
-        |> min(@frame_timeout_max_ms)
-        |> max(1)
-
-      _ ->
-        @frame_timeout_max_ms
-    end
-  end
-
-  defp domain_cycle_time_us(%DomainPlan{cycle_time_us: cycle_time_us}), do: cycle_time_us
-  defp domain_cycle_time_us(%{cycle_time_us: cycle_time_us}), do: cycle_time_us
-
-  defp half_cycle_timeout_ms(cycle_time_us)
-       when is_integer(cycle_time_us) and cycle_time_us > 0 do
-    cycle_time_us
-    |> ceil_div(2)
-    |> ceil_div(1_000)
-  end
+  defp frame_timeout_floor_ms(_data), do: @frame_timeout_raw_floor_ms
 
   defp station_for_position(data, pos), do: data.base_station + pos
 

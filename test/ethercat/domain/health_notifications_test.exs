@@ -9,38 +9,46 @@ defmodule EtherCAT.Domain.HealthNotificationsTest do
     {:ok, setup_master_trace()}
   end
 
-  test "WKC mismatch notifies invalid once and recovered on the next valid cycle", %{
-    master_pid: master_pid,
-    owns_master_name?: owns_master_name?
-  } do
+  test "WKC mismatch notifies degraded only after the recovery threshold and recovered on the next valid cycle",
+       %{
+         master_pid: master_pid,
+         owns_master_name?: owns_master_name?
+       } do
     bus =
       start_bus!([
+        {:ok, [%{data: <<0>>, wkc: 0, circular: false, irq: 0}]},
         {:ok, [%{data: <<0>>, wkc: 0, circular: false, irq: 0}]},
         {:ok, [%{data: <<1>>, wkc: 1, circular: false, irq: 0}]}
       ])
 
     key = {:sensor, {:sm, 0}}
-    data = build_cycling_data(bus, key)
+    data = build_cycling_data(bus, key, recovery_threshold: 2)
 
-    assert {:keep_state, invalid_data, _actions} =
+    assert {:keep_state, first_invalid, _actions} =
              Domain.FSM.handle_event(:state_timeout, :tick, :cycling, data)
+
+    assert_no_master_message(master_pid, owns_master_name?)
+
+    assert {:keep_state, degraded_data, _actions} =
+             Domain.FSM.handle_event(:state_timeout, :tick, :cycling, first_invalid)
 
     assert_master_message(
       master_pid,
       owns_master_name?,
-      {:domain_cycle_invalid, :main, {:wkc_mismatch, %{expected: 1, actual: 0}}}
+      {:domain_cycle_degraded, :main, {:wkc_mismatch, %{expected: 1, actual: 0}}, 2}
     )
 
     assert {:keep_state, _recovered_data, _actions} =
-             Domain.FSM.handle_event(:state_timeout, :tick, :cycling, invalid_data)
+             Domain.FSM.handle_event(:state_timeout, :tick, :cycling, degraded_data)
 
     assert_master_message(master_pid, owns_master_name?, {:domain_cycle_recovered, :main})
   end
 
-  test "transport misses increment consecutive miss count and stop the domain at threshold", %{
-    master_pid: master_pid,
-    owns_master_name?: owns_master_name?
-  } do
+  test "transport misses stop the domain at the miss threshold without escalating the master early",
+       %{
+         master_pid: master_pid,
+         owns_master_name?: owns_master_name?
+       } do
     bus = start_bus!([{:error, :timeout}, {:error, :timeout}])
 
     key = {:sensor, {:sm, 0}}
@@ -52,7 +60,7 @@ defmodule EtherCAT.Domain.HealthNotificationsTest do
     assert once_missed.miss_count == 1
     assert once_missed.cycle_health == {:invalid, :timeout}
 
-    assert_master_message(master_pid, owns_master_name?, {:domain_cycle_invalid, :main, :timeout})
+    assert_no_master_message(master_pid, owns_master_name?)
 
     assert {:next_state, :stopped, stopped_data} =
              Domain.FSM.handle_event(:state_timeout, :tick, :cycling, once_missed)
@@ -62,10 +70,11 @@ defmodule EtherCAT.Domain.HealthNotificationsTest do
     assert_master_message(master_pid, owns_master_name?, {:domain_stopped, :main, :timeout})
   end
 
-  test "confirmed bus down stops the domain immediately without waiting for miss threshold", %{
-    master_pid: master_pid,
-    owns_master_name?: owns_master_name?
-  } do
+  test "confirmed bus down stops the domain immediately without sending a degraded-cycle warning",
+       %{
+         master_pid: master_pid,
+         owns_master_name?: owns_master_name?
+       } do
     bus = start_bus!([{:error, :down}])
 
     key = {:sensor, {:sm, 0}}
@@ -77,7 +86,12 @@ defmodule EtherCAT.Domain.HealthNotificationsTest do
     assert stopped_data.miss_count == 1
     assert stopped_data.cycle_health == {:invalid, :down}
 
-    assert_master_message(master_pid, owns_master_name?, {:domain_cycle_invalid, :main, :down})
+    refute_master_message(
+      master_pid,
+      owns_master_name?,
+      {:domain_cycle_degraded, :main, :down, 1}
+    )
+
     assert_master_message(master_pid, owns_master_name?, {:domain_stopped, :main, :down})
   end
 
@@ -118,6 +132,7 @@ defmodule EtherCAT.Domain.HealthNotificationsTest do
       cycle_plan: cycle_plan,
       cycle_health: :healthy,
       miss_threshold: Keyword.get(opts, :miss_threshold, 500),
+      recovery_threshold: Keyword.get(opts, :recovery_threshold, 3),
       table: table
     }
   end
@@ -134,5 +149,21 @@ defmodule EtherCAT.Domain.HealthNotificationsTest do
 
   defp assert_master_message(master_pid, false, message) do
     assert_receive {:trace, ^master_pid, :receive, ^message}
+  end
+
+  defp refute_master_message(_master_pid, true, message) do
+    refute_receive ^message
+  end
+
+  defp refute_master_message(master_pid, false, message) do
+    refute_receive {:trace, ^master_pid, :receive, ^message}
+  end
+
+  defp assert_no_master_message(_master_pid, true) do
+    refute_receive _
+  end
+
+  defp assert_no_master_message(master_pid, false) do
+    refute_receive {:trace, ^master_pid, :receive, _}
   end
 end

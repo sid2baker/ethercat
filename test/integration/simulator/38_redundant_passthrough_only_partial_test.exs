@@ -39,19 +39,17 @@ defmodule EtherCAT.Integration.Simulator.RedundantPassthroughOnlyPartialTest do
     baseline_wkc = wait_until_bus_ready!(bus_name)
     assert baseline_wkc > 0
 
-    # Delay the forward-path response (primary→slaves→secondary) by 200ms at the
-    # simulator's secondary endpoint. A fixed-station read to the right-most
-    # slave only reaches that station from primary ingress in the healthy ring,
-    # so the reverse-path secondary-ingress copy is passthrough-only.
+    # Delay every response emitted by the simulator's secondary endpoint by
+    # 200ms. For a fixed-station read to the right-most slave in the healthy
+    # ring, the authoritative forward-path response exits secondary while the
+    # reverse-path copy still exits primary as passthrough-only traffic.
     assert :ok =
-             Raw.inject_fault(
-               RawFault.delay_response(200, endpoint: :secondary, from_ingress: :primary)
-             )
+             Raw.inject_fault(RawFault.delay_response(200, endpoint: :secondary))
 
-    # The passthrough-only response (wkc=0, unchanged payload) is
-    # indistinguishable from an outgoing echo and is discarded by the
-    # content-based echo filter. The real processed response is delayed beyond
-    # the timeout, so the fixed-station read times out.
+    # The passthrough-only response (wkc=0, unchanged payload) is not
+    # authoritative enough to complete the exchange. The real processed
+    # response is delayed beyond the timeout, so the fixed-station read times
+    # out.
     assert {:error, :timeout} =
              Bus.transaction(bus_name, Transaction.fprd(0x1002, {0x0010, 2}))
   end

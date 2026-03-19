@@ -68,6 +68,7 @@ defmodule EtherCAT.Master.FSM do
           slave_configs: start_config.slave_config,
           domain_configs: start_config.domain_config,
           dc_config: start_config.dc_config,
+          frame_timeout_floor_ms: start_config.frame_timeout_floor_ms,
           frame_timeout_override_ms: start_config.frame_timeout_override_ms,
           scan_poll_ms: start_config.scan_poll_ms,
           scan_stable_ms: start_config.scan_stable_ms,
@@ -775,29 +776,44 @@ defmodule EtherCAT.Master.FSM do
     Recovery.transition_runtime_fault(state, recovering_data)
   end
 
-  def handle_event(:info, {:domain_cycle_invalid, id, reason}, @operational, data) do
+  def handle_event(:info, {:domain_cycle_degraded, id, reason, consecutive}, @operational, data) do
     Logger.warning(
-      "[Master] domain #{id} cycle invalid: #{inspect(reason)} — entering recovery",
+      "[Master] domain #{id} cycle degraded after #{consecutive} consecutive invalid cycles: #{inspect(reason)} — entering recovery",
       component: :master,
-      event: :domain_cycle_invalid,
+      event: :domain_cycle_degraded,
       domain: id,
+      consecutive: consecutive,
       reason_kind: Utils.reason_kind(reason)
     )
 
     {:next_state, :recovering,
-     Recovery.put_runtime_fault(data, {:domain, id}, {:cycle_invalid, reason})}
+     Recovery.put_runtime_fault(
+       data,
+       {:domain, id},
+       {:cycle_degraded, %{reason: reason, consecutive: consecutive}}
+     )}
   end
 
-  def handle_event(:info, {:domain_cycle_invalid, id, reason}, :recovering, data) do
+  def handle_event(:info, {:domain_cycle_degraded, id, reason, consecutive}, :recovering, data) do
     Logger.warning(
-      "[Master] domain #{id} cycle still invalid: #{inspect(reason)}",
+      "[Master] domain #{id} cycle still degraded: #{inspect(reason)}",
       component: :master,
-      event: :domain_cycle_invalid,
+      event: :domain_cycle_degraded,
       domain: id,
+      consecutive: consecutive,
       reason_kind: Utils.reason_kind(reason)
     )
 
-    {:keep_state, Recovery.put_runtime_fault(data, {:domain, id}, {:cycle_invalid, reason})}
+    {:keep_state,
+     Recovery.put_runtime_fault(
+       data,
+       {:domain, id},
+       {:cycle_degraded, %{reason: reason, consecutive: consecutive}}
+     )}
+  end
+
+  def handle_event(:info, {:domain_cycle_degraded, _id, _reason, _consecutive}, _state, _data) do
+    :keep_state_and_data
   end
 
   def handle_event(:info, {:domain_cycle_invalid, _id, _reason}, _state, _data) do

@@ -5,6 +5,10 @@ defmodule EtherCAT.Bus.Link.Redundant do
   Owns two transports (primary and secondary), scheduling (queues, batching,
   stale expiry), in-flight exchange tracking, and caller replies.
 
+  In production this link is raw-only: both ports are expected to be
+  `EtherCAT.Bus.Transport.RawSocket` interfaces. The `transport_mod` option
+  remains available for tests and transport fakes.
+
   ## Ring topology
 
   In a healthy EtherCAT redundant ring, frames cross between ports:
@@ -28,13 +32,14 @@ defmodule EtherCAT.Bus.Link.Redundant do
       the break point.
 
   The forward cross (primary's frame on secondary) is authoritative and
-  completes immediately. A single reverse cross or bounce can shorten the
-  timeout to a merge window while the link waits for a forward cross or
-  second frame. A single `:unknown` arrival with processed datagrams
-  (`wkc > 0`) can also complete immediately when MAC classification is not
-  trustworthy. On timeout, partial arrivals are converted into a best-effort
-  reply when they still match the awaiting datagrams; only no-arrival or
-  mismatch cases become `{:error, :timeout}`.
+  completes immediately. A single reverse cross or bounce keeps the merge
+  window open while the link waits for a forward cross or second frame. A
+  single `:unknown` arrival with processed datagrams (`wkc > 0`) can also
+  complete immediately when MAC classification is not trustworthy. On
+  timeout, partial arrivals are converted into a best-effort reply when they
+  still match the awaiting datagrams; pure reverse-path copies are not used
+  as authoritative data, so only processed or merged bounce data can rescue
+  a timed-out exchange.
 
   ```mermaid
   flowchart TD
@@ -44,14 +49,13 @@ defmodule EtherCAT.Bus.Link.Redundant do
 
       WAIT{Arrival or timeout}
       WAIT -->|forward cross| REPLY_OK
-      WAIT -->|single reply on one live leg| REPLY_OK
+      WAIT -->|single authoritative reply on one live leg| REPLY_OK
       WAIT -->|single unknown with wkc>0| REPLY_OK
       WAIT -->|reverse cross / bounce / other unknown| MERGE_WAIT
       WAIT -->|timeout with no arrivals| ERR_TIMEOUT
 
       MERGE_WAIT{Merge window}
       MERGE_WAIT -->|forward cross arrives| REPLY_OK
-      MERGE_WAIT -->|reverse cross + any second frame| REPLY_OK
       MERGE_WAIT -->|pri bounce + sec bounce| MERGE_OK
       MERGE_WAIT -->|timeout with partial arrivals| BEST_EFFORT
 
@@ -68,10 +72,12 @@ defmodule EtherCAT.Bus.Link.Redundant do
     * `:awaiting` — exchange sent, waiting for reply(ies)
 
   The link tracks per-port transport health from open/send failures and
-  surfaces degraded topology and fault info through `info/1`. Timeout
-  observations are logged and emitted as telemetry, but receive-side timeout
-  patterns do not directly mark a port down unless send/open state also
-  fails.
+  surfaces degraded topology and fault info through `info/1`. Health is
+  observational only: a leg marked `:down` is still attempted on the next
+  exchange, so reconnects do not wait on a separate health promotion path.
+  Timeout observations are logged and emitted as telemetry, but receive-side
+  timeout patterns do not directly mark a port down unless send/open state
+  also fails.
   """
 
   @behaviour :gen_statem
@@ -81,7 +87,7 @@ defmodule EtherCAT.Bus.Link.Redundant do
   alias EtherCAT.Bus.Frame
   alias EtherCAT.Bus.Link
   alias EtherCAT.Bus.Link.{RedundantMerge, Submission}
-  alias EtherCAT.Bus.Transport.{RawSocket, UdpSocket}
+  alias EtherCAT.Bus.Transport.RawSocket
   alias EtherCAT.Telemetry
 
   @max_dispatch_errors 3
@@ -145,37 +151,49 @@ defmodule EtherCAT.Bus.Link.Redundant do
 
   @impl true
   def init(opts) do
+    with :ok <- validate_supported_transport(opts) do
+      do_init(opts)
+    else
+      {:error, reason} -> {:stop, reason}
+    end
+  end
+
+  defp do_init(opts) do
     transport_mod = resolve_transport_mod(opts)
     frame_timeout_ms = Keyword.get(opts, :frame_timeout_ms, 25)
-
-    # Drop outgoing echoes — AF_PACKET delivers copies of our own TX frames which
-    # race with real cross-delivery responses and would return wkc=0 data.
-    pri_opts = Keyword.put_new(opts, :drop_outgoing_echo?, true)
 
     sec_opts =
       opts
       |> Keyword.put(:interface, Keyword.fetch!(opts, :backup_interface))
-      |> Keyword.put_new(:drop_outgoing_echo?, true)
+      |> Keyword.delete(:backup_interface)
 
-    with {:ok, pri_transport} <- transport_mod.open(pri_opts),
-         {:ok, sec_transport} <- open_secondary(transport_mod, sec_opts, pri_transport) do
-      pri_name = transport_mod.name(pri_transport)
-      sec_name = transport_mod.name(sec_transport)
-      link_name = "#{pri_name}|#{sec_name}"
-      Logger.metadata(component: :bus, link: link_name)
+    case transport_mod.open(opts) do
+      {:ok, pri_transport} ->
+        case transport_mod.open(sec_opts) do
+          {:ok, sec_transport} ->
+            pri_name = transport_mod.name(pri_transport)
+            sec_name = transport_mod.name(sec_transport)
+            link_name = "#{pri_name}|#{sec_name}"
+            Logger.metadata(component: :bus, link: link_name)
 
-      {:ok, :idle,
-       %__MODULE__{
-         pri_transport: pri_transport,
-         pri_mac: transport_mod.src_mac(pri_transport),
-         sec_transport: sec_transport,
-         sec_mac: transport_mod.src_mac(sec_transport),
-         transport_mod: transport_mod,
-         link_name: link_name,
-         frame_timeout_ms: frame_timeout_ms
-       }}
-    else
-      {:error, reason} -> {:stop, reason}
+            {:ok, :idle,
+             %__MODULE__{
+               pri_transport: pri_transport,
+               pri_mac: transport_mod.src_mac(pri_transport),
+               sec_transport: sec_transport,
+               sec_mac: transport_mod.src_mac(sec_transport),
+               transport_mod: transport_mod,
+               link_name: link_name,
+               frame_timeout_ms: frame_timeout_ms
+             }}
+
+          {:error, reason} ->
+            transport_mod.close(pri_transport)
+            {:stop, reason}
+        end
+
+      {:error, reason} ->
+        {:stop, reason}
     end
   end
 
@@ -416,12 +434,11 @@ defmodule EtherCAT.Bus.Link.Redundant do
     case Frame.decode(ecat_payload) do
       {:ok, datagrams} ->
         if Link.all_expected_present?(data.exchange, datagrams) do
-          # Content-based echo filter: if the received frame is byte-for-byte
-          # identical to the sent frame (all wkc=0, data unchanged), it's an
-          # outgoing echo that slipped through the transport-level pkttype
-          # filter. Discard it and wait for the real cross-delivery response.
-          if echo_copy?(data.exchange, datagrams) do
-            Telemetry.frame_dropped(data.link_name, byte_size(ecat_payload), :echo_copy)
+          # A byte-for-byte unchanged `wkc=0` frame is only passthrough data.
+          # It proves a leg reflected the frame, but it is not authoritative
+          # enough to complete the exchange on its own.
+          if passthrough_copy?(data.exchange, datagrams) do
+            Telemetry.frame_dropped(data.link_name, byte_size(ecat_payload), :passthrough_copy)
             rearm_port(data, port_id)
             {:keep_state, data}
           else
@@ -505,15 +522,15 @@ defmodule EtherCAT.Bus.Link.Redundant do
 
       [single] ->
         cond do
-          expected_count <= 1 ->
+          authoritative_single_arrival?(single, expected_count) ->
             # Only one port sent — this single reply completes the exchange
             {:done, single.datagrams}
 
-          single.class == :unknown and frame_processed?(single.datagrams) ->
-            # Unknown MAC classification but frame was processed (wkc > 0).
-            # On real hardware where MAC comparison may not match (e.g. slave
-            # ASICs, NIC offload), treat a processed reply as authoritative.
-            {:done, single.datagrams}
+          expected_count <= 1 ->
+            # Only one leg actually sent, but a lone reverse-path copy still
+            # does not prove slave processing. Keep the full timeout instead of
+            # completing with non-authoritative data.
+            :waiting
 
           true ->
             # Both ports sent — shorten timeout to merge window for the second frame
@@ -537,15 +554,19 @@ defmodule EtherCAT.Bus.Link.Redundant do
     Enum.any?(datagrams, fn dg -> dg.wkc > 0 end)
   end
 
+  defp authoritative_single_arrival?(%{class: :unknown, datagrams: datagrams}, _expected_count),
+    do: frame_processed?(datagrams)
+
+  defp authoritative_single_arrival?(%{class: class}, expected_count)
+       when expected_count <= 1 and class in [:forward_cross, :pri_bounce, :sec_bounce],
+       do: true
+
+  defp authoritative_single_arrival?(_arrival, _expected_count), do: false
+
   defp resolve_two_arrivals(a, b, exchange) do
     classes = MapSet.new([a.class, b.class])
 
     cond do
-      # Any cross present → use the cross data (forward already handled above)
-      :reverse_cross in classes ->
-        cross = if a.class == :reverse_cross, do: a, else: b
-        {:done, cross.datagrams}
-
       # Both bounces → merge complementary data
       :pri_bounce in classes and :sec_bounce in classes ->
         {pri, sec} = if a.class == :pri_bounce, do: {a, b}, else: {b, a}
@@ -555,9 +576,8 @@ defmodule EtherCAT.Bus.Link.Redundant do
           # Legitimate ring break: slaves on both sides processed the frame.
           {:done, merged}
         else
-          # All wkc=0 — could be outgoing echoes (AF_PACKET kernel loopback)
-          # masquerading as bounces. Wait for potential cross-delivery within
-          # the merge window before committing to the wkc=0 result.
+          # Both legs only reflected the frame so far. Keep the merge window
+          # open instead of completing with unchanged `wkc=0` data.
           :waiting_merge
         end
 
@@ -571,9 +591,8 @@ defmodule EtherCAT.Bus.Link.Redundant do
             if frame_processed?(dg) do
               {:done, dg}
             else
-              # All wkc=0 — could be outgoing echoes whose source MAC doesn't
-              # match either NIC (e.g. slave ASIC rewrites src MAC). Wait for
-              # a real cross-delivery within the merge window.
+              # Unknown-MAC arrivals can still be pure passthrough data. Wait
+              # for a processed reply within the merge window.
               :waiting_merge
             end
 
@@ -591,15 +610,19 @@ defmodule EtherCAT.Bus.Link.Redundant do
     end
   end
 
-  defp resolve_best_effort(arrivals, _exchange) do
-    # Prefer a cross-delivery or any arrival with processed data (wkc > 0)
-    cross = Enum.find(arrivals, &(&1.class in [:reverse_cross, :forward_cross]))
-    processed = Enum.find(arrivals, &frame_processed?(&1.datagrams))
-    any = Enum.find(arrivals, &(&1.datagrams != nil))
+  defp resolve_best_effort(arrivals, exchange) do
+    datagrams = best_effort_datagrams(arrivals, exchange)
 
-    case cross || processed || any do
-      %{datagrams: dg} -> {:done, dg}
-      nil -> :waiting
+    case datagrams do
+      nil ->
+        :waiting
+
+      dg ->
+        if frame_processed?(dg) do
+          {:done, dg}
+        else
+          :waiting
+        end
     end
   end
 
@@ -621,7 +644,11 @@ defmodule EtherCAT.Bus.Link.Redundant do
       :mismatch -> Link.reply_awaiting(exchange.awaiting, {:error, :mismatch})
     end
 
-    data = clear_timeout_pattern(data)
+    data =
+      data
+      |> clear_timeout_pattern()
+      |> drain_transports()
+
     dispatch_next(%{data | exchange: nil, timeout_count: 0})
   end
 
@@ -657,9 +684,15 @@ defmodule EtherCAT.Bus.Link.Redundant do
       arrivals ->
         best_datagrams = best_effort_datagrams(arrivals, exchange)
 
-        case Link.match_and_reply(best_datagrams, exchange.awaiting) do
-          :ok -> :ok
-          :mismatch -> Link.reply_awaiting(exchange.awaiting, {:error, :timeout})
+        case best_datagrams do
+          nil ->
+            Link.reply_awaiting(exchange.awaiting, {:error, :timeout})
+
+          _ ->
+            case Link.match_and_reply(best_datagrams, exchange.awaiting) do
+              :ok -> :ok
+              :mismatch -> Link.reply_awaiting(exchange.awaiting, {:error, :timeout})
+            end
         end
     end
 
@@ -667,8 +700,10 @@ defmodule EtherCAT.Bus.Link.Redundant do
   end
 
   defp best_effort_datagrams(arrivals, exchange) do
-    # Prefer cross-delivery data over bounce data
-    cross = Enum.find(arrivals, &(&1.class in [:forward_cross, :reverse_cross]))
+    # Prefer authoritative forward-cross data over bounce data. Reverse-path
+    # copies are not authoritative in the healthy ring and should never win a
+    # timeout fallback by themselves.
+    cross = Enum.find(arrivals, &(&1.class == :forward_cross))
 
     if cross do
       cross.datagrams
@@ -686,7 +721,10 @@ defmodule EtherCAT.Bus.Link.Redundant do
           )
 
         true ->
-          hd(arrivals).datagrams
+          case Enum.find(arrivals, &(&1.class != :reverse_cross)) do
+            %{datagrams: datagrams} -> datagrams
+            nil -> nil
+          end
       end
     end
   end
@@ -718,12 +756,12 @@ defmodule EtherCAT.Bus.Link.Redundant do
         %{data | timeout_pattern_count: data.timeout_pattern_count + 1}
 
       _ ->
-        log_timeout_observation(data.link_name, observation)
+        maybe_log_timeout_observation(data.link_name, observation)
         %{data | timeout_pattern: observation, timeout_pattern_count: 1}
     end
   end
 
-  defp log_timeout_observation(link_name, observation) do
+  defp maybe_log_timeout_observation(link_name, %{detail: :partial_arrivals} = observation) do
     Logger.warning(
       "[Link.Redundant] exchange timeout detail=#{observation.detail} " <>
         "arrivals=#{inspect(observation.arrival_classes)} " <>
@@ -736,26 +774,38 @@ defmodule EtherCAT.Bus.Link.Redundant do
     )
   end
 
+  defp maybe_log_timeout_observation(_link_name, _observation), do: :ok
+
   defp clear_timeout_pattern(%{timeout_pattern: nil} = data), do: data
 
   defp clear_timeout_pattern(data) do
     observation = data.timeout_pattern
 
+    maybe_log_timeout_pattern_cleared(data.link_name, observation, data.timeout_pattern_count)
+
+    %{data | timeout_pattern: nil, timeout_pattern_count: 0}
+  end
+
+  defp maybe_log_timeout_pattern_cleared(
+         link_name,
+         %{detail: :partial_arrivals} = observation,
+         occurrence_count
+       ) do
     Logger.info(
       "[Link.Redundant] exchange timeout pattern cleared detail=#{observation.detail} " <>
         "arrivals=#{inspect(observation.arrival_classes)} " <>
         "pri_sent=#{observation.pri_sent?} sec_sent=#{observation.sec_sent?} " <>
-        "after=#{data.timeout_pattern_count}",
+        "after=#{occurrence_count}",
       component: :bus,
       event: :redundant_exchange_timeout_cleared,
-      link: data.link_name,
+      link: link_name,
       detail: observation.detail,
       arrival_classes: observation.arrival_classes,
-      occurrence_count: data.timeout_pattern_count
+      occurrence_count: occurrence_count
     )
-
-    %{data | timeout_pattern: nil, timeout_pattern_count: 0}
   end
+
+  defp maybe_log_timeout_pattern_cleared(_link_name, _observation, _occurrence_count), do: :ok
 
   # -- Port matching --
 
@@ -804,15 +854,14 @@ defmodule EtherCAT.Bus.Link.Redundant do
     data.transport_mod.rearm(transport)
   end
 
-  # An echo copy is a frame that is byte-for-byte identical to what was sent:
-  # all wkc == 0 and datagram data unchanged. This catches AF_PACKET outgoing
-  # echoes that slip through the transport-level pkttype filter (e.g. when the
-  # NIC driver doesn't set PACKET_OUTGOING, or OTP doesn't decode it).
+  # A passthrough copy is byte-for-byte identical to what was sent: all
+  # `wkc == 0` and datagram data unchanged. It proves the frame reflected back
+  # through the redundant path, but it does not prove any slave processed it.
   #
-  # On an empty bus (no slaves), legitimate bounces also match this pattern.
-  # Discarding them causes a timeout instead of returning wkc=0 — which is
-  # the correct outcome when no slaves are present.
-  defp echo_copy?(exchange, response_datagrams) do
+  # Discarding such arrivals keeps the exchange fail-closed: pure passthrough
+  # traffic cannot complete the call, and an empty or unprocessed ring times
+  # out instead of returning misleading all-zero success.
+  defp passthrough_copy?(exchange, response_datagrams) do
     sent = exchange.datagrams
 
     length(sent) == length(response_datagrams) and
@@ -954,23 +1003,16 @@ defmodule EtherCAT.Bus.Link.Redundant do
   defp earliest_timestamp(other, nil), do: other
   defp earliest_timestamp(left, right), do: min(left, right)
 
-  defp resolve_transport_mod(opts) do
-    opts[:transport_mod] ||
-      case opts[:transport] do
-        :udp -> UdpSocket
-        _ -> RawSocket
-      end
+  defp validate_supported_transport(opts) do
+    if opts[:transport_mod] == EtherCAT.Bus.Transport.UdpSocket or opts[:transport] == :udp do
+      {:error, :redundant_requires_raw_transport}
+    else
+      :ok
+    end
   end
 
-  defp open_secondary(transport_mod, sec_opts, pri_transport) do
-    case transport_mod.open(sec_opts) do
-      {:ok, sec_transport} ->
-        {:ok, sec_transport}
-
-      {:error, reason} ->
-        transport_mod.close(pri_transport)
-        {:error, reason}
-    end
+  defp resolve_transport_mod(opts) do
+    opts[:transport_mod] || RawSocket
   end
 
   defp start_named({:local, _name} = name, opts),

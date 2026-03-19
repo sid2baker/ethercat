@@ -8,6 +8,9 @@ defmodule EtherCAT.Bus.Transport.RawSocket do
   Uses sysfs for MAC address lookup and `:net` for interface index.
   The EtherCAT payload (from `Bus.Frame.encode/1`) is wrapped in a standard
   Ethernet frame internally — callers only deal with EtherCAT payloads.
+
+  On Linux this transport enables `PACKET_IGNORE_OUTGOING` so the kernel does
+  not loop the process' own transmitted EtherCAT frames back to the socket.
   """
 
   @behaviour EtherCAT.Bus.Transport
@@ -19,20 +22,21 @@ defmodule EtherCAT.Bus.Transport.RawSocket do
   alias EtherCAT.Telemetry
 
   @af_packet 17
+  @sol_packet 263
   @ethertype 0x88A4
+  @packet_ignore_outgoing 23
   @broadcast_mac <<0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF>>
   @zero_mac <<0, 0, 0, 0, 0, 0>>
   @min_frame_size 60
   @select_receive_retries 3
 
-  defstruct [:raw, :ifindex, :interface, :src_mac, drop_outgoing_echo?: false]
+  defstruct [:raw, :ifindex, :interface, :src_mac]
 
   @type t :: %__MODULE__{
           raw: :socket.socket() | nil,
           ifindex: non_neg_integer(),
           interface: String.t(),
-          src_mac: <<_::48>>,
-          drop_outgoing_echo?: boolean()
+          src_mac: <<_::48>>
         }
 
   @impl true
@@ -43,19 +47,31 @@ defmodule EtherCAT.Bus.Transport.RawSocket do
 
     with {:ok, idx} <- ifindex(interface),
          {:ok, src_mac} <- mac_address(interface),
-         {:ok, raw} <- :socket.open(@af_packet, :raw, {:raw, @ethertype}),
-         :ok <- :socket.bind(raw, sockaddr_ll(idx)) do
-      enable_rx_timestamping(raw)
-      enable_busy_poll(raw)
+         {:ok, raw} <- :socket.open(@af_packet, :raw, {:raw, @ethertype}) do
+      case :socket.bind(raw, sockaddr_ll(idx)) do
+        :ok ->
+          case enable_ignore_outgoing(raw) do
+            :ok ->
+              enable_rx_timestamping(raw)
+              enable_busy_poll(raw)
 
-      {:ok,
-       %__MODULE__{
-         raw: raw,
-         ifindex: idx,
-         interface: interface,
-         src_mac: src_mac,
-         drop_outgoing_echo?: Keyword.get(opts, :drop_outgoing_echo?, false)
-       }}
+              {:ok,
+               %__MODULE__{
+                 raw: raw,
+                 ifindex: idx,
+                 interface: interface,
+                 src_mac: src_mac
+               }}
+
+            {:error, reason} ->
+              :socket.close(raw)
+              {:error, reason}
+          end
+
+        {:error, reason} ->
+          :socket.close(raw)
+          {:error, reason}
+      end
     end
   end
 
@@ -210,29 +226,18 @@ defmodule EtherCAT.Bus.Transport.RawSocket do
   end
 
   defp extract_buffered_payload(%__MODULE__{} = sock, msg) do
-    if outgoing_echo?(sock, msg) do
-      :ignore
-    else
-      rx_at = extract_timestamp(msg)
-      raw_frame = msg_data(msg)
+    rx_at = extract_timestamp(msg)
+    raw_frame = msg_data(msg)
 
-      case strip_ethernet_headers(raw_frame) do
-        {:ok, ecat_payload, frame_src_mac} ->
-          {:ok, ecat_payload, rx_at, frame_src_mac}
+    case strip_ethernet_headers(raw_frame) do
+      {:ok, ecat_payload, frame_src_mac} ->
+        {:ok, ecat_payload, rx_at, frame_src_mac}
 
-        {:error, reason} ->
-          Telemetry.frame_dropped(sock.interface, byte_size(raw_frame), reason)
-          :ignore
-      end
+      {:error, reason} ->
+        Telemetry.frame_dropped(sock.interface, byte_size(raw_frame), reason)
+        :ignore
     end
   end
-
-  defp outgoing_echo?(%__MODULE__{drop_outgoing_echo?: true}, %{
-         addr: %{pkttype: :outgoing}
-       }),
-       do: true
-
-  defp outgoing_echo?(%__MODULE__{}, _msg), do: false
 
   defp strip_ethernet_headers(<<
          _dst::binary-size(6),
@@ -258,6 +263,10 @@ defmodule EtherCAT.Bus.Transport.RawSocket do
   defp strip_ethernet_headers(_), do: {:error, :not_ethercat}
 
   defp valid_source_mac?(mac), do: mac not in [@broadcast_mac, @zero_mac]
+
+  defp enable_ignore_outgoing(raw) do
+    :socket.setopt_native(raw, {@sol_packet, @packet_ignore_outgoing}, true)
+  end
 
   # -- timestamp support ------------------------------------------------------
 

@@ -6,6 +6,8 @@ defmodule EtherCAT.Domain.Config do
     - `:id` (required) — atom identifying the domain; also used as the ETS table name
     - `:cycle_time_us` (required) — cycle time in microseconds; must be a whole-millisecond value (`>= 1_000`, divisible by `1_000`)
     - `:miss_threshold` — consecutive miss count before domain halts, default `1000`
+    - `:recovery_threshold` — consecutive unhealthy cycles before the domain
+      tells the master that runtime recovery is required, default `3`
 
   The high-level master API owns logical address allocation. If you use
   `EtherCAT.start/1`, domains are declared by intent (`id`, cycle time, miss
@@ -19,13 +21,15 @@ defmodule EtherCAT.Domain.Config do
   @type t :: %__MODULE__{
           id: atom(),
           cycle_time_us: pos_integer(),
-          miss_threshold: pos_integer()
+          miss_threshold: pos_integer(),
+          recovery_threshold: pos_integer()
         }
 
   @enforce_keys [:id, :cycle_time_us]
   defstruct [
     :id,
     :cycle_time_us,
-    miss_threshold: 1000
+    miss_threshold: 1000,
+    recovery_threshold: 3
   ]
 end

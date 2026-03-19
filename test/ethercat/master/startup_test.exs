@@ -6,34 +6,48 @@ defmodule EtherCAT.Master.StartupTest do
   alias EtherCAT.Master.Config.DomainPlan
   alias EtherCAT.Master.Startup
 
-  test "recommended frame timeout uses a host-jitter floor on slower cycles" do
+  test "recommended frame timeout uses the UDP transport floor for short simulator cycles" do
     data = %Master{
+      frame_timeout_floor_ms: 5,
       domain_configs: [
-        %DomainPlan{id: :main, cycle_time_us: 10_000, miss_threshold: 1000, logical_base: 0}
+        %DomainPlan{
+          id: :main,
+          cycle_time_us: 10_000,
+          miss_threshold: 1000,
+          recovery_threshold: 3,
+          logical_base: 0
+        }
       ]
     }
 
-    assert Startup.recommended_frame_timeout_ms(data, 4) == 2
+    assert Startup.recommended_frame_timeout_ms(data, 4) == 5
   end
 
-  test "recommended frame timeout never exceeds half of the smallest domain cycle" do
+  test "recommended frame timeout grows with topology once it exceeds the default transport floor" do
     data = %Master{
+      frame_timeout_floor_ms: 5,
       domain_configs: [
-        %DomainPlan{id: :fast, cycle_time_us: 1_000, miss_threshold: 1000, logical_base: 0}
+        %DomainPlan{
+          id: :fast,
+          cycle_time_us: 1_000,
+          miss_threshold: 1000,
+          recovery_threshold: 3,
+          logical_base: 0
+        }
       ]
     }
 
-    assert Startup.recommended_frame_timeout_ms(data, 4) == 1
+    assert Startup.recommended_frame_timeout_ms(data, 160) == 7
   end
 
-  test "recommended frame timeout falls back to DC cycle when no domains are configured" do
-    data = %Master{dc_config: %DCConfig{cycle_ns: 10_000_000}}
+  test "recommended frame timeout falls back to the configured floor when no slaves are present" do
+    data = %Master{dc_config: %DCConfig{cycle_ns: 10_000_000}, frame_timeout_floor_ms: 5}
 
-    assert Startup.recommended_frame_timeout_ms(data, 4) == 2
+    assert Startup.recommended_frame_timeout_ms(data, 0) == 5
   end
 
   test "recommended frame timeout honors explicit override" do
-    data = %Master{frame_timeout_override_ms: 7}
+    data = %Master{frame_timeout_override_ms: 7, frame_timeout_floor_ms: 5}
 
     assert Startup.recommended_frame_timeout_ms(data, 4) == 7
   end

@@ -4,6 +4,7 @@ defmodule EtherCAT.SimulatorTest do
   import ExUnit.CaptureLog
   alias EtherCAT.Bus.Datagram
   alias EtherCAT.Bus.Frame
+  alias EtherCAT.Bus.Transport.RawSocket
   import EtherCAT.Integration.Assertions
   alias EtherCAT.IntegrationSupport.Drivers.EK1100
   alias EtherCAT.Simulator
@@ -18,6 +19,8 @@ defmodule EtherCAT.SimulatorTest do
   @raw_loopback_interface "lo"
   @af_packet 17
   @ethertype 0x88A4
+  @sol_packet 263
+  @packet_ignore_outgoing 23
   @broadcast_mac <<0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF>>
   @test_source_mac <<0x02, 0x00, 0x00, 0x00, 0x00, 0x01>>
   @min_frame_size 60
@@ -66,6 +69,22 @@ defmodule EtherCAT.SimulatorTest do
 
     assert :ok = Supervisor.stop(supervisor)
     assert {:error, :not_found} = Simulator.info()
+  end
+
+  @tag :raw_socket
+  test "raw transport enables PACKET_IGNORE_OUTGOING" do
+    assert {:ok, sock} = RawSocket.open(interface: @raw_loopback_interface)
+
+    on_exit(fn ->
+      _ = RawSocket.close(sock)
+    end)
+
+    assert {:ok, true} =
+             :socket.getopt_native(
+               sock.raw,
+               {@sol_packet, @packet_ignore_outgoing},
+               :boolean
+             )
   end
 
   @tag :raw_socket

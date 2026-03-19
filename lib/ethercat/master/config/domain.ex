@@ -5,7 +5,7 @@ defmodule EtherCAT.Master.Config.Domain do
   alias EtherCAT.Master.Config.DomainPlan
 
   @auto_logical_base_stride 2048
-  @domain_option_keys [:id, :cycle_time_us, :miss_threshold]
+  @domain_option_keys [:id, :cycle_time_us, :miss_threshold, :recovery_threshold]
 
   @spec normalize_configs(term()) :: {:ok, [DomainConfig.t()]} | {:error, term()}
   def normalize_configs(domain_config) when is_list(domain_config) do
@@ -43,6 +43,7 @@ defmodule EtherCAT.Master.Config.Domain do
          id: cfg.id,
          cycle_time_us: cfg.cycle_time_us,
          miss_threshold: cfg.miss_threshold,
+         recovery_threshold: cfg.recovery_threshold,
          logical_base: idx * @auto_logical_base_stride
        }
      end)}
@@ -57,6 +58,7 @@ defmodule EtherCAT.Master.Config.Domain do
       id: config.id,
       cycle_time_us: config.cycle_time_us,
       miss_threshold: config.miss_threshold,
+      recovery_threshold: config.recovery_threshold,
       logical_base: logical_base
     ]
   end
@@ -75,13 +77,15 @@ defmodule EtherCAT.Master.Config.Domain do
            validate_config(%DomainConfig{
              id: id,
              cycle_time_us: cycle_time_us,
-             miss_threshold: Keyword.get(opts, :miss_threshold, 1000)
+             miss_threshold: Keyword.get(opts, :miss_threshold, 1000),
+             recovery_threshold: Keyword.get(opts, :recovery_threshold, 3)
            }) do
       {:ok,
        %DomainConfig{
          id: id,
          cycle_time_us: cycle_time_us,
-         miss_threshold: Keyword.get(opts, :miss_threshold, 1000)
+         miss_threshold: Keyword.get(opts, :miss_threshold, 1000),
+         recovery_threshold: Keyword.get(opts, :recovery_threshold, 3)
        }}
     else
       :error -> {:error, :missing_required_field}
@@ -101,7 +105,8 @@ defmodule EtherCAT.Master.Config.Domain do
   defp validate_config(%DomainConfig{id: id, cycle_time_us: cycle_time_us} = cfg)
        when is_atom(id) and is_integer(cycle_time_us) and cycle_time_us >= 1_000 and
               rem(cycle_time_us, 1_000) == 0 and
-              is_integer(cfg.miss_threshold) and cfg.miss_threshold > 0 do
+              is_integer(cfg.miss_threshold) and cfg.miss_threshold > 0 and
+              is_integer(cfg.recovery_threshold) and cfg.recovery_threshold > 0 do
     :ok
   end
 

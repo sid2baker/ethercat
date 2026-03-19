@@ -227,7 +227,11 @@ defmodule EtherCAT.MasterTest do
 
   test "await_operational reports runtime degradation details in recovering mode" do
     from = {self(), make_ref()}
-    faults = %{{:domain, :main} => {:cycle_invalid, {:wkc_mismatch, %{expected: 2, actual: 1}}}}
+
+    faults = %{
+      {:domain, :main} =>
+        {:cycle_degraded, %{reason: {:wkc_mismatch, %{expected: 2, actual: 1}}, consecutive: 3}}
+    }
 
     assert {:keep_state_and_data, [{:reply, ^from, {:error, {:runtime_degraded, ^faults}}}]} =
              EtherCAT.Master.FSM.handle_event(
@@ -244,7 +248,7 @@ defmodule EtherCAT.MasterTest do
       start: {FakeSlave, :start_link, [:sensor, :ok]}
     })
 
-    faults = %{{:domain, :main} => {:cycle_invalid, :timeout}}
+    faults = %{{:domain, :main} => {:cycle_degraded, %{reason: :timeout, consecutive: 3}}}
 
     data = %EtherCAT.Master{
       activation_failures: %{sensor: {:op, :no_response}},
@@ -403,18 +407,19 @@ defmodule EtherCAT.MasterTest do
              )
   end
 
-  test "domain cycle invalid enters recovering and recovery returns to running" do
+  test "domain cycle degraded enters recovering and recovery returns to running" do
     reason = {:wkc_mismatch, %{expected: 2, actual: 1}}
+    fault = {:cycle_degraded, %{reason: reason, consecutive: 3}}
 
     assert {:next_state, :recovering, %EtherCAT.Master{} = recovering_data} =
              EtherCAT.Master.FSM.handle_event(
                :info,
-               {:domain_cycle_invalid, :main, reason},
+               {:domain_cycle_degraded, :main, reason, 3},
                :operational,
                %EtherCAT.Master{}
              )
 
-    assert recovering_data.runtime_faults == %{{:domain, :main} => {:cycle_invalid, reason}}
+    assert recovering_data.runtime_faults == %{{:domain, :main} => fault}
 
     assert {:next_state, :operational, %EtherCAT.Master{runtime_faults: %{}}} =
              EtherCAT.Master.FSM.handle_event(
@@ -764,7 +769,13 @@ defmodule EtherCAT.MasterTest do
 
     data = %EtherCAT.Master{
       domain_configs: [
-        %DomainPlan{id: domain_id, cycle_time_us: 1_000, miss_threshold: 500, logical_base: 0}
+        %DomainPlan{
+          id: domain_id,
+          cycle_time_us: 1_000,
+          miss_threshold: 500,
+          recovery_threshold: 3,
+          logical_base: 0
+        }
       ]
     }
 
@@ -814,6 +825,7 @@ defmodule EtherCAT.MasterTest do
                      id: domain_id,
                      cycle_time_us: 1_000,
                      miss_threshold: 500,
+                     recovery_threshold: 3,
                      logical_base: 0
                    }
                  ]

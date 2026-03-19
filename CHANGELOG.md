@@ -39,9 +39,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   transitions behind that boundary (`9f1342a`).
 - Redundant-link timeout detail now emits bounded telemetry and recovery logs
   instead of warning on every repeated timeout pattern (`2d97faf`).
+- Redundant-link `no_arrivals` timeout detail now stays in telemetry and
+  generic frame-timeout warnings instead of emitting one-shot warning/cleared
+  log pairs for transient blips (`pending hash`).
 - Input reads now fail closed on stale cached PDO data, and simulator transport
   ownership is split cleanly under `EtherCAT.Simulator.Transport.*`
   (`11d1af2`).
+- Raw AF_PACKET transport now suppresses local TX delivery with
+  `PACKET_IGNORE_OUTGOING`; redundant links are raw-only in production, and
+  degraded-port health no longer suppresses later send attempts on either leg.
+  Reverse-path cross copies no longer complete exchanges ahead of the
+  authoritative forward-path data, and completed exchanges now drain both
+  legs before dispatching the next request to cut late-frame `idx_mismatch`
+  drops (`pending hash`).
 
 ### Fixed
 - DC recovery and configuration validation are stricter, catching bad setup
@@ -67,6 +77,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Slave.subscribe/3` rejects unknown signal/latch names, and
   `Domain.write/read/sample` use explicit ETS lookup instead of exception-driven
   control flow (`4a9a4ad`).
+- Default simulator/master runs no longer flap the whole session on isolated
+  single-cycle misses: domains now escalate to master recovery only after a
+  short unhealthy streak, while timeout tuning keeps a wider `5ms` floor on
+  both the UDP simulator path and raw startup/activation traffic (`pending
+  hash`).
 
 ### Docs
 - `ARCHITECTURE.md`, `README.md`, `RELEASE.md`, and simulator guidance were

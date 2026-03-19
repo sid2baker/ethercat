@@ -34,6 +34,7 @@ defmodule EtherCAT.Master.ConfigTest do
     assert config.bus_opts[:interface] == "eth0"
     assert config.bus_opts[:backup_interface] == "eth1"
     assert config.bus_opts[:name] == EtherCAT.Bus
+    assert config.frame_timeout_floor_ms == 5
     refute Keyword.has_key?(config.bus_opts, :slaves)
     refute Keyword.has_key?(config.bus_opts, :domains)
     refute Keyword.has_key?(config.bus_opts, :scan_poll_ms)
@@ -160,6 +161,15 @@ defmodule EtherCAT.Master.ConfigTest do
 
     assert udp_config.bus_opts[:host] == {127, 0, 0, 2}
     assert udp_config.bus_opts[:bind_ip] == {127, 0, 0, 1}
+    assert udp_config.frame_timeout_floor_ms == 5
+
+    assert {:error, {:invalid_start_options, :redundant_requires_raw_transport}} =
+             Config.normalize_start_options(
+               transport: :udp,
+               host: {127, 0, 0, 2},
+               bind_ip: {127, 0, 0, 1},
+               backup_interface: "eth1"
+             )
 
     assert {:error, {:invalid_start_options, :legacy_dc_cycle_ns}} =
              Config.normalize_start_options(interface: "eth0", dc_cycle_ns: 1_000_000)

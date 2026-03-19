@@ -54,12 +54,14 @@ defmodule EtherCAT.MasterActivationTest do
           id: domain_id,
           cycle_time_us: 1_000,
           miss_threshold: 500,
+          recovery_threshold: 3,
           logical_base: 0
         },
         %DomainPlan{
           id: missing_domain_id,
           cycle_time_us: 1_000,
           miss_threshold: 500,
+          recovery_threshold: 3,
           logical_base: 1
         }
       ]

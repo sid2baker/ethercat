@@ -13,20 +13,20 @@ timeout window.
 
 ## Expected Master Behavior
 
-- The passthrough copy (wkc=0, data unchanged) is indistinguishable from an
-  outgoing echo and is correctly discarded by the content-based echo filter.
+- The passthrough copy (wkc=0, data unchanged) is not authoritative enough to
+  complete the exchange and is correctly discarded.
 - The exchange times out because the real processed response arrives too late.
 - The bus returns `{:error, :timeout}` to the caller.
 
 ## Actual Behavior Today
 
-Correct. The echo filter discards the passthrough and the timeout fires.
+Correct. The redundant link discards the passthrough-only copy and the timeout
+fires.
 
 ## Test Shape
 
 1. Boot redundant raw ring on veth pairs.
-2. Delay the forward-path response by 200ms at the simulator's secondary
-   endpoint (only delays frames originating from primary ingress).
+2. Delay all responses emitted by the simulator's secondary endpoint by 200ms.
 3. Issue a fixed-station `FPRD` to the right-most slave so the secondary-ingress
    copy is passthrough-only.
 4. Assert that `Bus.transaction` returns `{:error, :timeout}`.

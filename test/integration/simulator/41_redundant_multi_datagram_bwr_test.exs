@@ -4,11 +4,11 @@ defmodule EtherCAT.Integration.Simulator.RedundantMultiDatagramBwrTest do
   init_default_reset with 13 register writes) return all wkc=0 in redundant
   mode, even though single-datagram BRD works fine.
 
-  Root cause: AF_PACKET outgoing echoes (kernel loopback copies of TX frames)
-  arrive faster than real cross-delivery responses. Echoes have wkc=0 and may
-  carry a source MAC that doesn't match either NIC, causing `:unknown`
-  classification. If two echoes complete the exchange before the real processed
-  response arrives, the caller sees all-zero wkc values.
+  Root cause: non-authoritative passthrough copies (wkc=0, unchanged data)
+  must not complete the exchange before the real processed cross-delivery
+  response arrives. Raw transport now blocks local TX delivery in-kernel, and
+  the redundant link still treats unchanged `wkc=0` copies as insufficient to
+  complete a transaction.
   """
   use ExUnit.Case, async: false
 
@@ -115,56 +115,6 @@ defmodule EtherCAT.Integration.Simulator.RedundantMultiDatagramBwrTest do
 
     assert failures == [],
            "expected all 10 BWR transactions to succeed, failures: #{inspect(Enum.reverse(failures))}"
-  end
-
-  @tag :raw_socket_redundant
-  test "redundant BWR succeeds even with echo filtering disabled (link-layer defense)" do
-    # Disables transport-level echo filtering (drop_outgoing_echo?: false) to
-    # exercise the link-layer wkc=0 guard. On veth pairs, outgoing echoes have
-    # pkttype: :outgoing; without the filter, they reach the link as :unknown
-    # frames with wkc=0 — reproducing the real hardware scenario.
-    endpoint = RedundantSimulatorRing.start_simulator!()
-
-    bus_name = :"redundant_bwr_no_echo_filter_#{System.unique_integer([:positive])}"
-
-    {:ok, bus} =
-      Bus.start_link(
-        name: bus_name,
-        interface: endpoint.master_primary_interface,
-        backup_interface: endpoint.master_secondary_interface,
-        frame_timeout_ms: 100,
-        drop_outgoing_echo?: false
-      )
-
-    on_exit(fn ->
-      if Process.alive?(bus), do: GenServer.stop(bus)
-    end)
-
-    wait_until_bus_ready!(bus_name)
-
-    tx = InitReset.transaction()
-
-    failures =
-      for i <- 1..5, reduce: [] do
-        acc ->
-          case Bus.transaction(bus_name, tx) do
-            {:ok, results} ->
-              # Check required BWR datagrams (skip optional DC ones at indices 5-8)
-              required_wkcs = Enum.take(Enum.map(results, & &1.wkc), 5)
-
-              if Enum.all?(required_wkcs, &(&1 > 0)) do
-                acc
-              else
-                [{i, Enum.map(results, & &1.wkc)} | acc]
-              end
-
-            {:error, reason} ->
-              [{i, {:error, reason}} | acc]
-          end
-      end
-
-    assert failures == [],
-           "expected BWR to succeed without echo filtering, failures: #{inspect(Enum.reverse(failures))}"
   end
 
   @tag :raw_socket_redundant

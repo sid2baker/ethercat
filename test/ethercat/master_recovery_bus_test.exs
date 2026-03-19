@@ -213,7 +213,7 @@ defmodule EtherCAT.MasterRecoveryBusTest do
       slaves: [coupler: 0x1000, inputs: 0x1001, outputs: 0x1002],
       slave_faults: %{outputs: {:reconnect_failed, :not_reconnected}},
       runtime_faults: %{
-        {:domain, :main} => {:cycle_invalid, :timeout},
+        {:domain, :main} => {:cycle_degraded, %{reason: :timeout, consecutive: 3}},
         {:slave, :outputs} => {:reconnect_failed, :not_reconnected}
       }
     }

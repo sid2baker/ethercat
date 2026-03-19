@@ -41,6 +41,9 @@ defmodule EtherCAT.Domain.State do
       cycle_health: :healthy,
       miss_count: 0,
       miss_threshold: Keyword.get(opts, :miss_threshold, 100),
+      invalid_streak_count: 0,
+      degraded?: false,
+      recovery_threshold: Keyword.get(opts, :recovery_threshold, 3),
       cycle_count: 0,
       total_miss_count: 0,
       table: table

@@ -8,6 +8,7 @@ defmodule EtherCAT.Master.Config do
   alias EtherCAT.Slave.Config, as: SlaveConfig
 
   @default_base_station 0x1000
+  @default_frame_timeout_floor_ms 5
   @max_station_address 0xFFFF
   @master_option_keys [
     :slaves,
@@ -26,6 +27,7 @@ defmodule EtherCAT.Master.Config do
           dc_config: DCConfig.t() | nil,
           domain_config: [DomainPlan.t()],
           slave_config: [SlaveConfig.t()],
+          frame_timeout_floor_ms: pos_integer(),
           frame_timeout_override_ms: pos_integer() | nil,
           scan_stable_ms: pos_integer(),
           scan_poll_ms: pos_integer()
@@ -36,6 +38,7 @@ defmodule EtherCAT.Master.Config do
             dc_config: %DCConfig{},
             domain_config: [],
             slave_config: [],
+            frame_timeout_floor_ms: @default_frame_timeout_floor_ms,
             frame_timeout_override_ms: nil,
             scan_stable_ms: 1_000,
             scan_poll_ms: 100
@@ -47,10 +50,12 @@ defmodule EtherCAT.Master.Config do
     base_station = Keyword.get(opts, :base_station, @default_base_station)
     dc = Keyword.get(opts, :dc, %DCConfig{})
     frame_timeout_override_ms = Keyword.get(opts, :frame_timeout_ms)
+    frame_timeout_floor_ms = @default_frame_timeout_floor_ms
     scan_stable_ms = Keyword.get(opts, :scan_stable_ms, 1_000)
     scan_poll_ms = Keyword.get(opts, :scan_poll_ms, 100)
 
     with :ok <- validate_bus_source(opts),
+         :ok <- validate_redundant_transport(opts),
          :ok <- reject_legacy_start_options(opts),
          :ok <- validate_base_station(base_station),
          {:ok, dc_config} <- normalize_dc_config(dc),
@@ -66,6 +71,7 @@ defmodule EtherCAT.Master.Config do
          dc_config: dc_config,
          domain_config: allocated_domains,
          slave_config: normalized_slaves,
+         frame_timeout_floor_ms: frame_timeout_floor_ms,
          frame_timeout_override_ms: frame_timeout_override_ms,
          scan_stable_ms: scan_stable_ms,
          scan_poll_ms: scan_poll_ms
@@ -151,6 +157,19 @@ defmodule EtherCAT.Master.Config do
       {:error, {:invalid_start_options, :legacy_dc_cycle_ns}}
     else
       :ok
+    end
+  end
+
+  defp validate_redundant_transport(opts) do
+    cond do
+      not Keyword.has_key?(opts, :backup_interface) ->
+        :ok
+
+      udp_transport?(opts) ->
+        {:error, {:invalid_start_options, :redundant_requires_raw_transport}}
+
+      true ->
+        :ok
     end
   end
 
