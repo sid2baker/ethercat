@@ -97,7 +97,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Redundant links now complete late degraded reliable one-sided bounces within
   the original frame budget, domain timeout-class misses stay stable even when
   queued realtime work expires, and the maintained redundant replug watcher now
-  matches the current `Bus.info/1` link/topology surface (`pending hash`).
+  matches the current `Bus.info/1` link/topology surface (`7bfdb68`).
 - Slaves held in `:preop` or `:safeop` now keep health polling active and
   still transition into recovery on disconnect or lower-state regressions
   instead of staying stranded in stale held states (`efbc8da`).
