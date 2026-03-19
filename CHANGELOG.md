@@ -55,7 +55,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Slave reconnect ownership is now simpler: `:down` slaves probe their stored
   scan position, reclaim an anonymous fixed station locally, and rebuild to
   PREOP themselves instead of waiting for master reconnect authorization or
-  rediscovery fallback (`pending hash`).
+  rediscovery fallback (`efbc8da`).
 
 ### Fixed
 - DC recovery and configuration validation are stricter, catching bad setup
@@ -90,9 +90,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Redundant realtime exchanges now complete immediately on a single processed
   bounce instead of waiting for merge-time timeout fallback, so `1ms` cyclic
   domains can stay healthy after backup-port disconnect (`52c4ae8`).
+- Redundant realtime logical exchanges now keep a bounded merge window for
+  complementary bounce replies before accepting a single processed bounce, so
+  split-ring raw topology breaks merge back to full WKC instead of triggering
+  false domain recovery (`pending hash`).
 - Slaves held in `:preop` or `:safeop` now keep health polling active and
   still transition into recovery on disconnect or lower-state regressions
-  instead of staying stranded in stale held states (`pending hash`).
+  instead of staying stranded in stale held states (`efbc8da`).
 
 ### Docs
 - `ARCHITECTURE.md`, `README.md`, `RELEASE.md`, and simulator guidance were

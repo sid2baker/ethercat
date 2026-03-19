@@ -1,51 +1,35 @@
 ## Scenario
 
-Master gets stuck in `:recovering` after a disconnected PDO slave
-reconnects. A related limitation is that `slave_info/1` can still report
-`al_state: :op` during a silent PDO-only failure because the slave health
-poll is register-based, not PDO-based.
+Regression coverage for two related runtime-healing paths:
+
+- a silent PDO-only failure where LRW degrades but register health polling stays
+  green
+- a full disconnect or power-cycle where a PDO slave later returns anonymous
+  and must reclaim its fixed station locally by scan position
 
 ## Real-World Analog
 
-On CM4 hardware, a slave loses power or cable temporarily.
+On CM4 hardware, a slave loses PDO processing, power, or cable temporarily.
 
-**Eventually (after domain cycle detects fault):**
-- Master enters `:recovering`
-- Slave reconnects (ESC resets to `:init`)
-- Domain LRW still gets wkc_mismatch (slave not configured for PDO)
-- Nobody reconfigures the slave → master stays in `:recovering` forever
+## Historical Regression
 
-## Root Cause Analysis
+Older runtime behavior could get stuck because reconnect healing depended on the
+old fixed station and master-side orchestration. A power-cycled slave could
+return at station `0x0000`, never be rebuilt for PDO again, and leave the
+master stuck in `:recovering`.
 
-Two distinct problems:
-
-### Problem 1: Silent disconnect (no immediate detection)
-
-Without health polling, or when health poll FPRD still succeeds (slave
-ESC responds but PDO processing is broken), the slave process has no way
-to know it's disconnected. The domain cycle detects it via wkc_mismatch,
-but the slave process can stay in `:op`.
-
-This is modeled by `Fault.logical_wkc_offset` — only affects LRW (domain
-cycles) but not FPRD (health polls).
-
-### Problem 2: Stuck recovery after reconnect
-
-When the slave physically reconnects after a power cycle, its ESC is at
-`:init`. The domain LRW still gets wkc_mismatch because the slave isn't
-configured for PDO. But nobody tells the slave process to reconfigure —
-it thinks it's still in `:op`.
-
-The master has a `{:domain, :main}` runtime fault that never clears
-because the domain wkc never recovers. And no slave fault exists to
-trigger the reconnect flow.
+This scenario now guards the fixed behavior: the slave worker probes its stored
+position, reclaims an anonymous fixed station locally when identity matches, and
+reruns its own PREOP rebuild before the master resumes OP.
 
 ## Expected Behavior
 
-1. Full disconnect should be detected promptly by the default AL health poll.
-2. Silent PDO failures should still drive the master into `:recovering`.
-3. After reconnect, master should reconfigure the slave and return to
-   `:operational`.
+1. Silent PDO failures should still drive the master into `:recovering` even if
+   FPRD health polling stays green.
+2. Full disconnect should be detected promptly by the default AL health poll.
+3. If the slave comes back anonymous at the same configured scan position, the
+   slave worker should reclaim its fixed station locally and rebuild to PREOP.
+4. The master should then return the session to `:operational`.
 
 ## Test Shape
 
@@ -64,11 +48,20 @@ trigger the reconnect flow.
 2. Inject `Fault.disconnect` for bounded window.
 3. Assert master enters `:recovering`.
 4. Assert slave transitions away from `:op` (health poll detects it).
-5. Wait for fault window to expire (slave reconnects).
+5. Wait for fault window to expire (slave reconnects and rebuilds).
 6. Assert master returns to `:operational`.
 7. Assert loopback I/O works.
 
-### Test C: wkc fault during reconnection window
+### Test C: disconnected slave returns anonymous and reclaims station locally
 
-1. Same as Test B, but inject a brief wkc fault after reconnect.
-2. Assert master still returns to `:operational`.
+1. Disconnect the PDO slave long enough for recovery to start.
+2. Power-cycle it while still disconnected so it returns at station `0x0000`.
+3. Assert the slave reclaims its configured fixed station locally.
+4. Assert master still returns to `:operational`.
+
+### Test D: anonymous power-cycle without a disconnect window
+
+1. Power-cycle the PDO slave while it is still physically present.
+2. Assert the slave returns anonymous at station `0x0000`.
+3. Assert local station reclaim and PREOP rebuild succeed.
+4. Assert master returns to `:operational`.

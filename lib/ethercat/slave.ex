@@ -30,11 +30,13 @@ defmodule EtherCAT.Slave do
       bootstrap --> init: INIT is requested
       preop --> safeop: SAFEOP is requested
       preop --> op: OP is requested
-      preop --> init: INIT is requested
+      preop --> init: INIT is requested or AL health regresses to INIT
+      preop --> bootstrap: AL health regresses to BOOTSTRAP
       preop --> down: health poll sees bus loss or zero WKC
       safeop --> op: OP is requested
-      safeop --> preop: PREOP is requested
-      safeop --> init: INIT is requested
+      safeop --> preop: PREOP is requested or AL health regresses to PREOP
+      safeop --> init: INIT is requested or AL health regresses to INIT
+      safeop --> bootstrap: AL health regresses to BOOTSTRAP
       safeop --> down: health poll sees bus loss or zero WKC
       op --> safeop: SAFEOP is requested or AL health retreats
       op --> preop: PREOP is requested

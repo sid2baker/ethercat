@@ -15,8 +15,8 @@ An I/O terminal loses power, a field cable goes intermittent, or a connector is
   slave as down.
 - Master should stay in `:recovering` until both the domain and the slave fault
   are healed.
-- After reconnect, the master should authorize reconnect, drive the slave back
-  through `:preop`, request `:op`, and clear the slave fault.
+- After reconnect, the slave should rebuild itself back through `:preop`, then
+  the master should request `:op` and clear the slave fault.
 
 ## Actual Behavior Today
 
@@ -28,8 +28,8 @@ Observed with `Simulator.inject_fault({:next_exchanges, 30, {:disconnect, :outpu
 - the outputs slave health poll later reports `wkc=0` and the slave fault
   becomes `{:down, :disconnected}`
 - after the counted disconnect window ends, the outputs slave reports
-  reconnect, the master authorizes it, the slave rebuilds through `:preop`,
-  returns to `:op`, and the master returns to `:operational`
+  reconnect, the slave rebuilds through `:preop`, the master returns it to
+  `:op`, and the session returns to `:operational`
 - PDO traffic works again after reconnect
 
 The architectural nuance still matters:

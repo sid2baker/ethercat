@@ -7,9 +7,9 @@ rerunning driver PREOP mailbox configuration.
 ## Real-World Analog
 
 A non-critical mailbox device drops off the ring briefly. Link returns, the
-master authorizes reconnect, the device accepts the full PREOP CoE startup
-download, but the final acknowledgement returns malformed protocol data after
-the object write is already committed.
+slave rebuilds locally back to PREOP, the device accepts the full PREOP CoE
+startup download, but the final acknowledgement returns malformed protocol data
+after the object write is already committed.
 
 ## Expected Master Behavior
 

@@ -18,7 +18,12 @@ defmodule EtherCAT.TestHelper do
   end
 
   def raw_socket_redundant_toggle_excludes do
-    case raw_socket_redundant_excludes() do
+    case exclusion_for(
+           :raw_socket_redundant,
+           "redundant raw simulator",
+           redundant_raw_interfaces(),
+           warn?: false
+         ) do
       [] ->
         if can_toggle_redundant_raw_links?() do
           []
@@ -41,13 +46,16 @@ defmodule EtherCAT.TestHelper do
     ]
   end
 
-  defp exclusion_for(tag, label, interfaces) do
+  defp exclusion_for(tag, label, interfaces, opts \\ []) do
     case interface_statuses(interfaces) do
       {[], []} ->
         []
 
       {missing, unavailable} ->
-        warn_excluded(tag, label, missing, unavailable)
+        if Keyword.get(opts, :warn?, true) do
+          warn_excluded(tag, label, missing, unavailable)
+        end
+
         [tag]
     end
   end

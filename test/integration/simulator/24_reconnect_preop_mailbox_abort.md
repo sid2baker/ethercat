@@ -7,8 +7,8 @@ configuration.
 ## Real-World Analog
 
 A non-critical mailbox device drops off the ring briefly. Link returns, the
-master authorizes reconnect, but the device rejects one of the driver's PREOP
-CoE writes during the rebuild path before it can re-enter OP.
+slave rebuilds locally back to PREOP, but the device rejects one of the
+driver's PREOP CoE writes during that rebuild path before it can re-enter OP.
 
 ## Expected Master Behavior
 

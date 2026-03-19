@@ -1,7 +1,8 @@
 ## Scenario
 
 One PDO-participating slave retreats from `:op` to `:safeop`, with slave
-health polling enabled.
+health polling enabled. The same scenario file also guards the later
+disconnect-while-held path.
 
 ## Real-World Analog
 
@@ -19,6 +20,9 @@ state, but remains electrically present on the segment.
   once the slave returns to operational.
 - Domain cycling should remain healthy while the slave is still present and
   contributing WKC.
+- If the same slave later disconnects while already held in `:safeop`, the
+  health poll should still transition it to `:down` and then follow the normal
+  reconnect-healing path.
 
 ## Actual Behavior Today
 
@@ -36,12 +40,23 @@ This matches the intended slave-local recovery policy.
 
 ## Test Shape
 
+### Test A: SAFEOP retreat stays slave-local
+
 1. boot the ring with health polling enabled on the affected slave
 2. inject `{:retreat_to_safeop, :outputs}`
 3. assert the health-fault telemetry event
 4. assert the slave fault becomes `{:retreated, :safeop}`
 5. assert the master remains `:operational` and the domain remains healthy
 6. assert the fault later clears and the slave returns to `:op`
+
+### Test B: SAFEOP disconnect still becomes `:down`
+
+1. first drive the slave to `:safeop`
+2. inject a bounded full disconnect while it is still held there
+3. assert the slave fault changes from `{:retreated, :safeop}` to
+   `{:down, :no_response}`
+4. assert the master follows the normal recovery path and later returns the
+   slave to `:op`
 
 ## Simulator API Notes
 

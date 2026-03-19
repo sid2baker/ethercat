@@ -210,6 +210,7 @@ For detailed state diagrams and sequencing, see the moduledocs:
 - Healthy domains can keep cycling if the fault is localized and the transport is still usable.
 - Total bus loss can stop domains after the configured miss threshold; recovery can restart them.
 - Slave reconnect is PREOP-first: the slave rebuilds its local state, then the master decides when to return it to OP.
+- Slaves held in `:preop` or `:safeop` still health-poll for disconnects and lower-state regressions.
 
 The maintained end-to-end hardware walkthrough is
 `MIX_ENV=test mix run test/integration/hardware/scripts/fault_tolerance.exs --interface <eth-iface>`.

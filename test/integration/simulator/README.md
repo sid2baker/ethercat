@@ -74,9 +74,9 @@ plan -> fix -> verify -> commit.
 - `00`: baseline healthy ring boot and PDO exchange
 - `01`: transient full-response timeout
 - `02`: cyclic WKC mismatch
-- `03`: slave disconnect with health polling and reconnect
+- `03`: slave disconnect with health polling and PREOP-first reconnect healing
 - `04`: raw frame corruption or stale/duplicate frame
-- `05`: slave retreat to `SAFEOP` with health polling
+- `05`: slave retreat to `SAFEOP` with health polling, including later disconnect while held there
 - `06`: mailbox abort during startup or recovery
 - `07`: combined fault script, e.g. timeout -> reconnect -> WKC skew
 - `08`: delayed slave-local mutation after exchange-fault recovery

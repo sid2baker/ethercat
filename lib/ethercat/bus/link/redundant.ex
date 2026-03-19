@@ -92,6 +92,7 @@ defmodule EtherCAT.Bus.Link.Redundant do
 
   @max_dispatch_errors 3
   @merge_window_ms 25
+  @realtime_bounce_merge_wait_ms 1
 
   defstruct [
     # Transport (required)
@@ -509,6 +510,13 @@ defmodule EtherCAT.Bus.Link.Redundant do
         # First reply arrived; wait only within the remaining frame-time budget.
         {:keep_state, data,
          [{:state_timeout, merge_timeout_ms(data.exchange, data.frame_timeout_ms), :timeout}]}
+
+      :waiting_realtime_bounce_merge ->
+        {:keep_state, data,
+         [
+           {:state_timeout,
+            realtime_bounce_merge_timeout_ms(data.exchange, data.frame_timeout_ms), :timeout}
+         ]}
     end
   end
 
@@ -532,6 +540,9 @@ defmodule EtherCAT.Bus.Link.Redundant do
 
       [single] ->
         cond do
+          wait_for_complementary_realtime_bounce?(single, expected_count, exchange) ->
+            :waiting_realtime_bounce_merge
+
           authoritative_single_arrival?(single, expected_count, exchange) ->
             # Only one port sent — this single reply completes the exchange
             {:done, single.datagrams}
@@ -585,6 +596,17 @@ defmodule EtherCAT.Bus.Link.Redundant do
   end
 
   defp authoritative_single_arrival?(_arrival, _expected_count, _exchange), do: false
+
+  defp wait_for_complementary_realtime_bounce?(
+         %{class: class, datagrams: datagrams},
+         expected_count,
+         exchange
+       )
+       when expected_count > 1 and class in [:pri_bounce, :sec_bounce] do
+    exchange.tx_class == :realtime and logical_exchange?(exchange) and frame_processed?(datagrams)
+  end
+
+  defp wait_for_complementary_realtime_bounce?(_arrival, _expected_count, _exchange), do: false
 
   defp resolve_two_arrivals(a, b, exchange) do
     classes = MapSet.new([a.class, b.class])
@@ -764,6 +786,10 @@ defmodule EtherCAT.Bus.Link.Redundant do
     min(@merge_window_ms, remaining_ms)
   end
 
+  defp realtime_bounce_merge_timeout_ms(exchange, frame_timeout_ms) do
+    min(@realtime_bounce_merge_wait_ms, merge_timeout_ms(exchange, frame_timeout_ms))
+  end
+
   defp timeout_detail(%{arrivals: []}), do: :no_arrivals
   defp timeout_detail(_exchange), do: :partial_arrivals
 
@@ -907,6 +933,10 @@ defmodule EtherCAT.Bus.Link.Redundant do
       Enum.all?(Enum.zip(sent, response_datagrams), fn {s, r} ->
         r.wkc == 0 and s.data == r.data
       end)
+  end
+
+  defp logical_exchange?(exchange) do
+    Enum.any?(exchange.datagrams, &(&1.cmd in [10, 11, 12]))
   end
 
   defp queue_total(data), do: :queue.len(data.realtime) + :queue.len(data.reliable)

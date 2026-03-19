@@ -205,11 +205,8 @@ defmodule EtherCAT.Integration.Simulator.ReconnectPreopDisconnectSafeopChainTest
              slave: :outputs,
              from: :down,
              from_detail: :no_response,
-             to: :reconnecting,
-             to_detail: :authorized
-           ]},
-          {:event, [:ethercat, :master, :slave_fault, :changed],
-           metadata: [slave: :outputs, from: :reconnecting, from_detail: :authorized, to: nil]}
+             to: nil
+           ]}
         ])
 
         Expect.trace_sequence(trace, [
