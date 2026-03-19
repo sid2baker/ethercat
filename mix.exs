@@ -1,7 +1,7 @@
 defmodule EtherCAT.MixProject do
   use Mix.Project
 
-  @version "0.4.1"
+  @version "0.4.2"
   @source_url "https://github.com/sid2baker/ethercat"
 
   def project do

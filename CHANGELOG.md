@@ -7,10 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-03-19
+
 ### Fixed
 - The release workflow now runs on OTP `28.1` so `mix hex.publish --dry-run`
   and release publishing no longer crash inside Hex's regex import path on
-  GitHub runners.
+  GitHub runners (`e6fde6f`).
 
 ## [0.4.1] - 2026-03-19
 
