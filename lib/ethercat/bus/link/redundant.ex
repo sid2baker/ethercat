@@ -17,8 +17,9 @@ defmodule EtherCAT.Bus.Link.Redundant do
 
   ## Exchange flow
 
-  Every exchange sends on **both** ports simultaneously, starts a timeout,
-  and saves the caller. Frames are classified on arrival:
+  Every exchange attempts to send on **both** ports, starts a timeout if at
+  least one send succeeds, and saves the caller. Frames are classified on
+  arrival:
 
     * **Cross-delivery** — frame arrived on the opposite port (src MAC
       belongs to the other NIC). Ring path is healthy.
@@ -27,38 +28,38 @@ defmodule EtherCAT.Bus.Link.Redundant do
       the break point.
 
   The forward cross (primary's frame on secondary) is authoritative and
-  triggers an immediate reply to the caller. The reverse cross (secondary's
-  frame on primary) is confirmation only.
+  completes immediately. A single reverse cross or bounce can shorten the
+  timeout to a merge window while the link waits for a forward cross or
+  second frame. A single `:unknown` arrival with processed datagrams
+  (`wkc > 0`) can also complete immediately when MAC classification is not
+  trustworthy. On timeout, partial arrivals are converted into a best-effort
+  reply when they still match the awaiting datagrams; only no-arrival or
+  mismatch cases become `{:error, :timeout}`.
 
-  ```
+  ```mermaid
   flowchart TD
       IDLE -->|transact| SEND
-      SEND[Send on BOTH ports, start timeout] --> WAIT
+      SEND[Attempt primary and secondary send] -->|any leg sent| WAIT
+      SEND -->|both sends fail| ERR_SEND
 
-      WAIT{First frame?}
+      WAIT{Arrival or timeout}
+      WAIT -->|forward cross| REPLY_OK
+      WAIT -->|single reply on one live leg| REPLY_OK
+      WAIT -->|single unknown with wkc>0| REPLY_OK
+      WAIT -->|reverse cross / bounce / other unknown| MERGE_WAIT
+      WAIT -->|timeout with no arrivals| ERR_TIMEOUT
 
-      WAIT -->|pri MAC on sec| REPLY_OK
-      WAIT -->|sec MAC on pri| GOT_REV
-      WAIT -->|pri MAC on pri| GOT_PRI_B
-      WAIT -->|sec MAC on sec| GOT_SEC_B
-      WAIT -->|timeout| ERR_TIMEOUT
+      MERGE_WAIT{Merge window}
+      MERGE_WAIT -->|forward cross arrives| REPLY_OK
+      MERGE_WAIT -->|reverse cross + any second frame| REPLY_OK
+      MERGE_WAIT -->|pri bounce + sec bounce| MERGE_OK
+      MERGE_WAIT -->|timeout with partial arrivals| BEST_EFFORT
 
-      GOT_REV{Reverse cross saved} -->|pri MAC on sec| REPLY_OK
-      GOT_REV -->|pri MAC on pri| MERGE
-      GOT_REV -->|timeout| ERR_PARTIAL
-
-      GOT_PRI_B{Pri bounced} -->|sec MAC on sec| MERGE
-      GOT_PRI_B -->|sec MAC on pri| REPLY_OK
-      GOT_PRI_B -->|timeout| ERR_PARTIAL
-
-      GOT_SEC_B{Sec bounced} -->|pri MAC on pri| MERGE
-      GOT_SEC_B -->|pri MAC on sec| REPLY_OK
-      GOT_SEC_B -->|timeout| ERR_PARTIAL
-
-      REPLY_OK([Reply OK]) --> IDLE
-      MERGE([Merge bounced frames / degraded]) --> IDLE
-      ERR_TIMEOUT([Error timeout / both ports down]) --> IDLE
-      ERR_PARTIAL([Error partial / mark port down]) --> IDLE
+      REPLY_OK([Reply awaiting callers]) --> IDLE
+      MERGE_OK([Merge complementary bounces]) --> IDLE
+      BEST_EFFORT([Reply with best available datagrams]) --> IDLE
+      ERR_TIMEOUT([Reply timeout]) --> IDLE
+      ERR_SEND([Reply transport unavailable]) --> IDLE
   ```
 
   ## gen_statem states
@@ -66,8 +67,11 @@ defmodule EtherCAT.Bus.Link.Redundant do
     * `:idle` — no exchange in flight, ready to dispatch
     * `:awaiting` — exchange sent, waiting for reply(ies)
 
-  The bus does not track per-port health. It always sends on both ports
-  if the transport is open. The caller decides what to do with timeouts.
+  The link tracks per-port transport health from open/send failures and
+  surfaces degraded topology and fault info through `info/1`. Timeout
+  observations are logged and emitted as telemetry, but receive-side timeout
+  patterns do not directly mark a port down unless send/open state also
+  fails.
   """
 
   @behaviour :gen_statem
