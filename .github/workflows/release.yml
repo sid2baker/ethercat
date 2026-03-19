@@ -45,7 +45,7 @@ jobs:
           TAG_NAME: ${{ github.ref_name }}
         run: |
           version="${TAG_NAME#v}"
-          package_version="$(mix run -e 'IO.write(Mix.Project.config()[:version])')"
+          package_version="$(mix eval --no-compile 'IO.write(Mix.Project.config()[:version])')"
 
           if [ "$version" != "$package_version" ]; then
             echo "Tag ${version} does not match mix.exs version ${package_version}" >&2
