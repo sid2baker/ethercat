@@ -41,7 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of warning on every repeated timeout pattern (`2d97faf`).
 - Redundant-link `no_arrivals` timeout detail now stays in telemetry and
   generic frame-timeout warnings instead of emitting one-shot warning/cleared
-  log pairs for transient blips (`pending hash`).
+  log pairs for transient blips (`cf4a90c`).
 - Input reads now fail closed on stale cached PDO data, and simulator transport
   ownership is split cleanly under `EtherCAT.Simulator.Transport.*`
   (`11d1af2`).
@@ -51,7 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Reverse-path cross copies no longer complete exchanges ahead of the
   authoritative forward-path data, and completed exchanges now drain both
   legs before dispatching the next request to cut late-frame `idx_mismatch`
-  drops (`pending hash`).
+  drops (`cf4a90c`).
 
 ### Fixed
 - DC recovery and configuration validation are stricter, catching bad setup
@@ -80,8 +80,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Default simulator/master runs no longer flap the whole session on isolated
   single-cycle misses: domains now escalate to master recovery only after a
   short unhealthy streak, while timeout tuning keeps a wider `5ms` floor on
-  both the UDP simulator path and raw startup/activation traffic (`pending
-  hash`).
+  both the UDP simulator path and raw startup/activation traffic (`cf4a90c`).
 
 ### Docs
 - `ARCHITECTURE.md`, `README.md`, `RELEASE.md`, and simulator guidance were
