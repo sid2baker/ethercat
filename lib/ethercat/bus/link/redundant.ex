@@ -257,6 +257,9 @@ defmodule EtherCAT.Bus.Link.Redundant do
       {:ok, port_id, ecat_payload, rx_at, frame_src_mac} ->
         handle_rx(data, port_id, ecat_payload, rx_at, frame_src_mac)
 
+      {:error, port_id, reason} ->
+        handle_rx_error(data, port_id, reason)
+
       :ignore ->
         :keep_state_and_data
     end
@@ -486,6 +489,12 @@ defmodule EtherCAT.Bus.Link.Redundant do
     end
   end
 
+  defp handle_rx_error(data, port_id, reason) do
+    endpoint = data.transport_mod.name(port_transport(data, port_id))
+    drain_port(data, port_id)
+    {:keep_state, mark_port_down(data, port_id, endpoint, normalize_rx_error_reason(reason))}
+  end
+
   # -- Completion logic --
 
   defp maybe_complete(data) do
@@ -497,8 +506,9 @@ defmodule EtherCAT.Bus.Link.Redundant do
         {:keep_state, data}
 
       :waiting_merge ->
-        # First reply arrived; shorten timeout to a merge window for the second
-        {:keep_state, data, [{:state_timeout, @merge_window_ms, :timeout}]}
+        # First reply arrived; wait only within the remaining frame-time budget.
+        {:keep_state, data,
+         [{:state_timeout, merge_timeout_ms(data.exchange, data.frame_timeout_ms), :timeout}]}
     end
   end
 
@@ -729,6 +739,18 @@ defmodule EtherCAT.Bus.Link.Redundant do
     end
   end
 
+  defp merge_timeout_ms(%{tx_at: tx_at}, frame_timeout_ms)
+       when is_integer(tx_at) and is_integer(frame_timeout_ms) and frame_timeout_ms > 0 do
+    elapsed_us =
+      System.monotonic_time()
+      |> Kernel.-(tx_at)
+      |> System.convert_time_unit(:native, :microsecond)
+
+    remaining_us = max(frame_timeout_ms * 1_000 - elapsed_us, 0)
+    remaining_ms = ceil_div(remaining_us, 1_000)
+    min(@merge_window_ms, remaining_ms)
+  end
+
   defp timeout_detail(%{arrivals: []}), do: :no_arrivals
   defp timeout_detail(_exchange), do: :partial_arrivals
 
@@ -812,6 +834,7 @@ defmodule EtherCAT.Bus.Link.Redundant do
   defp match_port(data, msg) do
     case try_match(data, :primary, msg) do
       {:ok, _, _, _, _} = result -> result
+      {:error, _, _} = result -> result
       :ignore -> try_match(data, :secondary, msg)
     end
   end
@@ -822,6 +845,9 @@ defmodule EtherCAT.Bus.Link.Redundant do
     case data.transport_mod.match(transport, msg) do
       {:ok, ecat_payload, rx_at, frame_src_mac} ->
         {:ok, port_id, ecat_payload, rx_at, frame_src_mac}
+
+      {:error, reason} ->
+        {:error, port_id, reason}
 
       :ignore ->
         :ignore
@@ -999,9 +1025,16 @@ defmodule EtherCAT.Bus.Link.Redundant do
   defp maybe_put_reason(map, _port_id, nil), do: map
   defp maybe_put_reason(map, port_id, reason), do: Map.put(map, port_id, reason)
 
+  defp normalize_rx_error_reason(reason) when is_atom(reason), do: reason
+  defp normalize_rx_error_reason(_reason), do: :rx_error
+
   defp earliest_timestamp(nil, other), do: other
   defp earliest_timestamp(other, nil), do: other
   defp earliest_timestamp(left, right), do: min(left, right)
+
+  defp ceil_div(value, divisor) when is_integer(value) and is_integer(divisor) and divisor > 0 do
+    div(value + divisor - 1, divisor)
+  end
 
   defp validate_supported_transport(opts) do
     if opts[:transport_mod] == EtherCAT.Bus.Transport.UdpSocket or opts[:transport] == :udp do

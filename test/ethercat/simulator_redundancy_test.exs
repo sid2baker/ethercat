@@ -84,6 +84,18 @@ defmodule EtherCAT.SimulatorRedundancyTest do
              Simulator.process_datagrams_with_routing([datagram], ingress: :secondary)
   end
 
+  test "master secondary break makes primary ingress the only working full-ring path" do
+    assert :ok = Simulator.set_topology({:redundant, master_break: :secondary})
+
+    datagram = station_read_datagram(0x1002)
+
+    assert {:ok, [%{data: <<0x02, 0x10>>, wkc: 1}], :primary} =
+             Simulator.process_datagrams_with_routing([datagram], ingress: :primary)
+
+    assert {:ok, [%{data: <<0x00, 0x00>>, wkc: 0}], :secondary} =
+             Simulator.process_datagrams_with_routing([datagram], ingress: :secondary)
+  end
+
   defp station_read_datagram(station) do
     %Datagram{
       cmd: 4,

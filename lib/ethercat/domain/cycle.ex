@@ -45,7 +45,7 @@ defmodule EtherCAT.Domain.Cycle do
       Bus.transaction(
         data.bus,
         Transaction.lrw({data.logical_base, image}),
-        cycle_transaction_timeout_us(data.period_us)
+        cycle_transaction_timeout_us(data)
       )
 
     next_at = data.next_cycle_at + data.period_us
@@ -240,8 +240,20 @@ defmodule EtherCAT.Domain.Cycle do
     end
   end
 
-  defp cycle_transaction_timeout_us(period_us) when is_integer(period_us) and period_us > 0 do
-    max(div(period_us * 9, 10), 200)
+  defp cycle_transaction_timeout_us(%{period_us: period_us, frame_timeout_ms: frame_timeout_ms})
+       when is_integer(period_us) and period_us > 0 do
+    base_timeout_us = max(div(period_us * 9, 10), 200)
+
+    frame_budget_timeout_us =
+      case frame_timeout_ms do
+        timeout_ms when is_integer(timeout_ms) and timeout_ms > 0 ->
+          timeout_ms * 1_000 + 1_000
+
+        _other ->
+          0
+      end
+
+    max(base_timeout_us, frame_budget_timeout_us)
   end
 
   defp effective_stale_after_us(%{stale_after_us: stale_after_us})

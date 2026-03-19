@@ -88,6 +88,10 @@ defmodule EtherCAT.BusTest do
       {:ok, payload, rx_at, frame_src_mac}
     end
 
+    def match(%__MODULE__{raw: raw}, {:fake_transport_error, raw, reason}) do
+      {:error, reason}
+    end
+
     def match(%__MODULE__{}, _msg), do: :ignore
 
     @impl true
@@ -176,6 +180,10 @@ defmodule EtherCAT.BusTest do
           {:fake_transport_payload, raw, payload, rx_at, frame_src_mac}
         ) do
       {:ok, payload, rx_at, frame_src_mac}
+    end
+
+    def match(%__MODULE__{raw: raw}, {:fake_transport_error, raw, reason}) do
+      {:error, reason}
     end
 
     def match(%__MODULE__{}, _msg), do: :ignore
@@ -667,6 +675,24 @@ defmodule EtherCAT.BusTest do
             }} = Bus.info(bus)
   end
 
+  test "built-in single circuit enters unhealthy on receive error" do
+    {:ok, bus} = start_single_circuit_bus()
+
+    read = Task.async(fn -> Bus.transaction(bus, Transaction.fprd(0x1000, {0x0130, 2})) end)
+
+    sent = assert_sent_transport("eth0")
+    send(bus, {:fake_transport_error, sent.raw, :enetdown})
+
+    assert {:error, :enetdown} = Task.await(read)
+
+    assert {:ok,
+            %{
+              state: :unhealthy,
+              topology: :offline,
+              fault: %{kind: :transport_fault}
+            }} = Bus.info(bus)
+  end
+
   test "built-in redundant circuit executes a healthy redundant exchange" do
     {:ok, bus} = start_redundant_circuit_bus()
     pri_mac = fake_mac("pri")
@@ -717,6 +743,32 @@ defmodule EtherCAT.BusTest do
                 kind: :transport_fault,
                 degraded_ports: [:primary],
                 reasons: %{primary: :enetdown}
+              }
+            }} = Bus.info(bus)
+  end
+
+  test "built-in redundant circuit degrades on secondary receive error without wedging awaiting" do
+    pri_mac = fake_mac("pri")
+    {:ok, bus} = start_redundant_circuit_bus(frame_timeout_ms: 10)
+
+    read = Task.async(fn -> Bus.transaction(bus, Transaction.brd({0x0000, 1})) end)
+
+    primary = assert_sent_transport("pri")
+    secondary = assert_sent_transport("sec")
+
+    send(bus, {:fake_transport_error, secondary.raw, :enetdown})
+    reply_transport(bus, primary, fn dg -> %{dg | wkc: 1} end, src_mac: pri_mac)
+
+    assert {:ok, [%{wkc: 1}]} = Task.await(read)
+
+    assert {:ok,
+            %{
+              type: :redundant,
+              topology: :degraded_secondary_leg,
+              fault: %{
+                kind: :transport_fault,
+                degraded_ports: [:secondary],
+                reasons: %{secondary: :enetdown}
               }
             }} = Bus.info(bus)
   end
@@ -802,6 +854,23 @@ defmodule EtherCAT.BusTest do
 
     assert log =~
              "exchange timeout pattern cleared detail=partial_arrivals arrivals=[:pri_bounce]"
+  end
+
+  test "redundant merge wait does not extend a one-sided bounce past the frame timeout budget" do
+    pri_mac = fake_mac("pri")
+    {:ok, bus} = start_redundant_circuit_bus(frame_timeout_ms: 10)
+
+    started_at_us = System.monotonic_time(:microsecond)
+    read = Task.async(fn -> Bus.transaction(bus, Transaction.brd({0x0000, 1})) end)
+
+    primary = assert_sent_transport("pri")
+    _secondary = assert_sent_transport("sec")
+
+    wait_until_elapsed_us(started_at_us, 8_000)
+    reply_transport(bus, primary, &%{&1 | wkc: 1}, src_mac: pri_mac)
+
+    assert {:ok, [%{wkc: 1}]} = Task.await(read)
+    assert System.monotonic_time(:microsecond) - started_at_us < 20_000
   end
 
   test "redundant bus still attempts a previously degraded port on the next exchange" do

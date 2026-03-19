@@ -36,6 +36,7 @@ defmodule EtherCAT.Domain.State do
       last_invalid_cycle_at_us: nil,
       last_invalid_reason: nil,
       stale_after_us: stale_after_us,
+      frame_timeout_ms: Keyword.get(opts, :frame_timeout_ms),
       layout: Layout.new(),
       cycle_plan: nil,
       cycle_health: :healthy,

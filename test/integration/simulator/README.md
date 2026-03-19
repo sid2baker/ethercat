@@ -116,6 +116,7 @@ plan -> fix -> verify -> commit.
 - `42`: redundant primary port reconnection causes transient frame loss when slave PHY link-up timing differs from master NIC auto-negotiation (hardware-only, no simulator test)
 - `43`: permanent PDO-slave disconnect should drive `:down` via health polling, allow reconnect healing, and force rediscovery if the returning slave lost its fixed station address
 - `44`: single-link raw ring helper should pass static raw endpoint options through startup, allow transient raw delay overlays, and restore configured delay after fault clear
+- `45`: redundant secondary master-port disconnect must keep the default `10ms` cyclic domain healthy without stretching degraded exchanges past the configured frame timeout
 
 These are the current regression scenarios, not just backlog items. Each one
 should keep its `.md` note and matching `_test.exs` file aligned.

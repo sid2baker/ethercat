@@ -52,6 +52,18 @@ defmodule EtherCAT.IntegrationSupport.RedundantSimulatorRing do
     assert_ok!(Simulator.set_topology(:redundant))
   end
 
+  @spec disconnect_secondary!() :: :ok
+  def disconnect_secondary! do
+    assert_ok!(Simulator.set_topology({:redundant, master_break: :secondary}))
+    LinkToggle.set_down!(master_secondary_interface())
+  end
+
+  @spec reconnect_secondary!() :: :ok
+  def reconnect_secondary! do
+    LinkToggle.set_up!(master_secondary_interface())
+    assert_ok!(Simulator.set_topology(:redundant))
+  end
+
   @spec start_simulator!(keyword()) :: endpoint()
   def start_simulator!(opts \\ []) do
     ring = Keyword.get(opts, :ring, :default)

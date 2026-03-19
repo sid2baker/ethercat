@@ -81,6 +81,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   single-cycle misses: domains now escalate to master recovery only after a
   short unhealthy streak, while timeout tuning keeps a wider `5ms` floor on
   both the UDP simulator path and raw startup/activation traffic (`cf4a90c`).
+- Redundant links now keep degraded one-sided bounce exchanges within the
+  original frame-time budget instead of resetting them to a fresh fixed `25ms`
+  merge timeout, so a `10ms` cyclic ring can keep running after
+  secondary-port disconnect (`pending hash`).
+- Raw receive errors now surface through the bus transport boundary instead of
+  being silently ignored, so a broken leg cannot leave single or redundant
+  links stuck in `:awaiting` behind repeated socket-error chatter (`pending
+  hash`).
 
 ### Docs
 - `ARCHITECTURE.md`, `README.md`, `RELEASE.md`, and simulator guidance were

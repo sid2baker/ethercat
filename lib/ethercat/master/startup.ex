@@ -421,10 +421,11 @@ defmodule EtherCAT.Master.Startup do
     Enum.reduce_while(data.domain_configs || [], {:ok, %{}}, fn entry, {:ok, refs} ->
       domain_opts = Config.domain_start_opts(entry)
       id = entry.id
+      frame_timeout_ms = recommended_frame_timeout_ms(data, data.slave_count)
 
       case DynamicSupervisor.start_child(
              EtherCAT.SessionSupervisor,
-             {Domain, [{:bus, Bus} | domain_opts]}
+             {Domain, [bus: Bus, frame_timeout_ms: frame_timeout_ms] ++ domain_opts}
            ) do
         {:ok, pid} ->
           {:cont, {:ok, Map.put(refs, Process.monitor(pid), id)}}

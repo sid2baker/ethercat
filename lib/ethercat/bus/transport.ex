@@ -18,6 +18,7 @@ defmodule EtherCAT.Bus.Transport do
       # In gen_statem handle_event(:info, msg, :awaiting, data):
       case transport_mod.match(transport, msg) do
         {:ok, ecat_payload, rx_at, _src_mac} -> # process response
+        {:error, reason} -> # transport-level receive failure
         :ignore -> :keep_state_and_data
       end
   """
@@ -50,7 +51,9 @@ defmodule EtherCAT.Bus.Transport do
   Decode one process mailbox message from this transport.
 
   Returns `{:ok, ecat_payload, rx_at, frame_src_mac}` when the message belongs
-  to this transport and data is ready; `:ignore` for all other messages.
+  to this transport and data is ready; `{:error, reason}` when the message
+  belongs to this transport but receive processing failed; `:ignore` for all
+  other messages.
 
   `frame_src_mac` is the 6-byte source MAC address from the Ethernet header
   of the received frame, or `nil` for transports that don't expose it (UDP).
@@ -63,6 +66,7 @@ defmodule EtherCAT.Bus.Transport do
   """
   @callback match(t(), msg :: term()) ::
               {:ok, ecat_payload :: binary(), rx_at :: integer(), frame_src_mac :: binary() | nil}
+              | {:error, reason :: term()}
               | :ignore
 
   @doc """

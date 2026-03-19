@@ -168,6 +168,9 @@ defmodule EtherCAT.Bus.Link.Single do
       {:ok, ecat_payload, rx_at, _src_mac} ->
         handle_rx(data, ecat_payload, rx_at)
 
+      {:error, reason} ->
+        handle_rx_error(data, reason)
+
       :ignore ->
         :keep_state_and_data
     end
@@ -360,6 +363,13 @@ defmodule EtherCAT.Bus.Link.Single do
     end
   end
 
+  defp handle_rx_error(data, reason) do
+    new_transport = data.transport_mod.close(data.transport)
+    Telemetry.link_down(data.link_name, data.link_name, normalize_rx_error_reason(reason))
+    Link.reply_awaiting(data.exchange.awaiting, {:error, reason})
+    {:next_state, :unhealthy, go_unhealthy(%{data | transport: new_transport, exchange: nil})}
+  end
+
   defp complete_exchange(data, datagrams) do
     case Link.match_and_reply(datagrams, data.exchange.awaiting) do
       :ok ->
@@ -446,6 +456,9 @@ defmodule EtherCAT.Bus.Link.Single do
   defp go_unhealthy(data) do
     %{data | last_error_reason: :transport_unavailable}
   end
+
+  defp normalize_rx_error_reason(reason) when is_atom(reason), do: reason
+  defp normalize_rx_error_reason(_reason), do: :rx_error
 
   defp queue_total(data), do: :queue.len(data.realtime) + :queue.len(data.reliable)
 

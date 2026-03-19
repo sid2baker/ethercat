@@ -125,12 +125,14 @@ defmodule EtherCAT.Bus.Transport.RawSocket do
   and the frame's source MAC address (6 bytes).
   Returns `:ignore` for all other messages or non-EtherCAT frames.
   """
-  @spec match(t(), term()) :: {:ok, binary(), integer(), binary()} | :ignore
+  @spec match(t(), term()) :: {:ok, binary(), integer(), binary()} | {:error, term()} | :ignore
   def match(%__MODULE__{raw: raw} = sock, {:"$socket", raw, :select, _}),
     do: recv_ethercat_payload(sock, @select_receive_retries)
 
   def match(%__MODULE__{raw: raw}, {:ethercat_raw_payload, raw, payload, rx_at, frame_src_mac}),
     do: {:ok, payload, rx_at, frame_src_mac}
+
+  def match(%__MODULE__{raw: raw}, {:ethercat_raw_error, raw, reason}), do: {:error, reason}
 
   def match(%__MODULE__{}, _msg), do: :ignore
 
@@ -195,12 +197,13 @@ defmodule EtherCAT.Bus.Transport.RawSocket do
             arm_receive_once(sock)
         end
 
-      {:error, _} ->
+      {:error, reason} ->
+        Kernel.send(self(), {:ethercat_raw_error, raw, reason})
         :ok
     end
   end
 
-  defp recv_ethercat_payload(%__MODULE__{raw: raw} = sock, retries_left) do
+  defp recv_ethercat_payload(%__MODULE__{raw: raw} = sock, retries_left, last_error \\ nil) do
     case :socket.recvmsg(raw, 0, 0, :nowait) do
       {:ok, msg} ->
         case extract_buffered_payload(sock, msg) do
@@ -208,20 +211,23 @@ defmodule EtherCAT.Bus.Transport.RawSocket do
             {:ok, ecat_payload, rx_at, frame_src_mac}
 
           :ignore ->
-            recv_ethercat_payload(sock, retries_left)
+            recv_ethercat_payload(sock, retries_left, last_error)
         end
 
       {:select, _} when retries_left > 0 ->
-        recv_ethercat_payload(sock, retries_left - 1)
+        recv_ethercat_payload(sock, retries_left - 1, last_error)
 
       {:select, _} ->
-        :ignore
+        case last_error do
+          nil -> :ignore
+          reason -> {:error, reason}
+        end
 
-      {:error, _reason} when retries_left > 0 ->
-        recv_ethercat_payload(sock, retries_left - 1)
+      {:error, reason} when retries_left > 0 ->
+        recv_ethercat_payload(sock, retries_left - 1, reason)
 
-      {:error, _reason} ->
-        :ignore
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 

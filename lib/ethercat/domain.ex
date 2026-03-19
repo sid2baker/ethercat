@@ -65,6 +65,7 @@ defmodule EtherCAT.Domain do
     :last_invalid_cycle_at_us,
     :last_invalid_reason,
     :stale_after_us,
+    :frame_timeout_ms,
     layout: Layout.new(),
     cycle_plan: nil,
     cycle_health: :healthy,
