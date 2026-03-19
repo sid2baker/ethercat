@@ -8,40 +8,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- `36ed6b8`, `eee9d1e`, `a4b947b` — `EtherCAT.Simulator` now supports raw-socket transport, redundant dual-ingress raw topologies, and shared UDP/raw transport fixtures for integration and hardware bring-up.
-- `c4a6621`, `1f2b526`, `b12eec5` — integration coverage now includes event-triggered reconnect/disconnect mixes, harder clustered recovery chains, and split-domain EL3202 reconnect scenarios.
-- `80dc840`, `c42b0c9` — bus and hardware tooling now expose richer runtime diagnostics plus loopback and hardening knobs for real hardware bring-up.
-- `93c864d`, `6516c23`, `4a3321b`, `8eff41c` — GitHub Actions now cover CI and release automation, including raw-capable runners, raw simulator setup, and tag-build verification.
+- `EtherCAT.Simulator` now supports raw-socket transport, redundant dual-ingress
+  raw topologies, and shared UDP/raw fixtures for integration and hardware
+  bring-up (`36ed6b8`, `eee9d1e`, `a4b947b`).
+- Integration coverage now includes event-triggered reconnect/disconnect mixes,
+  clustered recovery chains, and split-domain EL3202 reconnect scenarios
+  (`c4a6621`, `1f2b526`, `b12eec5`).
+- Bus and hardware tooling now expose richer diagnostics plus loopback and
+  hardening knobs for real-hardware bring-up (`80dc840`, `c42b0c9`).
+- GitHub Actions now cover CI and release automation, including raw-capable
+  runners, raw simulator setup, and tag-build verification (`93c864d`,
+  `6516c23`, `4a3321b`, `8eff41c`).
 
 ### Changed
-- `4ae4392`, `0248012`, `8eff41c` — public master/domain/slave query paths are normalized, root API contracts are clearer, and synchronous calls now return `{:error, {:server_exit, reason}}` when a local server dies mid-call instead of exiting the caller.
-- `04b2c5f`, `072119d`, `9b3b4ba`, `dad947e`, `8eff41c` — simulator and helper/reference guidance was consolidated into source-adjacent docs and local-only helper material so the tracked repo surface stays focused on maintained implementation docs.
-- `8eff41c` — capture snapshots now write portable `.capture` data files instead of executable Elixir source, and generated simulator scaffolds load those data-only artifacts safely.
-- `29dcbd2` — version-tagged releases now publish the Hex package and HexDocs directly from CI instead of creating a draft GitHub release only.
-- `b57763a` — telemetry and logging now follow a stricter observability contract: transaction spans use stable stop metadata, link/frame events distinguish aggregate links from concrete endpoints, repeated startup/recovery retries are less noisy in logs, and new DC runtime plus slave-startup retry events improve machine-readable introspection.
-- `af5192e` — telemetry now separates invalid domain cycles from transport misses, master startup/activation/DC-lock decisions emit bounded lifecycle events, slave fault/down signals carry richer detail, and long-lived master/bus/domain/DC/slave/simulator processes now stamp consistent structured metadata onto high-signal logs.
-- `9f1342a` — `EtherCAT.Master`, `EtherCAT.Slave`, `EtherCAT.Domain`, and `EtherCAT.DC` now own the public API directly, while their `gen_statem` implementations live behind internal `*.FSM` modules and the old `*.API` facade split is gone.
-- `2d97faf` — redundant-link per-exchange timeout detail now emits bounded telemetry, repeated identical timeout patterns no longer warn on every cycle, and recovery logs report once when the degraded timeout pattern clears.
-- `11d1af2` — input reads now fail closed on stale cached PDO data, while domain and slave diagnostics expose explicit process-data freshness derived from valid LRW refresh timing.
-- `11d1af2` — simulator transport ownership now lives under `EtherCAT.Simulator.Transport.*`, UDP reply corruption remains transport-specific there, and raw transport exposes a mode-aware transport fault surface instead of a bare endpoint control API.
+- Public master/domain/slave queries are more consistent, and synchronous calls
+  now return `{:error, {:server_exit, reason}}` instead of exiting the caller
+  when a local runtime dies mid-call (`4ae4392`, `0248012`, `8eff41c`).
+- Simulator and helper guidance was consolidated into maintained source-adjacent
+  docs, and generated capture snapshots now use portable data-only `.capture`
+  files instead of executable Elixir (`04b2c5f`, `072119d`, `9b3b4ba`,
+  `dad947e`, `8eff41c`).
+- Version tags now publish the Hex package and HexDocs directly from CI instead
+  of only creating a draft GitHub release (`29dcbd2`).
+- Telemetry and structured logging are stricter and less noisy: invalid domain
+  cycles are separated from transport misses, lifecycle decisions emit bounded
+  machine-readable events, and long-lived processes stamp consistent metadata on
+  high-signal logs (`b57763a`, `af5192e`).
+- `EtherCAT.Master`, `EtherCAT.Slave`, `EtherCAT.Domain`, and `EtherCAT.DC`
+  now own the public API directly, with internal `*.FSM` modules handling state
+  transitions behind that boundary (`9f1342a`).
+- Redundant-link timeout detail now emits bounded telemetry and recovery logs
+  instead of warning on every repeated timeout pattern (`2d97faf`).
+- Input reads now fail closed on stale cached PDO data, and simulator transport
+  ownership is split cleanly under `EtherCAT.Simulator.Transport.*`
+  (`11d1af2`).
 
 ### Fixed
-- `95f343d` — DC recovery and configuration validation are stricter, reducing invalid recovery paths and catching bad setup earlier.
-- `35ebde7` — raw simulator EEPROM window reads now zero-pad out-of-range offsets instead of crashing `EtherCAT.Simulator` during startup, which restores the healthy raw transport matrix path.
-- `c937d53` — redundant transport now merges split logical replies correctly.
-- `d852fd4` — bus transaction aging semantics and diagnostics are now more explicit during retry and timeout handling.
-- `7055878` — raw socket transport no longer drains buffered frames on idx-mismatch rearm, preventing legitimate responses from being lost when rogue EtherCAT traffic is present on the wire.
-- `1b2211f` — redundant link rejoin now drains a reopened port, honors explicit carrier-restore notifications, and only promotes the restored leg after a run of successful probe cycles so cyclic traffic does not stall when a healthy backup path is already carrying the ring.
-- `68f6c20` — the bus runtime now executes built-in single and redundant traffic exclusively through `Bus.Circuit`, the legacy `Bus.Link` path is gone, OS link state is no longer part of bus correctness, and `Bus.info/1` reports smoothed topology/fault assessment from observed exchange results rather than carrier-driven healing state.
-- `4b1ac0f` — redundant link send failures now surface as degraded-port topology/fault state plus link-health telemetry, simulator power-cycle faults clear volatile mailbox state before reconfiguration, and slave AL health polling defaults to `250ms` unless explicitly disabled.
-- `2bc2185` — slave reconnect recovery now retries reconnect authorization for tracked `:down` faults, so a physically restored slave does not remain stuck in `:down` if the first reconnect authorization window is missed.
-- `75609a6` — recovering masters now fall back to fresh topology rediscovery when a PDO slave returns without its old fixed station address, and simulator power-cycle faults now clear fixed station identity so reconnect tests match real hardware more closely.
-- `4a9a4ad` — failed activation now rolls back any DC/domain runtime that was started before the error, `Slave.subscribe/3` rejects unknown signal/latch names instead of silently accepting them, and `Domain.write/read/sample` now use explicit ETS table lookup instead of exception-driven control flow.
+- DC recovery and configuration validation are stricter, catching bad setup
+  earlier and reducing invalid recovery paths (`95f343d`).
+- Raw simulator EEPROM reads now zero-pad out-of-range windows instead of
+  crashing startup, which restores the healthy raw transport matrix path
+  (`35ebde7`).
+- Redundant transport now merges split logical replies correctly and reports
+  degraded send failures as visible topology and link-health state
+  (`c937d53`, `4b1ac0f`).
+- Bus transaction aging, built-in circuit execution, and topology assessment are
+  more explicit; the legacy `Bus.Link` execution path is gone and carrier state
+  no longer drives bus correctness (`d852fd4`, `68f6c20`).
+- Raw socket transport no longer drops legitimate replies on idx-mismatch rearm,
+  and redundant rejoin now drains and reproves a restored leg before promoting
+  it back into cyclic traffic (`7055878`, `1b2211f`).
+- Recovery now handles physically restored slaves more honestly: reconnect
+  authorization is retried for tracked `:down` faults, masters can rediscover
+  slaves that return without their old fixed address, and simulator power-cycle
+  faults clear volatile runtime identity/state so tests match hardware more
+  closely (`2bc2185`, `75609a6`).
+- Failed activation now rolls back partially started DC/domain runtime,
+  `Slave.subscribe/3` rejects unknown signal/latch names, and
+  `Domain.write/read/sample` use explicit ETS lookup instead of exception-driven
+  control flow (`4a9a4ad`).
 
 ### Docs
-- `8f773d6`, `c42b0c9`, `0248012`, `04b2c5f`, `072119d`, `9b3b4ba`, `ee210fa`, `8eff41c` — README, hardware playbooks, simulator docs, and API guidance were rewritten to better explain transport boundaries, bring-up workflow, release metadata, and fault/recovery scenarios.
-- `4a9a4ad` — public master, slave, domain, and DC moduledocs now live inline with their runtime modules, and the public module-level APIs are documented directly at the function boundary.
-- `11d1af2` — the simulator integration README now reflects scenario `43`, distinguishes numbered regression scenarios from standalone transport-resilience checks, and documents the current fault-builder surface more accurately.
+- `ARCHITECTURE.md`, `README.md`, `RELEASE.md`, and simulator guidance were
+  aligned to the current public/runtime boundaries, Hex publish workflow, and
+  raw test interface ownership expectations (`pending hash`).
+- README, hardware playbooks, simulator docs, and API guidance were rewritten
+  to better explain transport boundaries, bring-up workflow, release metadata,
+  and fault/recovery scenarios (`8f773d6`, `c42b0c9`, `0248012`, `04b2c5f`,
+  `072119d`, `9b3b4ba`, `ee210fa`, `8eff41c`).
+- Public master, slave, domain, and DC moduledocs now live inline with their
+  runtime modules, and the simulator integration README now reflects the
+  current scenario set and fault-builder surface (`4a9a4ad`, `11d1af2`).
 
 ## [0.3.1] - 2026-03-12
 

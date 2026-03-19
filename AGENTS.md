@@ -7,6 +7,8 @@
 - `lib/ethercat.ex`, `lib/ethercat/master.ex`, `lib/ethercat/slave.ex`
 - `lib/ethercat/domain.ex`, `lib/ethercat/bus.ex`, `lib/ethercat/dc.ex`
 - public moduledocs in the runtime boundary modules above
+- `lib/ethercat/simulator.md` — simulator/runtime boundary and transport split
+- `README.md`, `RELEASE.md` — user-facing workflow and release truth
 - `test/` — behavioral truth and regression coverage
 - `ARCHITECTURE.md` — subsystem boundaries and runtime data flow
 

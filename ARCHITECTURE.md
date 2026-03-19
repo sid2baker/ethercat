@@ -2,9 +2,15 @@
 
 ## What This Is
 
-A pure-Elixir EtherCAT master library. No NIF. No kernel module. Raw sockets only.
-Targets automation workloads (discrete I/O, drives) where 1–10 ms cycle times are
-sufficient and BEAM's scheduler jitter is compensated by the distributed clock layer.
+A pure-Elixir EtherCAT master library. No NIF. No kernel module.
+
+Real hardware runs over raw sockets. UDP exists as a simulator and integration
+transport boundary, not as a claim that the production master speaks UDP on a
+real ring.
+
+The target is still automation workloads (discrete I/O, drives) where 1–10 ms
+cycle times are sufficient and BEAM scheduler jitter is compensated by the
+distributed clock layer.
 
 ---
 
@@ -36,10 +42,15 @@ Optional sibling runtime (started separately, not under `EtherCAT.Application`):
 
 ```
 EtherCAT.Simulator
-├── EtherCAT.Simulator.Slave          (simulated slave builders + hydration from real drivers)
-├── EtherCAT.Simulator.DriverAdapter  (optional simulator-side companion for real drivers)
-├── EtherCAT.Simulator.Fault          (public deterministic runtime fault builder)
-└── EtherCAT.Simulator.Udp            (raw UDP reply endpoint + transport-edge faults)
+├── EtherCAT.Simulator.Slave                (simulated slave builders + hydration from real drivers)
+├── EtherCAT.Simulator.DriverAdapter        (optional simulator-side companion for real drivers)
+├── EtherCAT.Simulator.Fault                (public deterministic runtime fault builder)
+└── EtherCAT.Simulator.Transport
+    ├── EtherCAT.Simulator.Transport.Udp
+    │   └── EtherCAT.Simulator.Transport.Udp.Fault
+    └── EtherCAT.Simulator.Transport.Raw
+        ├── EtherCAT.Simulator.Transport.Raw.Fault
+        └── EtherCAT.Simulator.Transport.Raw.Endpoint   (internal worker)
 ```
 
 Registry: `EtherCAT.Registry` (local). Slaves register as `{:slave, name}`;
@@ -302,7 +313,7 @@ even if the LRW frame arrives early or late.
 
 ## Component Entry Files
 
-Each subsystem has a co-located module doc / source entry file:
+Each subsystem has a co-located source or source-adjacent entry file:
 
 | File | Component |
 |------|-----------|
@@ -312,7 +323,7 @@ Each subsystem has a co-located module doc / source entry file:
 | `lib/ethercat/bus.ex` | Bus scheduler — transaction classes, frame dispatch, transport boundary |
 | `lib/ethercat/dc.ex` | DC runtime — maintenance loop, lock/runtime status, master notifications |
 | `lib/ethercat/simulator.ex` | Public simulator runtime — segment execution, snapshots, deterministic fault scheduling |
-| `lib/ethercat/simulator.md` | Simulator process boundary, fault API, UDP transport split, builder surface |
+| `lib/ethercat/simulator.md` | Simulator process boundary, transport split, and fault-builder surface |
 
 Deeper ESC hardware and register background should live in local helper material
 outside the tracked repo, not in project-owned documentation.

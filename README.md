@@ -48,10 +48,12 @@ def deps do
 end
 ```
 
-Raw Ethernet socket access requires `CAP_NET_RAW` or root:
+Raw Ethernet socket access requires `CAP_NET_RAW` or root. Grant that
+capability to the BEAM executable that will run the master:
 
 ```bash
-sudo setcap cap_net_raw+ep _build/dev/lib/ethercat/priv/raw_socket
+BEAM=$(readlink -f "$(dirname "$(dirname "$(command -v erl)")")"/erts-*/bin/beam.smp)
+sudo setcap cap_net_raw+ep "$BEAM"
 ```
 
 Link monitoring is handled internally.
@@ -172,9 +174,10 @@ dictionary automatically.
 If you understand those five roles, the rest of the API is predictable.
 
 The implementation follows the same split intentionally: `Master`, `Slave`,
-`Domain`, and `DC` are state-machine modules, while helper namespaces and the
-low-level `*.API` facades own the mechanics. When reading the code against the
-EtherCAT model, read the state-machine modules first and the helpers second.
+`Domain`, and `DC` own the public/runtime boundary directly, their internal
+`*.FSM` modules own state transitions, and helper namespaces hold the lower-
+level mechanics. When reading the code against the EtherCAT model, read the
+public boundary modules first, then the internal FSMs, then the helpers.
 
 ## Lifecycle
 

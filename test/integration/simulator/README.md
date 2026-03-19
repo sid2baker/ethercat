@@ -138,6 +138,13 @@ The baseline healthy-ring coverage is transport-aware.
   `:raw_socket_redundant`. Those run when both redundant raw veth pairs are
   available.
 
+The raw helpers also assume exclusive ownership of the configured veth
+interfaces. Before booting a raw simulator ring, they inspect
+`/proc/net/packet` for existing EtherCAT packet sockets on those interfaces and
+fail fast if another local process still owns them. If this trips, stop the
+external master/simulator first instead of trying to debug a contaminated raw
+test run.
+
 For helper-driven scenarios built on `EtherCAT.IntegrationSupport.SimulatorRing`,
 the default transport comes from `ETHERCAT_INTEGRATION_TRANSPORT`:
 
