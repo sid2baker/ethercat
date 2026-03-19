@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-03-19
+
 ### Fixed
 - The release workflow now reads the package version without triggering a fresh
   compile during the tag check, so clean GitHub runners no longer fail `v*.*.*`

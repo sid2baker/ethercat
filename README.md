@@ -33,11 +33,11 @@ Latest Hex release:
 
 ```elixir
 def deps do
-  [{:ethercat, "~> 0.4.0"}]
+  [{:ethercat, "~> 0.4.1"}]
 end
 ```
 
-For release notes and post-`0.4.0` work, see the
+For release notes and post-`0.4.1` work, see the
 [changelog](https://github.com/sid2baker/ethercat/blob/main/CHANGELOG.md).
 
 If you want the current `main` branch instead of the latest Hex cut:
