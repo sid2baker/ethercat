@@ -115,6 +115,7 @@ plan -> fix -> verify -> commit.
 - `41`: multi-datagram BWR transactions in redundant mode must return wkc > 0 despite AF_PACKET outgoing echo race
 - `42`: redundant primary port reconnection causes transient frame loss when slave PHY link-up timing differs from master NIC auto-negotiation (hardware-only, no simulator test)
 - `43`: permanent PDO-slave disconnect should drive `:down` via health polling, allow reconnect healing, and force rediscovery if the returning slave lost its fixed station address
+- `44`: single-link raw ring helper should pass static raw endpoint options through startup, allow transient raw delay overlays, and restore configured delay after fault clear
 
 These are the current regression scenarios, not just backlog items. Each one
 should keep its `.md` note and matching `_test.exs` file aligned.
@@ -329,6 +330,8 @@ Prefer the new test helpers for new scenarios:
   - boots the maintained UDP or single-link raw ring around the shared driver fixtures
   - honors `ETHERCAT_INTEGRATION_TRANSPORT` unless the test passes an explicit
     `transport:` override
+  - accepts `simulator_opts: [raw_endpoint_opts: [...]]` when a single-link raw
+    scenario needs static endpoint config such as response delay
 - `EtherCAT.IntegrationSupport.RedundantSimulatorRing`
   - boots the maintained redundant raw ring on the dual-interface topology
   - use this when the regression is about redundant-path behavior, primary-link
