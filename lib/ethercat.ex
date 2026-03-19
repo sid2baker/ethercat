@@ -273,8 +273,17 @@ defmodule EtherCAT do
           required(:available_fmmus) => non_neg_integer() | nil,
           required(:used_fmmus) => non_neg_integer(),
           required(:attachments) => [slave_attachment_summary()],
+          required(:pdo_health) => map(),
           required(:signals) => [slave_signal_summary()],
           required(:configuration_error) => term() | nil
+        }
+
+  @typedoc "Domain freshness snapshot reported in `domain_info/1`."
+  @type domain_freshness_info :: %{
+          required(:state) => :not_ready | :fresh | :stale,
+          required(:refreshed_at_us) => integer() | nil,
+          required(:age_us) => non_neg_integer() | nil,
+          required(:stale_after_us) => pos_integer()
         }
 
   @typedoc "Detailed snapshot returned by `domain_info/1`."
@@ -289,6 +298,7 @@ defmodule EtherCAT do
           required(:logical_base) => non_neg_integer(),
           required(:image_size) => non_neg_integer(),
           required(:expected_wkc) => non_neg_integer(),
+          required(:freshness) => domain_freshness_info(),
           required(:last_cycle_started_at_us) => integer() | nil,
           required(:last_cycle_completed_at_us) => integer() | nil,
           required(:last_valid_cycle_at_us) => integer() | nil,
@@ -527,6 +537,7 @@ defmodule EtherCAT do
         attachments: [
           %{domain: :main, sm_index: 3, direction: :input, logical_address: 0x0000, sm_size: 2, signal_count: 2, signals: [:ch1, :ch2]}
         ],
+        pdo_health: %{state: :fresh, domains: [%{id: :main, state: :fresh, refreshed_at_us: 1_234_000, age_us: 250, stale_after_us: 3_000}]},
         signals: [
           %{name: :ch1, domain: :main, direction: :input, bit_offset: 0, bit_size: 1},
           ...
@@ -551,6 +562,7 @@ defmodule EtherCAT do
     - `:logical_base` — current LRW logical start address for this domain image
     - `:image_size` — PDO image size in bytes
     - `:expected_wkc` — expected working counter for a healthy bus
+    - `:freshness` — cached-input freshness window derived from the domain cycle time
 
   ## Example
 
@@ -564,7 +576,8 @@ defmodule EtherCAT do
         total_miss_count: 2,
         logical_base: 0,
         image_size: 4,
-        expected_wkc: 3
+        expected_wkc: 3,
+        freshness: %{state: :fresh, refreshed_at_us: 1_234_000, age_us: 250, stale_after_us: 3_000}
       }}
   """
   @spec domain_info(atom()) ::
@@ -603,11 +616,13 @@ defmodule EtherCAT do
   @doc """
   Read the latest decoded input sample for a slave input signal.
 
-  Returns `{value, updated_at_us}` where `updated_at_us` is the last valid
-  master refresh time for the cached process-image sample, not a hardware-edge
+  Returns `{value, refreshed_at_us}` where `refreshed_at_us` is the last valid
+  domain refresh time for the cached process-image sample, not a hardware-edge
   timestamp.
 
-  Returns `{:error, :not_ready}` until the first domain cycle completes.
+  Returns `{:error, :not_ready}` until the first domain cycle completes and
+  `{:error, {:stale, details}}` once the cached sample is older than the
+  domain freshness window.
   """
   @spec read_input(atom(), atom()) :: {:ok, {term(), integer()}} | {:error, term()}
   def read_input(slave_name, pdo_name),

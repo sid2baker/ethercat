@@ -1,4 +1,4 @@
-defmodule EtherCAT.Simulator.Udp do
+defmodule EtherCAT.Simulator.Transport.Udp do
   @moduledoc """
   UDP endpoint for `EtherCAT.Simulator`.
 
@@ -12,9 +12,9 @@ defmodule EtherCAT.Simulator.Udp do
 
   Supported reply-fault injection forms:
 
-  - `EtherCAT.Simulator.Udp.Fault.truncate()`
-  - `EtherCAT.Simulator.Udp.Fault.wrong_idx() |> EtherCAT.Simulator.Udp.Fault.next(count)`
-  - `EtherCAT.Simulator.Udp.Fault.script([mode, ...])`
+  - `EtherCAT.Simulator.Transport.Udp.Fault.truncate()`
+  - `EtherCAT.Simulator.Transport.Udp.Fault.wrong_idx() |> EtherCAT.Simulator.Transport.Udp.Fault.next(count)`
+  - `EtherCAT.Simulator.Transport.Udp.Fault.script([mode, ...])`
 
   Supported modes:
 
@@ -30,7 +30,7 @@ defmodule EtherCAT.Simulator.Udp do
 
   alias EtherCAT.Bus.Frame
   alias EtherCAT.Simulator
-  alias EtherCAT.Simulator.Udp.Fault
+  alias EtherCAT.Simulator.Transport.Udp.Fault
   alias EtherCAT.Utils
 
   @type frame_fault_mode :: :truncate | :unsupported_type | :wrong_idx | :replay_previous
@@ -157,7 +157,7 @@ defmodule EtherCAT.Simulator.Udp do
 
         {:error, reason, next_state} ->
           Logger.warning(
-            "[EtherCAT.Simulator.Udp] dropped invalid payload: #{inspect(reason)}",
+            "[EtherCAT.Simulator.Transport.Udp] dropped invalid payload: #{inspect(reason)}",
             event: :invalid_payload_dropped,
             reason_kind: Utils.reason_kind(reason),
             sender_ip: sender_ip,

@@ -174,7 +174,7 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
           raw_opts = [interface: raw_simulator_interface(transport_opts)]
 
           {:ok, _supervisor} = Simulator.start(devices: devices, raw: raw_opts)
-          {:ok, %{raw: %{interface: interface}}} = Simulator.info()
+          {:ok, %{raw: %{mode: :single, primary: %{interface: interface}}}} = Simulator.info()
 
           %{
             transport: :raw,

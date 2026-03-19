@@ -200,11 +200,13 @@ Current in-script wait steps:
 - `Fault.wait_for(Fault.healthy_polls(slave_name, count))`
 - `Fault.wait_for(Fault.mailbox_step(slave_name, step, count))`
 
-For raw transport corruption, use the UDP-edge API instead:
+For transport-edge faults, use the transport-specific API:
 
-- `EtherCAT.Simulator.Udp.inject_fault(UdpFault.truncate())`
-- `EtherCAT.Simulator.Udp.inject_fault(UdpFault.wrong_idx() |> UdpFault.next(count))`
-- `EtherCAT.Simulator.Udp.inject_fault(UdpFault.script([UdpFault.unsupported_type(), ...]))`
+- `EtherCAT.Simulator.Transport.Udp.inject_fault(UdpFault.truncate())`
+- `EtherCAT.Simulator.Transport.Udp.inject_fault(UdpFault.wrong_idx() |> UdpFault.next(count))`
+- `EtherCAT.Simulator.Transport.Udp.inject_fault(UdpFault.script([UdpFault.unsupported_type(), ...]))`
+- `EtherCAT.Simulator.Transport.Raw.inject_fault(RawFault.delay_response(200))`
+- `EtherCAT.Simulator.Transport.Raw.inject_fault(RawFault.delay_response(200, endpoint: :secondary, from_ingress: :primary))`
 
 Current UDP corruption modes:
 
@@ -213,14 +215,17 @@ Current UDP corruption modes:
 - `:wrong_idx`
 - `:replay_previous`
 
-For tooling and scenario output, prefer `Fault.describe/1` and
-`UdpFault.describe/1` instead of rebuilding labels from tuple shapes.
+For tooling and scenario output, prefer `Fault.describe/1`,
+`UdpFault.describe/1`, and `RawFault.describe/1` instead of rebuilding labels
+from tuple shapes.
 
-`EtherCAT.Simulator.info/0` and `EtherCAT.Simulator.Udp.info/0` expose
+`EtherCAT.Simulator.info/0`, `EtherCAT.Simulator.Transport.Udp.info/0`, and
+`EtherCAT.Simulator.Transport.Raw.info/0` expose
 queued and delayed fault state through `next_fault`, `pending_faults`,
-`scheduled_faults`, and active `command_wkc_offsets` / `logical_wkc_offsets`,
-including milestone `waiting_on` / `remaining`, so new scenarios should assert queue drain explicitly
-instead of relying on sleeps alone.
+`scheduled_faults`, active `command_wkc_offsets` / `logical_wkc_offsets`, and
+active raw response-delay settings, including milestone `waiting_on` /
+`remaining`, so new scenarios should assert queue drain explicitly instead of
+relying on sleeps alone.
 
 Current mailbox protocol fault kinds:
 
@@ -454,8 +459,9 @@ Before adding a new simulator scenario, check these in order:
 
 1. Is the ring shape the smallest one that can still reproduce the bug?
 2. Is the fault on the right boundary?
-   Use `EtherCAT.Simulator` for datagram/runtime behavior and
-   `EtherCAT.Simulator.Udp` for raw reply corruption.
+   Use `EtherCAT.Simulator` for datagram/runtime behavior,
+   `EtherCAT.Simulator.Transport.Udp` for UDP reply corruption, and
+   `EtherCAT.Simulator.Transport.Raw` for raw endpoint behavior.
 3. Is the trigger modeled deterministically?
    Prefer `next`, milestones, or telemetry-triggered helpers over sleeps.
 4. Is the assertion about the public runtime behavior?
@@ -531,5 +537,6 @@ When one of those feels tempting, it usually means one of three things:
   in focused master/startup unit tests instead of inventing giant simulator
   rings the transport cannot honestly address.
 - Keep the fault boundary honest:
-  datagram/runtime faults belong on `EtherCAT.Simulator`, while raw reply
-  corruption belongs on `EtherCAT.Simulator.Udp`.
+  datagram/runtime faults belong on `EtherCAT.Simulator`, UDP reply corruption
+  belongs on `EtherCAT.Simulator.Transport.Udp`, and raw endpoint behavior
+  belongs on `EtherCAT.Simulator.Transport.Raw`.

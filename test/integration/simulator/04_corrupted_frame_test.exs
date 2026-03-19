@@ -4,8 +4,8 @@ defmodule EtherCAT.Integration.Simulator.CorruptedFrameTest do
   alias EtherCAT.Integration.Expect
   alias EtherCAT.IntegrationSupport.SimulatorRing
   alias EtherCAT.Integration.Trace
-  alias EtherCAT.Simulator.Udp
-  alias EtherCAT.Simulator.Udp.Fault, as: UdpFault
+  alias EtherCAT.Simulator.Transport.Udp
+  alias EtherCAT.Simulator.Transport.Udp.Fault, as: UdpFault
 
   setup do
     SimulatorRing.boot_operational!(

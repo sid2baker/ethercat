@@ -9,7 +9,10 @@ defmodule EtherCAT.SimulatorTest do
   alias EtherCAT.Simulator
   alias EtherCAT.Simulator.Fault
   alias EtherCAT.Simulator.Slave, as: SimSlave
-  alias EtherCAT.Simulator.Udp.Fault, as: UdpFault
+  alias EtherCAT.Simulator.Transport.Raw.Endpoint
+  alias EtherCAT.Simulator.Transport.Raw
+  alias EtherCAT.Simulator.Transport.Raw.Fault, as: RawFault
+  alias EtherCAT.Simulator.Transport.Udp.Fault, as: UdpFault
 
   @loopback {127, 0, 0, 1}
   @raw_loopback_interface "lo"
@@ -73,7 +76,13 @@ defmodule EtherCAT.SimulatorTest do
                strategy: :one_for_one
              )
 
-    assert {:ok, %{raw: %{interface: @raw_loopback_interface, ifindex: ifindex}}} =
+    assert {:ok,
+            %{
+              raw: %{
+                mode: :single,
+                primary: %{interface: @raw_loopback_interface, ifindex: ifindex}
+              }
+            }} =
              Simulator.info()
 
     assert is_integer(ifindex)
@@ -102,6 +111,7 @@ defmodule EtherCAT.SimulatorTest do
     assert {:ok,
             %{
               raw: %{
+                mode: :redundant,
                 primary: %{interface: @raw_loopback_interface, ingress: :primary},
                 secondary: %{interface: @raw_loopback_interface, ingress: :secondary}
               }
@@ -174,6 +184,142 @@ defmodule EtherCAT.SimulatorTest do
 
     assert UdpFault.describe(UdpFault.truncate() |> UdpFault.next(2)) ==
              "next 2 UDP replies truncate"
+
+    assert RawFault.describe(
+             RawFault.delay_response(200, endpoint: :secondary, from_ingress: :primary)
+           ) ==
+             "delay secondary raw responses from primary ingress by 200ms"
+  end
+
+  @tag :raw_socket
+  test "raw transport exposes mode-aware info and delay-response faults" do
+    assert {:ok, supervisor} =
+             Supervisor.start_link(
+               [{Simulator, devices: [], raw: [interface: @raw_loopback_interface]}],
+               strategy: :one_for_one
+             )
+
+    assert {:ok,
+            %{
+              mode: :single,
+              primary: %{
+                configured_response_delay_ms: 0,
+                response_delay_ms: 0,
+                response_delay_from_ingress: :all,
+                delay_fault: nil
+              }
+            }} = Raw.info()
+
+    assert :ok = Raw.inject_fault(RawFault.delay_response(75))
+
+    assert {:ok,
+            %{
+              mode: :single,
+              primary: %{
+                configured_response_delay_ms: 0,
+                response_delay_ms: 75,
+                response_delay_from_ingress: :all,
+                delay_fault: %{delay_ms: 75, from_ingress: :all}
+              }
+            }} = Raw.info()
+
+    assert {:error, :invalid_fault} =
+             Raw.inject_fault(RawFault.delay_response(75, endpoint: :secondary))
+
+    assert :ok = Raw.clear_faults()
+
+    assert {:ok,
+            %{
+              mode: :single,
+              primary: %{
+                configured_response_delay_ms: 0,
+                response_delay_ms: 0,
+                response_delay_from_ingress: :all,
+                delay_fault: nil
+              }
+            }} = Raw.info()
+
+    assert :ok = Supervisor.stop(supervisor)
+  end
+
+  @tag :raw_socket
+  test "raw clear_faults preserves configured response delay" do
+    assert {:ok, supervisor} =
+             Supervisor.start_link(
+               [
+                 {Simulator,
+                  devices: [],
+                  raw: [
+                    interface: @raw_loopback_interface,
+                    response_delay_ms: 30,
+                    response_delay_from_ingress: :primary
+                  ]}
+               ],
+               strategy: :one_for_one
+             )
+
+    assert {:ok,
+            %{
+              mode: :single,
+              primary: %{
+                configured_response_delay_ms: 30,
+                configured_response_delay_from_ingress: :primary,
+                response_delay_ms: 30,
+                response_delay_from_ingress: :primary,
+                delay_fault: nil
+              }
+            }} = Raw.info()
+
+    assert :ok = Raw.inject_fault(RawFault.delay_response(75, from_ingress: :secondary))
+
+    assert {:ok,
+            %{
+              mode: :single,
+              primary: %{
+                configured_response_delay_ms: 30,
+                configured_response_delay_from_ingress: :primary,
+                response_delay_ms: 75,
+                response_delay_from_ingress: :secondary,
+                delay_fault: %{delay_ms: 75, from_ingress: :secondary}
+              }
+            }} = Raw.info()
+
+    assert :ok = Raw.clear_faults()
+
+    assert {:ok,
+            %{
+              mode: :single,
+              primary: %{
+                configured_response_delay_ms: 30,
+                configured_response_delay_from_ingress: :primary,
+                response_delay_ms: 30,
+                response_delay_from_ingress: :primary,
+                delay_fault: nil
+              }
+            }} = Raw.info()
+
+    assert :ok = Supervisor.stop(supervisor)
+  end
+
+  @tag :raw_socket
+  test "single raw runtime preserves a custom endpoint name" do
+    custom_name = :"raw_endpoint_#{System.unique_integer([:positive, :monotonic])}"
+
+    assert {:ok, supervisor} =
+             Supervisor.start_link(
+               [
+                 {Simulator,
+                  devices: [], raw: [interface: @raw_loopback_interface, name: custom_name]}
+               ],
+               strategy: :one_for_one
+             )
+
+    assert is_pid(Process.whereis(custom_name))
+
+    assert {:ok, %{interface: @raw_loopback_interface, ingress: :primary}} =
+             Endpoint.info(custom_name)
+
+    assert :ok = Supervisor.stop(supervisor)
   end
 
   test "info/0 reports active logical wkc offsets" do

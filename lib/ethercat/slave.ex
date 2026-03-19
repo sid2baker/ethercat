@@ -211,6 +211,10 @@ defmodule EtherCAT.Slave do
 
   @doc """
   Read the latest decoded value for one registered input signal.
+
+  Returns `{:error, :not_ready}` before the first valid domain refresh and
+  `{:error, {:stale, details}}` once the cached sample is older than the
+  domain freshness window.
   """
   @spec read_input(atom(), atom()) :: {:ok, {term(), integer()}} | {:error, term()}
   def read_input(slave_name, signal_name) do

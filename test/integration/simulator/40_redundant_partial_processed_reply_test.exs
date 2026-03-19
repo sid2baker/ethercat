@@ -4,7 +4,8 @@ defmodule EtherCAT.Integration.Simulator.RedundantPartialProcessedReplyTest do
   alias EtherCAT.Bus
   alias EtherCAT.Bus.Transaction
   alias EtherCAT.IntegrationSupport.{RedundantSimulatorRing, SimulatorRing}
-  alias EtherCAT.Simulator.RawSocket
+  alias EtherCAT.Simulator.Transport.Raw
+  alias EtherCAT.Simulator.Transport.Raw.Fault, as: RawFault
 
   setup do
     on_exit(fn ->
@@ -38,10 +39,8 @@ defmodule EtherCAT.Integration.Simulator.RedundantPartialProcessedReplyTest do
     assert baseline_wkc > 0
 
     assert :ok =
-             RawSocket.set_response_delay(
-               RawSocket.endpoint_name(:primary),
-               200,
-               :secondary
+             Raw.inject_fault(
+               RawFault.delay_response(200, endpoint: :primary, from_ingress: :secondary)
              )
 
     assert {:ok, [%{wkc: wkc}]} = Bus.transaction(bus_name, Transaction.brd({0x0000, 1}))

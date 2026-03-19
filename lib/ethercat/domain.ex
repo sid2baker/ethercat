@@ -40,6 +40,18 @@ defmodule EtherCAT.Domain do
 
   @type domain_id :: atom()
   @type pdo_key :: {slave_name :: atom(), pdo_name :: atom()}
+  @type freshness_info :: %{
+          required(:state) => :not_ready | :fresh | :stale,
+          required(:refreshed_at_us) => integer() | nil,
+          required(:age_us) => non_neg_integer() | nil,
+          required(:stale_after_us) => pos_integer()
+        }
+  @type sample_info :: %{
+          required(:value) => binary(),
+          required(:updated_at_us) => integer() | nil,
+          required(:changed_at_us) => integer() | nil,
+          required(:freshness) => freshness_info() | nil
+        }
 
   defstruct [
     :id,
@@ -52,6 +64,7 @@ defmodule EtherCAT.Domain do
     :last_valid_cycle_at_us,
     :last_invalid_cycle_at_us,
     :last_invalid_reason,
+    :stale_after_us,
     layout: Layout.new(),
     cycle_plan: nil,
     cycle_health: :healthy,
@@ -139,9 +152,7 @@ defmodule EtherCAT.Domain do
   @doc """
   Read the current process-image value plus freshness metadata for one PDO key.
   """
-  @spec sample(domain_id(), pdo_key()) ::
-          {:ok, %{value: binary(), updated_at_us: integer() | nil}}
-          | {:error, :not_found | :not_ready}
+  @spec sample(domain_id(), pdo_key()) :: {:ok, sample_info()} | {:error, :not_found | :not_ready}
   def sample(domain_id, key) when is_atom(domain_id) do
     with {:ok, table} <- Image.lookup_table(domain_id) do
       Image.sample(table, key)

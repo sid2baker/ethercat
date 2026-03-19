@@ -1,11 +1,11 @@
-defmodule EtherCAT.Simulator.Udp.Fault do
+defmodule EtherCAT.Simulator.Transport.Udp.Fault do
   @moduledoc """
-  Builder API for `EtherCAT.Simulator.Udp.inject_fault/1`.
+  Builder API for `EtherCAT.Simulator.Transport.Udp.inject_fault/1`.
 
   Typical usage:
 
-      alias EtherCAT.Simulator.Udp
-      alias EtherCAT.Simulator.Udp.Fault
+      alias EtherCAT.Simulator.Transport.Udp
+      alias EtherCAT.Simulator.Transport.Udp.Fault
 
       Udp.inject_fault(Fault.truncate())
       Udp.inject_fault(Fault.wrong_idx() |> Fault.next(3))
@@ -53,8 +53,8 @@ defmodule EtherCAT.Simulator.Udp.Fault do
     }
   end
 
-  @spec normalize(t() | EtherCAT.Simulator.Udp.fault()) ::
-          {:ok, EtherCAT.Simulator.Udp.fault()} | :error
+  @spec normalize(t() | EtherCAT.Simulator.Transport.Udp.fault()) ::
+          {:ok, EtherCAT.Simulator.Transport.Udp.fault()} | :error
   def normalize(%__MODULE__{kind: :counted, mode: mode, count: 1}) when mode in @modes do
     {:ok, {:corrupt_next_response, mode}}
   end
@@ -72,7 +72,7 @@ defmodule EtherCAT.Simulator.Udp.Fault do
   def normalize(%__MODULE__{}), do: :error
   def normalize(raw_fault), do: {:ok, raw_fault}
 
-  @spec describe(t() | EtherCAT.Simulator.Udp.fault()) :: String.t()
+  @spec describe(t() | EtherCAT.Simulator.Transport.Udp.fault()) :: String.t()
   def describe(%__MODULE__{} = fault) do
     case normalize(fault) do
       {:ok, raw_fault} -> describe(raw_fault)

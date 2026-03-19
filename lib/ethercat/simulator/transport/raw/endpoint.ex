@@ -1,14 +1,5 @@
-defmodule EtherCAT.Simulator.RawSocket do
-  @moduledoc """
-  Raw AF_PACKET endpoint for `EtherCAT.Simulator`.
-
-  This binds a real EtherType `0x88A4` raw socket on a host interface and
-  forwards received EtherCAT frames to the in-memory simulator segment.
-
-  It is the raw-wire sibling of `EtherCAT.Simulator.Udp`: the simulator core
-  still executes datagrams, but the outer framing is now a real Ethernet
-  header instead of UDP.
-  """
+defmodule EtherCAT.Simulator.Transport.Raw.Endpoint do
+  @moduledoc false
 
   use GenServer
 
@@ -22,7 +13,6 @@ defmodule EtherCAT.Simulator.RawSocket do
   @af_packet 17
   @ethertype 0x88A4
   @broadcast_mac <<0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF>>
-  @default_name __MODULE__
   @echo_retention_ms 100
 
   @type ingress :: :primary | :secondary
@@ -34,13 +24,15 @@ defmodule EtherCAT.Simulator.RawSocket do
           src_mac: <<_::48>>,
           ingress: ingress(),
           recent_tx_frames: [{binary(), integer()}],
-          response_delay_ms: non_neg_integer(),
-          response_delay_from_ingress: ingress() | :all
+          configured_response_delay_ms: non_neg_integer(),
+          configured_response_delay_from_ingress: ingress() | :all,
+          fault_response_delay_ms: non_neg_integer(),
+          fault_response_delay_from_ingress: ingress() | :all
         }
 
   @spec child_spec(keyword()) :: Supervisor.child_spec()
   def child_spec(opts) do
-    name = Keyword.get(opts, :name, @default_name)
+    name = Keyword.get(opts, :name, endpoint_name(Keyword.get(opts, :ingress, :primary)))
 
     %{
       id: name,
@@ -50,7 +42,8 @@ defmodule EtherCAT.Simulator.RawSocket do
 
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
-    GenServer.start_link(__MODULE__, opts, name: Keyword.get(opts, :name, @default_name))
+    name = Keyword.get(opts, :name, endpoint_name(Keyword.get(opts, :ingress, :primary)))
+    GenServer.start_link(__MODULE__, opts, name: name)
   end
 
   @spec endpoint_name(ingress()) :: atom()
@@ -58,18 +51,26 @@ defmodule EtherCAT.Simulator.RawSocket do
   def endpoint_name(:secondary), do: Module.concat(__MODULE__, Secondary)
 
   @spec info(GenServer.server()) :: {:ok, map()} | {:error, :not_found}
-  def info(name \\ @default_name) do
+  def info(name \\ endpoint_name(:primary)) do
     GenServer.call(name, :info)
   catch
     :exit, {:noproc, _} -> {:error, :not_found}
     :exit, _reason -> {:error, :not_found}
   end
 
-  @spec set_response_delay(GenServer.server(), non_neg_integer(), ingress() | :all) ::
+  @spec set_response_delay_fault(GenServer.server(), non_neg_integer(), ingress() | :all) ::
           :ok | {:error, :not_found}
-  def set_response_delay(name, delay_ms, from_ingress \\ :all)
+  def set_response_delay_fault(name, delay_ms, from_ingress \\ :all)
       when is_integer(delay_ms) and delay_ms >= 0 and from_ingress in [:all, :primary, :secondary] do
-    GenServer.call(name, {:set_response_delay, delay_ms, from_ingress})
+    GenServer.call(name, {:set_response_delay_fault, delay_ms, from_ingress})
+  catch
+    :exit, {:noproc, _} -> {:error, :not_found}
+    :exit, _reason -> {:error, :not_found}
+  end
+
+  @spec clear_response_delay_fault(GenServer.server()) :: :ok | {:error, :not_found}
+  def clear_response_delay_fault(name) do
+    GenServer.call(name, :clear_response_delay_fault)
   catch
     :exit, {:noproc, _} -> {:error, :not_found}
     :exit, _reason -> {:error, :not_found}
@@ -77,13 +78,7 @@ defmodule EtherCAT.Simulator.RawSocket do
 
   @spec infos() :: {:ok, map()} | {:error, :not_found}
   def infos do
-    case info() do
-      {:ok, raw_info} ->
-        {:ok, raw_info}
-
-      {:error, :not_found} ->
-        endpoint_infos()
-    end
+    endpoint_infos()
   end
 
   @impl true
@@ -116,8 +111,10 @@ defmodule EtherCAT.Simulator.RawSocket do
          src_mac: src_mac,
          ingress: ingress,
          recent_tx_frames: [],
-         response_delay_ms: response_delay_ms,
-         response_delay_from_ingress: response_delay_from_ingress
+         configured_response_delay_ms: response_delay_ms,
+         configured_response_delay_from_ingress: response_delay_from_ingress,
+         fault_response_delay_ms: 0,
+         fault_response_delay_from_ingress: :all
        }}
     else
       {:error, reason} ->
@@ -134,17 +131,29 @@ defmodule EtherCAT.Simulator.RawSocket do
         ifindex: state.ifindex,
         ingress: state.ingress,
         recent_tx_frame_count: length(state.recent_tx_frames),
-        response_delay_ms: state.response_delay_ms,
-        response_delay_from_ingress: state.response_delay_from_ingress
+        configured_response_delay_ms: state.configured_response_delay_ms,
+        configured_response_delay_from_ingress: state.configured_response_delay_from_ingress,
+        response_delay_ms: effective_response_delay_ms(state),
+        response_delay_from_ingress: effective_response_delay_from_ingress(state),
+        delay_fault: delay_fault_info(state)
       }}, state}
   end
 
-  def handle_call({:set_response_delay, delay_ms, from_ingress}, _from, state) do
+  def handle_call({:set_response_delay_fault, delay_ms, from_ingress}, _from, state) do
     {:reply, :ok,
      %{
        state
-       | response_delay_ms: delay_ms,
-         response_delay_from_ingress: from_ingress
+       | fault_response_delay_ms: delay_ms,
+         fault_response_delay_from_ingress: from_ingress
+     }}
+  end
+
+  def handle_call(:clear_response_delay_fault, _from, state) do
+    {:reply, :ok,
+     %{
+       state
+       | fault_response_delay_ms: 0,
+         fault_response_delay_from_ingress: :all
      }}
   end
 
@@ -236,7 +245,7 @@ defmodule EtherCAT.Simulator.RawSocket do
 
           {:error, reason} ->
             Logger.warning(
-              "[EtherCAT.Simulator.RawSocket] dropped invalid raw frame: #{inspect(reason)}",
+              "[EtherCAT.Simulator.Transport.Raw.Endpoint] dropped invalid raw frame: #{inspect(reason)}",
               event: :invalid_frame_dropped,
               reason_kind: Utils.reason_kind(reason)
             )
@@ -328,50 +337,66 @@ defmodule EtherCAT.Simulator.RawSocket do
   end
 
   defp dispatch_response_frame(
-         %{response_delay_ms: delay_ms} = state,
+         state,
          source_ingress,
          envelope,
          response_payload,
          padding,
          requester_mac
-       )
-       when is_integer(delay_ms) and delay_ms > 0 do
-    if delay_response?(state, source_ingress) do
-      Process.send_after(
-        self(),
-        {:emit_response_frame, envelope, response_payload, padding, requester_mac},
-        delay_ms
-      )
+       ) do
+    delay_ms = effective_response_delay_ms(state)
 
-      state
-    else
-      emit_response_frame(state, envelope, response_payload, padding, requester_mac)
+    cond do
+      delay_ms <= 0 ->
+        emit_response_frame(state, envelope, response_payload, padding, requester_mac)
+
+      delay_response?(state, source_ingress) ->
+        Process.send_after(
+          self(),
+          {:emit_response_frame, envelope, response_payload, padding, requester_mac},
+          delay_ms
+        )
+
+        state
+
+      true ->
+        emit_response_frame(state, envelope, response_payload, padding, requester_mac)
     end
   end
 
-  defp dispatch_response_frame(
-         state,
-         _source_ingress,
-         envelope,
-         response_payload,
-         padding,
-         requester_mac
-       ) do
-    emit_response_frame(state, envelope, response_payload, padding, requester_mac)
-  end
-
   defp delay_response?(
-         %{response_delay_from_ingress: :all},
+         state,
          source_ingress
        )
-       when source_ingress in [:primary, :secondary],
-       do: true
+       when source_ingress in [:primary, :secondary] do
+    case effective_response_delay_from_ingress(state) do
+      :all -> true
+      expected_ingress -> expected_ingress == source_ingress
+    end
+  end
 
-  defp delay_response?(
-         %{response_delay_from_ingress: expected_ingress},
-         source_ingress
-       ),
-       do: expected_ingress == source_ingress
+  defp delay_response?(_state, _source_ingress), do: false
+
+  defp effective_response_delay_ms(%{fault_response_delay_ms: delay_ms}) when delay_ms > 0,
+    do: delay_ms
+
+  defp effective_response_delay_ms(%{configured_response_delay_ms: delay_ms}), do: delay_ms
+
+  defp effective_response_delay_from_ingress(%{fault_response_delay_ms: delay_ms} = state)
+       when delay_ms > 0,
+       do: state.fault_response_delay_from_ingress
+
+  defp effective_response_delay_from_ingress(state),
+    do: state.configured_response_delay_from_ingress
+
+  defp delay_fault_info(%{fault_response_delay_ms: 0}), do: nil
+
+  defp delay_fault_info(state) do
+    %{
+      delay_ms: state.fault_response_delay_ms,
+      from_ingress: state.fault_response_delay_from_ingress
+    }
+  end
 
   defp emit_response_frame(
          %{socket: socket, ifindex: ifindex} = state,

@@ -5,8 +5,8 @@ and simulator-backed tooling.
 slaves with protocol-faithful ESC register, AL-state, mailbox, and logical
 process-data behavior. It is the public process boundary for the simulator
 runtime; device authorship lives in `EtherCAT.Simulator.Slave`, and the real
-transport endpoints live in `EtherCAT.Simulator.Udp` and
-`EtherCAT.Simulator.RawSocket`.
+transport endpoints live in `EtherCAT.Simulator.Transport.Udp` and
+`EtherCAT.Simulator.Transport.Raw`.
 
 ## What This Is Not
 
@@ -14,8 +14,8 @@ This is not a hardware EtherCAT slave controller or a kernel-bypass slave NIC.
 
 The simulator can now expose two host-side ingress styles:
 
-- `udp: [...]` through `EtherCAT.Simulator.Udp`
-- `raw: [interface: ...]` through `EtherCAT.Simulator.RawSocket`
+- `udp: [...]` through `EtherCAT.Simulator.Transport.Udp`
+- `raw: [interface: ...]` through `EtherCAT.Simulator.Transport.Raw`
 - `raw: [primary: [...], secondary: [...]]` for redundant raw ingress against
   one shared slave segment
 
@@ -54,8 +54,8 @@ flowchart TD
   A{Master transport}
   A -- :udp --> B[Bus.Transport.UdpSocket sends UDP payload]
   A -- raw --> C[Bus.Transport.RawSocket sends EtherCAT Ethernet frame]
-  B --> D[Simulator.Udp receives UDP payload]
-  C --> E[Simulator.RawSocket receives EtherType 0x88A4 frame]
+  B --> D[Simulator.Transport.Udp receives UDP payload]
+  C --> E[Simulator.Transport.Raw.Endpoint receives EtherType 0x88A4 frame]
   D --> F[Frame.decode converts payload into EtherCAT datagrams]
   E --> F
   F --> G[EtherCAT.Simulator executes datagrams against in-memory slaves]
@@ -97,7 +97,6 @@ lib/ethercat/
 └── simulator/
     ├── driver_adapter.ex
     ├── fault.ex
-    ├── raw_socket.ex
     ├── runtime/
     │   ├── faults.ex
     │   ├── milestones.ex
@@ -105,8 +104,15 @@ lib/ethercat/
     │   ├── snapshot.ex
     │   ├── subscriptions.ex
     │   └── wiring.ex
-    ├── udp.ex
-    ├── udp/fault.ex
+    ├── transport.ex
+    ├── transport/
+    │   ├── raw.ex
+    │   ├── raw/
+    │   │   ├── endpoint.ex
+    │   │   └── fault.ex
+    │   ├── udp.ex
+    │   └── udp/
+    │       └── fault.ex
     └── slave/
         ├── behaviour.ex
         ├── definition.ex
@@ -238,15 +244,12 @@ naming, and simulator hydration aligned.
 
 ## Fault Model
 
-The simulator has two fault boundaries:
+The simulator has three fault boundaries:
 
 - `EtherCAT.Simulator` for datagram/runtime behavior
-- `EtherCAT.Simulator.Udp` for malformed, stale, or mismatched raw UDP replies
-
-The raw-socket endpoint still has no separate transport-fault injector. The
-redundant raw path is modeled through topology changes at the simulator core:
-healthy redundant ingress, or a single deterministic break that splits primary
-and secondary reachability.
+- `EtherCAT.Simulator.Transport.Udp` for malformed, stale, or mismatched UDP replies
+- `EtherCAT.Simulator.Transport.Raw` for raw endpoint behavior such as
+  delayed egress on one or both raw legs
 
 Runtime fault injection supports:
 
@@ -290,7 +293,8 @@ Example runtime and UDP-edge faults:
 
 ```elixir
 alias EtherCAT.Simulator.Fault
-alias EtherCAT.Simulator.Udp.Fault, as: UdpFault
+alias EtherCAT.Simulator.Transport.Raw.Fault, as: RawFault
+alias EtherCAT.Simulator.Transport.Udp.Fault, as: UdpFault
 
 EtherCAT.Simulator.inject_fault(Fault.drop_responses() |> Fault.next(10))
 
@@ -303,8 +307,12 @@ EtherCAT.Simulator.inject_fault(
   Fault.mailbox_protocol_fault(:mailbox, 0x2003, 0x01, :upload_segment, :toggle_mismatch)
 )
 
-EtherCAT.Simulator.Udp.inject_fault(
+EtherCAT.Simulator.Transport.Udp.inject_fault(
   UdpFault.script([UdpFault.unsupported_type(), UdpFault.replay_previous()])
+)
+
+EtherCAT.Simulator.Transport.Raw.inject_fault(
+  RawFault.delay_response(200, endpoint: :secondary, from_ingress: :primary)
 )
 ```
 
@@ -318,19 +326,21 @@ What exists today:
 - `Fault.after_ms/2` delays when a fault becomes active
 - `Fault.after_milestone/2` delays activation until a deterministic simulator
   milestone is observed
+- `Transport.Raw.Fault.delay_response/2` delays raw response emission on
+  selected endpoints for selected ingress directions
 - the DC register model carries `system_time_delay_ns` so DC reads can expose
   realistic-looking delay values during clock setup and diagnostics
 
 What does not exist today:
 
-- no built-in "reply after N ms" transport fault
 - no random jitter model
 - no per-port or per-hop wire propagation model
 
 That is deliberate. Most master regressions here are about missing replies,
 wrong WKCs, malformed mailbox exchanges, reconnect sequencing, and retained
-fault state. Those benefit more from deterministic fault windows than from an
-approximate latency model.
+fault state. The raw transport delay control exists because raw redundant-path
+regressions need an honest endpoint-level seam; broader latency models would
+still be less useful than deterministic fault windows.
 
 ## Testing Strategy
 

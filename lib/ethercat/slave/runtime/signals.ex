@@ -2,6 +2,7 @@ defmodule EtherCAT.Slave.Runtime.Signals do
   @moduledoc false
 
   alias EtherCAT.Domain
+  alias EtherCAT.Domain.Freshness
 
   @spec attachment_summaries(map() | nil) :: [map()]
   def attachment_summaries(nil), do: []
@@ -87,10 +88,16 @@ defmodule EtherCAT.Slave.Runtime.Signals do
           {:error, _} = err ->
             err
 
-          {:ok, %{value: sm_bytes, updated_at_us: updated_at_us}}
-          when is_integer(updated_at_us) ->
+          {:ok, %{freshness: %{state: :not_ready}}} ->
+            {:error, :not_ready}
+
+          {:ok, %{freshness: %{state: :stale} = freshness}} ->
+            {:error, {:stale, Freshness.stale_details(freshness)}}
+
+          {:ok, %{value: sm_bytes, updated_at_us: refreshed_at_us, freshness: %{state: :fresh}}}
+          when is_integer(refreshed_at_us) ->
             raw = extract_sm_bits(sm_bytes, bit_offset, bit_size)
-            {:ok, {data.driver.decode_signal(signal_name, data.config, raw), updated_at_us}}
+            {:ok, {data.driver.decode_signal(signal_name, data.config, raw), refreshed_at_us}}
         end
     end
   end

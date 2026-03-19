@@ -47,4 +47,32 @@ defmodule EtherCAT.Integration.Simulator.DisconnectWithHealthPollTest do
       assert {:ok, %{value: true}} = Simulator.signal_snapshot(:outputs, :ch1)
     end)
   end
+
+  test "disconnecting a PDO slave eventually makes cached input reads stale" do
+    assert_eventually(fn ->
+      assert {:ok, {_value, refreshed_at_us}} = EtherCAT.read_input(:inputs, :ch1)
+      assert is_integer(refreshed_at_us)
+    end)
+
+    assert :ok = Simulator.inject_fault(Fault.disconnect(:outputs) |> Fault.next(120))
+
+    assert_eventually(
+      fn ->
+        assert {:error,
+                {:stale,
+                 %{
+                   refreshed_at_us: refreshed_at_us,
+                   age_us: age_us,
+                   stale_after_us: stale_after_us
+                 }}} =
+                 EtherCAT.read_input(:inputs, :ch1)
+
+        assert is_integer(refreshed_at_us)
+        assert is_integer(age_us)
+        assert is_integer(stale_after_us)
+        assert age_us > stale_after_us
+      end,
+      80
+    )
+  end
 end

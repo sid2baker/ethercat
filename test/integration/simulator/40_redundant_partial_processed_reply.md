@@ -33,4 +33,5 @@ Correct. The exchange completes on the first processed arrival.
 
 ## Simulator API Notes
 
-- Current API is enough (`RawSocket.set_response_delay/3`).
+- Current API is enough (`Transport.Raw.inject_fault/1` with
+  `RawFault.delay_response/2`).

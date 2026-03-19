@@ -3,6 +3,7 @@ defmodule EtherCAT.Domain.Calls do
 
   alias EtherCAT.Domain
   alias EtherCAT.Domain.Cycle
+  alias EtherCAT.Domain.Freshness
   alias EtherCAT.Domain.Image
   alias EtherCAT.Domain.Layout
   alias EtherCAT.Domain.Status
@@ -49,7 +50,11 @@ defmodule EtherCAT.Domain.Calls do
   @spec update_cycle_time(term(), pos_integer(), %Domain{}) ::
           :gen_statem.event_handler_result(atom())
   def update_cycle_time(from, new_us, data) do
-    {:keep_state, %{data | period_us: new_us}, [{:reply, from, :ok}]}
+    new_stale_after_us = Freshness.default_stale_after_us(new_us)
+    Image.put_domain_status(data.table, data.last_valid_cycle_at_us, new_stale_after_us)
+
+    {:keep_state, %{data | period_us: new_us, stale_after_us: new_stale_after_us},
+     [{:reply, from, :ok}]}
   end
 
   defp reset_miss_count?(:stopped), do: true

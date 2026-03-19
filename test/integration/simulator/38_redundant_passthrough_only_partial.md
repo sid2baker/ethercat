@@ -27,8 +27,11 @@ Correct. The echo filter discards the passthrough and the timeout fires.
 1. Boot redundant raw ring on veth pairs.
 2. Delay the forward-path response by 200ms at the simulator's secondary
    endpoint (only delays frames originating from primary ingress).
-3. Assert that `Bus.transaction` returns `{:error, :timeout}`.
+3. Issue a fixed-station `FPRD` to the right-most slave so the secondary-ingress
+   copy is passthrough-only.
+4. Assert that `Bus.transaction` returns `{:error, :timeout}`.
 
 ## Simulator API Notes
 
-- Current API is enough (`RawSocket.set_response_delay/3`).
+- Current API is enough (`Transport.Raw.inject_fault/1` with
+  `RawFault.delay_response/2`).

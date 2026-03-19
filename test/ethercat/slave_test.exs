@@ -1,6 +1,7 @@
 defmodule EtherCAT.SlaveTest do
   use ExUnit.Case, async: true
 
+  alias EtherCAT.Domain.Image
   alias EtherCAT.Slave.ProcessData
   alias EtherCAT.Slave.ProcessData.Plan.DomainAttachment
   alias EtherCAT.Slave.ProcessData.Plan.SmGroup
@@ -227,7 +228,9 @@ defmodule EtherCAT.SlaveTest do
     domain_id = :"sample_domain_#{System.unique_integer([:positive, :monotonic])}"
     key = {:sensor, {:sm, 0}}
     :ets.new(domain_id, [:set, :public, :named_table])
-    :ets.insert(domain_id, {key, <<1>>, 1234})
+    refreshed_at_us = System.monotonic_time(:microsecond)
+    :ets.insert(domain_id, {key, <<1>>, {:input, refreshed_at_us - 10_000}})
+    Image.put_domain_status(domain_id, refreshed_at_us, 1_000_000)
 
     data = %EtherCAT.Slave{
       name: :sensor,
@@ -246,13 +249,57 @@ defmodule EtherCAT.SlaveTest do
 
     from = {self(), make_ref()}
 
-    assert {:keep_state_and_data, [{:reply, ^from, {:ok, {1, 1234}}}]} =
+    assert {:keep_state_and_data, [{:reply, ^from, {:ok, {1, ^refreshed_at_us}}}]} =
              EtherCAT.Slave.FSM.handle_event(
                {:call, from},
                {:read_input, :ch1},
                :op,
                data
              )
+  end
+
+  test "read_input rejects stale cached input samples" do
+    domain_id = :"stale_domain_#{System.unique_integer([:positive, :monotonic])}"
+    key = {:sensor, {:sm, 0}}
+    :ets.new(domain_id, [:set, :public, :named_table])
+    :ets.insert(domain_id, {key, <<1>>, {:input, System.monotonic_time(:microsecond) - 20_000}})
+
+    refreshed_at_us = System.monotonic_time(:microsecond) - 5_000
+    Image.put_domain_status(domain_id, refreshed_at_us, 1_000)
+
+    data = %EtherCAT.Slave{
+      name: :sensor,
+      driver: TestDriver,
+      config: %{},
+      signal_registrations: %{
+        ch1: %{
+          domain_id: domain_id,
+          sm_key: {:sm, 0},
+          bit_offset: 0,
+          bit_size: 1,
+          direction: :input
+        }
+      }
+    }
+
+    from = {self(), make_ref()}
+
+    assert {:keep_state_and_data,
+            [
+              {:reply, ^from,
+               {:error,
+                {:stale,
+                 %{refreshed_at_us: ^refreshed_at_us, age_us: age_us, stale_after_us: 1_000}}}}
+            ]} =
+             EtherCAT.Slave.FSM.handle_event(
+               {:call, from},
+               {:read_input, :ch1},
+               :op,
+               data
+             )
+
+    assert is_integer(age_us)
+    assert age_us > 1_000
   end
 
   test "preop rejects safeop and op requests when local configuration failed" do
@@ -493,9 +540,9 @@ defmodule EtherCAT.SlaveTest do
                }
              )
 
-    assert [{^key, <<1>>, fast_updated_at_us}] = :ets.lookup(fast_domain_id, key)
+    assert [{^key, <<1>>, {:output, fast_updated_at_us}}] = :ets.lookup(fast_domain_id, key)
     assert is_integer(fast_updated_at_us)
-    assert [{^key, <<1>>, slow_updated_at_us}] = :ets.lookup(slow_domain_id, key)
+    assert [{^key, <<1>>, {:output, slow_updated_at_us}}] = :ets.lookup(slow_domain_id, key)
     assert is_integer(slow_updated_at_us)
 
     assert {:keep_state, %EtherCAT.Slave{output_sm_images: %{{:sm, 1} => <<3>>}},
@@ -531,9 +578,9 @@ defmodule EtherCAT.SlaveTest do
                }
              )
 
-    assert [{^key, <<3>>, fast_updated_at_us}] = :ets.lookup(fast_domain_id, key)
+    assert [{^key, <<3>>, {:output, fast_updated_at_us}}] = :ets.lookup(fast_domain_id, key)
     assert is_integer(fast_updated_at_us)
-    assert [{^key, <<3>>, slow_updated_at_us}] = :ets.lookup(slow_domain_id, key)
+    assert [{^key, <<3>>, {:output, slow_updated_at_us}}] = :ets.lookup(slow_domain_id, key)
     assert is_integer(slow_updated_at_us)
   end
 

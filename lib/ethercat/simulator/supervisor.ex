@@ -4,8 +4,7 @@ defmodule EtherCAT.Simulator.Supervisor do
   use Supervisor
 
   alias EtherCAT.Simulator
-  alias EtherCAT.Simulator.RawSocket
-  alias EtherCAT.Simulator.Udp
+  alias EtherCAT.Simulator.Transport.{Udp, Raw.Endpoint}
 
   @name __MODULE__
 
@@ -46,7 +45,7 @@ defmodule EtherCAT.Simulator.Supervisor do
     raw_opts
     |> normalize_raw_endpoints()
     |> Enum.map(fn {name, opts} ->
-      {RawSocket, Keyword.put(opts, :name, name)}
+      {Endpoint, Keyword.put(opts, :name, name)}
     end)
   end
 
@@ -58,7 +57,10 @@ defmodule EtherCAT.Simulator.Supervisor do
         |> maybe_add_raw_endpoint(:secondary, Keyword.get(raw_opts, :secondary))
 
       true ->
-        [{Keyword.get(raw_opts, :name, RawSocket), raw_opts}]
+        [
+          {Keyword.get(raw_opts, :name, Endpoint.endpoint_name(:primary)),
+           Keyword.put(raw_opts, :ingress, :primary)}
+        ]
     end
   end
 
@@ -67,7 +69,7 @@ defmodule EtherCAT.Simulator.Supervisor do
   defp maybe_add_raw_endpoint(endpoints, ingress, opts) when is_list(opts) do
     endpoints ++
       [
-        {RawSocket.endpoint_name(ingress),
+        {Endpoint.endpoint_name(ingress),
          opts
          |> Keyword.put(:ingress, ingress)}
       ]

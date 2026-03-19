@@ -151,7 +151,7 @@ Use the existing simulator fault builders before inventing anything new.
 
 ### UDP-edge corruption surface
 
-`EtherCAT.Simulator.Udp.Fault` already supports:
+`EtherCAT.Simulator.Transport.Udp.Fault` already supports:
 
 - `UdpFault.truncate()`
 - `UdpFault.unsupported_type()`
@@ -159,6 +159,14 @@ Use the existing simulator fault builders before inventing anything new.
 - `UdpFault.replay_previous()`
 - counted windows with `UdpFault.next/2`
 - ordered corruption scripts with `UdpFault.script/1`
+
+### Raw-edge transport surface
+
+`EtherCAT.Simulator.Transport.Raw.Fault` currently supports:
+
+- `RawFault.delay_response(delay_ms)`
+- `RawFault.delay_response(delay_ms, endpoint: :primary | :secondary | :all)`
+- `RawFault.delay_response(delay_ms, from_ingress: :primary | :secondary | :all)`
 
 ### Ring builders
 

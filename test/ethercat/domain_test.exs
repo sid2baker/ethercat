@@ -3,6 +3,7 @@ defmodule EtherCAT.DomainTest do
 
   alias EtherCAT.Domain
   alias EtherCAT.Domain, as: DomainAPI
+  alias EtherCAT.Domain.Image
   alias EtherCAT.Domain.Layout
   alias EtherCAT.TestSupport.FakeBus
 
@@ -95,6 +96,31 @@ defmodule EtherCAT.DomainTest do
              DomainAPI.sample(domain_id, {:valve, {:sm, 0}})
 
     assert is_integer(updated_at_us)
+  end
+
+  test "sample reports input refresh time separately from last change time", %{
+    domain_id: domain_id
+  } do
+    key = {:sensor, {:sm, 0}}
+    assert {:ok, 0} = DomainAPI.register_pdo(domain_id, key, 1, :input)
+
+    changed_at_us = System.monotonic_time(:microsecond) - 50_000
+    refreshed_at_us = System.monotonic_time(:microsecond)
+
+    :ets.insert(domain_id, {key, <<1>>, {:input, changed_at_us}})
+    Image.put_domain_status(domain_id, refreshed_at_us, 100_000)
+
+    assert {:ok,
+            %{
+              value: <<1>>,
+              updated_at_us: ^refreshed_at_us,
+              changed_at_us: ^changed_at_us,
+              freshness: %{
+                state: :fresh,
+                refreshed_at_us: ^refreshed_at_us,
+                stale_after_us: 100_000
+              }
+            }} = DomainAPI.sample(domain_id, key)
   end
 
   test "write, read, and sample return not_found for missing domains" do

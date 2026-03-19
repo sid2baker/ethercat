@@ -69,6 +69,9 @@ defmodule EtherCAT.Integration.Expect do
 
     assert %{next_fault: nil, pending_faults: []} = udp_info
 
+    raw_info = Map.get(info, :raw)
+    assert_raw_faults_cleared(raw_info)
+
     :ok
   end
 
@@ -184,6 +187,17 @@ defmodule EtherCAT.Integration.Expect do
   defp match_expected?(actual, expected) when is_function(expected, 1), do: expected.(actual)
   defp match_expected?(actual, expected) when is_list(expected), do: actual in expected
   defp match_expected?(actual, expected), do: actual == expected
+
+  defp assert_raw_faults_cleared(nil), do: :ok
+
+  defp assert_raw_faults_cleared(%{mode: _mode} = raw_info) do
+    raw_info
+    |> Map.delete(:mode)
+    |> Enum.each(fn {endpoint, endpoint_info} ->
+      assert endpoint_info.delay_fault == nil,
+             "expected raw endpoint #{inspect(endpoint)} to have no active delay fault, got: #{inspect(endpoint_info)}"
+    end)
+  end
 
   defp maybe_dump_trace(nil, _label), do: :ok
 

@@ -51,7 +51,8 @@ timing.
   layer.
 - A simulator extension could model asymmetric link-up delay by holding
   one endpoint's responses for a configurable period after reconnect, but
-  this would duplicate what `set_response_delay` already does.
+  this would duplicate what `Transport.Raw.inject_fault/1` with
+  `RawFault.delay_response/2` already does.
 - **No API change needed** for the simulator. The fix belongs in the bus
   transport or link layer.
 

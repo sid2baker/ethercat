@@ -4,8 +4,9 @@ defmodule EtherCAT.Integration.ExpectTest do
   alias EtherCAT.Integration.Expect
   alias EtherCAT.Integration.Trace
   alias EtherCAT.IntegrationSupport.SimulatorRing
-  alias EtherCAT.Simulator.Udp
-  alias EtherCAT.Simulator.Udp.Fault, as: UdpFault
+  alias EtherCAT.Simulator.Transport.{Raw, Udp}
+  alias EtherCAT.Simulator.Transport.Raw.Fault, as: RawFault
+  alias EtherCAT.Simulator.Transport.Udp.Fault, as: UdpFault
 
   test "trace_sequence/2 asserts notes and telemetry in order" do
     trace = Trace.start_capture()
@@ -44,6 +45,22 @@ defmodule EtherCAT.Integration.ExpectTest do
     end
 
     assert :ok = Udp.clear_faults()
+    assert :ok = Expect.simulator_queue_empty()
+  end
+
+  @tag :raw_socket
+  test "simulator_queue_empty/0 treats active raw transport faults as non-empty" do
+    on_exit(fn -> SimulatorRing.stop_all!() end)
+
+    _endpoint = SimulatorRing.start_simulator!(transport: :raw)
+
+    assert :ok = Raw.inject_fault(RawFault.delay_response(100))
+
+    assert_raise ExUnit.AssertionError, fn ->
+      Expect.simulator_queue_empty()
+    end
+
+    assert :ok = Raw.clear_faults()
     assert :ok = Expect.simulator_queue_empty()
   end
 end

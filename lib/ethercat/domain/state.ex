@@ -2,6 +2,8 @@ defmodule EtherCAT.Domain.State do
   @moduledoc false
 
   alias EtherCAT.Domain
+  alias EtherCAT.Domain.Freshness
+  alias EtherCAT.Domain.Image
   alias EtherCAT.Domain.Layout
 
   @spec new(keyword()) :: %Domain{}
@@ -17,6 +19,9 @@ defmodule EtherCAT.Domain.State do
         {:read_concurrency, true}
       ])
 
+    stale_after_us = Freshness.default_stale_after_us(Keyword.fetch!(opts, :cycle_time_us))
+    Image.put_domain_status(table, nil, stale_after_us)
+
     Registry.register(EtherCAT.Registry, {:domain, id}, id)
 
     %Domain{
@@ -30,6 +35,7 @@ defmodule EtherCAT.Domain.State do
       last_valid_cycle_at_us: nil,
       last_invalid_cycle_at_us: nil,
       last_invalid_reason: nil,
+      stale_after_us: stale_after_us,
       layout: Layout.new(),
       cycle_plan: nil,
       cycle_health: :healthy,

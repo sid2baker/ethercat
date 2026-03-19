@@ -5,13 +5,13 @@ defmodule EtherCAT.Simulator do
 
   alias EtherCAT.Bus.Datagram
   alias EtherCAT.Simulator.Fault
-  alias EtherCAT.Simulator.RawSocket
   alias EtherCAT.Simulator.Runtime.FaultEngine
   alias EtherCAT.Simulator.Runtime.Faults
   alias EtherCAT.Simulator.Runtime.Router
   alias EtherCAT.Simulator.Runtime.Slaves
   alias EtherCAT.Simulator.Runtime.Snapshot
   alias EtherCAT.Simulator.Runtime.Topology
+  alias EtherCAT.Simulator.Transport.{Raw, Udp}
   alias EtherCAT.Simulator.State
   alias EtherCAT.Simulator.Slave.Runtime.Device
   alias EtherCAT.Simulator.Runtime.Subscriptions
@@ -260,14 +260,14 @@ defmodule EtherCAT.Simulator do
   end
 
   defp maybe_put_default_udp_info(info) do
-    case EtherCAT.Simulator.Udp.info() do
+    case Udp.info() do
       {:ok, udp_info} -> Map.put(info, :udp, udp_info)
       {:error, _reason} -> info
     end
   end
 
   defp maybe_put_default_raw_info(info) do
-    case RawSocket.infos() do
+    case Raw.info() do
       {:ok, raw_info} -> Map.put(info, :raw, raw_info)
       {:error, _reason} -> info
     end

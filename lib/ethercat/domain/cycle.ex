@@ -6,6 +6,7 @@ defmodule EtherCAT.Domain.Cycle do
   alias EtherCAT.Bus
   alias EtherCAT.Bus.Transaction
   alias EtherCAT.Domain
+  alias EtherCAT.Domain.Freshness
   alias EtherCAT.Domain.Image
   alias EtherCAT.Domain.Layout
   alias EtherCAT.Telemetry
@@ -65,6 +66,7 @@ defmodule EtherCAT.Domain.Cycle do
   defp handle_valid_cycle(data, response, t0, cycle_index, next_at, next_timeout) do
     maybe_notify_cycle_recovered(data)
     completed_at_us = System.monotonic_time(:microsecond)
+    Image.put_domain_status(data.table, completed_at_us, effective_stale_after_us(data))
 
     dispatch_inputs(response, data.cycle_plan.input_slices, data.table, data.id, completed_at_us)
 
@@ -234,6 +236,15 @@ defmodule EtherCAT.Domain.Cycle do
 
   defp cycle_transaction_timeout_us(period_us) when is_integer(period_us) and period_us > 0 do
     max(div(period_us * 9, 10), 200)
+  end
+
+  defp effective_stale_after_us(%{stale_after_us: stale_after_us})
+       when is_integer(stale_after_us) and stale_after_us > 0 do
+    stale_after_us
+  end
+
+  defp effective_stale_after_us(%{period_us: period_us}) do
+    Freshness.default_stale_after_us(period_us)
   end
 
   defp classify_cycle_result({:ok, [%{data: response, wkc: wkc}]}, expected_wkc)

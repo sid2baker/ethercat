@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `af5192e` — telemetry now separates invalid domain cycles from transport misses, master startup/activation/DC-lock decisions emit bounded lifecycle events, slave fault/down signals carry richer detail, and long-lived master/bus/domain/DC/slave/simulator processes now stamp consistent structured metadata onto high-signal logs.
 - `9f1342a` — `EtherCAT.Master`, `EtherCAT.Slave`, `EtherCAT.Domain`, and `EtherCAT.DC` now own the public API directly, while their `gen_statem` implementations live behind internal `*.FSM` modules and the old `*.API` facade split is gone.
 - `2d97faf` — redundant-link per-exchange timeout detail now emits bounded telemetry, repeated identical timeout patterns no longer warn on every cycle, and recovery logs report once when the degraded timeout pattern clears.
+- `(pending hash)` — input reads now fail closed on stale cached PDO data, while domain and slave diagnostics expose explicit process-data freshness derived from valid LRW refresh timing.
+- `(pending hash)` — simulator transport ownership now lives under `EtherCAT.Simulator.Transport.*`, UDP reply corruption remains transport-specific there, and raw transport exposes a mode-aware transport fault surface instead of a bare endpoint control API.
 
 ### Fixed
 - `95f343d` — DC recovery and configuration validation are stricter, reducing invalid recovery paths and catching bad setup earlier.
