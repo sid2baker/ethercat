@@ -93,7 +93,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Redundant realtime logical exchanges now keep a bounded merge window for
   complementary bounce replies before accepting a single processed bounce, so
   split-ring raw topology breaks merge back to full WKC instead of triggering
-  false domain recovery (`pending hash`).
+  false domain recovery (`1a80d39`).
 - Slaves held in `:preop` or `:safeop` now keep health polling active and
   still transition into recovery on disconnect or lower-state regressions
   instead of staying stranded in stale held states (`efbc8da`).
