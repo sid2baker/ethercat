@@ -84,11 +84,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Redundant links now keep degraded one-sided bounce exchanges within the
   original frame-time budget instead of resetting them to a fresh fixed `25ms`
   merge timeout, so a `10ms` cyclic ring can keep running after
-  secondary-port disconnect (`pending hash`).
+  secondary-port disconnect (`fea9d52`).
 - Raw receive errors now surface through the bus transport boundary instead of
   being silently ignored, so a broken leg cannot leave single or redundant
-  links stuck in `:awaiting` behind repeated socket-error chatter (`pending
-  hash`).
+  links stuck in `:awaiting` behind repeated socket-error chatter (`fea9d52`).
 
 ### Docs
 - `ARCHITECTURE.md`, `README.md`, `RELEASE.md`, and simulator guidance were
