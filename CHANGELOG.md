@@ -88,6 +88,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Raw receive errors now surface through the bus transport boundary instead of
   being silently ignored, so a broken leg cannot leave single or redundant
   links stuck in `:awaiting` behind repeated socket-error chatter (`fea9d52`).
+- Redundant realtime exchanges now complete immediately on a single processed
+  bounce instead of waiting for merge-time timeout fallback, so `1ms` cyclic
+  domains can stay healthy after backup-port disconnect (`pending hash`).
 
 ### Docs
 - `ARCHITECTURE.md`, `README.md`, `RELEASE.md`, and simulator guidance were

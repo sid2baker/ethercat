@@ -532,7 +532,7 @@ defmodule EtherCAT.Bus.Link.Redundant do
 
       [single] ->
         cond do
-          authoritative_single_arrival?(single, expected_count) ->
+          authoritative_single_arrival?(single, expected_count, exchange) ->
             # Only one port sent — this single reply completes the exchange
             {:done, single.datagrams}
 
@@ -564,14 +564,27 @@ defmodule EtherCAT.Bus.Link.Redundant do
     Enum.any?(datagrams, fn dg -> dg.wkc > 0 end)
   end
 
-  defp authoritative_single_arrival?(%{class: :unknown, datagrams: datagrams}, _expected_count),
-    do: frame_processed?(datagrams)
+  defp authoritative_single_arrival?(
+         %{class: :unknown, datagrams: datagrams},
+         _expected_count,
+         _exchange
+       ),
+       do: frame_processed?(datagrams)
 
-  defp authoritative_single_arrival?(%{class: class}, expected_count)
+  defp authoritative_single_arrival?(%{class: class}, expected_count, _exchange)
        when expected_count <= 1 and class in [:forward_cross, :pri_bounce, :sec_bounce],
        do: true
 
-  defp authoritative_single_arrival?(_arrival, _expected_count), do: false
+  defp authoritative_single_arrival?(
+         %{class: class, datagrams: datagrams},
+         expected_count,
+         %{tx_class: :realtime}
+       )
+       when expected_count > 1 and class in [:pri_bounce, :sec_bounce] do
+    frame_processed?(datagrams)
+  end
+
+  defp authoritative_single_arrival?(_arrival, _expected_count, _exchange), do: false
 
   defp resolve_two_arrivals(a, b, exchange) do
     classes = MapSet.new([a.class, b.class])
