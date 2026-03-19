@@ -451,6 +451,7 @@ defmodule EtherCAT.Master.Startup do
 
           opts = [
             bus: Bus,
+            position: pos,
             station: station,
             name: name,
             driver: entry.driver,

@@ -887,7 +887,93 @@ defmodule EtherCAT.SlaveTest do
     refute_receive {:driver_on_op, :axis}
   end
 
-  test "down waits for master reconnect authorization after the link returns" do
+  test "entering safeop arms health polling when configured" do
+    assert {:keep_state_and_data, [{{:timeout, :health_poll}, 250, nil}]} =
+             EtherCAT.Slave.FSM.handle_event(
+               :enter,
+               :op,
+               :safeop,
+               %EtherCAT.Slave{health_poll_ms: 250}
+             )
+  end
+
+  test "entering preop arms health polling when configured" do
+    assert {:keep_state_and_data, [{{:timeout, :health_poll}, 250, nil}]} =
+             EtherCAT.Slave.FSM.handle_event(
+               :enter,
+               :init,
+               :preop,
+               %EtherCAT.Slave{health_poll_ms: 250}
+             )
+  end
+
+  test "preop health poll enters down on disconnect" do
+    bus =
+      start_supervised!(
+        {FakeBus, responses: [{:ok, [%{data: <<0, 0>>, wkc: 0, circular: false, irq: 0}]}]}
+      )
+
+    data = %EtherCAT.Slave{
+      bus: bus,
+      station: 0x1001,
+      name: :sensor,
+      health_poll_ms: 250
+    }
+
+    assert {:next_state, :down, ^data} =
+             EtherCAT.Slave.FSM.handle_event(
+               {:timeout, :health_poll},
+               nil,
+               :preop,
+               data
+             )
+  end
+
+  test "safeop health poll enters down on disconnect" do
+    bus =
+      start_supervised!(
+        {FakeBus, responses: [{:ok, [%{data: <<0, 0>>, wkc: 0, circular: false, irq: 0}]}]}
+      )
+
+    data = %EtherCAT.Slave{
+      bus: bus,
+      station: 0x1001,
+      name: :sensor,
+      health_poll_ms: 250
+    }
+
+    assert {:next_state, :down, ^data} =
+             EtherCAT.Slave.FSM.handle_event(
+               {:timeout, :health_poll},
+               nil,
+               :safeop,
+               data
+             )
+  end
+
+  test "safeop health poll follows a lower AL state" do
+    bus =
+      start_supervised!(
+        {FakeBus, responses: [{:ok, [%{data: <<0x02, 0x00>>, wkc: 1, circular: false, irq: 0}]}]}
+      )
+
+    data = %EtherCAT.Slave{
+      bus: bus,
+      station: 0x1001,
+      name: :sensor,
+      health_poll_ms: 250
+    }
+
+    assert {:next_state, :preop, ^data} =
+             EtherCAT.Slave.FSM.handle_event(
+               {:timeout, :health_poll},
+               nil,
+               :safeop,
+               data
+             )
+  end
+
+  test "down reconnects immediately into local preop rebuild once the fixed station responds" do
     bus =
       start_supervised!(
         {FakeBus,
@@ -899,23 +985,20 @@ defmodule EtherCAT.SlaveTest do
 
     data = %EtherCAT.Slave{
       bus: bus,
+      position: 1,
       station: 0x1001,
       name: :sensor,
       health_poll_ms: 250
     }
 
-    assert {:keep_state, %EtherCAT.Slave{reconnect_ready?: true}, _actions} =
-             EtherCAT.Slave.FSM.handle_event({:timeout, :health_poll}, nil, :down, data)
-
-    from = {self(), make_ref()}
-
-    assert {:keep_state_and_data, [{:reply, ^from, {:error, :not_reconnected}}]} =
-             EtherCAT.Slave.FSM.handle_event(
-               {:call, from},
-               :authorize_reconnect,
-               :down,
-               %EtherCAT.Slave{reconnect_ready?: false}
+    assert {:next_state, :preop, %EtherCAT.Slave{} = rebuilt, [:rebuilt]} =
+             EtherCAT.Slave.Runtime.Health.probe_reconnect(
+               data,
+               initialize_to_preop: fn slave -> {:ok, :preop, slave, [:rebuilt]} end
              )
+
+    assert rebuilt.station == 0x1001
+    assert rebuilt.position == 1
   end
 
   test "sdo upload and download reject calls before mailbox setup" do

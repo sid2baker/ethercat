@@ -3,11 +3,9 @@ defmodule EtherCAT.Master.Recovery do
 
   require Logger
 
-  alias EtherCAT.{Bus, Domain, Slave}
-  alias EtherCAT.Bus.Transaction
+  alias EtherCAT.{Domain, Slave}
   alias EtherCAT.Master.Activation
   alias EtherCAT.Master.Status
-  alias EtherCAT.Slave.ESC.Registers
   alias EtherCAT.Telemetry
   alias EtherCAT.Utils
 
@@ -30,7 +28,7 @@ defmodule EtherCAT.Master.Recovery do
           Map.put(acc, name, {:reconnecting, :authorized})
 
         {name, {:reconnect_failed, _reason}}, acc ->
-          retry_activation_reconnect_authorization(acc, name)
+          Map.put(acc, name, {:down, :disconnected})
 
         {name, _last_failure}, acc ->
           case Slave.request(name, transition_request_target(data)) do
@@ -57,57 +55,13 @@ defmodule EtherCAT.Master.Recovery do
   @spec retry_recovering_state(%EtherCAT.Master{}) ::
           {:ok, :deactivated | :operational | :preop_ready, %EtherCAT.Master{}}
           | {:recovering, %EtherCAT.Master{}}
-          | {:rediscover, term(), %EtherCAT.Master{}}
   def retry_recovering_state(data) do
-    retried_data =
-      data
-      |> retry_slave_faults()
-      |> retry_recovering_slaves()
-
-    case maybe_request_topology_rediscovery(retried_data) do
-      {:rediscover, reason, rediscovery_data} ->
-        {:rediscover, reason, rediscovery_data}
-
-      :continue ->
-        retried_data
-        |> maybe_restart_stopped_domains()
-        |> maybe_restart_dc_runtime()
-        |> maybe_resume_running()
-    end
-  end
-
-  @spec authorize_activation_reconnect(%EtherCAT.Master{}, atom()) ::
-          {:ok, %EtherCAT.Master{}} | {:error, %EtherCAT.Master{}} | :ignore
-  def authorize_activation_reconnect(%{activation_failures: failures}, name)
-      when not is_map_key(failures, name) do
-    :ignore
-  end
-
-  def authorize_activation_reconnect(data, name) do
-    Logger.info(
-      "[Master] slave #{name} link restored during activation — authorizing reconnect",
-      component: :master,
-      event: :slave_reconnect_authorization_started,
-      phase: :activation,
-      slave: name
-    )
-
-    case Slave.authorize_reconnect(name) do
-      :ok ->
-        {:ok, put_activation_failure(data, name, {:reconnecting, :authorized})}
-
-      {:error, reason} ->
-        Logger.warning(
-          "[Master] slave #{name} reconnect authorization failed during activation: #{inspect(reason)}",
-          component: :master,
-          event: :slave_reconnect_authorization_failed,
-          phase: :activation,
-          slave: name,
-          reason_kind: Utils.reason_kind(reason)
-        )
-
-        {:error, put_activation_failure(data, name, {:reconnect_failed, reason})}
-    end
+    data
+    |> retry_slave_faults()
+    |> retry_recovering_slaves()
+    |> maybe_restart_stopped_domains()
+    |> maybe_restart_dc_runtime()
+    |> maybe_resume_running()
   end
 
   @spec handle_activation_ready_preop(%EtherCAT.Master{}, atom()) ::
@@ -162,34 +116,6 @@ defmodule EtherCAT.Master.Recovery do
 
           {:activation_blocked, put_activation_failure(data, name, {target, reason})}
       end
-    end
-  end
-
-  @spec authorize_runtime_reconnect(%EtherCAT.Master{}, atom()) :: %EtherCAT.Master{}
-  def authorize_runtime_reconnect(data, name) do
-    Logger.info(
-      "[Master] slave #{name} link restored — authorizing reconnect",
-      component: :master,
-      event: :slave_reconnect_authorization_started,
-      phase: :runtime,
-      slave: name
-    )
-
-    case Slave.authorize_reconnect(name) do
-      :ok ->
-        put_slave_fault(data, name, {:reconnecting, :authorized})
-
-      {:error, reason} ->
-        Logger.warning(
-          "[Master] slave #{name} reconnect authorization failed: #{inspect(reason)}",
-          component: :master,
-          event: :slave_reconnect_authorization_failed,
-          phase: :runtime,
-          slave: name,
-          reason_kind: Utils.reason_kind(reason)
-        )
-
-        put_slave_fault(data, name, {:reconnect_failed, reason})
     end
   end
 
@@ -405,12 +331,6 @@ defmodule EtherCAT.Master.Recovery do
     target = transition_request_target(data)
 
     Enum.reduce(runtime_faults, data, fn
-      {{:slave, name}, {:down, _reason}}, acc ->
-        retry_recovering_slave_reconnect_authorization(acc, name)
-
-      {{:slave, name}, {:reconnect_failed, _reason}}, acc ->
-        retry_recovering_slave_reconnect_authorization(acc, name)
-
       {{:slave, name}, {:retreated, _target_state}}, acc ->
         retry_recovering_slave_request(acc, name, target)
 
@@ -441,7 +361,7 @@ defmodule EtherCAT.Master.Recovery do
           else
             case reason do
               {:down, _down_reason} ->
-                retry_slave_reconnect_authorization(acc, name)
+                acc
 
               {:retreated, _target_state} ->
                 retry_slave_request(acc, name, target)
@@ -456,9 +376,6 @@ defmodule EtherCAT.Master.Recovery do
                   acc
                 end
 
-              {:reconnect_failed, _reason} ->
-                retry_slave_reconnect_authorization(acc, name)
-
               _other ->
                 acc
             end
@@ -471,11 +388,9 @@ defmodule EtherCAT.Master.Recovery do
   @spec retryable_slave_faults?(%EtherCAT.Master{}) :: boolean()
   def retryable_slave_faults?(%{slave_faults: slave_faults}) do
     Enum.any?(slave_faults, fn
-      {_name, {:down, _reason}} -> true
       {_name, {:retreated, _target_state}} -> true
       {_name, {:preop, {:preop_configuration_failed, _reason}}} -> true
       {_name, {:preop, reason}} -> retryable_runtime_slave_fault?(reason)
-      {_name, {:reconnect_failed, _reason}} -> true
       _other -> false
     end)
   end
@@ -559,101 +474,6 @@ defmodule EtherCAT.Master.Recovery do
         )
 
         put_slave_fault_entry(slave_faults, name, {:preop, {:preop_configuration_failed, reason}})
-    end
-  end
-
-  defp retry_slave_reconnect_authorization(slave_faults, name) do
-    case Slave.authorize_reconnect(name) do
-      :ok ->
-        put_slave_fault_entry(slave_faults, name, {:reconnecting, :authorized})
-
-      {:error, :not_down} ->
-        slave_faults
-
-      {:error, reason} ->
-        Logger.debug(
-          "[Master] slave reconnect authorization retry failed for #{inspect(name)}: #{inspect(reason)}",
-          component: :master,
-          event: :slave_reconnect_authorization_retry_failed,
-          phase: :steady_state,
-          slave: name,
-          reason_kind: Utils.reason_kind(reason)
-        )
-
-        put_slave_fault_entry(slave_faults, name, {:reconnect_failed, reason})
-    end
-  end
-
-  defp retry_recovering_slave_reconnect_authorization(data, name) do
-    case Slave.authorize_reconnect(name) do
-      :ok ->
-        put_tracked_runtime_slave_fault(data, name, {:reconnecting, :authorized})
-
-      {:error, :not_down} ->
-        data
-
-      {:error, reason} ->
-        Logger.debug(
-          "[Master] recovery retry: slave reconnect authorization still failing for #{inspect(name)}: #{inspect(reason)}",
-          component: :master,
-          event: :slave_reconnect_authorization_retry_failed,
-          phase: :recovery,
-          slave: name,
-          reason_kind: Utils.reason_kind(reason)
-        )
-
-        put_tracked_runtime_slave_fault(data, name, {:reconnect_failed, reason})
-    end
-  end
-
-  defp maybe_request_topology_rediscovery(%{slave_count: expected_count} = data)
-       when is_integer(expected_count) and expected_count > 0 do
-    reconnect_failed =
-      data.runtime_faults
-      |> Enum.reduce([], fn
-        {{:slave, name}, {:reconnect_failed, _reason}}, acc -> [name | acc]
-        _other, acc -> acc
-      end)
-      |> Enum.sort()
-
-    if reconnect_failed != [] and topology_visible_count() == {:ok, expected_count} do
-      {:rediscover,
-       {:topology_rediscovery_required,
-        %{slaves: reconnect_failed, visible_slave_count: expected_count}}, data}
-    else
-      :continue
-    end
-  end
-
-  defp maybe_request_topology_rediscovery(_data), do: :continue
-
-  defp topology_visible_count do
-    case Bus.transaction(Bus, Transaction.brd(Registers.esc_type())) do
-      {:ok, [%{wkc: wkc}]} when is_integer(wkc) and wkc >= 0 -> {:ok, wkc}
-      {:ok, replies} -> {:error, {:unexpected_replies, replies}}
-      {:error, reason} -> {:error, reason}
-    end
-  end
-
-  defp retry_activation_reconnect_authorization(activation_failures, name) do
-    case Slave.authorize_reconnect(name) do
-      :ok ->
-        Map.put(activation_failures, name, {:reconnecting, :authorized})
-
-      {:error, :not_down} ->
-        activation_failures
-
-      {:error, reason} ->
-        Logger.debug(
-          "[Master] activation-blocked reconnect authorization retry failed for #{inspect(name)}: #{inspect(reason)}",
-          component: :master,
-          event: :slave_reconnect_authorization_retry_failed,
-          phase: :activation,
-          slave: name,
-          reason_kind: Utils.reason_kind(reason)
-        )
-
-        Map.put(activation_failures, name, {:reconnect_failed, reason})
     end
   end
 

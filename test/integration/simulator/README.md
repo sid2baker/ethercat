@@ -114,7 +114,7 @@ plan -> fix -> verify -> commit.
 - `40`: redundant bus accepts a degraded processed reply when the redundant copy from the opposite direction is delayed beyond the merge window
 - `41`: multi-datagram BWR transactions in redundant mode must return wkc > 0 despite unchanged passthrough copies arriving before the processed cross-delivery
 - `42`: redundant primary port reconnection causes transient frame loss when slave PHY link-up timing differs from master NIC auto-negotiation (hardware-only, no simulator test)
-- `43`: permanent PDO-slave disconnect should drive `:down` via health polling, allow reconnect healing, and force rediscovery if the returning slave lost its fixed station address
+- `43`: permanent PDO-slave disconnect should drive `:down` via health polling, allow reconnect healing, and let the slave reclaim its fixed station locally when it returns anonymous at the same scan position
 - `44`: single-link raw ring helper should pass static raw endpoint options through startup, allow transient raw delay overlays, and restore configured delay after fault clear
 - `45`: redundant secondary master-port disconnect must keep the default `10ms` cyclic domain healthy without stretching degraded exchanges past the configured frame timeout
 

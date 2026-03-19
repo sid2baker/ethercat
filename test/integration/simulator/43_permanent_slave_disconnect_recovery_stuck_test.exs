@@ -121,11 +121,10 @@ defmodule EtherCAT.Integration.Simulator.PermanentSlaveDisconnectRecoveryStuckTe
     |> Scenario.run()
   end
 
-  test "master rediscovers a slave that returns anonymous after a full disconnect" do
-    # Models the real hardware case: the slave disappears completely, then
-    # comes back without its old fixed station address. The returning slave is
-    # visible again on the ring, but the slave worker is still polling the old
-    # station and cannot self-heal without a topology rediscovery.
+  test "master returns to operational after a disconnected slave reclaims its station locally" do
+    # The slave disappears completely, then comes back anonymous with station 0.
+    # The slave worker should probe its scan position, restore the configured
+    # fixed station locally, rebuild to PREOP, and let the master resume OP.
 
     Scenario.new()
     |> Scenario.trace()
@@ -143,7 +142,7 @@ defmodule EtherCAT.Integration.Simulator.PermanentSlaveDisconnectRecoveryStuckTe
       assert :ok = Simulator.inject_fault(Fault.power_cycle(:outputs))
       assert {:ok, %{station: 0, state: :init}} = Simulator.device_snapshot(:outputs)
     end)
-    |> Scenario.act("master returns to operational after rediscovery", fn _ctx ->
+    |> Scenario.act("master returns to operational after local reconnect rebuild", fn _ctx ->
       Expect.eventually(
         fn ->
           Expect.master_state(:operational)
@@ -171,11 +170,10 @@ defmodule EtherCAT.Integration.Simulator.PermanentSlaveDisconnectRecoveryStuckTe
     |> Scenario.run()
   end
 
-  test "master rediscovers a power-cycled slave after fixed station loss" do
-    # Models a powered slave that resets in place and loses its fixed station
-    # address. The slave stays physically present on the ring, but FPRD on the
-    # old station now returns wkc=0, so runtime recovery must fall back to a
-    # fresh discovery pass.
+  test "master returns to operational after a power-cycled slave reclaims its station locally" do
+    # The slave stays physically present on the ring, but power-cycling clears
+    # its fixed station address. Runtime recovery should reclaim that station by
+    # position and resume through the usual PREOP -> OP path.
 
     Scenario.new()
     |> Scenario.trace()
@@ -192,7 +190,7 @@ defmodule EtherCAT.Integration.Simulator.PermanentSlaveDisconnectRecoveryStuckTe
         label: "master enters recovering"
       )
     end)
-    |> Scenario.act("master returns to operational after rediscovery", fn _ctx ->
+    |> Scenario.act("master returns to operational after local reconnect rebuild", fn _ctx ->
       Expect.eventually(
         fn ->
           Expect.master_state(:operational)

@@ -273,7 +273,7 @@ defmodule EtherCAT.MasterTest do
     assert updated.activation_failures == %{sensor: {:op, :not_found}}
   end
 
-  test "activation_blocked authorizes reconnect and returns to operational once the slave reaches preop" do
+  test "activation_blocked returns to operational once the slave rebuilds to preop" do
     start_supervised!(%{
       id: make_ref(),
       start: {FakeSlave, :start_link, [:sensor, :ok]}
@@ -285,22 +285,12 @@ defmodule EtherCAT.MasterTest do
       slaves: [{:sensor, 0x1001}]
     }
 
-    assert {:keep_state, %EtherCAT.Master{} = authorized, _actions} =
-             EtherCAT.Master.FSM.handle_event(
-               :info,
-               {:slave_reconnected, :sensor},
-               :activation_blocked,
-               data
-             )
-
-    assert authorized.activation_failures == %{sensor: {:reconnecting, :authorized}}
-
     assert {:next_state, :operational, %EtherCAT.Master{} = healed} =
              EtherCAT.Master.FSM.handle_event(
                :info,
                {:slave_ready, :sensor, :preop},
                :activation_blocked,
-               authorized
+               data
              )
 
     assert healed.activation_failures == %{}
@@ -319,22 +309,12 @@ defmodule EtherCAT.MasterTest do
       slaves: [{:sensor, 0x1001}]
     }
 
-    assert {:keep_state, %EtherCAT.Master{} = authorized, _actions} =
-             EtherCAT.Master.FSM.handle_event(
-               :info,
-               {:slave_reconnected, :sensor},
-               :activation_blocked,
-               data
-             )
-
-    assert authorized.activation_failures == %{sensor: {:reconnecting, :authorized}}
-
     assert {:next_state, :deactivated, %EtherCAT.Master{} = settled} =
              EtherCAT.Master.FSM.handle_event(
                :info,
                {:slave_ready, :sensor, :preop},
                :activation_blocked,
-               authorized
+               data
              )
 
     assert settled.activation_failures == %{}
@@ -473,9 +453,7 @@ defmodule EtherCAT.MasterTest do
     assert %{outputs: _} = op_data.slave_faults
   end
 
-  test "slave_reconnected authorizes reconnect through the master in recovering" do
-    from = {self(), make_ref()}
-
+  test "slave_ready in recovering requests the desired runtime target and resumes operational" do
     start_supervised!(%{
       id: make_ref(),
       start: {FakeSlave, :start_link, [:sensor, :ok]}
@@ -483,27 +461,22 @@ defmodule EtherCAT.MasterTest do
 
     data =
       %EtherCAT.Master{
+        desired_runtime_target: :op,
         slave_faults: %{sensor: {:down, :disconnected}},
+        runtime_faults: %{{:slave, :sensor} => {:down, :disconnected}},
         slaves: [{:sensor, 0x1001}]
       }
 
-    assert {:keep_state, %EtherCAT.Master{} = updated} =
+    assert {:next_state, :operational, %EtherCAT.Master{} = healed} =
              EtherCAT.Master.FSM.handle_event(
                :info,
-               {:slave_reconnected, :sensor},
+               {:slave_ready, :sensor, :preop},
                :recovering,
                data
              )
 
-    assert updated.slave_faults == %{sensor: {:reconnecting, :authorized}}
-
-    assert {:keep_state_and_data, [{:reply, ^from, {:error, {:runtime_degraded, _faults}}}]} =
-             EtherCAT.Master.FSM.handle_event(
-               {:call, from},
-               :await_operational,
-               :recovering,
-               updated
-             )
+    assert healed.slave_faults == %{}
+    assert healed.runtime_faults == %{}
   end
 
   test "reconnect-time OP request failures replace stale critical disconnect faults in recovering" do
@@ -562,6 +535,24 @@ defmodule EtherCAT.MasterTest do
              EtherCAT.Master.FSM.handle_event({:call, from}, :slaves, :operational, updated)
   end
 
+  test "slave retreat below the SAFEOP target enters recovering while deactivated" do
+    data = %EtherCAT.Master{
+      desired_runtime_target: :safeop,
+      slaves: [{:sensor, 0x1001}]
+    }
+
+    assert {:next_state, :recovering, %EtherCAT.Master{} = updated} =
+             EtherCAT.Master.FSM.handle_event(
+               :info,
+               {:slave_retreated, :sensor, :preop},
+               :deactivated,
+               data
+             )
+
+    assert updated.slave_faults == %{sensor: {:retreated, :preop}}
+    assert updated.runtime_faults == %{{:slave, :sensor} => {:retreated, :preop}}
+  end
+
   test "slave down for a PDO-participating slave enters recovering and tracks the slave fault" do
     data = %EtherCAT.Master{
       slave_configs: [%SlaveConfig{name: :sensor, process_data: {:all, :main}}],
@@ -614,6 +605,25 @@ defmodule EtherCAT.MasterTest do
                       from_detail: nil,
                       to_detail: :server_exit
                     }}
+  end
+
+  test "slave down in preop_ready enters recovering and tracks the slave fault" do
+    data = %EtherCAT.Master{
+      desired_runtime_target: :preop,
+      slave_configs: [%SlaveConfig{name: :sensor, process_data: {:all, :main}}],
+      slaves: [{:sensor, 0x1001}]
+    }
+
+    assert {:next_state, :recovering, %EtherCAT.Master{} = updated} =
+             EtherCAT.Master.FSM.handle_event(
+               :info,
+               {:slave_down, :sensor, :no_response},
+               :preop_ready,
+               data
+             )
+
+    assert updated.slave_faults == %{sensor: {:down, :no_response}}
+    assert updated.runtime_faults == %{{:slave, :sensor} => {:down, :no_response}}
   end
 
   test "operational retries retryable slave faults without entering recovering" do

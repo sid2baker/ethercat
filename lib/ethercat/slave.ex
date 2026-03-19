@@ -31,15 +31,17 @@ defmodule EtherCAT.Slave do
       preop --> safeop: SAFEOP is requested
       preop --> op: OP is requested
       preop --> init: INIT is requested
+      preop --> down: health poll sees bus loss or zero WKC
       safeop --> op: OP is requested
       safeop --> preop: PREOP is requested
       safeop --> init: INIT is requested
+      safeop --> down: health poll sees bus loss or zero WKC
       op --> safeop: SAFEOP is requested or AL health retreats
       op --> preop: PREOP is requested
       op --> init: INIT is requested
       op --> down: health poll sees bus loss or zero WKC
-      down --> preop: reconnect is authorized and PREOP rebuild succeeds
-      down --> init: reconnect retries from INIT
+      down --> preop: link/position probe succeeds and PREOP rebuild succeeds
+      down --> init: reconnect rebuild retries from INIT
   ```
   """
 
@@ -50,6 +52,7 @@ defmodule EtherCAT.Slave do
 
   @type t :: %__MODULE__{
           bus: EtherCAT.Bus.server() | nil,
+          position: non_neg_integer() | nil,
           station: non_neg_integer() | nil,
           name: atom() | nil,
           driver: module() | nil,
@@ -76,12 +79,12 @@ defmodule EtherCAT.Slave do
           subscriptions: map() | nil,
           subscriber_refs: %{optional(pid()) => reference()},
           startup_retry_phase: atom() | nil,
-          startup_retry_count: non_neg_integer(),
-          reconnect_ready?: boolean()
+          startup_retry_count: non_neg_integer()
         }
 
   defstruct [
     :bus,
+    :position,
     :station,
     :name,
     :driver,
@@ -108,8 +111,7 @@ defmodule EtherCAT.Slave do
     :subscriptions,
     subscriber_refs: %{},
     startup_retry_phase: nil,
-    startup_retry_count: 0,
-    reconnect_ready?: false
+    startup_retry_count: 0
   ]
 
   @doc false
@@ -161,12 +163,6 @@ defmodule EtherCAT.Slave do
   def request(slave_name, target) do
     safe_call(slave_name, {:request, target})
   end
-
-  @doc """
-  Authorize a `:down` slave to rebuild from a detected reconnect.
-  """
-  @spec authorize_reconnect(atom()) :: :ok | {:error, term()}
-  def authorize_reconnect(slave_name), do: safe_call(slave_name, :authorize_reconnect)
 
   @doc """
   Apply runtime configuration updates for one slave.

@@ -7,6 +7,7 @@ defmodule EtherCAT.Slave.Runtime.State do
   def new(opts) do
     %Slave{
       bus: Keyword.fetch!(opts, :bus),
+      position: Keyword.get(opts, :position, 0),
       station: Keyword.fetch!(opts, :station),
       name: Keyword.fetch!(opts, :name),
       driver: Keyword.get(opts, :driver, EtherCAT.Slave.Driver.Default),
@@ -26,7 +27,6 @@ defmodule EtherCAT.Slave.Runtime.State do
         Keyword.get(opts, :health_poll_ms, EtherCAT.Slave.Config.default_health_poll_ms()),
       startup_retry_phase: nil,
       startup_retry_count: 0,
-      reconnect_ready?: false,
       signal_registrations: %{},
       signal_registrations_by_sm: %{},
       output_domain_ids_by_sm: %{},

@@ -52,6 +52,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   authoritative forward-path data, and completed exchanges now drain both
   legs before dispatching the next request to cut late-frame `idx_mismatch`
   drops (`cf4a90c`).
+- Slave reconnect ownership is now simpler: `:down` slaves probe their stored
+  scan position, reclaim an anonymous fixed station locally, and rebuild to
+  PREOP themselves instead of waiting for master reconnect authorization or
+  rediscovery fallback (`pending hash`).
 
 ### Fixed
 - DC recovery and configuration validation are stricter, catching bad setup
@@ -68,11 +72,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Raw socket transport no longer drops legitimate replies on idx-mismatch rearm,
   and redundant rejoin now drains and reproves a restored leg before promoting
   it back into cyclic traffic (`7055878`, `1b2211f`).
-- Recovery now handles physically restored slaves more honestly: reconnect
-  authorization is retried for tracked `:down` faults, masters can rediscover
-  slaves that return without their old fixed address, and simulator power-cycle
-  faults clear volatile runtime identity/state so tests match hardware more
-  closely (`2bc2185`, `75609a6`).
 - Failed activation now rolls back partially started DC/domain runtime,
   `Slave.subscribe/3` rejects unknown signal/latch names, and
   `Domain.write/read/sample` use explicit ETS lookup instead of exception-driven
@@ -91,6 +90,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Redundant realtime exchanges now complete immediately on a single processed
   bounce instead of waiting for merge-time timeout fallback, so `1ms` cyclic
   domains can stay healthy after backup-port disconnect (`52c4ae8`).
+- Slaves held in `:preop` or `:safeop` now keep health polling active and
+  still transition into recovery on disconnect or lower-state regressions
+  instead of staying stranded in stale held states (`pending hash`).
 
 ### Docs
 - `ARCHITECTURE.md`, `README.md`, `RELEASE.md`, and simulator guidance were

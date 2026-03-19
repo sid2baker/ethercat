@@ -559,18 +559,8 @@ defmodule EtherCAT.Master.FSM do
     {:keep_state_and_data, [{:reply, from, {:error, :activation_in_progress}}]}
   end
 
-  def handle_event(:info, {:slave_reconnected, name}, :activation_blocked, data) do
-    case Recovery.authorize_activation_reconnect(data, name) do
-      {:ok, updated} ->
-        {:keep_state, updated, [{{:timeout, :retry}, @retry_ms, nil}]}
-
-      {:error, updated} ->
-        {:keep_state, updated, [{{:timeout, :retry}, @retry_ms, nil}]}
-
-      :ignore ->
-        :keep_state_and_data
-    end
-  end
+  def handle_event(:info, {:slave_reconnected, _name}, :activation_blocked, _data),
+    do: :keep_state_and_data
 
   def handle_event(:info, {:slave_ready, name, :preop}, :activation_blocked, data) do
     case Recovery.handle_activation_ready_preop(data, name) do
@@ -611,18 +601,6 @@ defmodule EtherCAT.Master.FSM do
     case Recovery.retry_recovering_state(data) do
       {:ok, next_state, healed_data} ->
         {:next_state, next_state, healed_data}
-
-      {:rediscover, reason, rediscovery_data} ->
-        Logger.warning(
-          "[Master] recovery escalated to topology rediscovery: #{inspect(reason)}",
-          component: :master,
-          event: :recovery_rediscovering,
-          reason_kind: Utils.reason_kind(reason)
-        )
-
-        stop_runtime_session(rediscovery_data)
-
-        {:next_state, :discovering, reset_for_rediscovery(rediscovery_data)}
 
       {:recovering, still_recovering} ->
         case Recovery.unrecoverable_recovery_reason(still_recovering) do
@@ -842,6 +820,19 @@ defmodule EtherCAT.Master.FSM do
   end
 
   # Slave retreated to a lower ESM state (AL fault detected by health poll)
+  def handle_event(:info, {:slave_retreated, name, target_state}, state, data)
+      when state in [:preop_ready, :deactivated] do
+    Logger.warning(
+      "[Master] slave #{name} retreated to #{target_state}",
+      component: :master,
+      event: :slave_retreated,
+      slave: name,
+      target_state: target_state
+    )
+
+    track_slave_fault(state, data, name, {:retreated, target_state})
+  end
+
   def handle_event(:info, {:slave_retreated, name, target_state}, @operational, data) do
     Logger.warning(
       "[Master] slave #{name} retreated to #{target_state}",
@@ -879,6 +870,19 @@ defmodule EtherCAT.Master.FSM do
   end
 
   # Slave physically disconnected (health poll wkc=0 or bus error)
+  def handle_event(:info, {:slave_down, name, reason}, state, data)
+      when state in [:preop_ready, :deactivated] do
+    Logger.warning(
+      "[Master] slave #{name} disconnected",
+      component: :master,
+      event: :slave_down,
+      slave: name,
+      reason_kind: Utils.reason_kind(reason)
+    )
+
+    track_slave_fault(state, data, name, {:down, reason})
+  end
+
   def handle_event(:info, {:slave_down, name, reason}, @operational, data) do
     Logger.warning(
       "[Master] slave #{name} disconnected",
@@ -904,15 +908,13 @@ defmodule EtherCAT.Master.FSM do
   end
 
   def handle_event(:info, {:slave_down, name}, state, data)
-      when state in [:operational, :recovering] do
+      when state in [:preop_ready, :deactivated, :operational, :recovering] do
     handle_event(:info, {:slave_down, name, :disconnected}, state, data)
   end
 
-  def handle_event(:info, {:slave_reconnected, name}, state, data)
-      when state in [:operational, :recovering] do
-    updated = Recovery.authorize_runtime_reconnect(data, name)
-    keep_state_with_slave_fault_retry(state, updated)
-  end
+  def handle_event(:info, {:slave_reconnected, _name}, state, _data)
+      when state in [:operational, :recovering],
+      do: :keep_state_and_data
 
   # Slave reconnected and reached :preop — attempt to bring it back to :op
   def handle_event(:info, {:slave_ready, name, :preop}, state, data)
@@ -1315,11 +1317,36 @@ defmodule EtherCAT.Master.FSM do
     {:keep_state, data}
   end
 
+  defp critical_slave_fault?(data, _name, {:retreated, actual_state}) do
+    desired_target = Status.desired_runtime_target(data)
+
+    desired_target in [:preop, :safeop] and lower_than_target?(actual_state, desired_target)
+  end
+
   defp critical_slave_fault?(data, name, {:down, _reason}) do
-    slave_participates_in_domains?(data, name)
+    desired_target = Status.desired_runtime_target(data)
+
+    if desired_target in [:preop, :safeop] do
+      true
+    else
+      slave_participates_in_domains?(data, name)
+    end
   end
 
   defp critical_slave_fault?(_data, _name, _reason), do: false
+
+  defp lower_than_target?(actual_state, desired_target)
+       when is_atom(actual_state) and is_atom(desired_target) do
+    slave_state_rank(actual_state) < slave_state_rank(desired_target)
+  end
+
+  defp lower_than_target?(_actual_state, _desired_target), do: false
+
+  defp slave_state_rank(:init), do: 1
+  defp slave_state_rank(:bootstrap), do: 1
+  defp slave_state_rank(:preop), do: 2
+  defp slave_state_rank(:safeop), do: 3
+  defp slave_state_rank(:op), do: 4
 
   defp slave_participates_in_domains?(data, name) do
     case Config.fetch_slave_config(data.slave_configs || [], name) do
@@ -1361,31 +1388,6 @@ defmodule EtherCAT.Master.FSM do
 
   defp stop_session(data) do
     Session.stop(data)
-  end
-
-  defp stop_runtime_session(data) do
-    Session.stop_runtime(data)
-  end
-
-  defp reset_for_rediscovery(data) do
-    %{
-      data
-      | dc_ref: nil,
-        dc_ref_station: nil,
-        dc_stations: [],
-        activatable_slaves: [],
-        slaves: [],
-        scan_window: [],
-        slave_count: nil,
-        pending_preop: MapSet.new(),
-        activation_failures: %{},
-        runtime_faults: %{},
-        slave_faults: %{},
-        await_callers: [],
-        await_operational_callers: [],
-        domain_refs: %{},
-        slave_refs: %{}
-    }
   end
 
   defp handle_activate_network(from, data) do

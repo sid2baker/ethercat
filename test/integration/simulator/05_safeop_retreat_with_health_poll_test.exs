@@ -65,4 +65,49 @@ defmodule EtherCAT.Integration.Simulator.SafeOpRetreatWithHealthPollTest do
       attempts: 120
     )
   end
+
+  test "disconnecting a slave already in safeop still transitions it to down", %{trace: trace} do
+    assert :ok = Simulator.inject_fault(Fault.retreat_to_safeop(:outputs))
+
+    Expect.eventually(
+      fn ->
+        Expect.trace_event(trace, [:ethercat, :slave, :health, :fault],
+          measurements: [al_state: 4, error_code: 0],
+          metadata: [slave: :outputs, station: 0x1002]
+        )
+
+        Expect.slave_fault(:outputs, {:retreated, :safeop})
+        Expect.slave(:outputs, al_state: :safeop)
+      end,
+      attempts: 80,
+      label: "outputs retreats to safeop first"
+    )
+
+    assert :ok = Simulator.inject_fault(Fault.disconnect(:outputs) |> Fault.next(60))
+
+    Expect.eventually(
+      fn ->
+        Expect.trace_event(trace, [:ethercat, :master, :slave_fault, :changed],
+          metadata: [slave: :outputs, to: :down, to_detail: :no_response]
+        )
+
+        Expect.slave_fault(:outputs, {:down, :no_response})
+        Expect.master_state([:recovering, :operational])
+      end,
+      attempts: 120,
+      label: "safeop disconnect becomes slave down"
+    )
+
+    Expect.eventually(
+      fn ->
+        Expect.master_state(:operational)
+        Expect.domain(:main, cycle_health: :healthy)
+        Expect.slave_fault(:outputs, nil)
+        Expect.slave(:outputs, al_state: :op)
+        Expect.simulator_queue_empty()
+      end,
+      attempts: 300,
+      label: "safeop disconnect later recovers"
+    )
+  end
 end

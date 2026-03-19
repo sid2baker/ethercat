@@ -38,24 +38,6 @@ defmodule EtherCAT.Slave.Runtime.Calls do
     {:keep_state_and_data, [{:reply, from, :ok}]}
   end
 
-  def handle(from, :authorize_reconnect, :down, %{reconnect_ready?: true} = data, opts) do
-    reconnect_data = %{data | reconnect_ready?: false}
-
-    case Keyword.fetch!(opts, :initialize_to_preop).(reconnect_data) do
-      {:ok, next_state, new_data, actions} ->
-        {:next_state, next_state, %{new_data | reconnect_ready?: false},
-         [{:reply, from, :ok} | actions]}
-    end
-  end
-
-  def handle(from, :authorize_reconnect, :down, _data, _opts) do
-    {:keep_state_and_data, [{:reply, from, {:error, :not_reconnected}}]}
-  end
-
-  def handle(from, :authorize_reconnect, _state, _data, _opts) do
-    {:keep_state_and_data, [{:reply, from, {:error, :not_down}}]}
-  end
-
   def handle(
         from,
         {:request, target},

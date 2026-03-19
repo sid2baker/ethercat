@@ -12,6 +12,16 @@ defmodule EtherCAT.Slave.Runtime.Polling do
     latch_poll_actions(data) ++ health_poll_actions(data)
   end
 
+  @spec preop_enter_actions(%{optional(:health_poll_ms) => integer() | nil}) :: list()
+  def preop_enter_actions(data) do
+    health_poll_actions(data)
+  end
+
+  @spec safeop_enter_actions(%{optional(:health_poll_ms) => integer() | nil}) :: list()
+  def safeop_enter_actions(data) do
+    health_poll_actions(data)
+  end
+
   @spec down_enter_actions(%{health_poll_ms: pos_integer()}) :: list()
   def down_enter_actions(%{health_poll_ms: poll_ms}) do
     [Health.health_poll_action(poll_ms)]

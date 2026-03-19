@@ -278,8 +278,8 @@ Current milestones:
 Current slave-local fault injections include:
 
 - `{:power_cycle, slave_name}` — reset the slave to `INIT`, clear volatile
-  runtime state, and clear its fixed station address so the master must
-  rediscover or readdress it
+  runtime state, and clear its fixed station address so the slave reconnect
+  path must reclaim or restore it before PREOP rebuild can continue
 - `{:mailbox_abort, slave_name, index, subindex, abort_code}`
 - `{:mailbox_abort, slave_name, index, subindex, abort_code, stage}`
 - `{:mailbox_protocol_fault, slave_name, index, subindex, stage, fault_kind}`

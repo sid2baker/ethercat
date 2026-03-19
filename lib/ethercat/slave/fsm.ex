@@ -75,9 +75,13 @@ defmodule EtherCAT.Slave.FSM do
   @impl true
   def handle_event(:enter, _old, :init, _data), do: :keep_state_and_data
 
-  def handle_event(:enter, _old, :preop, _data), do: :keep_state_and_data
+  def handle_event(:enter, _old, :preop, data) do
+    {:keep_state_and_data, Polling.preop_enter_actions(data)}
+  end
 
-  def handle_event(:enter, _old, :safeop, _data), do: :keep_state_and_data
+  def handle_event(:enter, _old, :safeop, data) do
+    {:keep_state_and_data, Polling.safeop_enter_actions(data)}
+  end
 
   def handle_event(:enter, _old, :op, data) do
     {:keep_state_and_data, Polling.op_enter_actions(data)}
@@ -149,6 +153,14 @@ defmodule EtherCAT.Slave.FSM do
     Health.poll_op(data, transition_to: &transition_to/2, op_code: @al_codes.op)
   end
 
+  def handle_event({:timeout, :health_poll}, nil, :preop, data) do
+    Health.poll_preop(data)
+  end
+
+  def handle_event({:timeout, :health_poll}, nil, :safeop, data) do
+    Health.poll_safeop(data)
+  end
+
   # -- :down state (slave physically disconnected, polling for reconnect) -----
 
   def handle_event(:enter, _old, :down, data) do
@@ -161,15 +173,11 @@ defmodule EtherCAT.Slave.FSM do
       health_poll_ms: data.health_poll_ms
     )
 
-    {:keep_state, %{data | reconnect_ready?: false}, Polling.down_enter_actions(data)}
+    {:keep_state_and_data, Polling.down_enter_actions(data)}
   end
 
-  def handle_event({:timeout, :health_poll}, nil, :down, %{reconnect_ready?: false} = data) do
-    Health.probe_reconnect(data)
-  end
-
-  def handle_event({:timeout, :health_poll}, nil, :down, %{reconnect_ready?: true} = data) do
-    Health.confirm_reconnect(data)
+  def handle_event({:timeout, :health_poll}, nil, :down, data) do
+    Health.probe_reconnect(data, initialize_to_preop: &initialize_to_preop/1)
   end
 
   # -- Catch-all -------------------------------------------------------------
