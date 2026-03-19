@@ -71,7 +71,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Docs
 - `ARCHITECTURE.md`, `README.md`, `RELEASE.md`, and simulator guidance were
   aligned to the current public/runtime boundaries, Hex publish workflow, and
-  raw test interface ownership expectations (`pending hash`).
+  raw test interface ownership expectations (`b014f5d`).
 - README, hardware playbooks, simulator docs, and API guidance were rewritten
   to better explain transport boundaries, bring-up workflow, release metadata,
   and fault/recovery scenarios (`8f773d6`, `c42b0c9`, `0248012`, `04b2c5f`,
