@@ -40,6 +40,20 @@ defmodule EtherCAT.Simulator.Slave.ESCImageTest do
              expected_window(eeprom, 1, 8)
   end
 
+  test "maybe_load_eeprom_data zero pads reads beyond the EEPROM image" do
+    definition = Definition.build(:mailbox_device, name: :sim)
+    %{memory: memory, eeprom: eeprom} = ESCImage.hydrate(definition)
+    {eeprom_address, _} = Registers.eeprom_address()
+    out_of_range_word_address = div(byte_size(eeprom), 2) + 1
+
+    memory =
+      replace_binary(memory, eeprom_address, <<out_of_range_word_address::32-little>>)
+
+    updated = ESCImage.maybe_load_eeprom_data(memory, eeprom, 0x01)
+
+    assert binary_part(updated, Registers.eeprom_data(), 8) == :binary.copy(<<0>>, 8)
+  end
+
   defp offset({offset, _length}), do: offset
 
   defp expected_window(eeprom, word_address, bytes) do
@@ -47,7 +61,15 @@ defmodule EtherCAT.Simulator.Slave.ESCImageTest do
     available = max(byte_size(eeprom) - byte_offset, 0)
     take = min(bytes, available)
     padding = bytes - take
-    binary_part(eeprom, byte_offset, take) <> :binary.copy(<<0>>, padding)
+
+    window =
+      if byte_offset >= byte_size(eeprom) do
+        <<>>
+      else
+        binary_part(eeprom, byte_offset, take)
+      end
+
+    window <> :binary.copy(<<0>>, padding)
   end
 
   defp replace_binary(binary, offset, value) do

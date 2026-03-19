@@ -198,6 +198,14 @@ defmodule EtherCAT.Simulator.Slave.Runtime.ESCImage do
     available = max(byte_size(binary) - offset, 0)
     take = min(bytes, available)
     padding = bytes - take
-    binary_part(binary, offset, take) <> :binary.copy(<<0>>, padding)
+
+    chunk_prefix =
+      if offset >= byte_size(binary) do
+        <<>>
+      else
+        binary_part(binary, offset, take)
+      end
+
+    chunk_prefix <> :binary.copy(<<0>>, padding)
   end
 end
