@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-03-19
+
 ### Added
 - `EtherCAT.Simulator` now supports raw-socket transport, redundant dual-ingress
   raw topologies, and shared UDP/raw fixtures for integration and hardware
