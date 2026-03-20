@@ -32,8 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   decodes inputs once during device-state refresh, and reuses that decoded image
   for both raw signal subscriptions and driver projection (`f15d37b`).
 - The legacy `EtherCAT.Slave.Driver` compatibility shim is gone, and the
-  internal default slave implementation now lives under
-  `EtherCAT.Slave.DefaultDriver` instead of `EtherCAT.Slave.Driver.Default`
+  default driver implementation now lives directly under
+  `EtherCAT.Driver.Default` instead of splitting the implementation across
+  extra slave-internal wrapper modules
   (`f15d37b`).
 
 ## [0.4.2] - 2026-03-19
