@@ -1,7 +1,8 @@
 defmodule EtherCAT.Integration.Simulator.MalformedDownloadSegmentAckSDOTest do
   use ExUnit.Case, async: false
 
-  alias EtherCAT.IntegrationSupport.Drivers.{EK1100, MailboxDevice}
+  alias EtherCAT.Driver.EK1100
+  alias EtherCAT.IntegrationSupport.Drivers.MailboxDevice
   alias EtherCAT.IntegrationSupport.SimulatorRing
   alias EtherCAT.Simulator
   alias EtherCAT.Simulator.Fault
@@ -45,7 +46,7 @@ defmodule EtherCAT.Integration.Simulator.MalformedDownloadSegmentAckSDOTest do
     updated = updated_multi_segment_blob()
 
     assert {:ok, :preop_ready} = EtherCAT.state()
-    assert {:ok, ^original} = EtherCAT.upload_sdo(:mailbox, 0x2003, 0x01)
+    assert {:ok, ^original} = EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2003, 0x01)
 
     assert :ok =
              Simulator.inject_fault(
@@ -73,16 +74,16 @@ defmodule EtherCAT.Integration.Simulator.MalformedDownloadSegmentAckSDOTest do
             }} = Simulator.info()
 
     assert {:error, :invalid_coe_response} =
-             EtherCAT.download_sdo(:mailbox, 0x2003, 0x01, updated)
+             EtherCAT.Provisioning.download_sdo(:mailbox, 0x2003, 0x01, updated)
 
-    assert {:ok, ^original} = EtherCAT.upload_sdo(:mailbox, 0x2003, 0x01)
+    assert {:ok, ^original} = EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2003, 0x01)
     assert {:ok, :preop_ready} = EtherCAT.state()
     assert {:ok, %{scheduled_faults: [], pending_faults: []}} = Simulator.info()
 
     assert :ok = Simulator.clear_faults()
 
-    assert :ok = EtherCAT.download_sdo(:mailbox, 0x2003, 0x01, updated)
-    assert {:ok, ^updated} = EtherCAT.upload_sdo(:mailbox, 0x2003, 0x01)
+    assert :ok = EtherCAT.Provisioning.download_sdo(:mailbox, 0x2003, 0x01, updated)
+    assert {:ok, ^updated} = EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2003, 0x01)
     assert {:ok, :preop_ready} = EtherCAT.state()
   end
 
@@ -91,7 +92,7 @@ defmodule EtherCAT.Integration.Simulator.MalformedDownloadSegmentAckSDOTest do
     updated = updated_multi_segment_blob()
 
     assert {:ok, :preop_ready} = EtherCAT.state()
-    assert {:ok, ^original} = EtherCAT.upload_sdo(:mailbox, 0x2003, 0x01)
+    assert {:ok, ^original} = EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2003, 0x01)
 
     assert :ok =
              Simulator.inject_fault(
@@ -106,16 +107,16 @@ defmodule EtherCAT.Integration.Simulator.MalformedDownloadSegmentAckSDOTest do
              )
 
     assert {:error, {:unexpected_sdo_segment_command, 0x60}} =
-             EtherCAT.download_sdo(:mailbox, 0x2003, 0x01, updated)
+             EtherCAT.Provisioning.download_sdo(:mailbox, 0x2003, 0x01, updated)
 
-    assert {:ok, ^updated} = EtherCAT.upload_sdo(:mailbox, 0x2003, 0x01)
+    assert {:ok, ^updated} = EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2003, 0x01)
     assert {:ok, :preop_ready} = EtherCAT.state()
     assert {:ok, %{scheduled_faults: [], pending_faults: []}} = Simulator.info()
 
     assert :ok = Simulator.clear_faults()
 
-    assert :ok = EtherCAT.download_sdo(:mailbox, 0x2003, 0x01, original)
-    assert {:ok, ^original} = EtherCAT.upload_sdo(:mailbox, 0x2003, 0x01)
+    assert :ok = EtherCAT.Provisioning.download_sdo(:mailbox, 0x2003, 0x01, original)
+    assert {:ok, ^original} = EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2003, 0x01)
     assert {:ok, :preop_ready} = EtherCAT.state()
   end
 

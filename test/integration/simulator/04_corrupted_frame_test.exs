@@ -47,7 +47,7 @@ defmodule EtherCAT.Integration.Simulator.CorruptedFrameTest do
   test "counted corruption windows apply the same UDP reply mutation more than once", %{
     trace: trace
   } do
-    {:ok, %{total_miss_count: before_miss_count}} = EtherCAT.domain_info(:main)
+    {:ok, %{total_miss_count: before_miss_count}} = EtherCAT.Diagnostics.domain_info(:main)
 
     assert :ok = Udp.inject_fault(UdpFault.truncate() |> UdpFault.next(2))
 
@@ -121,7 +121,7 @@ defmodule EtherCAT.Integration.Simulator.CorruptedFrameTest do
   end
 
   defp assert_corrupted_reply_recovery(mode, telemetry_reason, trace) do
-    {:ok, %{total_miss_count: before_miss_count}} = EtherCAT.domain_info(:main)
+    {:ok, %{total_miss_count: before_miss_count}} = EtherCAT.Diagnostics.domain_info(:main)
 
     fault =
       case mode do

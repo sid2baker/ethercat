@@ -21,7 +21,7 @@ access with a deterministic abort code.
 Observed with a simulated mailbox-capable slave and
 `Simulator.inject_fault({:mailbox_abort, :mailbox, 0x2000, 0x01, 0x0601_0002})`:
 
-- `EtherCAT.upload_sdo(:mailbox, 0x2000, 0x01)` returns
+- `EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2000, 0x01)` returns
   `{:error, {:sdo_abort, 0x2000, 0x01, 0x0601_0002}}`
 - the master remains in `:preop_ready`
 - after `Simulator.clear_faults/0`, the upload succeeds again and returns the

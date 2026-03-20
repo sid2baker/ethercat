@@ -37,14 +37,14 @@ defmodule EtherCAT.Integration.Expect do
 
   @spec domain(atom(), keyword() | map()) :: :ok
   def domain(domain_id, expectations) do
-    assert {:ok, info} = EtherCAT.domain_info(domain_id)
+    assert {:ok, info} = EtherCAT.Diagnostics.domain_info(domain_id)
     assert_map_subset(info, expectations, "domain #{inspect(domain_id)}")
     :ok
   end
 
   @spec slave(atom(), keyword() | map()) :: :ok
   def slave(slave_name, expectations) do
-    assert {:ok, info} = EtherCAT.slave_info(slave_name)
+    assert {:ok, info} = EtherCAT.Diagnostics.slave_info(slave_name)
     assert_map_subset(info, expectations, "slave #{inspect(slave_name)}")
     :ok
   end

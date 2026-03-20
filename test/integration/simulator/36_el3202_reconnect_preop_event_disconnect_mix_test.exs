@@ -47,8 +47,8 @@ defmodule EtherCAT.Integration.Simulator.EL3202ReconnectPreopEventDisconnectMixT
     |> Scenario.act("baseline EL3202 startup SDOs and typed RTD decode are healthy", fn _ctx ->
       Expect.eventually(
         fn ->
-          assert {:ok, <<8, 0>>} = EtherCAT.upload_sdo(:rtd, 0x8000, 0x19)
-          assert {:ok, <<8, 0>>} = EtherCAT.upload_sdo(:rtd, 0x8010, 0x19)
+          assert {:ok, <<8, 0>>} = EtherCAT.Provisioning.upload_sdo(:rtd, 0x8000, 0x19)
+          assert {:ok, <<8, 0>>} = EtherCAT.Provisioning.upload_sdo(:rtd, 0x8010, 0x19)
           assert_rtd_reading(:channel1, @channel1_reading)
           assert_rtd_reading(:channel2, @channel2_reading)
         end,
@@ -128,8 +128,8 @@ defmodule EtherCAT.Integration.Simulator.EL3202ReconnectPreopEventDisconnectMixT
           Expect.slave_fault(:rtd, nil)
           Expect.slave_fault(:outputs, nil)
           Expect.slave(:rtd, al_state: :op, configuration_error: nil)
-          assert {:ok, <<8, 0>>} = EtherCAT.upload_sdo(:rtd, 0x8000, 0x19)
-          assert {:ok, <<8, 0>>} = EtherCAT.upload_sdo(:rtd, 0x8010, 0x19)
+          assert {:ok, <<8, 0>>} = EtherCAT.Provisioning.upload_sdo(:rtd, 0x8000, 0x19)
+          assert {:ok, <<8, 0>>} = EtherCAT.Provisioning.upload_sdo(:rtd, 0x8010, 0x19)
           assert_rtd_reading(:channel1, @channel1_reading)
           assert_rtd_reading(:channel2, @channel2_reading)
         end,
@@ -138,14 +138,14 @@ defmodule EtherCAT.Integration.Simulator.EL3202ReconnectPreopEventDisconnectMixT
       )
     end)
     |> Scenario.act("write output ch1 high after the EL3202 heals", fn _ctx ->
-      assert :ok = EtherCAT.write_output(:outputs, :ch1, 1)
+      assert :ok = EtherCAT.Raw.write_output(:outputs, :ch1, 1)
     end)
     |> Scenario.act(
       "full-ring PDO flow and typed RTD decode both recover after the EL3202 heals",
       fn _ctx ->
         Expect.eventually(
           fn ->
-            assert {:ok, {1, updated_at_us}} = EtherCAT.read_input(:inputs, :ch1)
+            assert {:ok, {true, updated_at_us}} = EtherCAT.Raw.read_input(:inputs, :ch1)
             assert is_integer(updated_at_us)
             Expect.signal(:outputs, :ch1, value: true)
             assert_rtd_reading(:channel1, @channel1_reading)
@@ -210,7 +210,7 @@ defmodule EtherCAT.Integration.Simulator.EL3202ReconnectPreopEventDisconnectMixT
   end
 
   defp assert_rtd_reading(signal_name, expected_reading) do
-    assert {:ok, {reading, updated_at_us}} = EtherCAT.read_input(:rtd, signal_name)
+    assert {:ok, {reading, updated_at_us}} = EtherCAT.Raw.read_input(:rtd, signal_name)
     assert reading == expected_reading
     assert is_integer(updated_at_us)
   end

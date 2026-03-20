@@ -30,7 +30,7 @@ Observed with:
 - the master enters `:activation_blocked`
 - `EtherCAT.await_running/1` reports
   `{:activation_failed, %{mailbox: {:safeop, {:preop_configuration_failed, {:mailbox_config_failed, 0x2003, 0x01, :invalid_coe_response}}}}}`
-- `EtherCAT.slave_info(:mailbox)` reports the exact mailbox configuration error
+- `EtherCAT.Diagnostics.slave_info(:mailbox)` reports the exact mailbox configuration error
 - after clearing the injected fault and restarting the master, startup reaches
   `:operational`
 

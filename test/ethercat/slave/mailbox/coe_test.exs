@@ -25,13 +25,11 @@ defmodule EtherCAT.Slave.Mailbox.CoETest do
   end
 
   defmodule SegmentedMailboxDriver do
-    @behaviour EtherCAT.Slave.Driver
+    @behaviour EtherCAT.Driver
+    @behaviour EtherCAT.Driver.Provisioning
 
     @impl true
-    def identity, do: nil
-
-    @impl true
-    def signal_model(_config), do: %{}
+    def signal_model(_config, _sii_pdo_configs), do: []
 
     @impl true
     def encode_signal(_signal, _config, _value), do: <<>>
@@ -40,19 +38,28 @@ defmodule EtherCAT.Slave.Mailbox.CoETest do
     def decode_signal(_signal, _config, raw), do: raw
 
     @impl true
-    def mailbox_config(_config) do
+    def mailbox_steps(_config, %{phase: :preop}) do
       [{:sdo_download, 0x2000, 0x01, <<1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12>>}]
     end
+
+    def mailbox_steps(_config, _context), do: []
+
+    @impl true
+    def project_state(decoded_inputs, _prev_state, driver_state, _config) do
+      {:ok, decoded_inputs, driver_state, [], []}
+    end
+
+    @impl true
+    def command(command, _state, _driver_state, _config),
+      do: EtherCAT.Driver.unsupported_command(command)
   end
 
   defmodule SyncModeDriver do
-    @behaviour EtherCAT.Slave.Driver
+    @behaviour EtherCAT.Driver
+    @behaviour EtherCAT.Driver.Provisioning
 
     @impl true
-    def identity, do: nil
-
-    @impl true
-    def signal_model(_config), do: %{}
+    def signal_model(_config, _sii_pdo_configs), do: []
 
     @impl true
     def encode_signal(_signal, _config, _value), do: <<>>
@@ -61,9 +68,20 @@ defmodule EtherCAT.Slave.Mailbox.CoETest do
     def decode_signal(_signal, _config, raw), do: raw
 
     @impl true
-    def sync_mode(_config, _sync) do
+    def mailbox_steps(_config, %{phase: :sync_update}) do
       [{:sdo_download, 0x1C32, 0x01, <<1, 0, 0, 0>>}]
     end
+
+    def mailbox_steps(_config, _context), do: []
+
+    @impl true
+    def project_state(decoded_inputs, _prev_state, driver_state, _config) do
+      {:ok, decoded_inputs, driver_state, [], []}
+    end
+
+    @impl true
+    def command(command, _state, _driver_state, _config),
+      do: EtherCAT.Driver.unsupported_command(command)
   end
 
   @mailbox_config %{recv_offset: 0x1000, recv_size: 20, send_offset: 0x1200, send_size: 32}
@@ -431,7 +449,7 @@ defmodule EtherCAT.Slave.Mailbox.CoETest do
     assert updated.mailbox_counter == 2
   end
 
-  test "slave PREOP mailbox configuration appends driver sync_mode steps" do
+  test "slave PREOP mailbox configuration appends driver sync-update steps" do
     from = {self(), make_ref()}
 
     bus =

@@ -1,15 +1,17 @@
 defmodule EtherCAT.Slave do
   @moduledoc """
-  EtherCAT State Machine lifecycle for one physical slave device.
+  Runtime boundary for one physical slave.
 
-  `EtherCAT.Slave` is the public boundary for one named slave. Each slave owns
-  its AL-state transitions, mailbox setup, process-data registration, health
-  polling, reconnect handling, and signal delivery.
+  `EtherCAT.Slave` owns AL-state transitions, mailbox setup, process-data
+  registration, health polling, reconnect handling, and signal delivery for one
+  named slave runtime.
 
   One slave process is started per configured name and registered under
-  `{:slave, name}`. The public API is typically driven by the master, but
-  direct slave-local calls are available here for introspection, output
-  staging, SDO traffic, and controlled retries.
+  `{:slave, name}`.
+
+  Normal machine-facing runtime usage should go through `EtherCAT`.
+
+  This module remains the runtime/process boundary beneath that public API.
 
   ## State transitions
 
@@ -59,6 +61,14 @@ defmodule EtherCAT.Slave do
           name: atom() | nil,
           driver: module() | nil,
           config: EtherCAT.Slave.Config.t() | nil,
+          driver_state: term(),
+          device_state: map(),
+          output_state: map(),
+          device_faults: [term()],
+          device_cycle: integer() | nil,
+          device_updated_at_us: integer() | nil,
+          driver_error: term() | nil,
+          event_subscriptions: MapSet.t(pid()),
           error_code: non_neg_integer() | nil,
           configuration_error: term() | nil,
           identity: map() | nil,
@@ -91,6 +101,14 @@ defmodule EtherCAT.Slave do
     :name,
     :driver,
     :config,
+    :driver_state,
+    :device_state,
+    :output_state,
+    :device_faults,
+    :device_cycle,
+    :device_updated_at_us,
+    :driver_error,
+    :event_subscriptions,
     :error_code,
     :configuration_error,
     :identity,
@@ -132,6 +150,13 @@ defmodule EtherCAT.Slave do
   @doc false
   @spec start_link(keyword()) :: :gen_statem.start_ret()
   def start_link(opts), do: FSM.start_link(opts)
+
+  @doc false
+  @spec subscribe_events(atom(), pid()) ::
+          :ok | {:error, :not_found | :timeout | {:server_exit, term()}}
+  def subscribe_events(slave_name, pid \\ self()) do
+    safe_call(slave_name, {:subscribe_events, pid})
+  end
 
   @doc """
   Subscribe `pid` to a registered process-data signal or configured latch name.
@@ -200,6 +225,23 @@ defmodule EtherCAT.Slave do
   @spec error(atom()) ::
           non_neg_integer() | nil | {:error, :not_found | :timeout | {:server_exit, term()}}
   def error(slave_name), do: safe_call(slave_name, :error)
+
+  @doc false
+  @spec snapshot(atom()) ::
+          {:ok, EtherCAT.SlaveSnapshot.t()}
+          | {:error, :not_found | :timeout | {:server_exit, term()}}
+  def snapshot(slave_name), do: safe_call(slave_name, :snapshot)
+
+  @doc false
+  @spec capabilities(atom()) ::
+          [atom()] | {:error, :not_found | :timeout | {:server_exit, term()}}
+  def capabilities(slave_name), do: safe_call(slave_name, :capabilities)
+
+  @doc false
+  @spec command(atom(), atom(), map()) :: {:ok, reference()} | {:error, term()}
+  def command(slave_name, command_name, args) when is_atom(command_name) and is_map(args) do
+    safe_call(slave_name, {:command, command_name, args})
+  end
 
   @doc """
   Return a detailed runtime snapshot for the slave.

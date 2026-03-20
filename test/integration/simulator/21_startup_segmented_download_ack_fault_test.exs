@@ -1,7 +1,8 @@
 defmodule EtherCAT.Integration.Simulator.StartupSegmentedDownloadAckFaultTest do
   use ExUnit.Case, async: false
 
-  alias EtherCAT.IntegrationSupport.Drivers.{EK1100, SegmentedConfiguredMailboxDevice}
+  alias EtherCAT.Driver.EK1100
+  alias EtherCAT.IntegrationSupport.Drivers.SegmentedConfiguredMailboxDevice
   alias EtherCAT.IntegrationSupport.SimulatorRing
   alias EtherCAT.Simulator
   alias EtherCAT.Simulator.Fault
@@ -63,7 +64,7 @@ defmodule EtherCAT.Integration.Simulator.StartupSegmentedDownloadAckFaultTest do
     assert {:ok, :activation_blocked} = EtherCAT.state()
 
     assert {:ok, %{al_state: :preop, configuration_error: @failure}} =
-             EtherCAT.slave_info(:mailbox)
+             EtherCAT.Diagnostics.slave_info(:mailbox)
 
     assert :ok = Simulator.clear_faults()
     assert :ok = EtherCAT.stop()
@@ -74,8 +75,8 @@ defmodule EtherCAT.Integration.Simulator.StartupSegmentedDownloadAckFaultTest do
 
     assert :ok = EtherCAT.await_operational(2_500)
     assert {:ok, :operational} = EtherCAT.state()
-    assert {:ok, %{configuration_error: nil}} = EtherCAT.slave_info(:mailbox)
-    assert {:ok, ^expected} = EtherCAT.upload_sdo(:mailbox, 0x2003, 0x01)
+    assert {:ok, %{configuration_error: nil}} = EtherCAT.Diagnostics.slave_info(:mailbox)
+    assert {:ok, ^expected} = EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2003, 0x01)
   end
 
   defp startup_blob do

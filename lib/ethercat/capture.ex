@@ -25,10 +25,7 @@ defmodule EtherCAT.Capture do
         EtherCAT.Capture.write_capture(:slave_1, sdos: [{0x1008, 0x00}])
 
       {:ok, %{driver_path: driver_path}} =
-        EtherCAT.Capture.gen_driver(
-          :slave_1,
-          module: EtherCAT.IntegrationSupport.Drivers.EL1809
-        )
+        EtherCAT.Capture.gen_driver(:slave_1, module: EtherCAT.Driver.EL1809)
 
       {:ok, %{module_path: module_path}} =
         EtherCAT.Capture.gen_simulator(
@@ -40,7 +37,7 @@ defmodule EtherCAT.Capture do
 
   alias EtherCAT.Bus
   alias EtherCAT.Simulator.Slave.Object
-  alias EtherCAT.Slave.Driver.Default, as: DefaultDriver
+  alias EtherCAT.Driver.Default, as: DefaultDriver
   alias EtherCAT.Slave.ESC.SII
 
   @capture_format 1
@@ -62,7 +59,7 @@ defmodule EtherCAT.Capture do
     IO.puts("""
     EtherCAT.Capture recommended command:
 
-      EtherCAT.Capture.gen_driver(:slave_1, module: EtherCAT.IntegrationSupport.Drivers.EL1809)
+      EtherCAT.Capture.gen_driver(:slave_1, module: EtherCAT.Driver.EL1809)
     """)
 
     :ok
@@ -88,7 +85,7 @@ defmodule EtherCAT.Capture do
   @spec capture(atom(), keyword()) :: {:ok, capture()} | {:error, term()}
   def capture(slave_name, opts \\ []) when is_atom(slave_name) and is_list(opts) do
     with {:ok, bus} <- fetch_bus(),
-         {:ok, info} <- EtherCAT.slave_info(slave_name),
+         {:ok, info} <- EtherCAT.Diagnostics.slave_info(slave_name),
          {:ok, sdos} <- normalize_sdo_refs(opts),
          {:ok, sii_identity} <- SII.read_identity(bus, info.station),
          {:ok, mailbox_config} <- SII.read_mailbox_config(bus, info.station),
@@ -376,7 +373,7 @@ defmodule EtherCAT.Capture do
   end
 
   defp summarize_slave(%{name: name, station: station, fault: fault}) do
-    case EtherCAT.slave_info(name) do
+    case EtherCAT.Diagnostics.slave_info(name) do
       {:ok, info} ->
         %{
           name: name,
@@ -395,14 +392,14 @@ defmodule EtherCAT.Capture do
   end
 
   defp fetch_slaves do
-    case EtherCAT.slaves() do
+    case EtherCAT.Diagnostics.slaves() do
       {:ok, slaves} -> {:ok, slaves}
       {:error, _} = err -> err
     end
   end
 
   defp fetch_bus do
-    case EtherCAT.bus() do
+    case EtherCAT.Diagnostics.bus() do
       {:error, _} = err -> err
       {:ok, nil} -> {:error, :not_started}
       {:ok, bus} -> {:ok, bus}
@@ -519,7 +516,7 @@ defmodule EtherCAT.Capture do
 
   defp read_sdo_snapshots(slave_name, sdos) do
     Enum.reduce_while(sdos, {:ok, []}, fn {index, subindex}, {:ok, acc} ->
-      case EtherCAT.upload_sdo(slave_name, index, subindex) do
+      case EtherCAT.Provisioning.upload_sdo(slave_name, index, subindex) do
         {:ok, data} ->
           {:cont, {:ok, acc ++ [%{index: index, subindex: subindex, data: data}]}}
 
@@ -836,7 +833,7 @@ defmodule EtherCAT.Capture do
       "defmodule #{render_module_name(module)} do",
       "  @moduledoc false",
       "",
-      "  @behaviour EtherCAT.Slave.Driver",
+      render_driver_behaviour_block(scaffold),
       "",
       render_driver_identity_block(scaffold.identity),
       "",
@@ -845,6 +842,8 @@ defmodule EtherCAT.Capture do
       render_driver_mailbox_block(scaffold.mailbox_steps),
       "",
       render_driver_codec_block(scaffold),
+      "",
+      render_driver_runtime_block(),
       "end",
       "",
       "defmodule #{render_module_name(simulator_module)} do",
@@ -858,6 +857,18 @@ defmodule EtherCAT.Capture do
     ]
     |> Enum.join("\n")
     |> format_source()
+  end
+
+  defp render_driver_behaviour_block(scaffold) do
+    [
+      "  @behaviour EtherCAT.Driver",
+      "  @behaviour EtherCAT.Simulator.Driver"
+      | if(scaffold.mailbox_steps == [],
+          do: [],
+          else: ["  @behaviour EtherCAT.Driver.Provisioning"]
+        )
+    ]
+    |> Enum.join("\n")
   end
 
   defp render_driver_identity_block(identity) do
@@ -876,8 +887,10 @@ defmodule EtherCAT.Capture do
     [
       inline_literal("  @signals ", signal_model_literal),
       "",
+      "  def signal_model(config), do: signal_model(config, [])",
+      "",
       "  @impl true",
-      "  def signal_model(_config), do: @signals"
+      "  def signal_model(_config, _sii_pdo_configs), do: @signals"
     ]
     |> Enum.join("\n")
   end
@@ -887,9 +900,25 @@ defmodule EtherCAT.Capture do
   defp render_driver_mailbox_block(mailbox_steps) do
     """
       @impl true
-      def mailbox_config(_config) do
+      def mailbox_steps(_config, %{phase: :preop}) do
     #{indent_block(format_literal(mailbox_steps, 88), 4)}
       end
+
+      def mailbox_steps(_config, _context), do: []
+    """
+    |> String.trim_trailing()
+  end
+
+  defp render_driver_runtime_block do
+    """
+      @impl true
+      def project_state(decoded_inputs, _prev_state, driver_state, _config) do
+        {:ok, decoded_inputs, driver_state, [], []}
+      end
+
+      @impl true
+      def command(command, _state, _driver_state, _config),
+        do: EtherCAT.Driver.unsupported_command(command)
     """
     |> String.trim_trailing()
   end

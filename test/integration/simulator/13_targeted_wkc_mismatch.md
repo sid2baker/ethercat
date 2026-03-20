@@ -21,7 +21,7 @@ responds to direct status polling.
 Observed with
 `Simulator.inject_fault({:next_exchanges, 6, {:logical_wkc_offset, :outputs, -1}})`:
 
-- `EtherCAT.domain_info(:main)` reports
+- `EtherCAT.Diagnostics.domain_info(:main)` reports
   `{:wkc_mismatch, %{expected: 3, actual: 2}}`
 - the master enters `:recovering`
 - the outputs slave does not get marked `:down`

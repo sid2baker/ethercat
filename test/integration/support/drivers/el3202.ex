@@ -1,7 +1,9 @@
 defmodule EtherCAT.IntegrationSupport.Drivers.EL3202 do
   @moduledoc false
 
-  @behaviour EtherCAT.Slave.Driver
+  @behaviour EtherCAT.Driver
+  @behaviour EtherCAT.Driver.Provisioning
+  @behaviour EtherCAT.Simulator.Driver
 
   @mailbox_steps [
     {:sdo_download, 0x8000, 0x19, <<8::16-little>>},
@@ -23,10 +25,12 @@ defmodule EtherCAT.IntegrationSupport.Drivers.EL3202 do
   ]
 
   @impl true
-  def signal_model(_config), do: @signals
+  def signal_model(_config, _sii_pdo_configs), do: @signals
 
   @impl true
-  def mailbox_config(_config), do: @mailbox_steps
+  def mailbox_steps(_config, %{phase: :preop}), do: @mailbox_steps
+
+  def mailbox_steps(_config, _context), do: []
 
   @impl true
   def encode_signal(_signal, _config, _value), do: <<>>
@@ -77,6 +81,30 @@ defmodule EtherCAT.IntegrationSupport.Drivers.EL3202 do
   end
 
   def decode_signal(_signal, _config, _raw), do: nil
+
+  @impl true
+  def describe(_config), do: %{device_type: :temperature_input, capabilities: [:read_input]}
+
+  @impl true
+  def init(_config), do: {:ok, %{}}
+
+  @impl true
+  def project_state(decoded_inputs, _prev_state, driver_state, _config) do
+    faults =
+      Enum.reduce(decoded_inputs, [], fn {channel, reading}, acc ->
+        if is_map(reading) and (reading.error or reading.invalid) do
+          [{:sensor_fault, channel} | acc]
+        else
+          acc
+        end
+      end)
+
+    {:ok, decoded_inputs, driver_state, [], Enum.reverse(faults)}
+  end
+
+  @impl true
+  def command(command, _state, _driver_state, _config),
+    do: EtherCAT.Driver.unsupported_command(command)
 end
 
 defmodule EtherCAT.IntegrationSupport.Drivers.EL3202.Simulator do

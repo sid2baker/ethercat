@@ -60,10 +60,12 @@ defmodule EtherCAT.Slave.Runtime.Signals do
   @spec drop_subscriber(%EtherCAT.Slave{}, pid()) :: %EtherCAT.Slave{}
   def drop_subscriber(data, pid) do
     subscriptions = prune_subscription_pid(data.subscriptions, pid)
+    event_subscriptions = MapSet.delete(data.event_subscriptions || MapSet.new(), pid)
 
     %{
       data
       | subscriptions: subscriptions,
+        event_subscriptions: event_subscriptions,
         subscriber_refs: Map.delete(data.subscriber_refs, pid)
     }
   end
@@ -102,41 +104,47 @@ defmodule EtherCAT.Slave.Runtime.Signals do
     end
   end
 
-  @spec dispatch_domain_input(
-          %EtherCAT.Slave{},
-          atom(),
-          tuple(),
-          binary(),
-          binary()
-        ) :: :ok
-  def dispatch_domain_input(data, domain_id, sm_key, old_sm_bytes, new_sm_bytes) do
+  @spec changed_input_names(%EtherCAT.Slave{}, atom(), tuple(), binary() | :unset, binary()) :: [
+          atom()
+        ]
+  def changed_input_names(data, domain_id, sm_key, old_sm_bytes, new_sm_bytes) do
+    data.signal_registrations_by_sm
+    |> Map.get({domain_id, sm_key}, [])
+    |> Enum.reduce([], fn {signal_name, %{bit_offset: bit_offset, bit_size: bit_size}}, acc ->
+      if signal_changed?(old_sm_bytes, new_sm_bytes, bit_offset, bit_size) do
+        [signal_name | acc]
+      else
+        acc
+      end
+    end)
+    |> Enum.reverse()
+  end
+
+  @spec dispatch_sampled_inputs(%EtherCAT.Slave{}, [atom()], map()) :: :ok
+  def dispatch_sampled_inputs(data, changed_signal_names, decoded_inputs)
+      when is_list(changed_signal_names) and is_map(decoded_inputs) do
     notifications =
-      data.signal_registrations_by_sm
-      |> Map.get({domain_id, sm_key}, [])
-      |> Enum.reduce([], fn {signal_name, %{bit_offset: bit_offset, bit_size: bit_size}}, acc ->
-        if signal_changed?(old_sm_bytes, new_sm_bytes, bit_offset, bit_size) do
-          raw = extract_sm_bits(new_sm_bytes, bit_offset, bit_size)
+      changed_signal_names
+      |> Enum.uniq()
+      |> Enum.reduce([], fn signal_name, acc ->
+        case Map.fetch(decoded_inputs, signal_name) do
+          {:ok, decoded} ->
+            data.subscriptions
+            |> Map.get(signal_name, MapSet.new())
+            |> Enum.reduce(acc, fn pid, pid_acc ->
+              [{pid, signal_name, decoded} | pid_acc]
+            end)
 
-          decoded =
-            if data.driver != nil do
-              data.driver.decode_signal(signal_name, data.config, raw)
-            else
-              raw
-            end
-
-          data.subscriptions
-          |> Map.get(signal_name, MapSet.new())
-          |> Enum.reduce(acc, fn pid, pid_acc ->
-            [{pid, signal_name, decoded} | pid_acc]
-          end)
-        else
-          acc
+          :error ->
+            acc
         end
       end)
 
     Enum.each(Enum.reverse(notifications), fn {pid, signal_name, decoded} ->
       send(pid, {:ethercat, :signal, data.name, signal_name, decoded})
     end)
+
+    :ok
   end
 
   @spec extract_sm_bits(binary(), non_neg_integer(), pos_integer()) :: binary()

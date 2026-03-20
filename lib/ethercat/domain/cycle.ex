@@ -68,7 +68,14 @@ defmodule EtherCAT.Domain.Cycle do
     completed_at_us = System.monotonic_time(:microsecond)
     Image.put_domain_status(data.table, completed_at_us, effective_stale_after_us(data))
 
-    dispatch_inputs(response, data.cycle_plan.input_slices, data.table, data.id, completed_at_us)
+    dispatch_inputs(
+      response,
+      data.cycle_plan.input_slices,
+      data.table,
+      data.id,
+      cycle_index,
+      completed_at_us
+    )
 
     duration_us = System.monotonic_time(:microsecond) - t0
 
@@ -109,7 +116,7 @@ defmodule EtherCAT.Domain.Cycle do
     [{:state_timeout, delay_ms, :tick}]
   end
 
-  defp dispatch_inputs(response, input_slices, table, domain_id, updated_at_us) do
+  defp dispatch_inputs(response, input_slices, table, domain_id, cycle_index, updated_at_us) do
     # Group changes by slave_name to prevent fan-out message flooding
     changes_by_slave =
       Enum.reduce(input_slices, %{}, fn {offset, size, {slave_name, _} = key}, acc ->
@@ -126,7 +133,10 @@ defmodule EtherCAT.Domain.Cycle do
       end)
 
     Enum.each(changes_by_slave, fn {slave_name, changes} ->
-      maybe_dispatch_input(slave_name, {:domain_inputs, domain_id, changes})
+      maybe_dispatch_input(
+        slave_name,
+        {:domain_inputs, domain_id, cycle_index, changes, updated_at_us}
+      )
     end)
   end
 

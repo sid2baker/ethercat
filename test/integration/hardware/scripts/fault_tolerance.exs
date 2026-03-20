@@ -125,7 +125,7 @@ defmodule FT.Helpers do
     |> Enum.reduce_while(:polling, fn _, _ ->
       states =
         Enum.map(domain_ids, fn domain_id ->
-          case EtherCAT.domain_info(domain_id) do
+          case EtherCAT.Diagnostics.domain_info(domain_id) do
             {:ok, %{state: state}} -> {domain_id, {:ok, state}}
             {:error, reason} -> {domain_id, {:error, reason}}
           end
@@ -150,14 +150,14 @@ defmodule FT.Helpers do
   def domain_snapshot(domain_ids) do
     Enum.into(domain_ids, %{}, fn domain_id ->
       {:ok, stats} = EtherCAT.Domain.stats(domain_id)
-      {:ok, info} = EtherCAT.domain_info(domain_id)
+      {:ok, info} = EtherCAT.Diagnostics.domain_info(domain_id)
 
       {domain_id, %{cycle_count: stats.cycle_count, state: info.state}}
     end)
   end
 
   def attachment_domains(slave_name) do
-    with {:ok, info} <- EtherCAT.slave_info(slave_name) do
+    with {:ok, info} <- EtherCAT.Diagnostics.slave_info(slave_name) do
       domains =
         info.attachments
         |> Enum.map(& &1.domain)
@@ -309,7 +309,7 @@ start_bus.(nil)
 EtherCAT.Telemetry.attach()
 
 {domain_id, domain_pid} =
-  case EtherCAT.domains() do
+  case EtherCAT.Diagnostics.domains() do
     {:ok, [{id, _cycle_time_us, pid} | _]} -> {id, pid}
     _ -> raise "No domains found"
   end
@@ -347,7 +347,7 @@ FT.Helpers.section("A2. Slave process crash detection")
 
 start_bus.(nil)
 
-{:ok, slaves} = EtherCAT.slaves()
+{:ok, slaves} = EtherCAT.Diagnostics.slaves()
 %{pid: slave_pid} = Enum.find(slaves, &(&1.name == :outputs))
 
 IO.puts("  Slave :outputs pid=#{inspect(slave_pid)}")

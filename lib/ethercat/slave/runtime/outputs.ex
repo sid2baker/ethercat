@@ -6,6 +6,31 @@ defmodule EtherCAT.Slave.Runtime.Outputs do
 
   @spec write_signal(%Slave{}, atom(), term()) :: {:ok, %Slave{}} | {:error, term()}
   def write_signal(data, signal_name, value) do
+    write_signals(data, [{:write, signal_name, value}])
+  end
+
+  @spec write_signals(%Slave{}, [tuple()]) :: {:ok, %Slave{}} | {:error, term()}
+  def write_signals(%Slave{} = data, intents) when is_list(intents) do
+    with {:ok, staged_writes} <- plan_writes(data, intents),
+         {:ok, next_data} <- commit_writes(data, staged_writes) do
+      {:ok, next_data}
+    end
+  end
+
+  defp plan_writes(%Slave{} = data, intents) do
+    Enum.reduce_while(intents, {:ok, %{}}, fn
+      {:write, signal_name, value}, {:ok, staged_writes} ->
+        case plan_signal_write(data, staged_writes, signal_name, value) do
+          {:ok, next_writes} -> {:cont, {:ok, next_writes}}
+          {:error, reason} -> {:halt, {:error, reason}}
+        end
+
+      other, _acc ->
+        {:halt, {:error, {:invalid_output_intent, other}}}
+    end)
+  end
+
+  defp plan_signal_write(%Slave{} = data, staged_writes, signal_name, value) do
     case Map.get(data.signal_registrations, signal_name) do
       nil ->
         {:error, {:not_registered, signal_name}}
@@ -24,13 +49,84 @@ defmodule EtherCAT.Slave.Runtime.Outputs do
         encoded = data.driver.encode_signal(signal_name, data.config, value)
         domain_ids = Map.get(data.output_domain_ids_by_sm || %{}, sm_key, [domain_id])
 
-        with {:ok, current} <-
-               ProcessData.current_output_sm_image(data, domain_id, sm_key, sm_size),
-             next_value <- set_sm_bits(current, bit_offset, bit_size, encoded),
-             :ok <- ProcessData.stage_output_sm_image(data, sm_key, domain_ids, next_value) do
-          {:ok, %{data | output_sm_images: Map.put(data.output_sm_images, sm_key, next_value)}}
+        with {:ok, current, previous_value} <-
+               current_staged_value(data, staged_writes, domain_id, sm_key, sm_size),
+             next_value <- set_sm_bits(current, bit_offset, bit_size, encoded) do
+          {:ok,
+           Map.put(
+             staged_writes,
+             sm_key,
+             %{
+               sm_key: sm_key,
+               domain_ids: domain_ids,
+               previous_value: previous_value,
+               next_value: next_value
+             }
+           )}
         end
     end
+  end
+
+  defp current_staged_value(%Slave{} = data, staged_writes, domain_id, sm_key, sm_size) do
+    case Map.get(staged_writes, sm_key) do
+      %{next_value: next_value, previous_value: previous_value} ->
+        {:ok, next_value, previous_value}
+
+      nil ->
+        with {:ok, current} <-
+               ProcessData.current_output_sm_image(data, domain_id, sm_key, sm_size) do
+          {:ok, current, current}
+        end
+    end
+  end
+
+  defp commit_writes(%Slave{} = data, staged_writes) do
+    staged_writes
+    |> Map.values()
+    |> Enum.reduce_while({:ok, data, []}, fn staged_write, {:ok, current_data, committed} ->
+      case ProcessData.stage_output_sm_image(
+             current_data,
+             staged_write.sm_key,
+             staged_write.domain_ids,
+             staged_write.next_value
+           ) do
+        :ok ->
+          next_data =
+            %{
+              current_data
+              | output_sm_images:
+                  Map.put(
+                    current_data.output_sm_images || %{},
+                    staged_write.sm_key,
+                    staged_write.next_value
+                  )
+            }
+
+          {:cont, {:ok, next_data, [staged_write | committed]}}
+
+        {:error, reason} ->
+          rollback_writes(data, committed)
+          {:halt, {:error, reason}}
+      end
+    end)
+    |> case do
+      {:ok, next_data, _committed} -> {:ok, next_data}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp rollback_writes(%Slave{} = data, committed) do
+    Enum.each(committed, fn staged_write ->
+      _ =
+        ProcessData.stage_output_sm_image(
+          data,
+          staged_write.sm_key,
+          staged_write.domain_ids,
+          staged_write.previous_value
+        )
+    end)
+
+    :ok
   end
 
   # Write `bit_size` bits from `encoded` into `sm_bytes` at `bit_offset`.

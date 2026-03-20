@@ -3,11 +3,11 @@ defmodule EtherCAT.Simulator.Slave do
   Device and signal-level API for simulated EtherCAT slaves.
 
   Use this module to hydrate simulated devices from real
-  `EtherCAT.Slave.Driver` modules and to inspect or override named signal
+  `EtherCAT.Driver` modules and to inspect or override named signal
   values on a running simulator.
 
   `from_driver/2` can hydrate a simulated device from a real
-  `EtherCAT.Slave.Driver` plus an optional simulator-side companion module such
+  `EtherCAT.Driver` plus an optional simulator-side companion module such
   as `MyDriver.Simulator`.
   """
 

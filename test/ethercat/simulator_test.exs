@@ -5,8 +5,8 @@ defmodule EtherCAT.SimulatorTest do
   alias EtherCAT.Bus.Datagram
   alias EtherCAT.Bus.Frame
   alias EtherCAT.Bus.Transport.RawSocket
+  alias EtherCAT.Driver.EK1100
   import EtherCAT.Integration.Assertions
-  alias EtherCAT.IntegrationSupport.Drivers.EK1100
   alias EtherCAT.Simulator
   alias EtherCAT.Simulator.Fault
   alias EtherCAT.Simulator.Slave, as: SimSlave

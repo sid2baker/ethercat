@@ -19,6 +19,12 @@ distributed clock layer.
 ```
 EtherCAT.Application
 │
+├── EtherCAT                    (driver-backed runtime API)
+├── EtherCAT.Provisioning       (advanced PREOP/configuration/SDO API)
+├── EtherCAT.Diagnostics        (advanced inspection and runtime visibility API)
+├── EtherCAT.Driver             (public driver behaviour for extension authors)
+├── EtherCAT.Raw                 (advanced raw-process-data API)
+│
 ├── EtherCAT.Master              (singleton gen_statem — bus lifecycle coordinator)
 │
 ├── EtherCAT.SessionSupervisor   (dynamic supervisor for session-scoped runtime processes)
@@ -33,7 +39,7 @@ EtherCAT.Application
 ├── EtherCAT.SlaveSupervisor     (dynamic supervisor — one_for_one slave runtime children)
 │   └── EtherCAT.Slave           (gen_statem per named slave — ESM lifecycle, checked PREOP setup, checked SAFEOP sync/latch setup)
 │       ├── EtherCAT.Slave.ESC.SII (EEPROM reader — stateless, called from Slave.init)
-│       ├── EtherCAT.Slave.Driver (behaviour contract for user drivers)
+│       ├── EtherCAT.Driver (behaviour contract for user drivers)
 │       ├── EtherCAT.Slave.Sync.Plan (pure sync/latch register planning)
 │       └── EtherCAT.Slave.ESC.Registers (ESC register address map — pure functions)
 ```
@@ -56,10 +62,12 @@ EtherCAT.Simulator
 Registry: `EtherCAT.Registry` (local). Slaves register as `{:slave, name}`;
 Domains register as `{:domain, id}`.
 
-The public runtime boundaries are `EtherCAT.Master`, `EtherCAT.Slave`,
-`EtherCAT.Domain`, and `EtherCAT.DC`. Their internal `*.FSM` modules are the
-small `gen_statem` entry points that own state transitions and subsystem event
-routing. Low-level mechanics live in helper namespaces
+The normal runtime surface is `EtherCAT`. `EtherCAT.Provisioning`,
+`EtherCAT.Diagnostics`, `EtherCAT.Raw`, and `EtherCAT.Driver` are specialist
+public modules. `EtherCAT.Master`, `EtherCAT.Slave`, `EtherCAT.Domain`, and
+`EtherCAT.DC` are the core runtime processes behind that surface. Their
+internal `*.FSM` modules are the small `gen_statem` entry points that own
+state transitions and subsystem event routing. Low-level mechanics live in helper namespaces
 (`EtherCAT.Master.*`, `EtherCAT.Slave.Runtime.*`, `EtherCAT.Domain.*`,
 `EtherCAT.DC.*`) so the FSM files can be checked against the EtherCAT model
 without mixing in all operational detail inline.
@@ -100,7 +108,7 @@ Master :discovering ──── BRD 0x0000, count stable ──── Master :a
               Master :preop_ready
 ```
 
-### Cyclic I/O (Domain owns)
+### Cyclic I/O (runtime + driver)
 
 ```
 Domain :cycling
@@ -109,20 +117,28 @@ Domain :cycling
     Bus.transaction LRW
       → raw socket send → receive → response binary
     dispatch_inputs → compare each slice against ETS → on change:
-      ETS update + send {:domain_input, domain_id, key, raw} to slave pid
-      Slave decodes only the signals registered for that SM via its `sm_key` index
-      → driver.decode_signal/3 → notify `{:ethercat, :signal, ...}` subscribers
+      ETS update + send {:domain_inputs, domain_id, cycle_index, changes, updated_at_us} to slave pid
+      Slave computes the changed input names from the changed SM slices
+      → samples and decodes the current input image once
+      → driver.project_state/4
+      → store device_state + driver_state
+      → notify raw signal subscribers and public slave subscribers from that same decoded input sample
 ```
 
-### Output path (application → bus)
+### Command/write path (application → bus)
 
 ```
 Application
-  EtherCAT.write_output(slave, signal, value)
-    → Slave encodes via driver.encode_signal/3
-    → Domain.write(domain_id, {slave, {:sm, sm_idx}}, binary)  ← direct :ets.update_element — no gen_statem
+  EtherCAT.command(slave, :set_output, %{signal: signal, value: value})
+    → driver.command/4 returns raw {:write, signal, value} intents
+    → runtime stages those intents through Domain.write/3
+    → runtime updates retained slave state and emits `%EtherCAT.Event{}`
   next Domain LRW tick picks up the new value and writes it to the slave
 ```
+
+`EtherCAT.Raw.*` remains available for direct PDO reads, writes, and signal
+subscriptions when lower-level diagnostics are required, but it is no longer
+the primary application-facing surface.
 
 ---
 
@@ -262,12 +278,17 @@ calls `{:next_state, ...}`.
 
 ### Real driver boundary vs simulator boundary
 
-`EtherCAT.Slave.Driver` owns runtime-facing device concerns:
+`EtherCAT.Driver` owns the runtime-facing core driver concerns:
 
-- static high-level identity (`identity/0`)
-- logical signal naming (`signal_model/1` or `/2`)
+- logical signal naming (`signal_model/2`)
 - signal encode/decode
-- PREOP mailbox configuration and optional sync-mode object writes
+- projected-state updates and specialist command planning
+
+Specialist driver behaviours hang off the core:
+
+- `EtherCAT.Simulator.Driver` for static identity metadata (`identity/0`)
+- `EtherCAT.Driver.Provisioning` for PREOP mailbox configuration and sync-update object writes
+- `EtherCAT.Driver.Latch` for optional DC latch hooks
 
 Exact simulator authoring does not live in the real driver behaviour. When a
 driver needs profile-specific simulator defaults, `MyDriver.Simulator` can

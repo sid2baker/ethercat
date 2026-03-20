@@ -10,7 +10,8 @@ defmodule EtherCAT.Simulator.Slave.Definition do
 
   alias EtherCAT.Simulator.Slave.Object
   alias EtherCAT.Simulator.Slave.Profile
-  alias EtherCAT.Slave.Driver, as: SlaveDriver
+  alias EtherCAT.Driver.Runtime, as: DriverRuntime
+  alias EtherCAT.Simulator.Driver, as: SimulatorDriver
 
   @typedoc "Mailbox SM layout declared by the simulated device."
   @type mailbox_config :: %{
@@ -141,7 +142,7 @@ defmodule EtherCAT.Simulator.Slave.Definition do
   end
 
   defp merge_driver_identity(opts, driver) do
-    case SlaveDriver.identity(driver) do
+    case SimulatorDriver.identity(driver) do
       %{vendor_id: vendor_id, product_code: product_code, revision: revision} ->
         opts
         |> Keyword.put_new(:vendor_id, vendor_id)
@@ -161,7 +162,7 @@ defmodule EtherCAT.Simulator.Slave.Definition do
   defp maybe_put_identity_revision(opts, _revision), do: opts
 
   defp maybe_strip_process_data(opts, driver, config) do
-    case SlaveDriver.signal_model(driver, config) do
+    case DriverRuntime.signal_model(driver, config) do
       [] ->
         opts
         |> Keyword.put(:signals, %{})

@@ -31,9 +31,14 @@ defmodule EtherCAT.Integration.Hardware.RedundantRingTest do
         assert {:ok, %{link: expected_link}} = EtherCAT.Bus.info(EtherCAT.Bus)
 
         assert expected_link == Hardware.expected_bus_link(profile)
-        assert {:ok, %{station: 0x1000, al_state: :op}} = EtherCAT.slave_info(:coupler)
-        assert {:ok, %{station: 0x1001, al_state: :op}} = EtherCAT.slave_info(:inputs)
-        assert {:ok, %{station: 0x1002, al_state: :op}} = EtherCAT.slave_info(:outputs)
+
+        assert {:ok, %{station: 0x1000, al_state: :op}} =
+                 EtherCAT.Diagnostics.slave_info(:coupler)
+
+        assert {:ok, %{station: 0x1001, al_state: :op}} = EtherCAT.Diagnostics.slave_info(:inputs)
+
+        assert {:ok, %{station: 0x1002, al_state: :op}} =
+                 EtherCAT.Diagnostics.slave_info(:outputs)
       end
 
       test "reads EL1809 inputs and stages EL2809 outputs over #{profile.label}" do
@@ -47,13 +52,13 @@ defmodule EtherCAT.Integration.Hardware.RedundantRingTest do
         assert expected_link == Hardware.expected_bus_link(profile)
 
         EtherCAT.Integration.Assertions.assert_eventually(fn ->
-          assert {:ok, {value, updated_at_us}} = EtherCAT.read_input(:inputs, :ch1)
+          assert {:ok, {value, updated_at_us}} = EtherCAT.Raw.read_input(:inputs, :ch1)
           assert is_integer(value)
           assert is_integer(updated_at_us)
         end)
 
-        assert :ok = EtherCAT.write_output(:outputs, :ch1, 1)
-        assert :ok = EtherCAT.write_output(:outputs, :ch16, 0)
+        assert :ok = EtherCAT.Raw.write_output(:outputs, :ch1, 1)
+        assert :ok = EtherCAT.Raw.write_output(:outputs, :ch16, 0)
       end
     end
 

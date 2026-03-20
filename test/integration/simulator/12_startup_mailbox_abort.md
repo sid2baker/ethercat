@@ -28,7 +28,7 @@ Observed with:
 
 - the master enters `:activation_blocked`
 - `EtherCAT.await_running/1` reports `{:activation_failed, %{mailbox: {:safeop, {:preop_configuration_failed, {:mailbox_config_failed, ...}}}}}`
-- `EtherCAT.slave_info(:mailbox)` reports the exact mailbox configuration error
+- `EtherCAT.Diagnostics.slave_info(:mailbox)` reports the exact mailbox configuration error
 - after clearing the injected abort and restarting the master, startup reaches
   `:operational`
 

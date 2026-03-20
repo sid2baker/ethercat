@@ -221,7 +221,7 @@ defmodule EtherCAT.HardwareScripts.RedundantReplugWatch do
     1..8
     |> Enum.zip(bits)
     |> Enum.reduce_while(:ok, fn {index, value}, :ok ->
-      case EtherCAT.write_output(:outputs, channel_name(index), value) do
+      case EtherCAT.Raw.write_output(:outputs, channel_name(index), value) do
         :ok -> {:cont, :ok}
         {:error, reason} -> {:halt, {:error, {channel_name(index), reason}}}
       end
@@ -253,7 +253,7 @@ defmodule EtherCAT.HardwareScripts.RedundantReplugWatch do
   defp read_pattern do
     1..8
     |> Enum.reduce_while({:ok, []}, fn index, {:ok, values} ->
-      case EtherCAT.read_input(:inputs, channel_name(index)) do
+      case EtherCAT.Raw.read_input(:inputs, channel_name(index)) do
         {:ok, {value, updated_at_us}} when value in [0, 1] and is_integer(updated_at_us) ->
           {:cont, {:ok, [{index, value, updated_at_us} | values]}}
 
@@ -286,7 +286,7 @@ defmodule EtherCAT.HardwareScripts.RedundantReplugWatch do
 
   defp log_startup_summary(sink, opts) do
     {:ok, bus_info} = EtherCAT.Bus.info(EtherCAT.Bus)
-    {:ok, domain_info} = EtherCAT.domain_info(:main)
+    {:ok, domain_info} = EtherCAT.Diagnostics.domain_info(:main)
 
     log(
       sink,
@@ -336,7 +336,7 @@ defmodule EtherCAT.HardwareScripts.RedundantReplugWatch do
 
   defp snapshot do
     master_state = EtherCAT.state()
-    domain = EtherCAT.domain_info(:main)
+    domain = EtherCAT.Diagnostics.domain_info(:main)
     bus = EtherCAT.Bus.info(EtherCAT.Bus)
 
     %{

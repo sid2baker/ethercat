@@ -57,7 +57,7 @@ end
 defmodule EtherCAT.Slave.ProcessData.Plan do
   @moduledoc false
 
-  alias EtherCAT.Slave.Driver
+  alias EtherCAT.Driver
   alias EtherCAT.Slave.ProcessData.Plan.DomainAttachment
   alias EtherCAT.Slave.ProcessData.Plan.SmGroup
   alias EtherCAT.Slave.ProcessData.Signal
@@ -87,7 +87,7 @@ defmodule EtherCAT.Slave.ProcessData.Plan do
   def normalize_request({:all, domain_id}, driver, config, sii_pdo_configs)
       when is_atom(domain_id) and not is_nil(driver) do
     requested =
-      Driver.signal_model(driver, config, sii_pdo_configs)
+      Driver.Runtime.signal_model(driver, config, sii_pdo_configs)
       |> Enum.map(fn {signal_name, _declaration} -> {signal_name, domain_id} end)
 
     {:ok, requested}

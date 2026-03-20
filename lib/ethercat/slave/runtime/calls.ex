@@ -6,6 +6,7 @@ defmodule EtherCAT.Slave.Runtime.Calls do
   alias EtherCAT.Slave.Runtime.Bootstrap
   alias EtherCAT.Slave.Runtime.Configuration
   alias EtherCAT.Slave.Runtime.Outputs
+  alias EtherCAT.Slave.Runtime.DeviceState
   alias EtherCAT.Slave.Runtime.Signals
   alias EtherCAT.Slave.Runtime.Status
 
@@ -32,6 +33,15 @@ defmodule EtherCAT.Slave.Runtime.Calls do
 
   def handle(from, :info, state, data, _opts) do
     {:keep_state_and_data, [{:reply, from, {:ok, Status.info_snapshot(state, data)}}]}
+  end
+
+  def handle(from, :snapshot, state, data, _opts) do
+    {:keep_state_and_data, [{:reply, from, {:ok, DeviceState.snapshot(state, data)}}]}
+  end
+
+  def handle(from, :capabilities, _state, data, _opts) do
+    {:keep_state_and_data,
+     [{:reply, from, EtherCAT.Driver.Runtime.capabilities(data.driver, data.config || %{})}]}
   end
 
   def handle(from, {:request, target}, state, _data, _opts) when state == target do
@@ -107,14 +117,27 @@ defmodule EtherCAT.Slave.Runtime.Calls do
     end
   end
 
+  def handle(from, {:subscribe_events, pid}, _state, data, _opts) do
+    {:keep_state, DeviceState.event_subscribe(data, pid), [{:reply, from, :ok}]}
+  end
+
   def handle(from, {:write_output, _signal_name, _value}, :down, _data, _opts) do
     {:keep_state_and_data, [{:reply, from, {:error, :slave_down}}]}
   end
 
   def handle(from, {:write_output, signal_name, value}, _state, data, _opts) do
+    previous_value = Map.get(DeviceState.signal_image(data), signal_name, :unset)
+
     case Outputs.write_signal(data, signal_name, value) do
       {:ok, new_data} ->
-        {:keep_state, new_data, [{:reply, from, :ok}]}
+        updated_at_us = System.monotonic_time(:microsecond)
+        next_data = DeviceState.record_output_value(new_data, signal_name, value, updated_at_us)
+
+        if previous_value != value do
+          dispatch_output_event(next_data, signal_name, value, updated_at_us)
+        end
+
+        {:keep_state, next_data, [{:reply, from, :ok}]}
 
       {:error, reason} ->
         {:keep_state_and_data, [{:reply, from, {:error, reason}}]}
@@ -123,6 +146,21 @@ defmodule EtherCAT.Slave.Runtime.Calls do
 
   def handle(from, {:read_input, signal_name}, _state, data, _opts) do
     {:keep_state_and_data, [{:reply, from, Signals.read_input(data, signal_name)}]}
+  end
+
+  def handle(from, {:command, _command_name, _args}, :down, _data, _opts) do
+    {:keep_state_and_data, [{:reply, from, {:error, :slave_down}}]}
+  end
+
+  def handle(from, {:command, command_name, args}, _state, data, _opts)
+      when is_atom(command_name) and is_map(args) do
+    case DeviceState.command(data, command_name, args) do
+      {:ok, ref, new_data} ->
+        {:keep_state, new_data, [{:reply, from, {:ok, ref}}]}
+
+      {:error, reason, new_data} ->
+        {:keep_state, new_data, [{:reply, from, {:error, reason}}]}
+    end
   end
 
   def handle(from, {:download_sdo, index, subindex, sdo_data}, state, data, _opts)
@@ -153,5 +191,18 @@ defmodule EtherCAT.Slave.Runtime.Calls do
 
   def handle(from, {:upload_sdo, _index, _subindex}, _state, _data, _opts) do
     {:keep_state_and_data, [{:reply, from, {:error, :mailbox_not_ready}}]}
+  end
+
+  defp dispatch_output_event(data, signal_name, value, updated_at_us) do
+    event =
+      EtherCAT.Event.signal_changed(
+        data.name,
+        signal_name,
+        value,
+        data.device_cycle,
+        updated_at_us
+      )
+
+    DeviceState.dispatch_event(data, event)
   end
 end

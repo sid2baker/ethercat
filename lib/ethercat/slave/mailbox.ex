@@ -1,18 +1,21 @@
 defmodule EtherCAT.Slave.Mailbox do
   @moduledoc false
 
+  alias EtherCAT.Driver
   alias EtherCAT.Slave
   alias EtherCAT.Slave.Mailbox.CoE
 
   @spec run_preop_config(%Slave{}) :: {:ok, %Slave{}} | {:error, term()}
   def run_preop_config(%{driver: nil} = data), do: {:ok, data}
 
-  def run_preop_config(data), do: run_steps(data, mailbox_steps(data))
+  def run_preop_config(data) do
+    run_steps(data, mailbox_steps(data, :preop) ++ mailbox_steps(data, :sync_update))
+  end
 
   @spec run_sync_config(%Slave{}) :: {:ok, %Slave{}} | {:error, term()}
   def run_sync_config(%{driver: nil} = data), do: {:ok, data}
 
-  def run_sync_config(data), do: run_steps(data, sync_mailbox_steps(data))
+  def run_sync_config(data), do: run_steps(data, mailbox_steps(data, :sync_update))
 
   @spec download_sdo(%Slave{}, non_neg_integer(), non_neg_integer(), binary()) ::
           {:ok, %Slave{}} | {:error, term()}
@@ -61,23 +64,11 @@ defmodule EtherCAT.Slave.Mailbox do
     end
   end
 
-  defp mailbox_steps(data) do
-    base_steps =
-      if function_exported?(data.driver, :mailbox_config, 1) do
-        data.driver.mailbox_config(data.config)
-      else
-        []
-      end
-
-    base_steps ++ sync_mailbox_steps(data)
-  end
-
-  defp sync_mailbox_steps(data) do
-    if not is_nil(data.sync_config) and function_exported?(data.driver, :sync_mode, 2) do
-      data.driver.sync_mode(data.config, data.sync_config)
-    else
-      []
-    end
+  defp mailbox_steps(data, phase) when phase in [:preop, :sync_update] do
+    Driver.Provisioning.mailbox_steps(data.driver, data.config, %{
+      phase: phase,
+      sync: data.sync_config
+    })
   end
 
   defp run_steps(data, steps) do

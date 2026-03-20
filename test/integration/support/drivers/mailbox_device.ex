@@ -1,7 +1,8 @@
 defmodule EtherCAT.IntegrationSupport.Drivers.MailboxDevice do
   @moduledoc false
 
-  @behaviour EtherCAT.Slave.Driver
+  @behaviour EtherCAT.Driver
+  @behaviour EtherCAT.Simulator.Driver
 
   @impl true
   def identity do
@@ -9,7 +10,7 @@ defmodule EtherCAT.IntegrationSupport.Drivers.MailboxDevice do
   end
 
   @impl true
-  def signal_model(_config), do: []
+  def signal_model(_config, _sii_pdo_configs), do: []
 
   @impl true
   def encode_signal(_signal, _config, value) when is_binary(value), do: value
@@ -17,6 +18,15 @@ defmodule EtherCAT.IntegrationSupport.Drivers.MailboxDevice do
 
   @impl true
   def decode_signal(_signal, _config, raw), do: raw
+
+  @impl true
+  def project_state(decoded_inputs, _prev_state, driver_state, _config) do
+    {:ok, decoded_inputs, driver_state, [], []}
+  end
+
+  @impl true
+  def command(command, _state, _driver_state, _config),
+    do: EtherCAT.Driver.unsupported_command(command)
 end
 
 defmodule EtherCAT.IntegrationSupport.Drivers.MailboxDevice.Simulator do

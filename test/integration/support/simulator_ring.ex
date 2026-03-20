@@ -3,11 +3,9 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
 
   import ExUnit.CaptureLog
   alias EtherCAT.Domain.Config, as: DomainConfig
+  alias EtherCAT.Driver.{EK1100, EL1809, EL2809}
 
   alias EtherCAT.IntegrationSupport.Drivers.{
-    EK1100,
-    EL1809,
-    EL2809,
     EL3202,
     SegmentedConfiguredMailboxDevice
   }
@@ -243,7 +241,7 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
 
   @spec fault_for(atom()) :: term()
   def fault_for(slave_name) do
-    {:ok, slaves} = EtherCAT.slaves()
+    {:ok, slaves} = EtherCAT.Diagnostics.slaves()
 
     slaves
     |> Enum.find_value(fn

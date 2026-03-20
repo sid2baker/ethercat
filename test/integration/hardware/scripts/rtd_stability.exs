@@ -123,8 +123,8 @@ Process.sleep(300)
 IO.puts("Waiting for bus to reach OP...")
 :ok = EtherCAT.await_running(15_000)
 
-EtherCAT.subscribe(:rtd, :channel1, self())
-EtherCAT.subscribe(:rtd, :channel2, self())
+EtherCAT.Raw.subscribe(:rtd, :channel1, self())
+EtherCAT.Raw.subscribe(:rtd, :channel2, self())
 
 # ---------------------------------------------------------------------------
 # Collection loop

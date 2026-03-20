@@ -47,8 +47,8 @@ EtherCAT.start(
 # Allow startup to complete to PREOP
 :ok = EtherCAT.await_running(10_000)
 
-{:ok, bus} = EtherCAT.bus()
-{:ok, slaves} = EtherCAT.slaves()
+{:ok, bus} = EtherCAT.Diagnostics.bus()
+{:ok, slaves} = EtherCAT.Diagnostics.slaves()
 
 %{station: station} =
   slaves

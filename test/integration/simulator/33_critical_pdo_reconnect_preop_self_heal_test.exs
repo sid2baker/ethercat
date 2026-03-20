@@ -2,9 +2,10 @@ defmodule EtherCAT.Integration.Simulator.CriticalPdoReconnectPreopSelfHealTest d
   use ExUnit.Case, async: false
 
   alias EtherCAT.Domain.Config, as: DomainConfig
+  alias EtherCAT.Driver.EK1100
   alias EtherCAT.Integration.Expect
   alias EtherCAT.Integration.Scenario
-  alias EtherCAT.IntegrationSupport.Drivers.{ConfiguredProcessMailboxDevice, EK1100}
+  alias EtherCAT.IntegrationSupport.Drivers.ConfiguredProcessMailboxDevice
   alias EtherCAT.IntegrationSupport.SimulatorRing
   alias EtherCAT.Simulator.Fault
   alias EtherCAT.Simulator.Slave
@@ -61,7 +62,7 @@ defmodule EtherCAT.Integration.Simulator.CriticalPdoReconnectPreopSelfHealTest d
             Expect.domain(:main, cycle_health: :healthy)
             Expect.slave_fault(:combo, nil)
             Expect.slave(:combo, al_state: :op, configuration_error: nil)
-            assert {:ok, ^expected} = EtherCAT.upload_sdo(:combo, 0x2003, 0x01)
+            assert {:ok, ^expected} = EtherCAT.Provisioning.upload_sdo(:combo, 0x2003, 0x01)
             Expect.simulator_queue_empty()
           end,
           attempts: 360,

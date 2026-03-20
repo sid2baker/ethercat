@@ -66,7 +66,7 @@ IO.puts("Running.")
 IO.puts("Subscribed channels: #{Enum.map_join(channels, ", ", &Atom.to_string/1)}\n")
 
 Enum.each(channels, fn channel ->
-  EtherCAT.subscribe(:rtd, channel, self())
+  EtherCAT.Raw.subscribe(:rtd, channel, self())
 end)
 
 Enum.each(1..samples, fn _ ->

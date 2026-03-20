@@ -11,6 +11,7 @@ defmodule EtherCAT.Slave.FSM do
   alias EtherCAT.Slave.Runtime.DCSignals
   alias EtherCAT.Slave.Runtime.Health
   alias EtherCAT.Slave.Runtime.Polling
+  alias EtherCAT.Slave.Runtime.DeviceState
   alias EtherCAT.Slave.Runtime.Signals
   alias EtherCAT.Slave.Runtime.State
   alias EtherCAT.Slave.Runtime.Transition
@@ -120,15 +121,16 @@ defmodule EtherCAT.Slave.FSM do
   # SM-grouped key: {domain_id, {:sm, idx}} — unpack per-signal bits and dispatch.
   def handle_event(
         :info,
-        {:domain_inputs, domain_id, changes},
+        {:domain_inputs, domain_id, cycle_index, changes, updated_at_us},
         _state,
         data
       ) do
-    Enum.each(changes, fn {{_slave_name, {:sm, _} = sm_key}, old_sm_bytes, new_sm_bytes} ->
-      Signals.dispatch_domain_input(data, domain_id, sm_key, old_sm_bytes, new_sm_bytes)
-    end)
+    changed_signal_names =
+      Enum.flat_map(changes, fn {{_slave_name, {:sm, _} = sm_key}, old_sm_bytes, new_sm_bytes} ->
+        Signals.changed_input_names(data, domain_id, sm_key, old_sm_bytes, new_sm_bytes)
+      end)
 
-    :keep_state_and_data
+    {:keep_state, DeviceState.refresh(data, cycle_index, updated_at_us, changed_signal_names)}
   end
 
   def handle_event(:info, {:DOWN, ref, :process, pid, _reason}, _state, data) do

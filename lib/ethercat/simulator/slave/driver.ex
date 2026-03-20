@@ -1,17 +1,14 @@
 defmodule EtherCAT.Simulator.Slave.Driver do
   @moduledoc false
 
-  @behaviour EtherCAT.Slave.Driver
-
-  @impl true
-  def identity, do: nil
+  @behaviour EtherCAT.Driver
 
   alias EtherCAT.Slave.ProcessData.Signal
   alias EtherCAT.Simulator.Slave.Profile
   alias EtherCAT.Simulator.Slave.Value
 
   @impl true
-  def signal_model(config) do
+  def signal_model(config, _sii_pdo_configs) do
     profile = profile(config)
 
     signal_specs = Profile.signal_specs(profile)
@@ -69,6 +66,15 @@ defmodule EtherCAT.Simulator.Slave.Driver do
       :error -> nil
     end
   end
+
+  @impl true
+  def project_state(decoded_inputs, _prev_state, driver_state, _config) do
+    {:ok, decoded_inputs, driver_state, [], []}
+  end
+
+  @impl true
+  def command(command, _state, _driver_state, _config),
+    do: EtherCAT.Driver.unsupported_command(command)
 
   defp zero_bytes(definition) do
     :binary.copy(<<0>>, div(definition.bit_size, 8))

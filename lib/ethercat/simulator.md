@@ -191,7 +191,7 @@ Use `EtherCAT.Simulator.Slave` to build devices such as:
 - mailbox-capable demo slaves
 - analog and temperature devices
 - servo and drive profiles
-- simulated devices hydrated from a real `EtherCAT.Slave.Driver` through
+- simulated devices hydrated from a real `EtherCAT.Driver` through
   `from_driver/2`
 
 `EtherCAT.Simulator.Slave.Definition` is the public opaque authored device type

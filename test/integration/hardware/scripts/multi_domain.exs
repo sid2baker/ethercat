@@ -159,12 +159,12 @@ rtd_slave = Hardware.rtd(process_data: {:all, :rtd})
 IO.puts("  Bus reached OP.")
 
 Enum.each([:fast, :slow] ++ if(include_rtd, do: [:rtd], else: []), fn domain_id ->
-  {:ok, info} = EtherCAT.domain_info(domain_id)
+  {:ok, info} = EtherCAT.Diagnostics.domain_info(domain_id)
   IO.puts("  #{inspect(domain_id)} domain logical_base=#{info.logical_base}")
 end)
 
 Enum.each([:inputs, :outputs], fn slave_name ->
-  {:ok, info} = EtherCAT.slave_info(slave_name)
+  {:ok, info} = EtherCAT.Diagnostics.slave_info(slave_name)
 
   IO.puts(
     "  #{inspect(slave_name)}: #{info.used_fmmus}/#{info.available_fmmus} FMMUs used " <>
@@ -279,8 +279,8 @@ domain_stats =
 IO.puts("── 3. Split-SM loopback latency ─────────────────────────────────")
 IO.puts("  each pair shares the same slave SyncManagers but runs in a different domain\n")
 
-EtherCAT.subscribe(:inputs, :ch1, self())
-EtherCAT.subscribe(:inputs, :ch2, self())
+EtherCAT.Raw.subscribe(:inputs, :ch1, self())
+EtherCAT.Raw.subscribe(:inputs, :ch2, self())
 
 flush_input = fn flush_input, signal_name ->
   receive do
@@ -302,10 +302,10 @@ measure_loopback = fn label, signal_name, period_ms ->
       "(one output cycle + one input cycle)"
   )
 
-  EtherCAT.write_output(:outputs, signal_name, 0)
+  EtherCAT.Raw.write_output(:outputs, signal_name, 0)
   Process.sleep(period_ms * 5)
   flush_input.(flush_input, signal_name)
-  EtherCAT.write_output(:outputs, signal_name, 1)
+  EtherCAT.Raw.write_output(:outputs, signal_name, 1)
 
   primed =
     receive do
@@ -320,7 +320,7 @@ measure_loopback = fn label, signal_name, period_ms ->
         Enum.reduce(1..cross_samples, {[], :primed}, fn idx, {acc, _prev} ->
           target = rem(idx, 2)
           t0 = System.monotonic_time(:microsecond)
-          EtherCAT.write_output(:outputs, signal_name, target)
+          EtherCAT.Raw.write_output(:outputs, signal_name, target)
 
           latency_us =
             receive do
@@ -374,7 +374,7 @@ measure_loopback = fn label, signal_name, period_ms ->
       nil
     end
 
-  EtherCAT.write_output(:outputs, signal_name, 0)
+  EtherCAT.Raw.write_output(:outputs, signal_name, 0)
   result
 end
 

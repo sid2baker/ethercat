@@ -3,10 +3,12 @@ defmodule EtherCAT.Master do
   Master orchestrates startup, activation, deactivation, and runtime recovery
   for the local EtherCAT session.
 
-  `EtherCAT.Master` is the public boundary for the master lifecycle. It owns
+  `EtherCAT.Master` is the specialist boundary for the master lifecycle. It owns
   the singleton session exposed through `EtherCAT.state/0`, while internal
   helpers own bus discovery, slave bring-up, activation, deactivation,
-  recovery, and status projection.
+  recovery, and status projection. Normal application-facing runtime usage
+  should stay on `EtherCAT`, `EtherCAT.Provisioning`, or
+  `EtherCAT.Diagnostics`.
 
   Before the master reports `:preop_ready` or starts OP activation, it
   quiesces the bus. That extra drain window keeps late startup traffic from

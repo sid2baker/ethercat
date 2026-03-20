@@ -2,9 +2,11 @@ defmodule EtherCAT.DC do
   @moduledoc """
   Distributed Clocks initialization and runtime maintenance.
 
-  `EtherCAT.DC` is the public boundary for network-wide Distributed Clocks.
+  `EtherCAT.DC` is the specialist boundary for network-wide Distributed Clocks.
   One-time clock initialization and periodic FRMW/diagnostic maintenance are
   exposed here, while the internal runtime loop owns the active lock state.
+  Normal application-facing runtime usage should stay on `EtherCAT` or
+  `EtherCAT.Diagnostics`.
 
   ## Initialization
 

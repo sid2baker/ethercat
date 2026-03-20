@@ -2,6 +2,7 @@ defmodule EtherCAT.Slave.Runtime.State do
   @moduledoc false
 
   alias EtherCAT.Slave
+  alias EtherCAT.Slave.Runtime.DeviceState
 
   @spec new(keyword()) :: %Slave{}
   def new(opts) do
@@ -10,7 +11,7 @@ defmodule EtherCAT.Slave.Runtime.State do
       position: Keyword.get(opts, :position, 0),
       station: Keyword.fetch!(opts, :station),
       name: Keyword.fetch!(opts, :name),
-      driver: Keyword.get(opts, :driver, EtherCAT.Slave.Driver.Default),
+      driver: Keyword.get(opts, :driver, EtherCAT.Driver.Default),
       config: Keyword.get(opts, :config, %{}),
       configuration_error: nil,
       esc_info: nil,
@@ -32,7 +33,9 @@ defmodule EtherCAT.Slave.Runtime.State do
       output_domain_ids_by_sm: %{},
       output_sm_images: %{},
       subscriptions: %{},
+      event_subscriptions: MapSet.new(),
       subscriber_refs: %{}
     }
+    |> DeviceState.initialize()
   end
 end

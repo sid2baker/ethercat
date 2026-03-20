@@ -70,7 +70,7 @@ EtherCAT.start(interface: "eth0")
 EtherCAT.state()
 #=> :preop_ready
 
-EtherCAT.slaves()
+EtherCAT.Diagnostics.slaves()
 #=> [
 #=>   %{name: :slave_0, station: 0x1000, server: {:via, Registry, ...}, pid: #PID<...>},
 #=>   ...
@@ -83,14 +83,14 @@ If you start without explicit slave configs, EtherCAT still scans the ring, name
 station, and brings every slave to `:preop`. That is the right entry point for
 exploration, diagnostics, and dynamic configuration.
 
-### Run cyclic PDO I/O
+### Run driver-backed slave I/O
 
 ```elixir
 defmodule MyApp.EL1809 do
-  @behaviour EtherCAT.Slave.Driver
+  @behaviour EtherCAT.Driver
 
   @impl true
-  def signal_model(_config), do: [ch1: 0x1A00]
+  def signal_model(_config, _sii_pdo_configs), do: [ch1: 0x1A00]
 
   @impl true
   def encode_signal(_signal, _config, _value), do: <<>>
@@ -98,6 +98,22 @@ defmodule MyApp.EL1809 do
   @impl true
   def decode_signal(_signal, _config, <<_::7, bit::1>>), do: bit
   def decode_signal(_signal, _config, _), do: 0
+
+  @impl true
+  def describe(_config), do: %{device_type: :digital_input, capabilities: [:read_input]}
+
+  @impl true
+  def init(_config), do: {:ok, %{}}
+
+  @impl true
+  def project_state(decoded_inputs, _prev_state, driver_state, _config) do
+    next_state = %{ch1: Map.get(decoded_inputs, :ch1, 0) == 1}
+    {:ok, next_state, driver_state, [], []}
+  end
+
+  @impl true
+  def command(command, _state, _driver_state, _config),
+    do: EtherCAT.Driver.unsupported_command(command)
 end
 
 EtherCAT.start(
@@ -110,17 +126,50 @@ EtherCAT.start(
       driver: MyApp.EL1809,
       process_data: {:all, :io},
       target_state: :op
+    },
+    %EtherCAT.Slave.Config{
+      name: :outputs,
+      driver: MyApp.EL2809,
+      process_data: {:all, :io},
+      target_state: :op
     }
   ]
 )
 
 :ok = EtherCAT.await_operational()
 
-{:ok, {bit, updated_at_us}} = EtherCAT.read_input(:inputs, :ch1)
+{:ok, input_snapshot} = EtherCAT.snapshot(:inputs)
+input_snapshot.state.ch1
+#=> false
 
-EtherCAT.subscribe(:inputs, :ch1)
-#=> receive {:ethercat, :signal, :inputs, :ch1, value}
+EtherCAT.subscribe(:inputs)
+#=> receive %EtherCAT.Event{
+#=>   kind: :signal_changed,
+#=>   signal: {:inputs, :ch1},
+#=>   slave: :inputs,
+#=>   value: true,
+#=>   cycle: 42,
+#=>   updated_at_us: timestamp_us
+#=> }
+
+{:ok, ref} =
+  EtherCAT.command(:outputs, :set_output, %{signal: :ch1, value: true})
+#=> later receive %EtherCAT.Event{kind: :event, data: {:command_completed, ^ref}, ...}
 ```
+
+Drivers still own the raw PDO mapping, but the public API is now slave-first:
+`slaves/0`, `snapshot/0`, `snapshot/1`, `describe/1`, `subscribe/2`, and
+`command/3`. If you need direct process-data access for diagnostics or
+low-level tooling, use `EtherCAT.Raw.read_input/2`,
+`EtherCAT.Raw.write_output/3`, and `EtherCAT.Raw.subscribe/3`.
+
+The runtime owns the retained driver-backed slave state, including staged
+outputs, and derives normal `%EtherCAT.Event{kind: :signal_changed}` deltas by
+diffing that state. Drivers project slave state and may emit command lifecycle
+updates through the same top-level event stream.
+
+`EtherCAT.subscribe(:all)` follows the runtime-wide slave event stream,
+including slaves that appear after the subscription is created.
 
 For PREOP-first workflows, configure discovered slaves dynamically:
 
@@ -133,14 +182,14 @@ EtherCAT.start(
 :ok = EtherCAT.await_running()
 
 :ok =
-  EtherCAT.configure_slave(
+  EtherCAT.Provisioning.configure_slave(
     :slave_1,
     driver: MyApp.EL1809,
     process_data: {:all, :main},
     target_state: :op
   )
 
-:ok = EtherCAT.activate()
+:ok = EtherCAT.Provisioning.activate()
 :ok = EtherCAT.await_operational()
 ```
 
@@ -168,16 +217,17 @@ dictionary automatically.
 - The master owns startup, activation-blocked startup, and runtime recovery decisions.
 - The bus is the single serialization point for all frames.
 - Domains own logical PDO images and cyclic LRW exchange.
-- Slaves own AL transitions, SII/mailbox/PDO setup, and signal decode/encode.
+- Drivers own PDO decode/encode plus projected-state updates, faults, and specialist commands.
+- Slaves own AL transitions and bind drivers into the runtime.
 - DC owns distributed-clock initialization, lock monitoring, and runtime maintenance.
 
 If you understand those five roles, the rest of the API is predictable.
 
-The implementation follows the same split intentionally: `Master`, `Slave`,
-`Domain`, and `DC` own the public/runtime boundary directly, their internal
-`*.FSM` modules own state transitions, and helper namespaces hold the lower-
-level mechanics. When reading the code against the EtherCAT model, read the
-public boundary modules first, then the internal FSMs, then the helpers.
+The normal application-facing surface is `EtherCAT`. Provisioning, diagnostics,
+raw PDO access, and driver authoring live under `EtherCAT.Provisioning`,
+`EtherCAT.Diagnostics`, `EtherCAT.Raw`, and `EtherCAT.Driver`. The runtime
+still uses `Master`, `Slave`, `Domain`, and `DC` internally to model the
+session, but those are specialist entry points now.
 
 ## Lifecycle
 
@@ -194,9 +244,10 @@ Public startup and runtime health are exposed through `EtherCAT.state/0`:
 
 `await_running/1` waits for a usable session and returns activation/configuration
 errors directly if startup cannot reach one. `await_operational/1` waits for
-cyclic OP. Inspect `EtherCAT.slaves/0` for non-critical per-slave fault state.
+cyclic OP. Inspect `EtherCAT.Diagnostics.slaves/0` for non-critical per-slave
+fault state.
 
-For detailed state diagrams and sequencing, see the moduledocs:
+For detailed state diagrams and sequencing, see the specialist moduledocs:
 - `EtherCAT.Master` — startup, activation, and recovery orchestration
 - `EtherCAT.Slave` — ESM transitions and AL control
 - `EtherCAT.Domain` — cyclic LRW exchange states
@@ -206,7 +257,7 @@ For detailed state diagrams and sequencing, see the moduledocs:
 
 - A slave disconnect does not automatically mean full-session teardown.
 - Critical domain or DC faults move the master to `:recovering`.
-- Non-critical slave-local faults stay attached to the affected slave and are visible through `EtherCAT.slaves/0`.
+- Non-critical slave-local faults stay attached to the affected slave and are visible through `EtherCAT.Diagnostics.slaves/0`.
 - Healthy domains can keep cycling if the fault is localized and the transport is still usable.
 - Total bus loss can stop domains after the configured miss threshold; recovery can restart them.
 - Slave reconnect is PREOP-first: the slave rebuilds its local state, then the master decides when to return it to OP.

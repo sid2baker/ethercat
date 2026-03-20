@@ -4,13 +4,13 @@ defmodule EtherCAT.Slave.Config do
 
   Fields:
     - `:name` (required) — atom identifying this slave
-    - `:driver` — module implementing `EtherCAT.Slave.Driver`,
-      defaults to `EtherCAT.Slave.Driver.Default`
+    - `:driver` — module implementing `EtherCAT.Driver`,
+      defaults to `EtherCAT.Driver.Default`
     - `:config` — driver-specific configuration map, default `%{}`
     - `:process_data` — one of:
       - `:none` — do not auto-register process data
       - `{:all, domain_id}` — register all signal names from the driver's
-        `signal_model/1` against one domain
+        `signal_model/2` against one domain
       - `[{signal_name, domain_id}]` — explicit signal-to-domain assignments
     - `:target_state` — desired startup target for this slave:
       - `:op` — master will advance it to cyclic operation
@@ -42,7 +42,7 @@ defmodule EtherCAT.Slave.Config do
 
   @enforce_keys [:name]
   defstruct name: nil,
-            driver: EtherCAT.Slave.Driver.Default,
+            driver: EtherCAT.Driver.Default,
             config: %{},
             process_data: :none,
             target_state: :op,

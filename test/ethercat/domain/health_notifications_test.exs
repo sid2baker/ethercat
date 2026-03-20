@@ -160,10 +160,14 @@ defmodule EtherCAT.Domain.HealthNotificationsTest do
   end
 
   defp assert_no_master_message(_master_pid, true) do
-    refute_receive _
+    refute_receive {:domain_cycle_degraded, _, _, _}
+    refute_receive {:domain_cycle_recovered, _}
+    refute_receive {:domain_stopped, _, _}
   end
 
   defp assert_no_master_message(master_pid, false) do
-    refute_receive {:trace, ^master_pid, :receive, _}
+    refute_receive {:trace, ^master_pid, :receive, {:domain_cycle_degraded, _, _, _}}
+    refute_receive {:trace, ^master_pid, :receive, {:domain_cycle_recovered, _}}
+    refute_receive {:trace, ^master_pid, :receive, {:domain_stopped, _, _}}
   end
 end

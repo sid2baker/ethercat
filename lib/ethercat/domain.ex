@@ -5,11 +5,12 @@ defmodule EtherCAT.Domain do
   One domain runs per configured domain ID. Slaves register their PDO layout
   during PREOP, then the domain runs a self-timed LRW exchange each cycle.
 
-  `EtherCAT.Domain` is the public boundary for domain lifecycle and process
-  image access. The domain process owns the open, cycling, and stopped states.
+  `EtherCAT.Domain` is the specialist boundary for domain lifecycle and
+  process image access. The domain process owns the open, cycling, and stopped states.
   The hot-path image API is intentionally separate: `write/3`, `read/2`, and
   `sample/2` access the ETS-backed process image directly instead of going
-  through synchronous state-machine calls.
+  through synchronous state-machine calls. Normal application-facing runtime
+  usage should stay on `EtherCAT`.
 
   ## States
 

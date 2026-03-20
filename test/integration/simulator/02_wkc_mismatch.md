@@ -21,7 +21,7 @@ no longer matches what the master believes is mapped.
 
 Observed with `Simulator.inject_fault({:next_exchanges, 6, {:wkc_offset, -1}})`:
 
-- `EtherCAT.domain_info(:main)` reports
+- `EtherCAT.Diagnostics.domain_info(:main)` reports
   `{:wkc_mismatch, %{expected: 3, actual: 2}}`
 - master enters `:recovering`
 - slave faults remain `nil`

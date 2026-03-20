@@ -1,7 +1,8 @@
 defmodule EtherCAT.Integration.Simulator.MailboxProtocolFaultSDOTest do
   use ExUnit.Case, async: false
 
-  alias EtherCAT.IntegrationSupport.Drivers.{EK1100, MailboxDevice}
+  alias EtherCAT.Driver.EK1100
+  alias EtherCAT.IntegrationSupport.Drivers.MailboxDevice
   alias EtherCAT.IntegrationSupport.SimulatorRing
   alias EtherCAT.Simulator
   alias EtherCAT.Simulator.Fault
@@ -57,13 +58,13 @@ defmodule EtherCAT.Integration.Simulator.MailboxProtocolFaultSDOTest do
              )
 
     assert {:error, {:unexpected_mailbox_counter, 1, 2}} =
-             EtherCAT.upload_sdo(:mailbox, 0x2001, 0x01)
+             EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2001, 0x01)
 
     assert {:ok, :preop_ready} = EtherCAT.state()
 
     assert :ok = Simulator.clear_faults()
 
-    assert {:ok, ^value} = EtherCAT.upload_sdo(:mailbox, 0x2001, 0x01)
+    assert {:ok, ^value} = EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2001, 0x01)
     assert {:ok, :preop_ready} = EtherCAT.state()
   end
 
@@ -84,13 +85,13 @@ defmodule EtherCAT.Integration.Simulator.MailboxProtocolFaultSDOTest do
              )
 
     assert {:error, {:toggle_mismatch, 0, 1}} =
-             EtherCAT.upload_sdo(:mailbox, 0x2003, 0x01)
+             EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2003, 0x01)
 
     assert {:ok, :preop_ready} = EtherCAT.state()
 
     assert :ok = Simulator.clear_faults()
 
-    assert {:ok, ^blob} = EtherCAT.upload_sdo(:mailbox, 0x2003, 0x01)
+    assert {:ok, ^blob} = EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2003, 0x01)
     assert {:ok, :preop_ready} = EtherCAT.state()
   end
 

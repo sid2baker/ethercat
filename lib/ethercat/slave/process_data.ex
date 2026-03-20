@@ -7,7 +7,7 @@ defmodule EtherCAT.Slave.ProcessData do
   alias EtherCAT.Bus.Transaction
   alias EtherCAT.Domain
   alias EtherCAT.Slave
-  alias EtherCAT.Slave.Driver
+  alias EtherCAT.Driver
   alias EtherCAT.Slave.ProcessData.Plan
   alias EtherCAT.Slave.ProcessData.Plan.DomainAttachment
   alias EtherCAT.Slave.ProcessData.Plan.SmGroup
@@ -577,7 +577,7 @@ defmodule EtherCAT.Slave.ProcessData do
   end
 
   defp call_signal_model(data) do
-    Driver.signal_model(data.driver, data.config, data.sii_pdo_configs)
+    Driver.Runtime.signal_model(data.driver, data.config, data.sii_pdo_configs)
   end
 
   defp binary_pad(data, size) when byte_size(data) >= size, do: binary_part(data, 0, size)

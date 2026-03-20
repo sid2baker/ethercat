@@ -6,6 +6,7 @@ defmodule EtherCAT.Slave.Runtime.DCSignals do
   alias EtherCAT.Bus
   alias EtherCAT.Bus.Transaction
   alias EtherCAT.DC.Runtime, as: DCRuntime
+  alias EtherCAT.Driver
   alias EtherCAT.Slave
   alias EtherCAT.Slave.ESC.Registers
   alias EtherCAT.Slave.Sync.Plan
@@ -91,11 +92,7 @@ defmodule EtherCAT.Slave.Runtime.DCSignals do
   defp invoke_driver_on_latch(%{driver: nil}, _latch_id, _edge, _timestamp_ns), do: :ok
 
   defp invoke_driver_on_latch(data, latch_id, edge, timestamp_ns) do
-    if function_exported?(data.driver, :on_latch, 5) do
-      apply(data.driver, :on_latch, [data.name, data.config, latch_id, edge, timestamp_ns])
-    end
-
-    :ok
+    Driver.Latch.on_latch(data.driver, data.name, data.config, latch_id, edge, timestamp_ns)
   end
 
   defp latch_event_captured?(status, :pos) do

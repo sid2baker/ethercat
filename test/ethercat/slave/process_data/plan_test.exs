@@ -6,13 +6,10 @@ defmodule EtherCAT.Slave.ProcessData.PlanTest do
   alias EtherCAT.Slave.ProcessData.Signal
 
   defmodule TestDriver do
-    @behaviour EtherCAT.Slave.Driver
+    @behaviour EtherCAT.Driver
 
     @impl true
-    def identity, do: nil
-
-    @impl true
-    def signal_model(_config) do
+    def signal_model(_config, _sii_pdo_configs) do
       [
         out1: 0x1600,
         in1: 0x1A00,
@@ -27,6 +24,15 @@ defmodule EtherCAT.Slave.ProcessData.PlanTest do
 
     @impl true
     def decode_signal(_signal, _config, raw), do: raw
+
+    @impl true
+    def project_state(decoded_inputs, _prev_state, driver_state, _config) do
+      {:ok, decoded_inputs, driver_state, [], []}
+    end
+
+    @impl true
+    def command(command, _state, _driver_state, _config),
+      do: EtherCAT.Driver.unsupported_command(command)
   end
 
   test "normalizes :none and {:all, domain} requests" do

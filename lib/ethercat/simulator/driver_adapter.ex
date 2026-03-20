@@ -1,6 +1,6 @@
 defmodule EtherCAT.Simulator.DriverAdapter do
   @moduledoc """
-  Optional simulator-side companion for a real `EtherCAT.Slave.Driver`.
+  Optional simulator-side companion for a real `EtherCAT.Driver`.
 
   The adapter returns authored simulator configuration as keyword options for
   `EtherCAT.Simulator.Slave.Definition.build/2`. It must include `:profile`.

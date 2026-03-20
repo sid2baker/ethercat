@@ -78,7 +78,7 @@ Process.sleep(300)
 
 :ok = EtherCAT.await_operational(10_000)
 
-{:ok, bus} = EtherCAT.bus()
+{:ok, bus} = EtherCAT.Diagnostics.bus()
 
 # Read domain stats to know image size
 {:ok, stats} = DomainAPI.stats(:main)
@@ -93,7 +93,7 @@ sm0_before =
 
 IO.puts("EL2809 SM0+SM1 before write_output: #{sm0_before}")
 
-EtherCAT.write_output(:out, :ch1, 1)
+EtherCAT.Raw.write_output(:out, :ch1, 1)
 Process.sleep(20)
 
 # ETS holds the raw encoded value the domain will splice into the frame

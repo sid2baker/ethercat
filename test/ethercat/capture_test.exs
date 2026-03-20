@@ -221,7 +221,10 @@ defmodule EtherCAT.CaptureTest do
     assert simulator_module in compiled_modules
     assert %{vendor_id: 0x0000_0ACE, product_code: 0x0000_1602} = module.identity()
     assert module.signal_model(%{}) == []
-    assert module.mailbox_config(%{}) == [{:sdo_download, 0x2000, 0x02, <<0>>}]
+
+    assert module.mailbox_steps(%{}, %{phase: :preop, sync: nil}) ==
+             [{:sdo_download, 0x2000, 0x02, <<0>>}]
+
     assert module.encode_signal(:blob, %{}, :ignored) == <<>>
     assert module.decode_signal(:blob, %{}, <<1, 2>>) == nil
 
@@ -336,7 +339,7 @@ defmodule EtherCAT.CaptureTest do
 
     assert module.signal_model(%{}) == [channel1: 0x1A00, channel2: 0x1A01]
 
-    assert module.mailbox_config(%{}) == [
+    assert module.mailbox_steps(%{}, %{phase: :preop, sync: nil}) == [
              {:sdo_download, 0x8000, 0x19, <<8::16-little>>},
              {:sdo_download, 0x8010, 0x19, <<8::16-little>>}
            ]
@@ -420,7 +423,7 @@ defmodule EtherCAT.CaptureTest do
           serial_number: 0
         },
         esc: %{fmmu_count: 4, sm_count: 4},
-        driver: EtherCAT.Slave.Driver.Default,
+        driver: EtherCAT.Driver.Default,
         coe: true,
         configuration_error: nil
       },

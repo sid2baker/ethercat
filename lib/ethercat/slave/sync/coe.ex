@@ -9,7 +9,8 @@ defmodule EtherCAT.Slave.Sync.CoE do
   - `0x1C33` — SM input parameter
 
   The public application API still uses `%EtherCAT.Slave.Sync.Config{}` for generic ESC
-  SYNC/latch intent. Drivers may use these helpers from `c:EtherCAT.Slave.Driver.sync_mode/2`
+  SYNC/latch intent. Drivers may use these helpers from
+  `c:EtherCAT.Driver.Provisioning.mailbox_steps/2`
   when a slave application also needs CoE object-dictionary sync-mode writes.
 
   This module does not talk to the mailbox itself. It only builds
@@ -25,7 +26,7 @@ defmodule EtherCAT.Slave.Sync.CoE do
 
   ## Examples
 
-      def sync_mode(_config, %EtherCAT.Slave.Sync.Config{mode: :sync0} = sync) do
+      def mailbox_steps(_config, %{phase: :preop, sync: %EtherCAT.Slave.Sync.Config{mode: :sync0}}) do
         EtherCAT.Slave.Sync.CoE.steps!(
           cycle_ns: 1_000_000,
           output: :sync0,
@@ -33,7 +34,7 @@ defmodule EtherCAT.Slave.Sync.CoE do
         )
       end
 
-      def sync_mode(_config, _sync) do
+      def mailbox_steps(_config, %{phase: :sync_update}) do
         EtherCAT.Slave.Sync.CoE.steps!(
           cycle_ns: 1_000_000,
           output: :sm_event,
@@ -43,7 +44,7 @@ defmodule EtherCAT.Slave.Sync.CoE do
   """
 
   @type mailbox_step ::
-          EtherCAT.Slave.Driver.mailbox_step()
+          EtherCAT.Driver.mailbox_step()
 
   @type output_mode :: :free_run | :sm_event | :sync0 | :sync1
   @type input_mode :: :free_run | {:sm_event, :sm2 | :sm3} | :sync0 | :sync1

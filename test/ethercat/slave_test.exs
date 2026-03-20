@@ -8,13 +8,10 @@ defmodule EtherCAT.SlaveTest do
   alias EtherCAT.TestSupport.FakeBus
 
   defmodule TestDriver do
-    @behaviour EtherCAT.Slave.Driver
+    @behaviour EtherCAT.Driver
 
     @impl true
-    def identity, do: nil
-
-    @impl true
-    def signal_model(_config), do: %{}
+    def signal_model(_config, _sii_pdo_configs), do: []
 
     @impl true
     def encode_signal(_signal, _config, _value), do: <<>>
@@ -24,16 +21,22 @@ defmodule EtherCAT.SlaveTest do
 
     @impl true
     def decode_signal(_signal, _config, _raw), do: 0
+
+    @impl true
+    def project_state(decoded_inputs, _prev_state, driver_state, _config) do
+      {:ok, decoded_inputs, driver_state, [], []}
+    end
+
+    @impl true
+    def command(command, _state, _driver_state, _config),
+      do: EtherCAT.Driver.unsupported_command(command)
   end
 
   defmodule BitDriver do
-    @behaviour EtherCAT.Slave.Driver
+    @behaviour EtherCAT.Driver
 
     @impl true
-    def identity, do: nil
-
-    @impl true
-    def signal_model(_config), do: %{}
+    def signal_model(_config, _sii_pdo_configs), do: []
 
     @impl true
     def encode_signal(_signal, _config, value), do: <<value::8>>
@@ -43,32 +46,45 @@ defmodule EtherCAT.SlaveTest do
 
     @impl true
     def decode_signal(_signal, _config, _raw), do: 0
+
+    @impl true
+    def project_state(decoded_inputs, _prev_state, driver_state, _config) do
+      {:ok, decoded_inputs, driver_state, [], []}
+    end
+
+    @impl true
+    def command(command, _state, _driver_state, _config),
+      do: EtherCAT.Driver.unsupported_command(command)
   end
 
   defmodule SplitOutputDriver do
-    @behaviour EtherCAT.Slave.Driver
+    @behaviour EtherCAT.Driver
 
     @impl true
-    def identity, do: nil
-
-    @impl true
-    def signal_model(_config), do: [ch1: 0, ch2: 1]
+    def signal_model(_config, _sii_pdo_configs), do: [ch1: 0, ch2: 1]
 
     @impl true
     def encode_signal(_signal, _config, value), do: <<value::8>>
 
     @impl true
     def decode_signal(_signal, _config, raw), do: raw
+
+    @impl true
+    def project_state(decoded_inputs, _prev_state, driver_state, _config) do
+      {:ok, decoded_inputs, driver_state, [], []}
+    end
+
+    @impl true
+    def command(command, _state, _driver_state, _config),
+      do: EtherCAT.Driver.unsupported_command(command)
   end
 
   defmodule InvalidMailboxDriver do
-    @behaviour EtherCAT.Slave.Driver
+    @behaviour EtherCAT.Driver
+    @behaviour EtherCAT.Driver.Provisioning
 
     @impl true
-    def identity, do: nil
-
-    @impl true
-    def signal_model(_config), do: %{}
+    def signal_model(_config, _sii_pdo_configs), do: []
 
     @impl true
     def encode_signal(_signal, _config, _value), do: <<>>
@@ -77,17 +93,25 @@ defmodule EtherCAT.SlaveTest do
     def decode_signal(_signal, _config, raw), do: raw
 
     @impl true
-    def mailbox_config(_config), do: [:bad_step]
+    def mailbox_steps(_config, %{phase: :preop}), do: [:bad_step]
+    def mailbox_steps(_config, _context), do: []
+
+    @impl true
+    def project_state(decoded_inputs, _prev_state, driver_state, _config) do
+      {:ok, decoded_inputs, driver_state, [], []}
+    end
+
+    @impl true
+    def command(command, _state, _driver_state, _config),
+      do: EtherCAT.Driver.unsupported_command(command)
   end
 
   defmodule InvalidSyncModeDriver do
-    @behaviour EtherCAT.Slave.Driver
+    @behaviour EtherCAT.Driver
+    @behaviour EtherCAT.Driver.Provisioning
 
     @impl true
-    def identity, do: nil
-
-    @impl true
-    def signal_model(_config), do: %{}
+    def signal_model(_config, _sii_pdo_configs), do: []
 
     @impl true
     def encode_signal(_signal, _config, _value), do: <<>>
@@ -96,42 +120,54 @@ defmodule EtherCAT.SlaveTest do
     def decode_signal(_signal, _config, raw), do: raw
 
     @impl true
-    def sync_mode(_config, _sync), do: [:bad_step]
-  end
-
-  defmodule OpHookDriver do
-    @behaviour EtherCAT.Slave.Driver
+    def mailbox_steps(_config, %{phase: :sync_update}), do: [:bad_step]
+    def mailbox_steps(_config, _context), do: []
 
     @impl true
-    def identity, do: nil
-
-    @impl true
-    def signal_model(_config), do: %{}
-
-    @impl true
-    def encode_signal(_signal, _config, _value), do: <<>>
-
-    @impl true
-    def decode_signal(_signal, _config, raw), do: raw
-
-    @impl true
-    def on_op(slave_name, _config) do
-      send(self(), {:driver_on_op, slave_name})
-      :ok
+    def project_state(decoded_inputs, _prev_state, driver_state, _config) do
+      {:ok, decoded_inputs, driver_state, [], []}
     end
+
+    @impl true
+    def command(command, _state, _driver_state, _config),
+      do: EtherCAT.Driver.unsupported_command(command)
   end
 
   test "only dispatches subscribed signal updates when that signal changes inside a shared SM" do
+    domain_id = :"shared_sm_domain_#{System.unique_integer([:positive, :monotonic])}"
+    key = {:sensor, {:sm, 0}}
+    :ets.new(domain_id, [:set, :public, :named_table])
+    :ets.insert(domain_id, {key, <<0>>, {:input, nil}})
+    Image.put_domain_status(domain_id, System.monotonic_time(:microsecond), 1_000_000)
+
+    on_exit(fn ->
+      if :ets.whereis(domain_id) != :undefined do
+        :ets.delete(domain_id)
+      end
+    end)
+
     data = %EtherCAT.Slave{
       name: :sensor,
       driver: TestDriver,
       config: %{},
       signal_registrations: %{
-        ch1: %{domain_id: :main, sm_key: {:sm, 0}, bit_offset: 0, bit_size: 1},
-        ch2: %{domain_id: :main, sm_key: {:sm, 0}, bit_offset: 1, bit_size: 1}
+        ch1: %{
+          domain_id: domain_id,
+          sm_key: {:sm, 0},
+          bit_offset: 0,
+          bit_size: 1,
+          direction: :input
+        },
+        ch2: %{
+          domain_id: domain_id,
+          sm_key: {:sm, 0},
+          bit_offset: 1,
+          bit_size: 1,
+          direction: :input
+        }
       },
       signal_registrations_by_sm: %{
-        {:main, {:sm, 0}} => [
+        {domain_id, {:sm, 0}} => [
           {:ch1, %{bit_offset: 0, bit_size: 1}},
           {:ch2, %{bit_offset: 1, bit_size: 1}}
         ]
@@ -139,10 +175,15 @@ defmodule EtherCAT.SlaveTest do
       subscriptions: %{ch1: MapSet.new([self()]), ch2: MapSet.new([self()])}
     }
 
-    assert :keep_state_and_data =
+    initial_at_us = System.monotonic_time(:microsecond)
+    :ets.insert(domain_id, {key, <<0>>, {:input, initial_at_us}})
+    Image.put_domain_status(domain_id, initial_at_us, 1_000_000)
+
+    assert {:keep_state, _updated_data} =
              EtherCAT.Slave.FSM.handle_event(
                :info,
-               {:domain_inputs, :main, [{{:sensor, {:sm, 0}}, :unset, <<0>>}]},
+               {:domain_inputs, domain_id, 1, [{{:sensor, {:sm, 0}}, :unset, <<0>>}],
+                initial_at_us},
                :op,
                data
              )
@@ -151,10 +192,15 @@ defmodule EtherCAT.SlaveTest do
     assert_receive {:ethercat, :signal, :sensor, :ch2, 0}
     refute_receive _
 
-    assert :keep_state_and_data =
+    changed_at_us = System.monotonic_time(:microsecond)
+    :ets.insert(domain_id, {key, <<2>>, {:input, changed_at_us}})
+    Image.put_domain_status(domain_id, changed_at_us, 1_000_000)
+
+    assert {:keep_state, _updated_data} =
              EtherCAT.Slave.FSM.handle_event(
                :info,
-               {:domain_inputs, :main, [{{:sensor, {:sm, 0}}, <<0>>, <<2>>}]},
+               {:domain_inputs, domain_id, 2, [{{:sensor, {:sm, 0}}, <<0>>, <<2>>}],
+                changed_at_us},
                :op,
                data
              )
@@ -163,20 +209,29 @@ defmodule EtherCAT.SlaveTest do
     refute_receive {:ethercat, :signal, :sensor, :ch1, _}
     refute_receive _
 
-    assert :keep_state_and_data =
+    unchanged_at_us = System.monotonic_time(:microsecond)
+    :ets.insert(domain_id, {key, <<2>>, {:input, unchanged_at_us}})
+    Image.put_domain_status(domain_id, unchanged_at_us, 1_000_000)
+
+    assert {:keep_state, _updated_data} =
              EtherCAT.Slave.FSM.handle_event(
                :info,
-               {:domain_inputs, :main, [{{:sensor, {:sm, 0}}, <<2>>, <<2>>}]},
+               {:domain_inputs, domain_id, 3, [{{:sensor, {:sm, 0}}, <<2>>, <<2>>}],
+                unchanged_at_us},
                :op,
                data
              )
 
     refute_receive _
 
-    assert :keep_state_and_data =
+    final_at_us = System.monotonic_time(:microsecond)
+    :ets.insert(domain_id, {key, <<3>>, {:input, final_at_us}})
+    Image.put_domain_status(domain_id, final_at_us, 1_000_000)
+
+    assert {:keep_state, _updated_data} =
              EtherCAT.Slave.FSM.handle_event(
                :info,
-               {:domain_inputs, :main, [{{:sensor, {:sm, 0}}, <<2>>, <<3>>}]},
+               {:domain_inputs, domain_id, 4, [{{:sensor, {:sm, 0}}, <<2>>, <<3>>}], final_at_us},
                :op,
                data
              )
@@ -186,25 +241,63 @@ defmodule EtherCAT.SlaveTest do
   end
 
   test "dispatches only the signals attached to the notifying domain when one SM is split across domains" do
+    fast_domain = :"fast_domain_#{System.unique_integer([:positive, :monotonic])}"
+    slow_domain = :"slow_domain_#{System.unique_integer([:positive, :monotonic])}"
+    fast_key = {:sensor, {:sm, 3}}
+    slow_key = {:sensor, {:sm, 3}}
+    :ets.new(fast_domain, [:set, :public, :named_table])
+    :ets.new(slow_domain, [:set, :public, :named_table])
+    :ets.insert(fast_domain, {fast_key, <<0>>, {:input, nil}})
+    :ets.insert(slow_domain, {slow_key, <<0>>, {:input, nil}})
+    Image.put_domain_status(fast_domain, System.monotonic_time(:microsecond), 1_000_000)
+    Image.put_domain_status(slow_domain, System.monotonic_time(:microsecond), 1_000_000)
+
+    on_exit(fn ->
+      if :ets.whereis(fast_domain) != :undefined do
+        :ets.delete(fast_domain)
+      end
+
+      if :ets.whereis(slow_domain) != :undefined do
+        :ets.delete(slow_domain)
+      end
+    end)
+
     data = %EtherCAT.Slave{
       name: :sensor,
       driver: TestDriver,
       config: %{},
       signal_registrations: %{
-        fast_ch1: %{domain_id: :fast, sm_key: {:sm, 3}, bit_offset: 0, bit_size: 1},
-        slow_ch2: %{domain_id: :slow, sm_key: {:sm, 3}, bit_offset: 1, bit_size: 1}
+        fast_ch1: %{
+          domain_id: fast_domain,
+          sm_key: {:sm, 3},
+          bit_offset: 0,
+          bit_size: 1,
+          direction: :input
+        },
+        slow_ch2: %{
+          domain_id: slow_domain,
+          sm_key: {:sm, 3},
+          bit_offset: 1,
+          bit_size: 1,
+          direction: :input
+        }
       },
       signal_registrations_by_sm: %{
-        {:fast, {:sm, 3}} => [{:fast_ch1, %{bit_offset: 0, bit_size: 1}}],
-        {:slow, {:sm, 3}} => [{:slow_ch2, %{bit_offset: 1, bit_size: 1}}]
+        {fast_domain, {:sm, 3}} => [{:fast_ch1, %{bit_offset: 0, bit_size: 1}}],
+        {slow_domain, {:sm, 3}} => [{:slow_ch2, %{bit_offset: 1, bit_size: 1}}]
       },
       subscriptions: %{fast_ch1: MapSet.new([self()]), slow_ch2: MapSet.new([self()])}
     }
 
-    assert :keep_state_and_data =
+    fast_at_us = System.monotonic_time(:microsecond)
+    :ets.insert(fast_domain, {fast_key, <<1>>, {:input, fast_at_us}})
+    Image.put_domain_status(fast_domain, fast_at_us, 1_000_000)
+
+    assert {:keep_state, _updated_data} =
              EtherCAT.Slave.FSM.handle_event(
                :info,
-               {:domain_inputs, :fast, [{{:sensor, {:sm, 3}}, <<0>>, <<1>>}]},
+               {:domain_inputs, fast_domain, 1, [{{:sensor, {:sm, 3}}, <<0>>, <<1>>}],
+                fast_at_us},
                :op,
                data
              )
@@ -212,10 +305,15 @@ defmodule EtherCAT.SlaveTest do
     assert_receive {:ethercat, :signal, :sensor, :fast_ch1, 1}
     refute_receive {:ethercat, :signal, :sensor, :slow_ch2, _}
 
-    assert :keep_state_and_data =
+    slow_at_us = System.monotonic_time(:microsecond)
+    :ets.insert(slow_domain, {slow_key, <<2>>, {:input, slow_at_us}})
+    Image.put_domain_status(slow_domain, slow_at_us, 1_000_000)
+
+    assert {:keep_state, _updated_data} =
              EtherCAT.Slave.FSM.handle_event(
                :info,
-               {:domain_inputs, :slow, [{{:sensor, {:sm, 3}}, <<0>>, <<2>>}]},
+               {:domain_inputs, slow_domain, 1, [{{:sensor, {:sm, 3}}, <<0>>, <<2>>}],
+                slow_at_us},
                :op,
                data
              )
@@ -845,7 +943,7 @@ defmodule EtherCAT.SlaveTest do
              )
   end
 
-  test "preop sync-only reconfigure rejects invalid sync_mode mailbox steps" do
+  test "preop sync-only reconfigure rejects invalid sync-update mailbox steps" do
     from = {self(), make_ref()}
     sync = %EtherCAT.Slave.Sync.Config{mode: :sync0, sync0: %{pulse_ns: 5_000, shift_ns: 0}}
 
@@ -870,7 +968,7 @@ defmodule EtherCAT.SlaveTest do
     assert unchanged.sync_config == nil
   end
 
-  test "entering op only arms latch polling and does not invoke on_op twice" do
+  test "entering op only arms latch polling" do
     assert {:keep_state_and_data, []} =
              EtherCAT.Slave.FSM.handle_event(
                :enter,
@@ -878,13 +976,11 @@ defmodule EtherCAT.SlaveTest do
                :op,
                %EtherCAT.Slave{
                  name: :axis,
-                 driver: OpHookDriver,
+                 driver: TestDriver,
                  config: %{},
                  latch_poll_ms: nil
                }
              )
-
-    refute_receive {:driver_on_op, :axis}
   end
 
   test "entering safeop arms health polling when configured" do

@@ -7,6 +7,7 @@ defmodule EtherCAT.Slave.Runtime.Configuration do
   alias EtherCAT.Slave.Runtime.DCSignals
   alias EtherCAT.Slave.Mailbox
   alias EtherCAT.Slave.ProcessData
+  alias EtherCAT.Slave.Runtime.DeviceState
 
   @spec maybe_reconfigure_preop(%Slave{}, keyword()) ::
           {:ok, %Slave{}} | {:error, term(), %Slave{}}
@@ -46,14 +47,10 @@ defmodule EtherCAT.Slave.Runtime.Configuration do
   end
 
   def post_transition(:safeop, data) do
-    invoke_driver(data, :on_safeop)
     DCSignals.configure(data)
   end
 
-  def post_transition(:op, data) do
-    invoke_driver(data, :on_op)
-    {:ok, data}
-  end
+  def post_transition(:op, data), do: {:ok, data}
 
   def post_transition(_target, data), do: {:ok, data}
 
@@ -79,14 +76,16 @@ defmodule EtherCAT.Slave.Runtime.Configuration do
   end
 
   defp reconfigure_unregistered_preop(data, opts) do
-    updated_data = %{
-      data
-      | driver: Keyword.get(opts, :driver, data.driver),
-        config: Keyword.get(opts, :config, data.config),
-        process_data_request: Keyword.get(opts, :process_data, data.process_data_request),
-        sync_config: Keyword.get(opts, :sync, data.sync_config),
-        health_poll_ms: Keyword.get(opts, :health_poll_ms, data.health_poll_ms)
-    }
+    updated_data =
+      %{
+        data
+        | driver: Keyword.get(opts, :driver, data.driver),
+          config: Keyword.get(opts, :config, data.config),
+          process_data_request: Keyword.get(opts, :process_data, data.process_data_request),
+          sync_config: Keyword.get(opts, :sync, data.sync_config),
+          health_poll_ms: Keyword.get(opts, :health_poll_ms, data.health_poll_ms)
+      }
+      |> DeviceState.initialize()
 
     configured = configure_preop_process_data(updated_data)
 
@@ -101,7 +100,6 @@ defmodule EtherCAT.Slave.Runtime.Configuration do
   end
 
   defp configure_preop_process_data(data) do
-    invoke_driver(data, :on_preop)
     ProcessData.configure_preop(data, run_mailbox_config: &Mailbox.run_preop_config/1)
   end
 
@@ -121,19 +119,5 @@ defmodule EtherCAT.Slave.Runtime.Configuration do
         ProcessData.log_configuration_error(updated_data, reason)
         {:error, reason}
     end
-  end
-
-  defp invoke_driver(data, cb), do: invoke_driver(data, cb, [])
-
-  defp invoke_driver(%{driver: nil}, _cb, _args), do: :ok
-
-  defp invoke_driver(data, cb, args) do
-    arity = 2 + length(args)
-
-    if function_exported?(data.driver, cb, arity) do
-      apply(data.driver, cb, [data.name, data.config | args])
-    end
-
-    :ok
   end
 end

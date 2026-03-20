@@ -69,12 +69,12 @@ defmodule CycleJitter.Collector do
     # Drive ch1 to a known 0 state and wait for it to propagate through hardware.
     # Without the sleep, a subsequent write(1) may overwrite the 0 in ETS before
     # any domain cycle fires, leaving the input unchanged → no notification.
-    EtherCAT.write_output(:outputs, output_channel, 0)
+    EtherCAT.Raw.write_output(:outputs, output_channel, 0)
     Process.sleep(period_ms * 4)
     flush_channel(input_channel)
 
     # Arm: write 1 and wait for the first rising-edge confirmation
-    EtherCAT.write_output(:outputs, output_channel, 1)
+    EtherCAT.Raw.write_output(:outputs, output_channel, 1)
     wait_for(input_channel, 1)
 
     # Now collect n transitions.  Each wait_for call is one bus cycle.
@@ -84,14 +84,14 @@ defmodule CycleJitter.Collector do
       Enum.map_reduce(0..(n - 1), System.monotonic_time(:microsecond), fn i, prev_t ->
         # 0, 1, 0, 1 ...
         target = rem(i, 2)
-        EtherCAT.write_output(:outputs, output_channel, target)
+        EtherCAT.Raw.write_output(:outputs, output_channel, target)
         wait_for(input_channel, target)
         now = System.monotonic_time(:microsecond)
         {now - prev_t, now}
       end)
 
     # Leave ch1 = 0
-    EtherCAT.write_output(:outputs, output_channel, 0)
+    EtherCAT.Raw.write_output(:outputs, output_channel, 0)
     intervals
   end
 
@@ -168,12 +168,12 @@ Process.sleep(300)
 IO.puts("Waiting for bus to reach OP...")
 :ok = EtherCAT.await_running(15_000)
 
-EtherCAT.subscribe(:inputs, input_channel, self())
+EtherCAT.Raw.subscribe(:inputs, input_channel, self())
 
 # Warm-up: discard first 50 cycles to let the bus stabilise.
 # Write 0 first and sleep to ensure hardware sees 0 before we start toggling.
 IO.puts("Warming up (50 cycles)...")
-EtherCAT.write_output(:outputs, output_channel, 0)
+EtherCAT.Raw.write_output(:outputs, output_channel, 0)
 Process.sleep(period_ms * 4)
 
 # Flush any notifications that arrived during the sleep
@@ -189,7 +189,7 @@ end)
 
 Enum.each(1..50, fn i ->
   target = rem(i, 2)
-  EtherCAT.write_output(:outputs, output_channel, target)
+  EtherCAT.Raw.write_output(:outputs, output_channel, target)
 
   receive do
     {:ethercat, :signal, :inputs, ^input_channel, ^target} -> :ok

@@ -1,7 +1,9 @@
 defmodule EtherCAT.IntegrationSupport.Drivers.ConfiguredProcessMailboxDevice do
   @moduledoc false
 
-  @behaviour EtherCAT.Slave.Driver
+  @behaviour EtherCAT.Driver
+  @behaviour EtherCAT.Driver.Provisioning
+  @behaviour EtherCAT.Simulator.Driver
 
   alias EtherCAT.Slave.ProcessData.Signal
 
@@ -17,12 +19,14 @@ defmodule EtherCAT.IntegrationSupport.Drivers.ConfiguredProcessMailboxDevice do
   end
 
   @impl true
-  def signal_model(_config), do: @signals
+  def signal_model(_config, _sii_pdo_configs), do: @signals
 
   @impl true
-  def mailbox_config(_config) do
+  def mailbox_steps(_config, %{phase: :preop}) do
     [{:sdo_download, 0x2003, 0x01, startup_blob()}]
   end
+
+  def mailbox_steps(_config, _context), do: []
 
   @impl true
   def encode_signal(_signal, _config, value)
@@ -34,6 +38,15 @@ defmodule EtherCAT.IntegrationSupport.Drivers.ConfiguredProcessMailboxDevice do
   @impl true
   def decode_signal(_signal, _config, <<value::8>>), do: value
   def decode_signal(_signal, _config, raw), do: raw
+
+  @impl true
+  def project_state(decoded_inputs, _prev_state, driver_state, _config) do
+    {:ok, decoded_inputs, driver_state, [], []}
+  end
+
+  @impl true
+  def command(command, _state, _driver_state, _config),
+    do: EtherCAT.Driver.unsupported_command(command)
 
   def startup_blob do
     0..191

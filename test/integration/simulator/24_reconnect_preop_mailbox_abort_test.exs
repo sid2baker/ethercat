@@ -2,9 +2,10 @@ defmodule EtherCAT.Integration.Simulator.ReconnectPreopMailboxAbortTest do
   use ExUnit.Case, async: false
 
   alias EtherCAT.Domain.Config, as: DomainConfig
+  alias EtherCAT.Driver.{EK1100, EL1809, EL2809}
   alias EtherCAT.Integration.Expect
   alias EtherCAT.Integration.Scenario
-  alias EtherCAT.IntegrationSupport.Drivers.{ConfiguredMailboxDevice, EK1100, EL1809, EL2809}
+  alias EtherCAT.IntegrationSupport.Drivers.ConfiguredMailboxDevice
   alias EtherCAT.IntegrationSupport.SimulatorRing
   alias EtherCAT.Simulator.Fault
   alias EtherCAT.Simulator.Slave
@@ -49,12 +50,12 @@ defmodule EtherCAT.Integration.Simulator.ReconnectPreopMailboxAbortTest do
       )
     end)
     |> Scenario.act("write output ch1 high", fn _ctx ->
-      assert :ok = EtherCAT.write_output(:outputs, :ch1, 1)
+      assert :ok = EtherCAT.Raw.write_output(:outputs, :ch1, 1)
     end)
     |> Scenario.act("pdo flow still works during mailbox fault", fn _ctx ->
       Expect.eventually(
         fn ->
-          assert {:ok, {1, updated_at_us}} = EtherCAT.read_input(:inputs, :ch1)
+          assert {:ok, {true, updated_at_us}} = EtherCAT.Raw.read_input(:inputs, :ch1)
           assert is_integer(updated_at_us)
           Expect.signal(:outputs, :ch1, value: true)
         end,
@@ -68,7 +69,7 @@ defmodule EtherCAT.Integration.Simulator.ReconnectPreopMailboxAbortTest do
           Expect.master_state(:operational)
           Expect.slave_fault(:mailbox, nil)
           Expect.slave(:mailbox, al_state: :op, configuration_error: nil)
-          assert {:ok, <<1>>} = EtherCAT.upload_sdo(:mailbox, 0x2000, 0x02)
+          assert {:ok, <<1>>} = EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2000, 0x02)
           Expect.simulator_queue_empty()
         end,
         attempts: 220,

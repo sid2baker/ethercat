@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- The public runtime surface now names the managed instance consistently as a
+  slave: `EtherCAT.slaves/0`, `snapshot.slaves`, `%EtherCAT.SlaveSnapshot{}`,
+  and `%EtherCAT.Event{slave: ...}` replace the old mixed device/slave naming
+  (`9c5b5ca`).
+- `EtherCAT` is now the only normal public runtime entry point: `slaves/0`,
+  `snapshot/0`, `snapshot/1`, `describe/1`, `subscribe/2`, and `command/3`
+  expose the driver-backed slave surface directly, and `EtherCAT.Device` is
+  gone (`9c5b5ca`).
+- `EtherCAT.Driver` was reduced to a smaller extension contract centered on
+  `signal_model/2`, `project_state/4`, and `command/4`; mailbox setup, latch
+  hooks, and simulator identity now live under specialist behaviours instead of
+  the core runtime driver API (`9c5b5ca`).
+- `EtherCAT.snapshot/0` now returns a best-effort aggregate of
+  `%EtherCAT.SlaveSnapshot{}` structs instead of a flattened signal map, and
+  `%EtherCAT.Event{}` is documented as the top-level driver/slave event
+  envelope (`9c5b5ca`).
+- Driver-backed commands now own the normal top-level write path, and command
+  output staging emits public state-change events through the same `EtherCAT`
+  subscription stream (`9c5b5ca`).
+- Cyclic input refresh no longer decodes changed inputs twice: the slave runtime
+  now computes changed input names from domain change notifications, samples and
+  decodes inputs once during device-state refresh, and reuses that decoded image
+  for both raw signal subscriptions and driver projection (`9c5b5ca`).
+- The legacy `EtherCAT.Slave.Driver` compatibility shim is gone, and the
+  internal default slave implementation now lives under
+  `EtherCAT.Slave.DefaultDriver` instead of `EtherCAT.Slave.Driver.Default`
+  (`9c5b5ca`).
+
 ## [0.4.2] - 2026-03-19
 
 ### Fixed

@@ -7,6 +7,7 @@ defmodule EtherCAT.Application do
   def start(_type, _args) do
     children = [
       {Registry, keys: :unique, name: EtherCAT.Registry},
+      {Registry, keys: :duplicate, name: EtherCAT.SubscriptionRegistry},
       {DynamicSupervisor, name: EtherCAT.SlaveSupervisor, strategy: :one_for_one},
       {DynamicSupervisor, name: EtherCAT.SessionSupervisor, strategy: :one_for_one},
       EtherCAT.Master

@@ -26,9 +26,9 @@ Observed with a simulated mailbox-capable slave and:
 - `Simulator.inject_fault(Fault.mailbox_protocol_fault(:mailbox, 0x2003, 0x01, :upload_segment, :drop_response) |> Fault.after_milestone(Fault.mailbox_step(:mailbox, :upload_segment, 2)))`
 - `Simulator.inject_fault(Fault.mailbox_protocol_fault(:mailbox, 0x2003, 0x01, :download_segment, :drop_response) |> Fault.after_milestone(Fault.mailbox_step(:mailbox, :download_segment, 1)))`
 
-- `EtherCAT.upload_sdo(:mailbox, 0x2003, 0x01)` returns
+- `EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2003, 0x01)` returns
   `{:error, :response_timeout}`
-- `EtherCAT.download_sdo(:mailbox, 0x2003, 0x01, binary)` returns
+- `EtherCAT.Provisioning.download_sdo(:mailbox, 0x2003, 0x01, binary)` returns
   `{:error, :response_timeout}`
 - the master remains in `:preop_ready`
 - the timeouted download leaves the original object value intact

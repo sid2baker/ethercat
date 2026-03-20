@@ -1,12 +1,15 @@
-defmodule EtherCAT.Slave.DriverTest do
+defmodule EtherCAT.DriverTest do
   use ExUnit.Case, async: true
 
-  alias EtherCAT.IntegrationSupport.Drivers.{EL1809, EL2809}
-  alias EtherCAT.Slave.Driver
+  alias EtherCAT.Driver
+  alias EtherCAT.Driver.{EL1809, EL2809}
+  alias EtherCAT.Driver.Runtime, as: DriverRuntime
+  alias EtherCAT.Simulator.Driver, as: SimulatorDriver
   alias EtherCAT.Simulator.Slave
 
   defmodule IdentityDriver do
-    @behaviour EtherCAT.Slave.Driver
+    @behaviour EtherCAT.Driver
+    @behaviour EtherCAT.Simulator.Driver
 
     @impl true
     def identity do
@@ -14,33 +17,47 @@ defmodule EtherCAT.Slave.DriverTest do
     end
 
     @impl true
-    def signal_model(_config), do: [out: 0x1600, in: 0x1A00]
+    def signal_model(_config, _sii_pdo_configs), do: [out: 0x1600, in: 0x1A00]
 
     @impl true
     def encode_signal(_signal, _config, value), do: <<value::8>>
 
     @impl true
     def decode_signal(_signal, _config, <<value::8>>), do: value
+
+    @impl true
+    def project_state(decoded_inputs, _prev_state, driver_state, _config) do
+      {:ok, decoded_inputs, driver_state, [], []}
+    end
+
+    @impl true
+    def command(command, _state, _driver_state, _config), do: Driver.unsupported_command(command)
   end
 
   defmodule NoSimulationDriver do
-    @behaviour EtherCAT.Slave.Driver
+    @behaviour EtherCAT.Driver
 
     @impl true
-    def identity, do: nil
-
-    @impl true
-    def signal_model(_config), do: [out: 0x1600]
+    def signal_model(_config, _sii_pdo_configs), do: [out: 0x1600]
 
     @impl true
     def encode_signal(_signal, _config, value), do: <<value::8>>
 
     @impl true
     def decode_signal(_signal, _config, <<value::8>>), do: value
+
+    @impl true
+    def project_state(decoded_inputs, _prev_state, driver_state, _config) do
+      {:ok, decoded_inputs, driver_state, [], []}
+    end
+
+    @impl true
+    def command(command, _state, _driver_state, _config), do: Driver.unsupported_command(command)
   end
 
   defmodule RevisionIdentityDriver do
-    @behaviour EtherCAT.Slave.Driver
+    @behaviour EtherCAT.Driver
+    @behaviour EtherCAT.Simulator.Driver
 
     @impl true
     def identity do
@@ -48,13 +65,21 @@ defmodule EtherCAT.Slave.DriverTest do
     end
 
     @impl true
-    def signal_model(_config), do: [out: 0x1600]
+    def signal_model(_config, _sii_pdo_configs), do: [out: 0x1600]
 
     @impl true
     def encode_signal(_signal, _config, value), do: <<value::8>>
 
     @impl true
     def decode_signal(_signal, _config, <<value::8>>), do: value
+
+    @impl true
+    def project_state(decoded_inputs, _prev_state, driver_state, _config) do
+      {:ok, decoded_inputs, driver_state, [], []}
+    end
+
+    @impl true
+    def command(command, _state, _driver_state, _config), do: Driver.unsupported_command(command)
   end
 
   defmodule IdentityDriver.Simulator do
@@ -77,15 +102,15 @@ defmodule EtherCAT.Slave.DriverTest do
 
   test "identity/1 returns normalized driver identity" do
     assert %{vendor_id: 0x0000_00AA, product_code: 0x0000_1601, revision: :any} =
-             Driver.identity(IdentityDriver)
+             SimulatorDriver.identity(IdentityDriver)
   end
 
   test "identity/1 returns nil when the driver does not declare identity" do
-    assert nil == Driver.identity(NoSimulationDriver)
+    assert nil == SimulatorDriver.identity(NoSimulationDriver)
   end
 
   test "signal_model/2 returns the driver's logical signals" do
-    assert [out: 0x1600, in: 0x1A00] == Driver.signal_model(IdentityDriver, %{})
+    assert [out: 0x1600, in: 0x1A00] == DriverRuntime.signal_model(IdentityDriver, %{})
   end
 
   test "from_driver/2 defaults simulator identity from the driver" do
@@ -127,7 +152,7 @@ defmodule EtherCAT.Slave.DriverTest do
     assert definition.vendor_id == 0x0000_0002
     assert definition.product_code == 0x0711_3052
 
-    assert Driver.identity(EL1809) == %{
+    assert SimulatorDriver.identity(EL1809) == %{
              vendor_id: 0x0000_0002,
              product_code: 0x0711_3052,
              revision: :any
@@ -149,7 +174,7 @@ defmodule EtherCAT.Slave.DriverTest do
     assert definition.vendor_id == 0x0000_0002
     assert definition.product_code == 0x0AF9_3052
 
-    assert Driver.identity(EL2809) == %{
+    assert SimulatorDriver.identity(EL2809) == %{
              vendor_id: 0x0000_0002,
              product_code: 0x0AF9_3052,
              revision: :any

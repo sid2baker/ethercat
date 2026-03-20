@@ -2,7 +2,8 @@ defmodule EtherCAT.IntegrationSupport.Hardware do
   @moduledoc false
 
   alias EtherCAT.Domain.Config, as: DomainConfig
-  alias EtherCAT.IntegrationSupport.Drivers.{EK1100, EL1809, EL2809, EL3202}
+  alias EtherCAT.Driver.{EK1100, EL1809, EL2809}
+  alias EtherCAT.IntegrationSupport.Drivers.EL3202
   alias EtherCAT.Slave.Config, as: SlaveConfig
 
   @default_udp_port 0x88A4

@@ -2,7 +2,7 @@ defmodule EtherCAT.Master.Config.Slave do
   @moduledoc false
 
   alias EtherCAT.Slave.Config, as: SlaveConfig
-  alias EtherCAT.Slave.Driver.Default, as: DefaultSlaveDriver
+  alias EtherCAT.Driver.Default, as: DefaultSlaveDriver
   alias EtherCAT.Slave.Sync.Config, as: SyncConfig
 
   @spec normalize_configs(term()) :: {:ok, [SlaveConfig.t()]} | {:error, term()}

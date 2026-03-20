@@ -25,7 +25,7 @@ defmodule EtherCAT.Master.ConfigTest do
     assert [
              %SlaveConfig{
                name: :sensor,
-               driver: EtherCAT.Slave.Driver.Default,
+               driver: EtherCAT.Driver.Default,
                process_data: {:all, :main},
                target_state: :op
              }

@@ -43,7 +43,7 @@ defmodule EtherCAT.Integration.Simulator.ReconnectPreopFinalSegmentAckFaultTest 
             Expect.slave_fault(:mailbox, {:preop, {:preop_configuration_failed, @failure}})
             Expect.slave(:mailbox, al_state: :preop, configuration_error: @failure)
             Expect.domain(:main, cycle_health: :healthy)
-            assert {:ok, ^expected} = EtherCAT.upload_sdo(:mailbox, 0x2003, 0x01)
+            assert {:ok, ^expected} = EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2003, 0x01)
           end,
           attempts: 220,
           label: "mailbox keeps committed write while final segment ack is malformed"
@@ -51,12 +51,12 @@ defmodule EtherCAT.Integration.Simulator.ReconnectPreopFinalSegmentAckFaultTest 
       end
     )
     |> Scenario.act("write output ch1 high", fn _ctx ->
-      assert :ok = EtherCAT.write_output(:outputs, :ch1, 1)
+      assert :ok = EtherCAT.Raw.write_output(:outputs, :ch1, 1)
     end)
     |> Scenario.act("pdo flow still works during committed-write fault", fn _ctx ->
       Expect.eventually(
         fn ->
-          assert {:ok, {1, updated_at_us}} = EtherCAT.read_input(:inputs, :ch1)
+          assert {:ok, {true, updated_at_us}} = EtherCAT.Raw.read_input(:inputs, :ch1)
           assert is_integer(updated_at_us)
           Expect.signal(:outputs, :ch1, value: true)
         end,
@@ -70,7 +70,7 @@ defmodule EtherCAT.Integration.Simulator.ReconnectPreopFinalSegmentAckFaultTest 
           Expect.master_state(:operational)
           Expect.slave_fault(:mailbox, nil)
           Expect.slave(:mailbox, al_state: :op, configuration_error: nil)
-          assert {:ok, ^expected} = EtherCAT.upload_sdo(:mailbox, 0x2003, 0x01)
+          assert {:ok, ^expected} = EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2003, 0x01)
           Expect.simulator_queue_empty()
         end,
         attempts: 220,

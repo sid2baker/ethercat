@@ -163,7 +163,7 @@ defmodule EtherCAT.Integration.Simulator.ReconnectPreopDisconnectSafeopChainTest
           Expect.slave(:mailbox, al_state: :op, configuration_error: nil)
           Expect.slave(:outputs, al_state: :op)
           Expect.slave(:inputs, al_state: :op)
-          assert {:ok, ^expected} = EtherCAT.upload_sdo(:mailbox, 0x2003, 0x01)
+          assert {:ok, ^expected} = EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2003, 0x01)
           Expect.simulator_queue_empty()
         end,
         attempts: 420,
