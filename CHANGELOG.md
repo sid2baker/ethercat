@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   latch hooks now live under specialist behaviours, while optional simulator
   identity moved back onto `EtherCAT.Driver.identity/0`, simulator companions
   use `EtherCAT.Simulator.Adapter`, and the extra simulator-side driver helper
-  split was removed (`151d83c`).
+  split was removed (`7830f13`).
 - `EtherCAT.snapshot/0` now returns a best-effort aggregate of
   `%EtherCAT.SlaveSnapshot{}` structs instead of a flattened signal map, and
   `%EtherCAT.Event{}` is documented as the top-level driver/slave event
