@@ -280,6 +280,9 @@ Current slave-local fault injections include:
 - `{:power_cycle, slave_name}` — reset the slave to `INIT`, clear volatile
   runtime state, and clear its fixed station address so the slave reconnect
   path must reclaim or restore it before PREOP rebuild can continue
+- `{:latch_al_error, slave_name, code}` — set the slave's AL error bit and
+  status code without disconnecting it from the segment so runtime health
+  handling can react to a live local fault
 - `{:mailbox_abort, slave_name, index, subindex, abort_code}`
 - `{:mailbox_abort, slave_name, index, subindex, abort_code, stage}`
 - `{:mailbox_protocol_fault, slave_name, index, subindex, stage, fault_kind}`

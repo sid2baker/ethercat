@@ -117,6 +117,7 @@ plan -> fix -> verify -> commit.
 - `43`: permanent PDO-slave disconnect should drive `:down` via health polling, allow reconnect healing, and let the slave reclaim its fixed station locally when it returns anonymous at the same scan position
 - `44`: single-link raw ring helper should pass static raw endpoint options through startup, allow transient raw delay overlays, and restore configured delay after fault clear
 - `45`: redundant secondary master-port disconnect must keep the default `10ms` cyclic domain healthy without stretching degraded exchanges past the configured frame timeout
+- `46`: a latched AL error on an `OP` PDO slave should stay a slave-local `SAFEOP` retreat, emit health-fault telemetry, and retry cleanly back to `OP`
 
 These are the current regression scenarios, not just backlog items. Each one
 should keep its `.md` note and matching `_test.exs` file aligned.
