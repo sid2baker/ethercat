@@ -3,7 +3,6 @@ defmodule EtherCAT.IntegrationSupport.Drivers.EL3202 do
 
   @behaviour EtherCAT.Driver
   @behaviour EtherCAT.Driver.Provisioning
-  @behaviour EtherCAT.Simulator.Driver
 
   @mailbox_steps [
     {:sdo_download, 0x8000, 0x19, <<8::16-little>>},
@@ -110,7 +109,7 @@ end
 defmodule EtherCAT.IntegrationSupport.Drivers.EL3202.Simulator do
   @moduledoc false
 
-  @behaviour EtherCAT.Simulator.DriverAdapter
+  @behaviour EtherCAT.Simulator.Adapter
 
   alias EtherCAT.Simulator.Slave.Object
 

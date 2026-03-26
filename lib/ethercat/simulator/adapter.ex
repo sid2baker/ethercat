@@ -1,4 +1,4 @@
-defmodule EtherCAT.Simulator.DriverAdapter do
+defmodule EtherCAT.Simulator.Adapter do
   @moduledoc """
   Optional simulator-side companion for a real `EtherCAT.Driver`.
 

@@ -8,10 +8,11 @@ defmodule EtherCAT.Simulator.Slave.Definition do
   by the simulator runtime and is not part of this public type.
   """
 
+  alias EtherCAT.Driver
+  alias EtherCAT.Driver.Runtime, as: DriverRuntime
+  alias EtherCAT.Simulator.Adapter
   alias EtherCAT.Simulator.Slave.Object
   alias EtherCAT.Simulator.Slave.Profile
-  alias EtherCAT.Driver.Runtime, as: DriverRuntime
-  alias EtherCAT.Simulator.Driver, as: SimulatorDriver
 
   @typedoc "Mailbox SM layout declared by the simulated device."
   @type mailbox_config :: %{
@@ -124,7 +125,7 @@ defmodule EtherCAT.Simulator.Slave.Definition do
       when is_atom(driver) and is_map(config) and is_atom(adapter) do
     opts =
       adapter
-      |> EtherCAT.Simulator.DriverAdapter.definition_options(config)
+      |> Adapter.definition_options(config)
       |> normalize_definition_options!(adapter)
       |> merge_driver_identity(driver)
       |> maybe_strip_process_data(driver, config)
@@ -142,7 +143,7 @@ defmodule EtherCAT.Simulator.Slave.Definition do
   end
 
   defp merge_driver_identity(opts, driver) do
-    case SimulatorDriver.identity(driver) do
+    case Driver.identity(driver) do
       %{vendor_id: vendor_id, product_code: product_code, revision: revision} ->
         opts
         |> Keyword.put_new(:vendor_id, vendor_id)

@@ -4,12 +4,10 @@ defmodule EtherCAT.DriverTest do
   alias EtherCAT.Driver
   alias EtherCAT.Driver.{EL1809, EL2809}
   alias EtherCAT.Driver.Runtime, as: DriverRuntime
-  alias EtherCAT.Simulator.Driver, as: SimulatorDriver
   alias EtherCAT.Simulator.Slave
 
   defmodule IdentityDriver do
     @behaviour EtherCAT.Driver
-    @behaviour EtherCAT.Simulator.Driver
 
     @impl true
     def identity do
@@ -57,7 +55,6 @@ defmodule EtherCAT.DriverTest do
 
   defmodule RevisionIdentityDriver do
     @behaviour EtherCAT.Driver
-    @behaviour EtherCAT.Simulator.Driver
 
     @impl true
     def identity do
@@ -83,7 +80,7 @@ defmodule EtherCAT.DriverTest do
   end
 
   defmodule IdentityDriver.Simulator do
-    @behaviour EtherCAT.Simulator.DriverAdapter
+    @behaviour EtherCAT.Simulator.Adapter
 
     @impl true
     def definition_options(_config) do
@@ -92,7 +89,7 @@ defmodule EtherCAT.DriverTest do
   end
 
   defmodule RevisionIdentityDriver.Simulator do
-    @behaviour EtherCAT.Simulator.DriverAdapter
+    @behaviour EtherCAT.Simulator.Adapter
 
     @impl true
     def definition_options(_config) do
@@ -102,11 +99,11 @@ defmodule EtherCAT.DriverTest do
 
   test "identity/1 returns normalized driver identity" do
     assert %{vendor_id: 0x0000_00AA, product_code: 0x0000_1601, revision: :any} =
-             SimulatorDriver.identity(IdentityDriver)
+             Driver.identity(IdentityDriver)
   end
 
   test "identity/1 returns nil when the driver does not declare identity" do
-    assert nil == SimulatorDriver.identity(NoSimulationDriver)
+    assert nil == Driver.identity(NoSimulationDriver)
   end
 
   test "signal_model/2 returns the driver's logical signals" do
@@ -152,7 +149,7 @@ defmodule EtherCAT.DriverTest do
     assert definition.vendor_id == 0x0000_0002
     assert definition.product_code == 0x0711_3052
 
-    assert SimulatorDriver.identity(EL1809) == %{
+    assert Driver.identity(EL1809) == %{
              vendor_id: 0x0000_0002,
              product_code: 0x0711_3052,
              revision: :any
@@ -174,7 +171,7 @@ defmodule EtherCAT.DriverTest do
     assert definition.vendor_id == 0x0000_0002
     assert definition.product_code == 0x0AF9_3052
 
-    assert SimulatorDriver.identity(EL2809) == %{
+    assert Driver.identity(EL2809) == %{
              vendor_id: 0x0000_0002,
              product_code: 0x0AF9_3052,
              revision: :any

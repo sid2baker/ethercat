@@ -2,7 +2,6 @@ defmodule EtherCAT.IntegrationSupport.Drivers.MailboxDevice do
   @moduledoc false
 
   @behaviour EtherCAT.Driver
-  @behaviour EtherCAT.Simulator.Driver
 
   @impl true
   def identity do
@@ -32,7 +31,7 @@ end
 defmodule EtherCAT.IntegrationSupport.Drivers.MailboxDevice.Simulator do
   @moduledoc false
 
-  @behaviour EtherCAT.Simulator.DriverAdapter
+  @behaviour EtherCAT.Simulator.Adapter
 
   @impl true
   def definition_options(_config) do

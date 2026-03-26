@@ -3,7 +3,6 @@ defmodule EtherCAT.IntegrationSupport.Drivers.ConfiguredProcessMailboxDevice do
 
   @behaviour EtherCAT.Driver
   @behaviour EtherCAT.Driver.Provisioning
-  @behaviour EtherCAT.Simulator.Driver
 
   alias EtherCAT.Slave.ProcessData.Signal
 
@@ -58,7 +57,7 @@ end
 defmodule EtherCAT.IntegrationSupport.Drivers.ConfiguredProcessMailboxDevice.Simulator do
   @moduledoc false
 
-  @behaviour EtherCAT.Simulator.DriverAdapter
+  @behaviour EtherCAT.Simulator.Adapter
 
   @impl true
   def definition_options(_config) do

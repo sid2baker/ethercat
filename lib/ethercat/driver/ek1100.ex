@@ -2,7 +2,6 @@ defmodule EtherCAT.Driver.EK1100 do
   @moduledoc "Beckhoff EK1100 EtherCAT coupler."
 
   @behaviour EtherCAT.Driver
-  @behaviour EtherCAT.Simulator.Driver
 
   @vendor_id 0x0000_0002
   @product_code 0x044C_2C52
@@ -10,7 +9,7 @@ defmodule EtherCAT.Driver.EK1100 do
   def vendor_id, do: @vendor_id
   def product_code, do: @product_code
 
-  @impl EtherCAT.Simulator.Driver
+  @impl true
   def identity do
     %{vendor_id: @vendor_id, product_code: @product_code}
   end
@@ -37,7 +36,7 @@ end
 defmodule EtherCAT.Driver.EK1100.Simulator do
   @moduledoc false
 
-  @behaviour EtherCAT.Simulator.DriverAdapter
+  @behaviour EtherCAT.Simulator.Adapter
 
   @impl true
   def definition_options(_config) do

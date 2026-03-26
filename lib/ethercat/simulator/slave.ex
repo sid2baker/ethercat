@@ -12,7 +12,7 @@ defmodule EtherCAT.Simulator.Slave do
   """
 
   alias EtherCAT.Simulator
-  alias EtherCAT.Simulator.DriverAdapter
+  alias EtherCAT.Simulator.Adapter
   alias EtherCAT.Simulator.Slave.Definition
 
   @type driver :: module()
@@ -121,13 +121,13 @@ defmodule EtherCAT.Simulator.Slave do
   defp maybe_override_name(definition, name) when is_atom(name), do: %{definition | name: name}
 
   defp resolve_adapter!(driver, simulator) do
-    case DriverAdapter.resolve(driver, simulator) do
+    case Adapter.resolve(driver, simulator) do
       adapter when is_atom(adapter) and not is_nil(adapter) ->
         adapter
 
       nil ->
         raise ArgumentError,
-              "driver #{inspect(driver)} does not expose a simulator companion; define #{inspect(Module.concat(driver, "Simulator"))} implementing EtherCAT.Simulator.DriverAdapter or pass :simulator explicitly"
+              "driver #{inspect(driver)} does not expose a simulator companion; define #{inspect(Module.concat(driver, "Simulator"))} implementing EtherCAT.Simulator.Adapter or pass :simulator explicitly"
     end
   end
 end

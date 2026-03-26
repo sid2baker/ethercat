@@ -3,7 +3,6 @@ defmodule EtherCAT.IntegrationSupport.Drivers.SegmentedConfiguredMailboxDevice d
 
   @behaviour EtherCAT.Driver
   @behaviour EtherCAT.Driver.Provisioning
-  @behaviour EtherCAT.Simulator.Driver
 
   @impl true
   def identity do
@@ -46,7 +45,7 @@ end
 defmodule EtherCAT.IntegrationSupport.Drivers.SegmentedConfiguredMailboxDevice.Simulator do
   @moduledoc false
 
-  @behaviour EtherCAT.Simulator.DriverAdapter
+  @behaviour EtherCAT.Simulator.Adapter
 
   @impl true
   def definition_options(_config) do

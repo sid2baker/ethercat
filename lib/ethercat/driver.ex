@@ -17,7 +17,10 @@ defmodule EtherCAT.Driver do
 
   - `EtherCAT.Driver.Provisioning` for mailbox startup/setup steps
   - `EtherCAT.Driver.Latch` for DC latch callbacks
-  - `EtherCAT.Simulator.Driver` for simulator/capture identity metadata
+  - `EtherCAT.Simulator.Adapter` for simulator-side companion definitions
+
+  Drivers may also implement optional `identity/0` metadata for simulator
+  hydration and generated capture scaffolds.
 
   Normal applications should not call this module at runtime. Use it to define
   drivers that plug into the EtherCAT runtime directly.
@@ -27,6 +30,11 @@ defmodule EtherCAT.Driver do
 
   @type signal_name :: atom()
   @type config :: map()
+  @type identity :: %{
+          required(:vendor_id) => non_neg_integer(),
+          required(:product_code) => non_neg_integer(),
+          optional(:revision) => non_neg_integer() | :any
+        }
   @type decoded_inputs :: %{optional(atom()) => term()}
   @type projected_state :: %{optional(atom()) => term()}
   @type notice :: term()
@@ -45,6 +53,7 @@ defmodule EtherCAT.Driver do
   @callback signal_model(config(), sii_pdo_configs :: [map()]) ::
               [{signal_name(), non_neg_integer() | Signal.t()}]
 
+  @callback identity() :: identity() | nil
   @callback encode_signal(signal_name(), config(), term()) :: binary()
   @callback decode_signal(signal_name(), config(), binary()) :: term()
   @callback init(config()) :: {:ok, term()} | {:error, term()}
@@ -58,11 +67,36 @@ defmodule EtherCAT.Driver do
   @callback describe(config()) :: description()
 
   @optional_callbacks [
+    identity: 0,
     init: 1,
     describe: 1
   ]
 
+  @spec identity(module()) :: identity() | nil
+  def identity(driver) when is_atom(driver) do
+    if exported?(driver, :identity, 0) do
+      driver
+      |> apply(:identity, [])
+      |> normalize_identity()
+    else
+      nil
+    end
+  end
+
   @spec unsupported_command(command_request()) :: {:error, {:unsupported_command, atom()}}
   def unsupported_command(%{name: name}) when is_atom(name),
     do: {:error, {:unsupported_command, name}}
+
+  defp normalize_identity(nil), do: nil
+
+  defp normalize_identity(%{vendor_id: vendor_id, product_code: product_code} = identity)
+       when is_integer(vendor_id) and vendor_id >= 0 and is_integer(product_code) and
+              product_code >= 0 do
+    Map.put_new(identity, :revision, :any)
+  end
+
+  defp exported?(module, function_name, arity)
+       when is_atom(module) and is_atom(function_name) and is_integer(arity) and arity >= 0 do
+    Code.ensure_loaded?(module) and function_exported?(module, function_name, arity)
+  end
 end

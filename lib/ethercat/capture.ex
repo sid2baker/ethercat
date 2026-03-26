@@ -849,7 +849,7 @@ defmodule EtherCAT.Capture do
       "defmodule #{render_module_name(simulator_module)} do",
       "  @moduledoc false",
       "",
-      "  @behaviour EtherCAT.Simulator.DriverAdapter",
+      "  @behaviour EtherCAT.Simulator.Adapter",
       "",
       render_driver_simulator_block(scaffold.simulator_definition_options),
       "end",
@@ -861,8 +861,7 @@ defmodule EtherCAT.Capture do
 
   defp render_driver_behaviour_block(scaffold) do
     [
-      "  @behaviour EtherCAT.Driver",
-      "  @behaviour EtherCAT.Simulator.Driver"
+      "  @behaviour EtherCAT.Driver"
       | if(scaffold.mailbox_steps == [],
           do: [],
           else: ["  @behaviour EtherCAT.Driver.Provisioning"]
@@ -1471,7 +1470,7 @@ defmodule EtherCAT.Capture do
       still need manual authoring.
       \"\"\"
 
-      @behaviour EtherCAT.Simulator.DriverAdapter
+      @behaviour EtherCAT.Simulator.Adapter
 
       @capture_path Path.expand(#{inspect(relative_capture_path)}, __DIR__)
 

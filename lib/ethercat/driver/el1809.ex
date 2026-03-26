@@ -2,7 +2,6 @@ defmodule EtherCAT.Driver.EL1809 do
   @moduledoc "Beckhoff EL1809 16-channel digital input, 24 V DC."
 
   @behaviour EtherCAT.Driver
-  @behaviour EtherCAT.Simulator.Driver
 
   @vendor_id 0x0000_0002
   @product_code 0x0711_3052
@@ -11,7 +10,7 @@ defmodule EtherCAT.Driver.EL1809 do
   def vendor_id, do: @vendor_id
   def product_code, do: @product_code
 
-  @impl EtherCAT.Simulator.Driver
+  @impl true
   def identity do
     %{vendor_id: @vendor_id, product_code: @product_code}
   end
@@ -80,7 +79,7 @@ end
 defmodule EtherCAT.Driver.EL1809.Simulator do
   @moduledoc false
 
-  @behaviour EtherCAT.Simulator.DriverAdapter
+  @behaviour EtherCAT.Simulator.Adapter
 
   @impl true
   def definition_options(_config) do

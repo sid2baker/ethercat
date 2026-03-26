@@ -17,9 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   expose the driver-backed slave surface directly, and `EtherCAT.Device` is
   gone (`f15d37b`).
 - `EtherCAT.Driver` was reduced to a smaller extension contract centered on
-  `signal_model/2`, `project_state/4`, and `command/4`; mailbox setup, latch
-  hooks, and simulator identity now live under specialist behaviours instead of
-  the core runtime driver API (`f15d37b`).
+  `signal_model/2`, `project_state/4`, and `command/4`; mailbox setup and
+  latch hooks now live under specialist behaviours, while optional simulator
+  identity moved back onto `EtherCAT.Driver.identity/0`, simulator companions
+  use `EtherCAT.Simulator.Adapter`, and the extra simulator-side driver helper
+  split was removed (`151d83c`).
 - `EtherCAT.snapshot/0` now returns a best-effort aggregate of
   `%EtherCAT.SlaveSnapshot{}` structs instead of a flattened signal map, and
   `%EtherCAT.Event{}` is documented as the top-level driver/slave event

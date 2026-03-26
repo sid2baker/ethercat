@@ -49,7 +49,7 @@ Optional sibling runtime (started separately, not under `EtherCAT.Application`):
 ```
 EtherCAT.Simulator
 ├── EtherCAT.Simulator.Slave                (simulated slave builders + hydration from real drivers)
-├── EtherCAT.Simulator.DriverAdapter        (optional simulator-side companion for real drivers)
+├── EtherCAT.Simulator.Adapter              (optional simulator-side companion for real drivers)
 ├── EtherCAT.Simulator.Fault                (public deterministic runtime fault builder)
 └── EtherCAT.Simulator.Transport
     ├── EtherCAT.Simulator.Transport.Udp
@@ -286,13 +286,14 @@ calls `{:next_state, ...}`.
 
 Specialist driver behaviours hang off the core:
 
-- `EtherCAT.Simulator.Driver` for static identity metadata (`identity/0`)
 - `EtherCAT.Driver.Provisioning` for PREOP mailbox configuration and sync-update object writes
 - `EtherCAT.Driver.Latch` for optional DC latch hooks
+- `EtherCAT.Simulator.Adapter` for simulator-side authored definitions
 
-Exact simulator authoring does not live in the real driver behaviour. When a
+Exact simulator authoring does not live in the real driver behaviour. Drivers
+may optionally expose `identity/0` directly on `EtherCAT.Driver`. When a
 driver needs profile-specific simulator defaults, `MyDriver.Simulator` can
-implement `EtherCAT.Simulator.DriverAdapter`, and
+implement `EtherCAT.Simulator.Adapter`, and
 `EtherCAT.Simulator.Slave.from_driver/2` merges that simulator-side authored
 configuration with the real driver's declared identity.
 
