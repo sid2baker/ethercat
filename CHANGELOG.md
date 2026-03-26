@@ -19,7 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `EtherCAT.Driver` was reduced to a smaller extension contract centered on
   `signal_model/2`, `project_state/4`, and `command/4`; mailbox setup and
   latch hooks now live under specialist behaviours, while optional simulator
-  identity moved back onto `EtherCAT.Driver.identity/0`, simulator companions
+  identity moved back onto the optional `identity/0` callback on
+  `EtherCAT.Driver`, simulator companions
   use `EtherCAT.Simulator.Adapter`, and the extra simulator-side driver helper
   split was removed (`7830f13`).
 - `EtherCAT.snapshot/0` now returns a best-effort aggregate of
@@ -34,9 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   decodes inputs once during device-state refresh, and reuses that decoded image
   for both raw signal subscriptions and driver projection (`f15d37b`).
 - The legacy `EtherCAT.Slave.Driver` compatibility shim is gone, and the
-  default driver implementation now lives directly under
-  `EtherCAT.Driver.Default` instead of splitting the implementation across
-  extra slave-internal wrapper modules
+  built-in default driver implementation now lives in one place instead of
+  splitting the implementation across extra slave-internal wrapper modules
   (`f15d37b`).
 
 ## [0.4.2] - 2026-03-19

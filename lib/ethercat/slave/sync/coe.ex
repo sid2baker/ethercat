@@ -44,7 +44,7 @@ defmodule EtherCAT.Slave.Sync.CoE do
   """
 
   @type mailbox_step ::
-          EtherCAT.Driver.mailbox_step()
+          EtherCAT.Driver.Provisioning.mailbox_step()
 
   @type output_mode :: :free_run | :sm_event | :sync0 | :sync1
   @type input_mode :: :free_run | {:sm_event, :sm2 | :sm3} | :sync0 | :sync1

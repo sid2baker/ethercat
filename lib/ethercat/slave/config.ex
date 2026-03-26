@@ -5,7 +5,7 @@ defmodule EtherCAT.Slave.Config do
   Fields:
     - `:name` (required) — atom identifying this slave
     - `:driver` — module implementing `EtherCAT.Driver`,
-      defaults to `EtherCAT.Driver.Default`
+      defaults to the built-in default driver
     - `:config` — driver-specific configuration map, default `%{}`
     - `:process_data` — one of:
       - `:none` — do not auto-register process data
