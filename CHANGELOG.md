@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Mixed operational sessions now keep health polling active on slaves
+  intentionally held in `:preop` and recover those slaves back to their
+  configured target instead of silently skipping the fault or promoting them to
+  `:op` (`pending`).
 - Startup-held `:preop_ready` sessions no longer let the default `250ms`
   slave health poll mark disconnected PREOP-held slaves `:down` and push the
   master into `:recovering` (`473e224`).

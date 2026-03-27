@@ -119,6 +119,7 @@ plan -> fix -> verify -> commit.
 - `45`: redundant secondary master-port disconnect must keep the default `10ms` cyclic domain healthy without stretching degraded exchanges past the configured frame timeout
 - `46`: a latched AL error on an `OP` PDO slave should stay a slave-local `SAFEOP` retreat, emit health-fault telemetry, and retry cleanly back to `OP`
 - `47`: slaves intentionally started and held in `PREOP` should not use the default `250ms` health poll to background-detect disconnects and push the master into `:recovering`
+- `48`: a slave intentionally held in `PREOP` inside an otherwise operational session should stay runtime-visible on fault and recover back to `PREOP`, not be promoted to `OP`
 
 These are the current regression scenarios, not just backlog items. Each one
 should keep its `.md` note and matching `_test.exs` file aligned.

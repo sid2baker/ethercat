@@ -668,6 +668,32 @@ defmodule EtherCAT.MasterTest do
     assert healed.slave_faults == %{}
   end
 
+  test "held preop slave reconnect in operational session clears fault without requesting op" do
+    start_supervised!(%{
+      id: make_ref(),
+      start: {RejectingRequestSlave, :start_link, [:mailbox]}
+    })
+
+    data = %EtherCAT.Master{
+      desired_runtime_target: :op,
+      slave_configs: [
+        %SlaveConfig{name: :mailbox, process_data: :none, target_state: :preop}
+      ],
+      slave_faults: %{mailbox: {:down, :no_response}}
+    }
+
+    assert {:keep_state, %EtherCAT.Master{} = healed, _actions} =
+             EtherCAT.Master.FSM.handle_event(
+               :info,
+               {:slave_ready, :mailbox, :preop},
+               :operational,
+               data
+             )
+
+    assert healed.runtime_faults == %{}
+    assert healed.slave_faults == %{}
+  end
+
   test "dc runtime failure enters recovering and clears on recovery" do
     data = %EtherCAT.Master{}
 

@@ -442,6 +442,8 @@ defmodule EtherCAT.Master.Startup do
   defp start_slaves(data, bus_count, dc_cycle_ns) do
     with {:ok, effective_config} <-
            Config.effective_slave_config(data.slave_configs || [], bus_count) do
+      startup_runtime_target = startup_runtime_target(effective_config)
+
       Enum.with_index(effective_config)
       |> Enum.reduce_while(
         {:ok, [], [], [], %{}},
@@ -459,7 +461,7 @@ defmodule EtherCAT.Master.Startup do
             process_data: entry.process_data,
             dc_cycle_ns: dc_cycle_ns,
             sync: entry.sync,
-            health_poll_ms: startup_health_poll_ms(entry)
+            health_poll_ms: startup_health_poll_ms(entry, startup_runtime_target)
           ]
 
           case DynamicSupervisor.start_child(EtherCAT.SlaveSupervisor, {Slave, opts}) do
@@ -501,8 +503,14 @@ defmodule EtherCAT.Master.Startup do
 
   defp dc_cycle_ns(_data), do: nil
 
-  defp startup_health_poll_ms(%{target_state: :preop}), do: nil
-  defp startup_health_poll_ms(%{health_poll_ms: health_poll_ms}), do: health_poll_ms
+  defp startup_runtime_target(effective_config) do
+    if Enum.any?(effective_config, &(&1.target_state == :op)), do: :op, else: :preop
+  end
+
+  defp startup_health_poll_ms(%{target_state: :preop}, :preop), do: nil
+
+  defp startup_health_poll_ms(%{health_poll_ms: health_poll_ms}, _startup_runtime_target),
+    do: health_poll_ms
 
   defp bus_running? do
     is_pid(Process.whereis(Bus))
