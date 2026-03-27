@@ -17,6 +17,11 @@ defmodule EtherCAT.Slave.Runtime.Polling do
     health_poll_actions(data)
   end
 
+  @spec preop_reconfigure_actions(%{optional(:health_poll_ms) => integer() | nil}) :: list()
+  def preop_reconfigure_actions(data) do
+    health_poll_reset_actions(data)
+  end
+
   @spec safeop_enter_actions(%{optional(:health_poll_ms) => integer() | nil}) :: list()
   def safeop_enter_actions(data) do
     health_poll_actions(data)
@@ -42,4 +47,11 @@ defmodule EtherCAT.Slave.Runtime.Polling do
   end
 
   defp health_poll_actions(_data), do: []
+
+  defp health_poll_reset_actions(%{health_poll_ms: poll_ms})
+       when is_integer(poll_ms) and poll_ms > 0 do
+    [Health.health_poll_action(poll_ms)]
+  end
+
+  defp health_poll_reset_actions(_data), do: [{{:timeout, :health_poll}, :cancel}]
 end

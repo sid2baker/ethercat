@@ -48,9 +48,12 @@ defmodule EtherCAT.Master.Activation do
     )
 
     result =
-      case quiesce_bus() do
-        :ok ->
-          do_activate_network(data)
+      with :ok <- restore_held_preop_health_polls(data),
+           :ok <- quiesce_bus() do
+        do_activate_network(data)
+      else
+        {:error, {:held_preop_runtime_config_failed, _slave_name, _reason}} = err ->
+          {:error, err, data}
 
         {:error, reason} ->
           {:error, {:bus_not_ready, reason}, data}
@@ -223,6 +226,23 @@ defmodule EtherCAT.Master.Activation do
 
         _other ->
           failures
+      end
+    end)
+  end
+
+  defp restore_held_preop_health_polls(data) do
+    data.slave_configs
+    |> List.wrap()
+    |> Enum.filter(
+      &(&1.target_state == :preop and is_integer(&1.health_poll_ms) and &1.health_poll_ms > 0)
+    )
+    |> Enum.reduce_while(:ok, fn slave_config, :ok ->
+      case Slave.configure(slave_config.name, health_poll_ms: slave_config.health_poll_ms) do
+        :ok ->
+          {:cont, :ok}
+
+        {:error, reason} ->
+          {:halt, {:error, {:held_preop_runtime_config_failed, slave_config.name, reason}}}
       end
     end)
   end

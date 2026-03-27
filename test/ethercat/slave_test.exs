@@ -425,7 +425,8 @@ defmodule EtherCAT.SlaveTest do
   test "preop configure rejects local process-data changes after registration" do
     from = {self(), make_ref()}
 
-    assert {:keep_state, %EtherCAT.Slave{driver: TestDriver} = updated, [{:reply, ^from, :ok}]} =
+    assert {:keep_state, %EtherCAT.Slave{driver: TestDriver} = updated,
+            [{:reply, ^from, :ok}, {{:timeout, :health_poll}, :cancel}]} =
              EtherCAT.Slave.FSM.handle_event(
                {:call, from},
                {:configure, [driver: TestDriver]},
@@ -458,6 +459,46 @@ defmodule EtherCAT.SlaveTest do
                  config: %{},
                  process_data_request: :none,
                  signal_registrations: %{ch1: %{domain_id: :main}}
+               }
+             )
+  end
+
+  test "preop configure re-arms or cancels health polling when health_poll_ms changes" do
+    from = {self(), make_ref()}
+
+    assert {:keep_state, %EtherCAT.Slave{health_poll_ms: 20},
+            [{:reply, ^from, :ok}, {{:timeout, :health_poll}, 20, nil}]} =
+             EtherCAT.Slave.FSM.handle_event(
+               {:call, from},
+               {:configure, [health_poll_ms: 20]},
+               :preop,
+               %EtherCAT.Slave{
+                 driver: TestDriver,
+                 config: %{},
+                 process_data_request: :none,
+                 signal_registrations: %{},
+                 subscriptions: %{},
+                 sii_pdo_configs: [],
+                 sii_sm_configs: [],
+                 health_poll_ms: nil
+               }
+             )
+
+    assert {:keep_state, %EtherCAT.Slave{health_poll_ms: nil},
+            [{:reply, ^from, :ok}, {{:timeout, :health_poll}, :cancel}]} =
+             EtherCAT.Slave.FSM.handle_event(
+               {:call, from},
+               {:configure, [health_poll_ms: nil]},
+               :preop,
+               %EtherCAT.Slave{
+                 driver: TestDriver,
+                 config: %{},
+                 process_data_request: :none,
+                 signal_registrations: %{},
+                 subscriptions: %{},
+                 sii_pdo_configs: [],
+                 sii_sm_configs: [],
+                 health_poll_ms: 20
                }
              )
   end
@@ -764,7 +805,8 @@ defmodule EtherCAT.SlaveTest do
     from = {self(), make_ref()}
     sync = %EtherCAT.Slave.Sync.Config{mode: :sync0, sync0: %{pulse_ns: 5_000, shift_ns: 0}}
 
-    assert {:keep_state, %EtherCAT.Slave{} = updated, [{:reply, ^from, :ok}]} =
+    assert {:keep_state, %EtherCAT.Slave{} = updated,
+            [{:reply, ^from, :ok}, {{:timeout, :health_poll}, :cancel}]} =
              EtherCAT.Slave.FSM.handle_event(
                {:call, from},
                {:configure, [sync: sync]},
@@ -784,7 +826,8 @@ defmodule EtherCAT.SlaveTest do
   test "preop configure allows health poll updates after process-data registration" do
     from = {self(), make_ref()}
 
-    assert {:keep_state, %EtherCAT.Slave{} = updated, [{:reply, ^from, :ok}]} =
+    assert {:keep_state, %EtherCAT.Slave{} = updated,
+            [{:reply, ^from, :ok}, {{:timeout, :health_poll}, 250, nil}]} =
              EtherCAT.Slave.FSM.handle_event(
                {:call, from},
                {:configure, [health_poll_ms: 250]},

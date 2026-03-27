@@ -7,6 +7,7 @@ defmodule EtherCAT.Slave.Runtime.Calls do
   alias EtherCAT.Slave.Runtime.Configuration
   alias EtherCAT.Slave.Runtime.Outputs
   alias EtherCAT.Slave.Runtime.DeviceState
+  alias EtherCAT.Slave.Runtime.Polling
   alias EtherCAT.Slave.Runtime.Signals
   alias EtherCAT.Slave.Runtime.Status
 
@@ -78,7 +79,8 @@ defmodule EtherCAT.Slave.Runtime.Calls do
   def handle(from, {:configure, opts}, :preop, data, _handler_opts) do
     case Configuration.maybe_reconfigure_preop(data, opts) do
       {:ok, new_data} ->
-        {:keep_state, new_data, [{:reply, from, :ok}]}
+        {:keep_state, new_data,
+         [{:reply, from, :ok} | Polling.preop_reconfigure_actions(new_data)]}
 
       {:error, reason, new_data} ->
         {:keep_state, new_data, [{:reply, from, {:error, reason}}]}

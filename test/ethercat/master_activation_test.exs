@@ -12,11 +12,11 @@ defmodule EtherCAT.MasterActivationTest do
   defmodule FakeSlave do
     @behaviour :gen_statem
 
-    def start_link(name) do
+    def start_link(name, owner \\ nil) do
       :gen_statem.start_link(
         {:via, Registry, {EtherCAT.Registry, {:slave, name}}},
         __MODULE__,
-        nil,
+        %{owner: owner, health_poll_ms: nil},
         []
       )
     end
@@ -25,11 +25,21 @@ defmodule EtherCAT.MasterActivationTest do
     def callback_mode, do: :handle_event_function
 
     @impl true
-    def init(_arg), do: {:ok, :preop, nil}
+    def init(data), do: {:ok, :preop, data}
 
     @impl true
     def handle_event({:call, from}, :info, :preop, data) do
       {:keep_state, data, [{:reply, from, {:ok, %{al_state: :preop, configuration_error: nil}}}]}
+    end
+
+    def handle_event({:call, from}, {:configure, opts}, :preop, data) do
+      if is_pid(data.owner) do
+        send(data.owner, {:configured, self(), opts})
+      end
+
+      {:keep_state,
+       %{data | health_poll_ms: Keyword.get(opts, :health_poll_ms, data.health_poll_ms)},
+       [{:reply, from, :ok}]}
     end
 
     def handle_event({:call, from}, {:request, target}, _state, _data)
@@ -125,6 +135,37 @@ defmodule EtherCAT.MasterActivationTest do
              EtherCAT.Master.FSM.handle_event({:call, from}, :activate, :preop_ready, data)
 
     assert updated.desired_runtime_target == :op
+    assert updated.activation_failures == %{}
+  end
+
+  test "activation restores configured health polling for held preop slaves" do
+    start_supervised!({FakeBus, [name: EtherCAT.Bus]})
+
+    coupler =
+      start_supervised!(%{
+        id: make_ref(),
+        start: {FakeSlave, :start_link, [:coupler]}
+      })
+
+    mailbox =
+      start_supervised!(%{
+        id: make_ref(),
+        start: {FakeSlave, :start_link, [:mailbox, self()]}
+      })
+
+    data = %Master{
+      desired_runtime_target: :op,
+      activatable_slaves: [:coupler],
+      slave_configs: [
+        %EtherCAT.Slave.Config{name: :coupler, target_state: :op},
+        %EtherCAT.Slave.Config{name: :mailbox, target_state: :preop, health_poll_ms: 20}
+      ]
+    }
+
+    assert {:ok, :operational, %Master{} = updated} = Activation.activate_network(data)
+
+    assert_receive {:configured, ^mailbox, [health_poll_ms: 20]}
+    refute_receive {:configured, ^coupler, _opts}
     assert updated.activation_failures == %{}
   end
 end

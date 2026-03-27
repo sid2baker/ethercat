@@ -121,6 +121,7 @@ plan -> fix -> verify -> commit.
 - `47`: slaves intentionally started and held in `PREOP` should not use the default `250ms` health poll to background-detect disconnects and push the master into `:recovering`
 - `48`: a slave intentionally held in `PREOP` inside an otherwise operational session should stay runtime-visible on fault and recover back to `PREOP`, not be promoted to `OP`
 - `49`: the PREOP-first provisioning flow should restore runtime health polling when a discovered slave is later configured to `OP` and activated
+- `50`: the PREOP-first provisioning flow should also restore runtime health polling for a discovered slave intentionally left in `PREOP` once the rest of the ring is activated to `OP`
 
 These are the current regression scenarios, not just backlog items. Each one
 should keep its `.md` note and matching `_test.exs` file aligned.
