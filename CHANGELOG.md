@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Startup-held `:preop_ready` sessions no longer let the default `250ms`
   slave health poll mark disconnected PREOP-held slaves `:down` and push the
-  master into `:recovering` (`pending`).
+  master into `:recovering` (`473e224`).
 
 ### Changed
 - The public runtime surface now names the managed instance consistently as a
