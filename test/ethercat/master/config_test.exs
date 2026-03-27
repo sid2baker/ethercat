@@ -63,6 +63,21 @@ defmodule EtherCAT.Master.ConfigTest do
     assert updated.health_poll_ms == 250
   end
 
+  test "local_config_changed? treats target-state updates as local preop reconfigure work" do
+    current = %SlaveConfig{
+      name: :sensor,
+      driver: EtherCAT.Driver.Default,
+      config: %{},
+      process_data: :none,
+      target_state: :preop,
+      health_poll_ms: 250
+    }
+
+    updated = %SlaveConfig{current | target_state: :op}
+
+    assert Config.local_config_changed?(current, updated)
+  end
+
   test "normalize_start_options validates sync config and stores it on slave config" do
     assert {:ok, config} =
              Config.normalize_start_options(

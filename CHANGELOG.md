@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- PREOP-first provisioning now restores runtime slave health polling on
+  target-state-only activation updates and keeps the master converging back to
+  `:operational` after `Provisioning.activate/0` instead of silently staying on
+  the startup `:preop` target (`pending`).
 - Mixed operational sessions now keep health polling active on slaves
   intentionally held in `:preop` and recover those slaves back to their
   configured target instead of silently skipping the fault or promoting them to

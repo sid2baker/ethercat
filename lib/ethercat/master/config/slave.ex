@@ -101,7 +101,8 @@ defmodule EtherCAT.Master.Config.Slave do
 
   @spec local_config_changed?(SlaveConfig.t(), SlaveConfig.t()) :: boolean()
   def local_config_changed?(%SlaveConfig{} = current_config, %SlaveConfig{} = updated_config) do
-    current_config.driver != updated_config.driver or
+    current_config.target_state != updated_config.target_state or
+      current_config.driver != updated_config.driver or
       current_config.config != updated_config.config or
       current_config.process_data != updated_config.process_data or
       current_config.sync != updated_config.sync or

@@ -9,6 +9,37 @@ defmodule EtherCAT.MasterActivationTest do
   alias EtherCAT.Master.Config.DomainPlan
   alias EtherCAT.TestSupport.FakeBus
 
+  defmodule FakeSlave do
+    @behaviour :gen_statem
+
+    def start_link(name) do
+      :gen_statem.start_link(
+        {:via, Registry, {EtherCAT.Registry, {:slave, name}}},
+        __MODULE__,
+        nil,
+        []
+      )
+    end
+
+    @impl true
+    def callback_mode, do: :handle_event_function
+
+    @impl true
+    def init(_arg), do: {:ok, :preop, nil}
+
+    @impl true
+    def handle_event({:call, from}, :info, :preop, data) do
+      {:keep_state, data, [{:reply, from, {:ok, %{al_state: :preop, configuration_error: nil}}}]}
+    end
+
+    def handle_event({:call, from}, {:request, target}, _state, _data)
+        when target in [:preop, :safeop, :op] do
+      {:keep_state_and_data, [{:reply, from, :ok}]}
+    end
+
+    def handle_event(_type, _event, _state, data), do: {:keep_state, data}
+  end
+
   setup do
     on_exit(fn ->
       case Process.whereis(EtherCAT.DC) do
@@ -73,5 +104,27 @@ defmodule EtherCAT.MasterActivationTest do
     assert failed_data.dc_ref == nil
     assert Process.whereis(EtherCAT.DC) == nil
     assert {:ok, %{state: :stopped}} = DomainAPI.info(domain_id)
+  end
+
+  test "activate from preop_ready restores the desired runtime target to op" do
+    from = {self(), make_ref()}
+
+    start_supervised!({FakeBus, [name: EtherCAT.Bus]})
+
+    start_supervised!(%{
+      id: make_ref(),
+      start: {FakeSlave, :start_link, [:sensor]}
+    })
+
+    data = %Master{
+      desired_runtime_target: :preop,
+      activatable_slaves: [:sensor]
+    }
+
+    assert {:next_state, :operational, %Master{} = updated, [{:reply, ^from, :ok}]} =
+             EtherCAT.Master.FSM.handle_event({:call, from}, :activate, :preop_ready, data)
+
+    assert updated.desired_runtime_target == :op
+    assert updated.activation_failures == %{}
   end
 end

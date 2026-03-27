@@ -469,7 +469,7 @@ defmodule EtherCAT.Master.FSM do
   end
 
   def handle_event({:call, from}, :activate, :preop_ready, data) do
-    handle_activate_network(from, data)
+    handle_activate_network(from, %{data | desired_runtime_target: :op})
   end
 
   def handle_event({:call, from}, :activate, :deactivated, data) do
