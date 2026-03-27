@@ -459,7 +459,7 @@ defmodule EtherCAT.Master.Startup do
             process_data: entry.process_data,
             dc_cycle_ns: dc_cycle_ns,
             sync: entry.sync,
-            health_poll_ms: entry.health_poll_ms
+            health_poll_ms: startup_health_poll_ms(entry)
           ]
 
           case DynamicSupervisor.start_child(EtherCAT.SlaveSupervisor, {Slave, opts}) do
@@ -500,6 +500,9 @@ defmodule EtherCAT.Master.Startup do
        do: cycle_ns
 
   defp dc_cycle_ns(_data), do: nil
+
+  defp startup_health_poll_ms(%{target_state: :preop}), do: nil
+  defp startup_health_poll_ms(%{health_poll_ms: health_poll_ms}), do: health_poll_ms
 
   defp bus_running? do
     is_pid(Process.whereis(Bus))
