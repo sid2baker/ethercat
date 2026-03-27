@@ -2,6 +2,7 @@ defmodule EtherCAT.Master.Preop do
   @moduledoc false
 
   alias EtherCAT.Master.Config
+  alias EtherCAT.Master.Status
   alias EtherCAT.Slave
 
   @spec configure_discovered_slave(
@@ -16,7 +17,8 @@ defmodule EtherCAT.Master.Preop do
            Config.normalize_runtime_slave_config(slave_name, spec, current_config),
          :ok <- ensure_known_domains(data, updated_config),
          :ok <- ensure_slave_in_preop(slave_name),
-         :ok <- maybe_apply_slave_configuration(slave_name, current_config, updated_config) do
+         :ok <-
+           maybe_apply_slave_configuration(data, slave_name, current_config, updated_config) do
       updated_slave_configs = List.replace_at(data.slave_configs, config_idx, updated_config)
 
       {:ok,
@@ -46,7 +48,7 @@ defmodule EtherCAT.Master.Preop do
     end
   end
 
-  defp maybe_apply_slave_configuration(slave_name, current_config, updated_config) do
+  defp maybe_apply_slave_configuration(data, slave_name, current_config, updated_config) do
     if Config.local_config_changed?(current_config, updated_config) do
       Slave.configure(
         slave_name,
@@ -54,10 +56,20 @@ defmodule EtherCAT.Master.Preop do
         config: updated_config.config,
         process_data: updated_config.process_data,
         sync: updated_config.sync,
-        health_poll_ms: updated_config.health_poll_ms
+        health_poll_ms: runtime_health_poll_ms(data, updated_config)
       )
     else
       :ok
     end
   end
+
+  defp runtime_health_poll_ms(data, %{target_state: :preop, health_poll_ms: health_poll_ms}) do
+    if Status.desired_runtime_target(data) == :preop do
+      nil
+    else
+      health_poll_ms
+    end
+  end
+
+  defp runtime_health_poll_ms(_data, %{health_poll_ms: health_poll_ms}), do: health_poll_ms
 end

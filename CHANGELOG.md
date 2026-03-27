@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Startup-held `:preop_ready` provisioning sessions now keep background health
+  polling suppressed when `configure_slave/2` updates a slave that still
+  remains targeted at `:preop`, instead of turning that configuration-only
+  session into `:recovering` on later disconnect (`pending`).
 - PREOP-first mixed provisioning now restores runtime health polling for
   slaves intentionally left in `:preop`, and live PREOP reconfigure updates now
   re-arm or cancel the slave health poll timeout immediately instead of waiting

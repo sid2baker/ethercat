@@ -121,6 +121,37 @@ defmodule EtherCAT.MasterTest do
     def handle_event(_type, _event, _state, data), do: {:keep_state, data}
   end
 
+  defmodule ConfigCaptureSlave do
+    @behaviour :gen_statem
+
+    def start_link(name, owner) do
+      :gen_statem.start_link(
+        {:via, Registry, {EtherCAT.Registry, {:slave, name}}},
+        __MODULE__,
+        owner,
+        []
+      )
+    end
+
+    @impl true
+    def callback_mode, do: :handle_event_function
+
+    @impl true
+    def init(owner), do: {:ok, :preop, owner}
+
+    @impl true
+    def handle_event({:call, from}, :state, state, owner) do
+      {:keep_state, owner, [{:reply, from, state}]}
+    end
+
+    def handle_event({:call, from}, {:configure, opts}, _state, owner) do
+      send(owner, {:configured, opts})
+      {:keep_state, owner, [{:reply, from, :ok}]}
+    end
+
+    def handle_event(_type, _event, _state, data), do: {:keep_state, data}
+  end
+
   test "state reports preop_ready, deactivated, and operational distinctly" do
     from = {self(), make_ref()}
 
@@ -191,6 +222,57 @@ defmodule EtherCAT.MasterTest do
                :operational,
                %EtherCAT.Master{}
              )
+  end
+
+  test "configure_slave in preop_ready keeps startup-held preop polling suppressed" do
+    from = {self(), make_ref()}
+
+    start_supervised!(%{
+      id: make_ref(),
+      start: {ConfigCaptureSlave, :start_link, [:sensor, self()]}
+    })
+
+    data = %EtherCAT.Master{
+      desired_runtime_target: :preop,
+      slave_configs: [
+        %SlaveConfig{
+          name: :sensor,
+          driver: EtherCAT.Driver.Default,
+          config: %{},
+          process_data: :none,
+          target_state: :preop,
+          health_poll_ms: 250
+        }
+      ]
+    }
+
+    assert {:keep_state, %EtherCAT.Master{} = updated, [{:reply, ^from, :ok}]} =
+             EtherCAT.Master.FSM.handle_event(
+               {:call, from},
+               {:configure_slave, :sensor, [health_poll_ms: 20]},
+               :preop_ready,
+               data
+             )
+
+    assert updated.slave_configs == [
+             %SlaveConfig{
+               name: :sensor,
+               driver: EtherCAT.Driver.Default,
+               config: %{},
+               process_data: :none,
+               target_state: :preop,
+               health_poll_ms: 20
+             }
+           ]
+
+    assert_receive {:configured,
+                    [
+                      driver: EtherCAT.Driver.Default,
+                      config: %{},
+                      process_data: :none,
+                      sync: nil,
+                      health_poll_ms: nil
+                    ]}
   end
 
   test "stop in discovering replies blocked await callers" do
