@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - PREOP-first mixed provisioning now restores runtime health polling for
   slaves intentionally left in `:preop`, and live PREOP reconfigure updates now
   re-arm or cancel the slave health poll timeout immediately instead of waiting
-  for a later state transition (`pending`).
+  for a later state transition (`d126047`).
 - PREOP-first provisioning now restores runtime slave health polling on
   target-state-only activation updates and keeps the master converging back to
   `:operational` after `Provisioning.activate/0` instead of silently staying on
