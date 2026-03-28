@@ -182,6 +182,33 @@ defmodule EtherCAT.SimulatorTest do
     assert port > 0
   end
 
+  test "status/0 infers backend identity from legacy transport-only starts and reports subscriptions as a list" do
+    device = SimSlave.from_driver(EK1100, name: :coupler)
+
+    assert {:ok, supervisor} =
+             EtherCAT.Simulator.Supervisor.start_link(
+               devices: [device],
+               udp: [ip: @loopback, port: 0]
+             )
+
+    on_exit(fn ->
+      _ = stop_supervisor(supervisor)
+    end)
+
+    assert :ok = Simulator.subscribe(:coupler, :all, self())
+
+    assert {:ok,
+            %EtherCAT.Simulator.Status{
+              lifecycle: :running,
+              backend: %EtherCAT.Backend.Udp{host: @loopback, port: port},
+              subscriptions: [%{slave: :coupler, signal: :all, pid: pid}]
+            }} = Simulator.status()
+
+    assert pid == self()
+    assert is_integer(port)
+    assert port > 0
+  end
+
   test "info/0 reports queued exchange faults" do
     assert {:ok, _pid} = Simulator.start_link(devices: [])
 

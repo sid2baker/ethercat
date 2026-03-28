@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- `EtherCAT.Scan.scan/1` now refuses to probe a backend already owned by the
+  local master, so standalone discovery cannot reassign station addresses on a
+  live runtime, and simulator status now infers backend identity from
+  transport-only runtime starts while keeping detached no-transport runs
+  explicit as `backend: nil` (`pending`).
 - Startup-held `:preop_ready` provisioning sessions now keep background health
   polling suppressed when `configure_slave/2` updates a slave that still
   remains targeted at `:preop`, instead of turning that configuration-only

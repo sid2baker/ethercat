@@ -198,6 +198,27 @@ defmodule EtherCAT.Backend do
   def transport(%Raw{}), do: :raw
   def transport(%Redundant{}), do: :redundant
 
+  @spec conflicts?(t(), t()) :: boolean()
+  def conflicts?(%Udp{host: host, port: port}, %Udp{host: host, port: port}), do: true
+
+  def conflicts?(%Raw{interface: interface}, %Raw{interface: interface}), do: true
+
+  def conflicts?(%Raw{interface: interface}, %Redundant{} = backend) do
+    interface in redundant_interfaces(backend)
+  end
+
+  def conflicts?(%Redundant{} = backend, %Raw{} = other) do
+    conflicts?(other, backend)
+  end
+
+  def conflicts?(%Redundant{} = left, %Redundant{} = right) do
+    left
+    |> redundant_interfaces()
+    |> Enum.any?(&(&1 in redundant_interfaces(right)))
+  end
+
+  def conflicts?(_left, _right), do: false
+
   defp normalize_redundant_struct(%Redundant{primary: %Raw{}, secondary: %Raw{}} = backend) do
     {:ok, backend}
   end
@@ -259,6 +280,13 @@ defmodule EtherCAT.Backend do
           {:error, {:invalid_backend, {key, :invalid_ip}}}
         end
     end
+  end
+
+  defp redundant_interfaces(%Redundant{
+         primary: %Raw{interface: primary},
+         secondary: %Raw{interface: secondary}
+       }) do
+    [primary, secondary]
   end
 
   defp fetch_port(opts, key, default) do

@@ -173,7 +173,8 @@ Main entry points:
 - `child_spec/1` — supervisor-friendly form of `start/1`
 - `start_link/1` — low-level in-memory simulator core only
 - `stop/0` — stop the singleton simulator runtime
-- `status/0` — stable machine-readable `%EtherCAT.Simulator.Status{}`
+- `status/0` — stable machine-readable `%EtherCAT.Simulator.Status{}`; `backend: nil`
+  means the simulator is running detached with no transport attached
 - `process_datagrams/1` — execute EtherCAT datagrams directly
 - `process_datagrams/2` — execute EtherCAT datagrams with simulator-local
   options such as raw ingress side

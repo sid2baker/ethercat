@@ -154,7 +154,8 @@ defmodule EtherCAT.Simulator do
   def status do
     case safe_call(:status, 5_000) do
       {:ok, %Status{} = status} ->
-        {:ok, status |> maybe_merge_udp_backend() |> maybe_merge_raw_backend()}
+        {:ok,
+         status |> maybe_infer_backend() |> maybe_merge_udp_backend() |> maybe_merge_raw_backend()}
 
       {:error, :not_found} ->
         {:ok, Status.stopped()}
@@ -310,6 +311,36 @@ defmodule EtherCAT.Simulator do
       {:error, _reason} -> info
     end
   end
+
+  defp maybe_infer_backend(%Status{backend: nil} = status) do
+    case {Udp.info(), Raw.info()} do
+      {{:ok, udp_info}, {:error, _reason}} ->
+        %{status | backend: %Backend.Udp{host: udp_info.ip, port: udp_info.port}}
+
+      {{:error, _reason}, {:ok, %{mode: :single, primary: %{interface: interface}}}} ->
+        %{status | backend: %Backend.Raw{interface: interface}}
+
+      {{:error, _reason},
+       {:ok,
+        %{
+          mode: :redundant,
+          primary: %{interface: primary},
+          secondary: %{interface: secondary}
+        }}} ->
+        %{
+          status
+          | backend: %Backend.Redundant{
+              primary: %Backend.Raw{interface: primary},
+              secondary: %Backend.Raw{interface: secondary}
+            }
+        }
+
+      _other ->
+        status
+    end
+  end
+
+  defp maybe_infer_backend(%Status{} = status), do: status
 
   defp maybe_merge_udp_backend(%Status{backend: %Backend.Udp{} = backend} = status) do
     case Udp.info() do

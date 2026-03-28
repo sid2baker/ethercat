@@ -1,12 +1,20 @@
 defmodule EtherCAT.Scan do
   @moduledoc """
-  One-shot backend scan that reports observed topology without starting the master runtime.
+  One-shot backend scan that reports observed topology without starting the
+  master runtime.
+
+  `scan/1` is a standalone discovery path. It will refuse to probe a backend
+  that is already owned by a live local master session, because scan assigns
+  station addresses as part of discovery and is therefore not safe to run
+  against an active runtime on the same backend.
   """
 
   alias EtherCAT.Backend
   alias EtherCAT.Bus
   alias EtherCAT.Bus.Transaction
   alias EtherCAT.DC.Snapshot, as: DCSnapshot
+  alias EtherCAT.Master
+  alias EtherCAT.Master.Status, as: MasterStatus
   alias EtherCAT.Scan.Result
   alias EtherCAT.Slave.ESC.{Registers, SII}
 
@@ -15,12 +23,33 @@ defmodule EtherCAT.Scan do
   @spec scan(Backend.input() | Backend.t()) :: {:ok, Result.t()} | {:error, term()}
   def scan(backend_spec) do
     with {:ok, backend} <- Backend.normalize(backend_spec),
+         :ok <- ensure_backend_available(backend),
          {:ok, bus} <- Bus.start_link(Backend.to_bus_opts(backend)) do
       try do
         do_scan(bus, backend)
       after
         :gen_statem.stop(bus)
       end
+    end
+  end
+
+  defp ensure_backend_available(backend) do
+    case Master.status() do
+      %MasterStatus{lifecycle: lifecycle} when lifecycle in [:stopped, :idle] ->
+        :ok
+
+      %MasterStatus{backend: active_backend} when is_struct(active_backend) ->
+        if Backend.conflicts?(backend, active_backend) do
+          {:error, {:backend_in_use, active_backend}}
+        else
+          :ok
+        end
+
+      %MasterStatus{} ->
+        {:error, :master_running}
+
+      {:error, reason} ->
+        {:error, {:scan_unavailable, reason}}
     end
   end
 

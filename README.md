@@ -220,7 +220,7 @@ dictionary automatically.
 ## Runtime Roles
 
 - `EtherCAT.Backend` describes the transport/backend the master or simulator uses.
-- `EtherCAT.Scan.scan/1` returns an observational `%EtherCAT.Scan.Result{}` without starting the master.
+- `EtherCAT.Scan.scan/1` returns an observational `%EtherCAT.Scan.Result{}` without starting the master, and refuses to probe a backend already owned by the running master.
 - `EtherCAT.Master.status/0` returns the current `%EtherCAT.Master.Status{}` runtime view.
 - `EtherCAT.Simulator.status/0` returns the current `%EtherCAT.Simulator.Status{}` runtime view.
 

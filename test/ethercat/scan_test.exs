@@ -9,9 +9,11 @@ defmodule EtherCAT.ScanTest do
   @simulator_ip {127, 0, 0, 2}
 
   setup do
+    _ = EtherCAT.stop()
     _ = Simulator.stop()
 
     on_exit(fn ->
+      _ = EtherCAT.stop()
       _ = Simulator.stop()
     end)
 
@@ -58,5 +60,32 @@ defmodule EtherCAT.ScanTest do
                al_state: :init
              }
            ] = result.discovered_slaves
+  end
+
+  test "scan/1 refuses to probe a backend already owned by the running master" do
+    endpoint = SimulatorRing.boot_preop_ready!(transport: :udp)
+    simulator_ip = endpoint.simulator_ip
+    master_ip = endpoint.master_ip
+    port = endpoint.port
+
+    assert %EtherCAT.Master.Status{lifecycle: :operational} = EtherCAT.Master.status()
+
+    assert {:error,
+            {:backend_in_use,
+             %EtherCAT.Backend.Udp{
+               host: ^simulator_ip,
+               bind_ip: ^master_ip,
+               port: ^port
+             }}} =
+             Scan.scan(
+               {:udp,
+                %{
+                  host: simulator_ip,
+                  bind_ip: master_ip,
+                  port: port
+                }}
+             )
+
+    assert %EtherCAT.Master.Status{lifecycle: :operational} = EtherCAT.Master.status()
   end
 end

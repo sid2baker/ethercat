@@ -1,6 +1,9 @@
 defmodule EtherCAT.Simulator.Status do
   @moduledoc """
   Stable machine-readable simulator runtime status.
+
+  `backend: nil` means the simulator runtime is detached and has no live
+  transport/backend attached.
   """
 
   alias EtherCAT.Backend
@@ -15,7 +18,7 @@ defmodule EtherCAT.Simulator.Status do
           injected_faults: map(),
           scheduled_faults: [map()],
           connections: [map()],
-          subscriptions: map()
+          subscriptions: [map()]
         }
 
   defstruct lifecycle: :stopped,
@@ -25,7 +28,7 @@ defmodule EtherCAT.Simulator.Status do
             injected_faults: %{},
             scheduled_faults: [],
             connections: [],
-            subscriptions: %{}
+            subscriptions: []
 
   @spec stopped() :: t()
   def stopped, do: %__MODULE__{}
