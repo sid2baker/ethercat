@@ -1,6 +1,7 @@
 defmodule EtherCAT.Simulator.Runtime.Snapshot do
   @moduledoc false
 
+  alias EtherCAT.Simulator.Status
   alias EtherCAT.Simulator.State
   alias EtherCAT.Simulator.Runtime.{Faults, Topology}
   alias EtherCAT.Simulator.Runtime.Slaves
@@ -30,6 +31,28 @@ defmodule EtherCAT.Simulator.Runtime.Snapshot do
     }
     |> Map.merge(faults_info)
     |> Map.update!(:topology, &Topology.info/1)
+  end
+
+  @spec status(simulator_state()) :: Status.t()
+  def status(%State{
+        backend: backend,
+        slaves: slaves,
+        faults: faults,
+        connections: connections,
+        subscriptions: subscriptions,
+        scheduled_faults: scheduled_faults,
+        topology: topology
+      }) do
+    %Status{
+      lifecycle: :running,
+      backend: backend,
+      topology: Topology.info(topology),
+      devices: Enum.map(slaves, &Device.info/1),
+      injected_faults: Faults.info(faults),
+      scheduled_faults: scheduled_fault_info(scheduled_faults),
+      connections: connections,
+      subscriptions: Subscriptions.info(subscriptions)
+    }
   end
 
   @spec device(simulator_state(), atom()) :: {:ok, map()} | {:error, :not_found}

@@ -11,6 +11,10 @@ defmodule EtherCAT.Master.Calls do
     {:keep_state_and_data, [{:reply, from, state}]}
   end
 
+  def handle_active(from, :status, state, data) do
+    {:keep_state_and_data, [{:reply, from, Status.from_runtime(state, data)}]}
+  end
+
   def handle_active(from, :last_failure, _state, data) do
     {:keep_state_and_data, [{:reply, from, data.last_failure}]}
   end

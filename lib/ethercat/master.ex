@@ -106,6 +106,7 @@ defmodule EtherCAT.Master do
   alias EtherCAT.Bus
   alias EtherCAT.DC
   alias EtherCAT.Master.FSM
+  alias EtherCAT.Master.Status
   alias EtherCAT.Utils
 
   @call_timeout_ms 5_000
@@ -120,6 +121,7 @@ defmodule EtherCAT.Master do
           dc_ref: reference() | nil,
           dc_ref_station: non_neg_integer() | nil,
           dc_stations: [non_neg_integer()],
+          backend: EtherCAT.Backend.t() | nil,
           domain_configs: [EtherCAT.Domain.Config.t()] | nil,
           slave_configs: [EtherCAT.Slave.Config.t()] | nil,
           dc_config: EtherCAT.DC.Config.t() | nil,
@@ -149,6 +151,7 @@ defmodule EtherCAT.Master do
     :dc_ref,
     :dc_ref_station,
     :dc_stations,
+    :backend,
     :domain_configs,
     :slave_configs,
     :dc_config,
@@ -248,6 +251,23 @@ defmodule EtherCAT.Master do
   """
   @spec state() :: atom() | {:error, :not_started | :timeout | {:server_exit, term()}}
   def state, do: safe_call(:state)
+
+  @doc """
+  Return the stable machine-readable master runtime status.
+  """
+  @spec status() :: Status.t() | {:error, :timeout | {:server_exit, term()}}
+  def status do
+    case Process.whereis(__MODULE__) do
+      nil ->
+        Status.stopped()
+
+      _pid ->
+        case safe_call(:status) do
+          {:error, :not_started} -> Status.stopped()
+          other -> other
+        end
+    end
+  end
 
   @doc """
   Apply or replace runtime configuration for one named slave.

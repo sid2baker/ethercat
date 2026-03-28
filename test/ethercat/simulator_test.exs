@@ -37,7 +37,7 @@ defmodule EtherCAT.SimulatorTest do
 
   test "stop/0 shuts down the supervised simulator runtime" do
     assert {:ok, _supervisor} =
-             Simulator.start(devices: [], udp: [ip: @loopback, port: 0])
+             Simulator.start(devices: [], backend: udp_backend(port: 0))
 
     assert {:ok, info} = Simulator.info()
     assert %{udp: %{port: port}} = info
@@ -59,7 +59,7 @@ defmodule EtherCAT.SimulatorTest do
   test "child_spec/1 uses the supervised runtime and honors udp opts" do
     assert {:ok, supervisor} =
              Supervisor.start_link(
-               [{Simulator, devices: [], udp: [ip: @loopback, port: 0]}],
+               [{Simulator, devices: [], backend: udp_backend(port: 0)}],
                strategy: :one_for_one
              )
 
@@ -91,7 +91,7 @@ defmodule EtherCAT.SimulatorTest do
   test "child_spec/1 uses the supervised runtime and honors raw opts" do
     assert {:ok, supervisor} =
              Supervisor.start_link(
-               [{Simulator, devices: [], raw: [interface: @raw_loopback_interface]}],
+               [{Simulator, devices: [], backend: raw_backend()}],
                strategy: :one_for_one
              )
 
@@ -116,13 +116,7 @@ defmodule EtherCAT.SimulatorTest do
     assert {:ok, supervisor} =
              Supervisor.start_link(
                [
-                 {Simulator,
-                  devices: [],
-                  raw: [
-                    primary: [interface: @raw_loopback_interface],
-                    secondary: [interface: @raw_loopback_interface]
-                  ],
-                  topology: :redundant}
+                 {Simulator, devices: [], backend: redundant_backend(), topology: :redundant}
                ],
                strategy: :one_for_one
              )
@@ -166,9 +160,24 @@ defmodule EtherCAT.SimulatorTest do
 
   test "setup cleanup can stop the supervised simulator runtime" do
     assert {:ok, _supervisor} =
-             Simulator.start(devices: [], udp: [ip: @loopback, port: 0])
+             Simulator.start(devices: [], backend: udp_backend(port: 0))
 
     assert {:ok, %{udp: %{port: port}}} = Simulator.info()
+    assert is_integer(port)
+    assert port > 0
+  end
+
+  test "status/0 reports stopped and running simulator roles explicitly" do
+    assert {:ok, %EtherCAT.Simulator.Status{lifecycle: :stopped}} = Simulator.status()
+
+    assert {:ok, _supervisor} = Simulator.start(devices: [], backend: udp_backend(port: 0))
+
+    assert {:ok,
+            %EtherCAT.Simulator.Status{
+              lifecycle: :running,
+              backend: %EtherCAT.Backend.Udp{host: @loopback, port: port}
+            }} = Simulator.status()
+
     assert is_integer(port)
     assert port > 0
   end
@@ -214,7 +223,7 @@ defmodule EtherCAT.SimulatorTest do
   test "raw transport exposes mode-aware info and delay-response faults" do
     assert {:ok, supervisor} =
              Supervisor.start_link(
-               [{Simulator, devices: [], raw: [interface: @raw_loopback_interface]}],
+               [{Simulator, devices: [], backend: raw_backend()}],
                strategy: :one_for_one
              )
 
@@ -268,8 +277,8 @@ defmodule EtherCAT.SimulatorTest do
                [
                  {Simulator,
                   devices: [],
-                  raw: [
-                    interface: @raw_loopback_interface,
+                  backend: raw_backend(),
+                  transport_opts: [
                     response_delay_ms: 30,
                     response_delay_from_ingress: :primary
                   ]}
@@ -328,7 +337,7 @@ defmodule EtherCAT.SimulatorTest do
              Supervisor.start_link(
                [
                  {Simulator,
-                  devices: [], raw: [interface: @raw_loopback_interface, name: custom_name]}
+                  devices: [], backend: raw_backend(), transport_opts: [name: custom_name]}
                ],
                strategy: :one_for_one
              )
@@ -537,7 +546,7 @@ defmodule EtherCAT.SimulatorTest do
 
     assert {:ok, supervisor} =
              Supervisor.start_link(
-               [{Simulator, devices: [device], raw: [interface: @raw_loopback_interface]}],
+               [{Simulator, devices: [device], backend: raw_backend()}],
                strategy: :one_for_one
              )
 
@@ -666,5 +675,25 @@ defmodule EtherCAT.SimulatorTest do
     end
   catch
     :exit, _reason -> :ok
+  end
+
+  defp udp_backend(opts) when is_list(opts) do
+    {:udp,
+     %{
+       host: @loopback,
+       port: Keyword.get(opts, :port, 0x88A4)
+     }}
+  end
+
+  defp raw_backend do
+    {:raw, %{interface: @raw_loopback_interface}}
+  end
+
+  defp redundant_backend do
+    {:redundant,
+     %{
+       primary: raw_backend(),
+       secondary: raw_backend()
+     }}
   end
 end

@@ -20,6 +20,8 @@ distributed clock layer.
 EtherCAT.Application
 │
 ├── EtherCAT                    (driver-backed runtime API)
+├── EtherCAT.Backend            (normalized backend description)
+├── EtherCAT.Scan               (one-shot observational topology scan)
 ├── EtherCAT.Provisioning       (advanced PREOP/configuration/SDO API)
 ├── EtherCAT.Diagnostics        (advanced inspection and runtime visibility API)
 ├── EtherCAT.Driver             (public driver behaviour for extension authors)
@@ -73,9 +75,16 @@ state transitions and subsystem event routing. Low-level mechanics live in helpe
 without mixing in all operational detail inline.
 
 `EtherCAT.Simulator` follows the same boundary rule on the test/runtime side:
-the public simulator process owns segment state, datagram execution, snapshots,
-and deterministic fault scheduling, while profile logic and device behavior live
-under `EtherCAT.Simulator.Slave.*`.
+the public simulator process owns segment state, datagram execution,
+`status/0`, and deterministic fault scheduling, while profile logic and device
+behavior live under `EtherCAT.Simulator.Slave.*`.
+
+The top-level runtime roles are now explicit:
+
+- `EtherCAT.Backend` describes how a runtime attaches to a transport boundary
+- `EtherCAT.Scan.scan/1` reports observed topology only
+- `EtherCAT.Master.status/0` reports controller/runtime state
+- `EtherCAT.Simulator.status/0` reports simulator/runtime state
 
 ---
 

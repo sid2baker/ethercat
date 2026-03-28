@@ -368,17 +368,15 @@ defmodule EtherCAT.CaptureTest do
     {:ok, _supervisor} =
       Simulator.start(
         devices: SimulatorRing.devices(:segmented),
-        udp: [ip: @simulator_ip, port: 0]
+        backend: {:udp, %{host: @simulator_ip, port: 0}}
       )
 
-    {:ok, %{udp: %{port: port}}} = Simulator.info()
+    assert {:ok, %EtherCAT.Simulator.Status{backend: %EtherCAT.Backend.Udp{port: port}}} =
+             Simulator.status()
 
     assert :ok =
              EtherCAT.start(
-               transport: :udp,
-               bind_ip: @master_ip,
-               host: @simulator_ip,
-               port: port,
+               backend: {:udp, %{host: @simulator_ip, bind_ip: @master_ip, port: port}},
                dc: nil,
                domains: [],
                slaves: [],

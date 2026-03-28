@@ -141,7 +141,7 @@ rtd_slave = Hardware.rtd(process_data: {:all, :rtd})
 
 :ok =
   EtherCAT.start(
-    interface: interface,
+    backend: {:raw, %{interface: interface}},
     domains: domain_configs,
     slaves:
       [

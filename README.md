@@ -63,12 +63,17 @@ Link monitoring is handled internally.
 ### Discover a ring
 
 ```elixir
-EtherCAT.start(interface: "eth0")
+{:ok, scan} = EtherCAT.Scan.scan({:raw, %{interface: "eth0"}})
+
+EtherCAT.start(backend: {:raw, %{interface: "eth0"}})
 
 :ok = EtherCAT.await_running()
 
 EtherCAT.state()
 #=> :preop_ready
+
+EtherCAT.Master.status()
+#=> %EtherCAT.Master.Status{backend: %EtherCAT.Backend.Raw{interface: "eth0"}, ...}
 
 EtherCAT.Diagnostics.slaves()
 #=> [
@@ -117,7 +122,7 @@ defmodule MyApp.EL1809 do
 end
 
 EtherCAT.start(
-  interface: "eth0",
+  backend: {:raw, %{interface: "eth0"}},
   domains: [%EtherCAT.Domain.Config{id: :io, cycle_time_us: 1_000}],
   slaves: [
     %EtherCAT.Slave.Config{name: :coupler},
@@ -175,7 +180,7 @@ For PREOP-first workflows, configure discovered slaves dynamically:
 
 ```elixir
 EtherCAT.start(
-  interface: "eth0",
+  backend: {:raw, %{interface: "eth0"}},
   domains: [%EtherCAT.Domain.Config{id: :main, cycle_time_us: 1_000}]
 )
 
@@ -211,6 +216,13 @@ This capture flow writes a data-only capture artifact, then preserves static
 structure: identity, mailbox layout, PDO shape, and any explicit SDO snapshots
 you request. It does not infer dynamic behavior or a complete object
 dictionary automatically.
+
+## Runtime Roles
+
+- `EtherCAT.Backend` describes the transport/backend the master or simulator uses.
+- `EtherCAT.Scan.scan/1` returns an observational `%EtherCAT.Scan.Result{}` without starting the master.
+- `EtherCAT.Master.status/0` returns the current `%EtherCAT.Master.Status{}` runtime view.
+- `EtherCAT.Simulator.status/0` returns the current `%EtherCAT.Simulator.Status{}` runtime view.
 
 ## Mental Model
 

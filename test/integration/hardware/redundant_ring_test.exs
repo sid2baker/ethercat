@@ -63,7 +63,7 @@ defmodule EtherCAT.Integration.Hardware.RedundantRingTest do
     end
 
     defp start_ring(profile) do
-      assert is_binary(Keyword.get(Hardware.start_opts(profile), :backup_interface))
+      assert {:redundant, _backend} = Keyword.fetch!(Hardware.start_opts(profile), :backend)
 
       EtherCAT.start(
         Hardware.start_opts(profile) ++

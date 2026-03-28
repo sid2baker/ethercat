@@ -6,9 +6,18 @@ defmodule EtherCAT.Simulator.State do
   alias EtherCAT.Simulator.Slave.Runtime.Device
 
   @enforce_keys [:slaves, :faults, :connections, :subscriptions, :scheduled_faults, :topology]
-  defstruct [:slaves, :faults, :connections, :subscriptions, :scheduled_faults, :topology]
+  defstruct [
+    :backend,
+    :slaves,
+    :faults,
+    :connections,
+    :subscriptions,
+    :scheduled_faults,
+    :topology
+  ]
 
   @type t :: %__MODULE__{
+          backend: EtherCAT.Backend.t() | nil,
           slaves: [Device.t()],
           faults: Faults.t(),
           connections: [Simulator.connection()],
@@ -17,9 +26,10 @@ defmodule EtherCAT.Simulator.State do
           topology: Topology.t()
         }
 
-  @spec new([Device.t()], Topology.t()) :: t()
-  def new(slaves, topology) when is_list(slaves) do
+  @spec new([Device.t()], Topology.t(), EtherCAT.Backend.t() | nil) :: t()
+  def new(slaves, topology, backend) when is_list(slaves) do
     %__MODULE__{
+      backend: backend,
       slaves: slaves,
       faults: Faults.new(),
       connections: [],

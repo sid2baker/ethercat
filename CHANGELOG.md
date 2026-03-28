@@ -29,6 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   master into `:recovering` (`473e224`).
 
 ### Changed
+- Master and simulator startup now attach through explicit `backend:` values,
+  `EtherCAT.Backend` normalizes UDP/raw/redundant transport descriptions, and
+  the runtime exposes first-class `%EtherCAT.Master.Status{}`,
+  `%EtherCAT.Simulator.Status{}`, and `%EtherCAT.Scan.Result{}` structures
+  instead of leaving callers to reconstruct runtime roles from fragmented
+  queries (`pending`).
 - The public runtime surface now names the managed instance consistently as a
   slave: `EtherCAT.slaves/0`, `snapshot.slaves`, `%EtherCAT.SlaveSnapshot{}`,
   and `%EtherCAT.Event{slave: ...}` replace the old mixed device/slave naming

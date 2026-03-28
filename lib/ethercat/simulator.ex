@@ -3,6 +3,7 @@ defmodule EtherCAT.Simulator do
 
   use GenServer
 
+  alias EtherCAT.Backend
   alias EtherCAT.Bus.Datagram
   alias EtherCAT.Simulator.Fault
   alias EtherCAT.Simulator.Runtime.FaultEngine
@@ -10,6 +11,7 @@ defmodule EtherCAT.Simulator do
   alias EtherCAT.Simulator.Runtime.Router
   alias EtherCAT.Simulator.Runtime.Slaves
   alias EtherCAT.Simulator.Runtime.Snapshot
+  alias EtherCAT.Simulator.Status
   alias EtherCAT.Simulator.Runtime.Topology
   alias EtherCAT.Simulator.Transport.{Raw, Udp}
   alias EtherCAT.Simulator.State
@@ -107,8 +109,12 @@ defmodule EtherCAT.Simulator do
     end
   end
 
-  @spec start_link(keyword()) :: GenServer.on_start()
-  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: @default_name)
+  @spec start_link(keyword()) :: GenServer.on_start() | {:error, term()}
+  def start_link(opts) do
+    with {:ok, normalized_opts} <- normalize_start_opts(opts) do
+      GenServer.start_link(__MODULE__, normalized_opts, name: @default_name)
+    end
+  end
 
   @spec stop() :: :ok
   def stop, do: stop_root()
@@ -141,6 +147,20 @@ defmodule EtherCAT.Simulator do
   def info do
     with {:ok, info} <- safe_call(:info, 5_000) do
       {:ok, info |> maybe_put_default_udp_info() |> maybe_put_default_raw_info()}
+    end
+  end
+
+  @spec status() :: {:ok, Status.t()} | {:error, :timeout | {:server_exit, term()}}
+  def status do
+    case safe_call(:status, 5_000) do
+      {:ok, %Status{} = status} ->
+        {:ok, status |> maybe_merge_udp_backend() |> maybe_merge_raw_backend()}
+
+      {:error, :not_found} ->
+        {:ok, Status.stopped()}
+
+      {:error, _} = err ->
+        err
     end
   end
 
@@ -213,6 +233,7 @@ defmodule EtherCAT.Simulator do
   @impl true
   def init(opts) do
     devices = Keyword.get(opts, :devices, [])
+    backend = Keyword.get(opts, :backend)
 
     topology =
       opts
@@ -225,7 +246,7 @@ defmodule EtherCAT.Simulator do
         |> Enum.with_index()
         |> Enum.map(fn {definition, position} -> Device.new(definition, position) end)
 
-      {:ok, State.new(slaves, topology)}
+      {:ok, State.new(slaves, topology, backend)}
     else
       {:error, :invalid_topology} ->
         {:stop, :invalid_topology}
@@ -234,22 +255,39 @@ defmodule EtherCAT.Simulator do
 
   defp normalize_start_opts(opts) do
     cond do
-      Keyword.has_key?(opts, :udp) ->
+      not is_list(opts) ->
+        {:error, {:invalid_options, :invalid_start_options}}
+
+      Keyword.get(opts, :normalized_backend) == true ->
         {:ok, opts}
 
-      Keyword.has_key?(opts, :raw) ->
-        {:ok, opts}
+      Keyword.has_key?(opts, :udp) or Keyword.has_key?(opts, :raw) ->
+        {:error, {:invalid_options, {:use_backend, [:udp, :raw]}}}
 
-      Keyword.has_key?(opts, :ip) or Keyword.has_key?(opts, :port) ->
-        {:error,
-         {:invalid_options, "use udp: [ip: ..., port: ...] when starting UDP simulator runtime"}}
-
-      Keyword.has_key?(opts, :interface) ->
-        {:error,
-         {:invalid_options, "use raw: [interface: ...] when starting raw simulator runtime"}}
+      Keyword.has_key?(opts, :ip) or Keyword.has_key?(opts, :port) or
+          Keyword.has_key?(opts, :interface) ->
+        {:error, {:invalid_options, {:use_backend, [:ip, :port, :interface]}}}
 
       true ->
-        {:ok, opts}
+        case Keyword.fetch(opts, :backend) do
+          {:ok, backend_spec} ->
+            with {:ok, backend} <- Backend.normalize(backend_spec) do
+              transport_opts = Keyword.get(opts, :transport_opts, [])
+
+              {:ok,
+               opts
+               |> Keyword.delete(:backend)
+               |> Keyword.delete(:transport_opts)
+               |> Keyword.merge(Backend.to_simulator_opts(backend, transport_opts))
+               |> Keyword.put(:backend, backend)
+               |> Keyword.put(:normalized_backend, true)}
+            else
+              {:error, reason} -> {:error, {:invalid_options, reason}}
+            end
+
+          :error ->
+            {:ok, opts}
+        end
     end
   end
 
@@ -273,6 +311,31 @@ defmodule EtherCAT.Simulator do
     end
   end
 
+  defp maybe_merge_udp_backend(%Status{backend: %Backend.Udp{} = backend} = status) do
+    case Udp.info() do
+      {:ok, udp_info} -> %{status | backend: Backend.merge_runtime(backend, udp_info)}
+      {:error, _reason} -> status
+    end
+  end
+
+  defp maybe_merge_udp_backend(%Status{} = status), do: status
+
+  defp maybe_merge_raw_backend(%Status{backend: %Backend.Raw{} = backend} = status) do
+    case Raw.info() do
+      {:ok, raw_info} -> %{status | backend: Backend.merge_runtime(backend, raw_info)}
+      {:error, _reason} -> status
+    end
+  end
+
+  defp maybe_merge_raw_backend(%Status{backend: %Backend.Redundant{} = backend} = status) do
+    case Raw.info() do
+      {:ok, raw_info} -> %{status | backend: Backend.merge_runtime(backend, raw_info)}
+      {:error, _reason} -> status
+    end
+  end
+
+  defp maybe_merge_raw_backend(%Status{} = status), do: status
+
   defp stop_named_process(name) do
     case Process.whereis(name) do
       nil ->
@@ -290,6 +353,11 @@ defmodule EtherCAT.Simulator do
   @impl true
   def handle_call(:info, _from, state) do
     {:reply, {:ok, Snapshot.simulator(state)}, state}
+  end
+
+  @impl true
+  def handle_call(:status, _from, state) do
+    {:reply, {:ok, Snapshot.status(state)}, state}
   end
 
   @impl true

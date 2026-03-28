@@ -66,7 +66,7 @@ Process.sleep(300)
 
 :ok =
   EtherCAT.start(
-    interface: interface,
+    backend: {:raw, %{interface: interface}},
     domains: [Hardware.main_domain(cycle_time_us: 4_000)],
     slaves: [
       Hardware.coupler(),

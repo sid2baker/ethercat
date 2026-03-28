@@ -69,7 +69,10 @@ defmodule EtherCAT.Integration.Hardware.RingTest do
     end
 
     defp start_ring(profile) do
-      assert Keyword.get(Hardware.start_opts(profile), :backup_interface) == nil
+      case {profile.id, Keyword.fetch!(Hardware.start_opts(profile), :backend)} do
+        {:raw, {:raw, _backend}} -> :ok
+        {:udp, {:udp, _backend}} -> :ok
+      end
 
       EtherCAT.start(
         Hardware.start_opts(profile) ++

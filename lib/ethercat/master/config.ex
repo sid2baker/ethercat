@@ -1,6 +1,7 @@
 defmodule EtherCAT.Master.Config do
   @moduledoc false
 
+  alias EtherCAT.Backend
   alias EtherCAT.DC.Config, as: DCConfig
   alias EtherCAT.Master.Config.Domain
   alias EtherCAT.Master.Config.DomainPlan
@@ -10,19 +11,9 @@ defmodule EtherCAT.Master.Config do
   @default_base_station 0x1000
   @default_frame_timeout_floor_ms 5
   @max_station_address 0xFFFF
-  @master_option_keys [
-    :slaves,
-    :domains,
-    :base_station,
-    :dc,
-    :dc_cycle_ns,
-    :frame_timeout_ms,
-    :scan_stable_ms,
-    :scan_poll_ms
-  ]
-
   @type t :: %__MODULE__{
           base_station: non_neg_integer(),
+          backend: Backend.t(),
           bus_opts: keyword(),
           dc_config: DCConfig.t() | nil,
           domain_config: [DomainPlan.t()],
@@ -34,6 +25,7 @@ defmodule EtherCAT.Master.Config do
         }
 
   defstruct base_station: @default_base_station,
+            backend: nil,
             bus_opts: [],
             dc_config: %DCConfig{},
             domain_config: [],
@@ -45,6 +37,7 @@ defmodule EtherCAT.Master.Config do
 
   @spec normalize_start_options(term()) :: {:ok, t()} | {:error, term()}
   def normalize_start_options(opts) when is_list(opts) do
+    backend_spec = Keyword.get(opts, :backend)
     slave_config = Keyword.get(opts, :slaves, [])
     domain_config = Keyword.get(opts, :domains, [])
     base_station = Keyword.get(opts, :base_station, @default_base_station)
@@ -54,9 +47,9 @@ defmodule EtherCAT.Master.Config do
     scan_stable_ms = Keyword.get(opts, :scan_stable_ms, 1_000)
     scan_poll_ms = Keyword.get(opts, :scan_poll_ms, 100)
 
-    with :ok <- validate_bus_source(opts),
-         :ok <- validate_redundant_transport(opts),
-         :ok <- reject_legacy_start_options(opts),
+    with :ok <- reject_legacy_start_options(opts),
+         :ok <- validate_bus_source(opts),
+         {:ok, backend} <- normalize_backend(backend_spec),
          :ok <- validate_base_station(base_station),
          {:ok, dc_config} <- normalize_dc_config(dc),
          :ok <- validate_frame_timeout_override_ms(frame_timeout_override_ms),
@@ -67,7 +60,8 @@ defmodule EtherCAT.Master.Config do
       {:ok,
        %__MODULE__{
          base_station: base_station,
-         bus_opts: build_bus_start_opts(opts, frame_timeout_override_ms),
+         backend: backend,
+         bus_opts: build_bus_start_opts(backend, frame_timeout_override_ms),
          dc_config: dc_config,
          domain_config: allocated_domains,
          slave_config: normalized_slaves,
@@ -124,23 +118,27 @@ defmodule EtherCAT.Master.Config do
   @spec domain_start_opts(DomainPlan.t()) :: keyword()
   def domain_start_opts(%DomainPlan{} = config), do: Domain.start_opts(config)
 
-  defp build_bus_start_opts(opts, frame_timeout_override_ms) do
-    opts
-    |> Keyword.drop(@master_option_keys)
+  defp build_bus_start_opts(backend, frame_timeout_override_ms) do
+    backend
+    |> Backend.to_bus_opts()
     |> Keyword.put_new(:name, EtherCAT.Bus)
     |> maybe_put_frame_timeout(frame_timeout_override_ms)
   end
 
   defp validate_bus_source(opts) do
-    cond do
-      udp_transport?(opts) ->
-        validate_udp_bus_source(opts)
+    if Keyword.has_key?(opts, :backend) do
+      :ok
+    else
+      {:error, {:invalid_start_options, :missing_backend}}
+    end
+  end
 
-      true ->
-        case Keyword.fetch(opts, :interface) do
-          {:ok, _interface} -> :ok
-          :error -> {:error, :missing_interface}
-        end
+  defp normalize_backend(nil), do: {:error, {:invalid_start_options, :missing_backend}}
+
+  defp normalize_backend(backend_spec) do
+    case Backend.normalize(backend_spec) do
+      {:ok, backend} -> {:ok, backend}
+      {:error, reason} -> {:error, {:invalid_start_options, reason}}
     end
   end
 
@@ -153,20 +151,20 @@ defmodule EtherCAT.Master.Config do
     do: {:error, {:invalid_start_options, :invalid_base_station}}
 
   defp reject_legacy_start_options(opts) do
-    if Keyword.has_key?(opts, :dc_cycle_ns) do
-      {:error, {:invalid_start_options, :legacy_dc_cycle_ns}}
-    else
-      :ok
-    end
-  end
+    legacy_backend_keys =
+      Enum.filter(
+        [:transport, :transport_mod, :interface, :host, :bind_ip, :backup_interface],
+        fn key ->
+          Keyword.has_key?(opts, key)
+        end
+      )
 
-  defp validate_redundant_transport(opts) do
     cond do
-      not Keyword.has_key?(opts, :backup_interface) ->
-        :ok
+      legacy_backend_keys != [] ->
+        {:error, {:invalid_start_options, {:use_backend, legacy_backend_keys}}}
 
-      udp_transport?(opts) ->
-        {:error, {:invalid_start_options, :redundant_requires_raw_transport}}
+      Keyword.has_key?(opts, :dc_cycle_ns) ->
+        {:error, {:invalid_start_options, :legacy_dc_cycle_ns}}
 
       true ->
         :ok
@@ -225,30 +223,4 @@ defmodule EtherCAT.Master.Config do
   end
 
   defp maybe_put_frame_timeout(opts, _timeout_ms), do: opts
-
-  defp validate_udp_bus_source(opts) do
-    cond do
-      Keyword.has_key?(opts, :interface) ->
-        :ok
-
-      Keyword.has_key?(opts, :host) ->
-        :ok
-
-      true ->
-        {:error, {:invalid_start_options, :missing_udp_host}}
-    end
-  end
-
-  defp udp_transport?(opts) do
-    case {Keyword.get(opts, :transport), Keyword.get(opts, :transport_mod)} do
-      {:udp, _} ->
-        true
-
-      {_, EtherCAT.Bus.Transport.UdpSocket} ->
-        true
-
-      _ ->
-        false
-    end
-  end
 end

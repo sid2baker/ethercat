@@ -283,7 +283,7 @@ start_bus = fn health_poll_ms_opt ->
 
   :ok =
     EtherCAT.start(
-      interface: interface,
+      backend: {:raw, %{interface: interface}},
       domains: domains,
       slaves:
         [

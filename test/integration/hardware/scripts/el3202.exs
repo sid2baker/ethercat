@@ -50,7 +50,7 @@ EtherCAT.stop()
 Process.sleep(300)
 
 EtherCAT.start(
-  interface: interface,
+  backend: {:raw, %{interface: interface}},
   domains: [Hardware.main_domain()],
   slaves: [
     Hardware.coupler(),

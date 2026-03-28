@@ -79,20 +79,19 @@ defmodule EtherCAT.IntegrationSupport.RedundantSimulatorRing do
       simulator_secondary_interface()
     ])
 
-    raw_opts = [
-      primary:
-        Keyword.merge(
-          [interface: simulator_primary_interface()],
-          Keyword.get(raw_endpoint_opts, :primary, [])
-        ),
-      secondary:
-        Keyword.merge(
-          [interface: simulator_secondary_interface()],
-          Keyword.get(raw_endpoint_opts, :secondary, [])
-        )
-    ]
+    {:ok, _supervisor} =
+      Simulator.start(
+        devices: devices,
+        backend:
+          {:redundant,
+           %{
+             primary: {:raw, %{interface: simulator_primary_interface()}},
+             secondary: {:raw, %{interface: simulator_secondary_interface()}}
+           }},
+        transport_opts: raw_endpoint_opts,
+        topology: topology
+      )
 
-    {:ok, _supervisor} = Simulator.start(devices: devices, raw: raw_opts, topology: topology)
     Process.sleep(20)
 
     Enum.each(connections, fn {source, target} ->
@@ -118,8 +117,12 @@ defmodule EtherCAT.IntegrationSupport.RedundantSimulatorRing do
     ring = Keyword.get(opts, :ring, :default)
 
     default_start_opts = [
-      interface: endpoint.master_primary_interface,
-      backup_interface: endpoint.master_secondary_interface,
+      backend:
+        {:redundant,
+         %{
+           primary: {:raw, %{interface: endpoint.master_primary_interface}},
+           secondary: {:raw, %{interface: endpoint.master_secondary_interface}}
+         }},
       dc: nil,
       scan_stable_ms: 20,
       scan_poll_ms: 10,

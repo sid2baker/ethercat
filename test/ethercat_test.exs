@@ -16,7 +16,7 @@ defmodule EtherCATTest do
   test "start rejects nil slave placeholders" do
     assert {:error, {:invalid_slave_config, {:nil_entry, 1}}} =
              EtherCAT.start(
-               interface: "eth0",
+               backend: raw_backend("eth0"),
                slaves: [%EtherCAT.Slave.Config{name: :coupler}, nil]
              )
 
@@ -26,7 +26,7 @@ defmodule EtherCATTest do
   test "start rejects invalid process_data requests" do
     assert {:error, {:invalid_slave_config, {:invalid_options, 0, :invalid_process_data}}} =
              EtherCAT.start(
-               interface: "eth0",
+               backend: raw_backend("eth0"),
                slaves: [
                  %EtherCAT.Slave.Config{
                    name: :sensor,
@@ -41,7 +41,7 @@ defmodule EtherCATTest do
   test "start rejects invalid slave target states" do
     assert {:error, {:invalid_slave_config, {:invalid_options, 0, :invalid_target_state}}} =
              EtherCAT.start(
-               interface: "eth0",
+               backend: raw_backend("eth0"),
                slaves: [
                  [name: :sensor, process_data: :none, target_state: :safeop]
                ]
@@ -108,6 +108,13 @@ defmodule EtherCATTest do
              match?({:ok, %EtherCAT.DC.Status{lock_state: :disabled}}, status)
   end
 
+  test "master status reports stopped or idle without an active session" do
+    status = EtherCAT.Master.status()
+
+    assert match?(%EtherCAT.Master.Status{lifecycle: :stopped}, status) or
+             match?(%EtherCAT.Master.Status{lifecycle: :idle}, status)
+  end
+
   test "await_running returns timeout instead of exiting when the master call itself times out" do
     _pid = ensure_master_running()
     :sys.suspend(EtherCAT.Master)
@@ -139,4 +146,6 @@ defmodule EtherCATTest do
 
     assert {:error, :timeout} = EtherCAT.state()
   end
+
+  defp raw_backend(interface), do: {:raw, %{interface: interface}}
 end

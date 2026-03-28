@@ -64,7 +64,7 @@ defmodule EtherCAT.IntegrationSupport.Hardware do
             label: "redundant raw",
             transport: :raw,
             redundant?: true,
-            start_opts: [interface: primary, backup_interface: secondary]
+            start_opts: [backend: redundant_backend(primary, secondary)]
           }
         ]
 
@@ -78,18 +78,21 @@ defmodule EtherCAT.IntegrationSupport.Hardware do
 
   @spec expected_bus_link(transport_profile()) :: binary()
   def expected_bus_link(%{id: :raw, start_opts: start_opts}) do
-    Keyword.fetch!(start_opts, :interface)
+    case Keyword.fetch!(start_opts, :backend) do
+      {:raw, %{interface: interface}} -> interface
+    end
   end
 
   def expected_bus_link(%{id: :udp, start_opts: start_opts}) do
-    host = Keyword.fetch!(start_opts, :host)
-    port = Keyword.fetch!(start_opts, :port)
+    {:udp, %{host: host, port: port}} = Keyword.fetch!(start_opts, :backend)
     "#{:inet.ntoa(host)}:#{port}"
   end
 
   def expected_bus_link(%{id: :raw_redundant, start_opts: start_opts}) do
-    primary = Keyword.fetch!(start_opts, :interface)
-    secondary = Keyword.fetch!(start_opts, :backup_interface)
+    {:redundant,
+     %{primary: {:raw, %{interface: primary}}, secondary: {:raw, %{interface: secondary}}}} =
+      Keyword.fetch!(start_opts, :backend)
+
     "#{primary}|#{secondary}"
   end
 
@@ -194,7 +197,7 @@ defmodule EtherCAT.IntegrationSupport.Hardware do
           label: "raw",
           transport: :raw,
           redundant?: false,
-          start_opts: [interface: interface]
+          start_opts: [backend: raw_backend(interface)]
         }
 
       {:error, _reason} ->
@@ -212,7 +215,7 @@ defmodule EtherCAT.IntegrationSupport.Hardware do
 
       host ->
         start_opts =
-          [transport: :udp, host: parse_ip!(host, "ETHERCAT_UDP_HOST"), port: udp_port()]
+          [backend: udp_backend(parse_ip!(host, "ETHERCAT_UDP_HOST"), udp_port())]
           |> maybe_put_udp_bind_ip()
 
         %{
@@ -228,7 +231,7 @@ defmodule EtherCAT.IntegrationSupport.Hardware do
   defp maybe_put_udp_bind_ip(start_opts) do
     case udp_bind_ip() do
       :none -> start_opts
-      {:ok, bind_ip} -> Keyword.put(start_opts, :bind_ip, bind_ip)
+      {:ok, bind_ip} -> Keyword.update!(start_opts, :backend, &put_udp_bind_ip(&1, bind_ip))
       {:error, reason} -> raise ArgumentError, reason
     end
   end
@@ -323,5 +326,17 @@ defmodule EtherCAT.IntegrationSupport.Hardware do
           {:error, "EtherCAT interface #{inspect(interface)} does not exist"}
         end
     end
+  end
+
+  defp raw_backend(interface), do: {:raw, %{interface: interface}}
+
+  defp redundant_backend(primary, secondary) do
+    {:redundant, %{primary: raw_backend(primary), secondary: raw_backend(secondary)}}
+  end
+
+  defp udp_backend(host, port), do: {:udp, %{host: host, port: port}}
+
+  defp put_udp_bind_ip({:udp, %{host: host, port: port}}, bind_ip) do
+    {:udp, %{host: host, bind_ip: bind_ip, port: port}}
   end
 end

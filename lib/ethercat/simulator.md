@@ -12,12 +12,13 @@ transport endpoints live in `EtherCAT.Simulator.Transport.Udp` and
 
 This is not a hardware EtherCAT slave controller or a kernel-bypass slave NIC.
 
-The simulator can now expose two host-side ingress styles:
+The simulator can now expose two host-side ingress styles through an explicit
+`backend:`:
 
-- `udp: [...]` through `EtherCAT.Simulator.Transport.Udp`
-- `raw: [interface: ...]` through `EtherCAT.Simulator.Transport.Raw`
-- `raw: [primary: [...], secondary: [...]]` for redundant raw ingress against
-  one shared slave segment
+- `backend: {:udp, %{host: ..., port: ...}}` through `EtherCAT.Simulator.Transport.Udp`
+- `backend: {:raw, %{interface: ...}}` through `EtherCAT.Simulator.Transport.Raw`
+- `backend: {:redundant, %{primary: {:raw, ...}, secondary: {:raw, ...}}}`
+  for redundant raw ingress against one shared slave segment
 
 In both cases, the slave segment is still userspace Elixir code that decodes
 EtherCAT datagrams, executes them against in-memory slaves, and encodes the
@@ -167,11 +168,12 @@ The rule is: preserve protocol behavior, not firmware structure.
 
 Main entry points:
 
-- `start/1` — start the supervised simulator runtime, including `udp: [...]`
-  or raw endpoint config when you want a real transport endpoint
+- `start/1` — start the supervised simulator runtime against an explicit
+  `backend: ...` when you want a real transport endpoint
 - `child_spec/1` — supervisor-friendly form of `start/1`
 - `start_link/1` — low-level in-memory simulator core only
 - `stop/0` — stop the singleton simulator runtime
+- `status/0` — stable machine-readable `%EtherCAT.Simulator.Status{}`
 - `process_datagrams/1` — execute EtherCAT datagrams directly
 - `process_datagrams/2` — execute EtherCAT datagrams with simulator-local
   options such as raw ingress side
@@ -179,7 +181,7 @@ Main entry points:
 - `set_topology/1` — switch the simulator between linear and redundant
   topology modes, including a deterministic single break
 - `info/0`, `device_snapshot/1`, `signal_snapshot/2`, `connections/0`
-  — stable runtime snapshots for tooling
+  — lower-level runtime snapshots for tooling and transport detail
 - `signals/1`, `signal_definitions/1`, `get_value/2`, `set_value/3`
 - `connect/2`, `disconnect/2` — cross-slave signal wiring
 - `subscribe/3` / `unsubscribe/3` — widget-friendly signal observation

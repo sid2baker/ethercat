@@ -141,7 +141,7 @@ defmodule Mix.Tasks.Ethercat.Capture do
       :raw ->
         case Keyword.get(opts, :interface) do
           interface when is_binary(interface) ->
-            Keyword.put(start_opts, :interface, interface)
+            Keyword.put(start_opts, :backend, {:raw, %{interface: interface}})
 
           _ ->
             Mix.raise("raw capture sessions require --interface")
@@ -149,11 +149,7 @@ defmodule Mix.Tasks.Ethercat.Capture do
 
       :udp ->
         start_opts
-        |> Keyword.put(:transport, :udp)
-        |> maybe_put(:host, Keyword.get(opts, :host))
-        |> maybe_put(:bind_ip, Keyword.get(opts, :bind_ip))
-        |> maybe_put(:port, Keyword.get(opts, :port))
-        |> maybe_put(:interface, Keyword.get(opts, :interface))
+        |> Keyword.put(:backend, udp_backend(opts))
     end
   end
 
@@ -161,7 +157,7 @@ defmodule Mix.Tasks.Ethercat.Capture do
     Mix.shell().info("")
     Mix.shell().info("EtherCAT capture session ready")
     Mix.shell().info("State: #{inspect(EtherCAT.state())}")
-    Mix.shell().info("Transport: #{transport_label(opts)}")
+    Mix.shell().info("Backend: #{backend_label(opts)}")
 
     case EtherCAT.Capture.list_slaves() do
       {:ok, slaves} ->
@@ -188,7 +184,7 @@ defmodule Mix.Tasks.Ethercat.Capture do
     EtherCAT.Capture.help()
   end
 
-  defp transport_label(opts) do
+  defp backend_label(opts) do
     case Keyword.fetch!(opts, :transport) do
       :raw ->
         Keyword.fetch!(opts, :interface)
@@ -205,6 +201,16 @@ defmodule Mix.Tasks.Ethercat.Capture do
     end
   end
 
-  defp maybe_put(opts, _key, nil), do: opts
-  defp maybe_put(opts, key, value), do: Keyword.put(opts, key, value)
+  defp udp_backend(opts) do
+    host = Keyword.get(opts, :host, {255, 255, 255, 255})
+    port = Keyword.get(opts, :port, 0x88A4)
+
+    case Keyword.get(opts, :bind_ip) do
+      nil ->
+        {:udp, %{host: host, port: port}}
+
+      bind_ip ->
+        {:udp, %{host: host, bind_ip: bind_ip, port: port}}
+    end
+  end
 end

@@ -33,7 +33,7 @@ Process.sleep(300)
 
 # Minimal start: no domains, no PDOs — we just need the link and PREOP
 EtherCAT.start(
-  interface: interface,
+  backend: {:raw, %{interface: interface}},
   dc: nil,
   domains: [],
   slaves: [

@@ -62,6 +62,7 @@ defmodule EtherCAT.Master.FSM do
       new_data = %{
         data
         | bus_ref: bus_ref,
+          backend: start_config.backend,
           dc_ref: nil,
           base_station: start_config.base_station,
           dc_stations: [],
@@ -102,6 +103,10 @@ defmodule EtherCAT.Master.FSM do
 
   def handle_event({:call, from}, :state, :idle, _data) do
     {:keep_state_and_data, [{:reply, from, :idle}]}
+  end
+
+  def handle_event({:call, from}, :status, :idle, data) do
+    {:keep_state_and_data, [{:reply, from, Status.from_runtime(:idle, data)}]}
   end
 
   def handle_event({:call, from}, :await_running, :idle, _data) do

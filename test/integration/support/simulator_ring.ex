@@ -157,10 +157,11 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
     simulator =
       case transport do
         {:udp, transport_opts} ->
-          udp_opts = udp_simulator_opts(transport_opts)
+          {:ok, _supervisor} =
+            Simulator.start(devices: devices, backend: udp_backend(transport_opts))
 
-          {:ok, _supervisor} = Simulator.start(devices: devices, udp: udp_opts)
-          {:ok, %{udp: %{port: port}}} = Simulator.info()
+          {:ok, %EtherCAT.Simulator.Status{backend: %EtherCAT.Backend.Udp{port: port}}} =
+            Simulator.status()
 
           %{
             transport: :udp,
@@ -181,8 +182,15 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
               Keyword.get(opts, :raw_endpoint_opts, [])
             )
 
-          {:ok, _supervisor} = Simulator.start(devices: devices, raw: raw_opts)
-          {:ok, %{raw: %{mode: :single, primary: %{interface: interface}}}} = Simulator.info()
+          {:ok, _supervisor} =
+            Simulator.start(
+              devices: devices,
+              backend: raw_backend(raw_simulator_interface(transport_opts)),
+              transport_opts: Keyword.drop(raw_opts, [:interface])
+            )
+
+          {:ok, %EtherCAT.Simulator.Status{backend: %EtherCAT.Backend.Raw{interface: interface}}} =
+            Simulator.status()
 
           %{
             transport: :raw,
@@ -369,10 +377,6 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
   defp normalize_transport(:udp), do: {:udp, []}
   defp normalize_transport(:raw), do: {:raw, []}
 
-  defp udp_simulator_opts(opts) do
-    [ip: udp_simulator_ip(opts), port: Keyword.get(opts, :simulator_port, 0)]
-  end
-
   defp udp_master_ip(opts), do: Keyword.get(opts, :master_ip, @master_ip)
   defp udp_simulator_ip(opts), do: Keyword.get(opts, :simulator_ip, @simulator_ip)
 
@@ -394,23 +398,22 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
 
   defp start_master_transport_opts(%{transport: :udp} = endpoint, _transport_override) do
     [
-      transport: :udp,
-      bind_ip: Map.fetch!(endpoint, :master_ip),
-      host: Map.fetch!(endpoint, :simulator_ip),
-      port: Map.fetch!(endpoint, :port)
+      backend:
+        udp_backend(
+          host: Map.fetch!(endpoint, :simulator_ip),
+          bind_ip: Map.fetch!(endpoint, :master_ip),
+          port: Map.fetch!(endpoint, :port)
+        )
     ]
   end
 
   defp start_master_transport_opts(%{transport: :raw} = endpoint, _transport_override) do
-    [interface: Map.fetch!(endpoint, :master_interface)]
+    [backend: raw_backend(Map.fetch!(endpoint, :master_interface))]
   end
 
   defp start_master_transport_opts(port, nil) when is_integer(port) do
     [
-      transport: :udp,
-      bind_ip: @master_ip,
-      host: @simulator_ip,
-      port: port
+      backend: udp_backend(host: @simulator_ip, bind_ip: @master_ip, port: port)
     ]
   end
 
@@ -443,4 +446,15 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
       :error -> simulator_opts
     end
   end
+
+  defp udp_backend(opts) when is_list(opts) do
+    {:udp,
+     %{
+       host: Keyword.get(opts, :host, udp_simulator_ip(opts)),
+       bind_ip: Keyword.get(opts, :bind_ip, Keyword.get(opts, :master_ip)),
+       port: Keyword.get(opts, :port, Keyword.get(opts, :simulator_port, 0))
+     }}
+  end
+
+  defp raw_backend(interface), do: {:raw, %{interface: interface}}
 end
