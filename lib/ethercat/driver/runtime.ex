@@ -2,6 +2,7 @@ defmodule EtherCAT.Driver.Runtime do
   @moduledoc false
 
   alias EtherCAT.Driver
+  alias EtherCAT.SlaveDescription
   alias EtherCAT.Slave.ProcessData.Signal
 
   @spec signal_model(module(), Driver.config()) ::
@@ -19,11 +20,7 @@ defmodule EtherCAT.Driver.Runtime do
 
   @spec describe(module(), Driver.config()) :: Driver.description()
   def describe(driver, config) when is_atom(driver) and is_map(config) do
-    if exported?(driver, :describe, 1) do
-      apply(driver, :describe, [config])
-    else
-      %{}
-    end
+    SlaveDescription.native_description(driver, config)
   end
 
   @spec device_type(module(), Driver.config()) :: atom() | nil
@@ -32,10 +29,19 @@ defmodule EtherCAT.Driver.Runtime do
     |> Map.get(:device_type)
   end
 
-  @spec capabilities(module(), Driver.config()) :: [atom()]
-  def capabilities(driver, config) when is_atom(driver) and is_map(config) do
+  @spec commands(module(), Driver.config()) :: [atom()]
+  def commands(driver, config) when is_atom(driver) and is_map(config) do
     describe(driver, config)
-    |> Map.get(:capabilities, [])
+    |> Map.get(:commands, [])
+  end
+
+  @spec capabilities(module(), Driver.config()) :: [atom()]
+  def capabilities(driver, config), do: commands(driver, config)
+
+  @spec endpoints(module(), Driver.config()) :: [EtherCAT.Endpoint.t()]
+  def endpoints(driver, config) when is_atom(driver) and is_map(config) do
+    describe(driver, config)
+    |> Map.get(:endpoints, [])
   end
 
   @spec init_state(module(), Driver.config()) :: {:ok, term()} | {:error, term()}

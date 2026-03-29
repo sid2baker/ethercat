@@ -2,9 +2,10 @@ defmodule EtherCAT.Event do
   @moduledoc """
   Public driver-backed slave event envelope emitted by `EtherCAT.subscribe/2`.
 
-  Events are scoped to one named slave. Signal-state changes still populate
-  `:signal` and `:value`, while command lifecycle and other driver/runtime
-  notices are carried as `kind: :event` with the original payload in `:data`.
+  Events are scoped to one named slave. Signal-state changes populate `:signal`
+  with the effective public endpoint name for that slave after aliases are
+  applied. Command lifecycle and other driver/runtime notices are carried as
+  `kind: :event` with the original payload in `:data`.
   """
 
   @type kind ::

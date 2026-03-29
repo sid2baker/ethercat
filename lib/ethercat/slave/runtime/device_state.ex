@@ -6,6 +6,7 @@ defmodule EtherCAT.Slave.Runtime.DeviceState do
   alias EtherCAT.Slave
   alias EtherCAT.Driver
   alias EtherCAT.Event
+  alias EtherCAT.SlaveDescription
   alias EtherCAT.SlaveSnapshot
   alias EtherCAT.Slave.Runtime.Outputs
   alias EtherCAT.Slave.Runtime.Signals
@@ -46,7 +47,7 @@ defmodule EtherCAT.Slave.Runtime.DeviceState do
 
   def refresh(%Slave{} = data, cycle, updated_at_us, changed_signal_names)
       when is_integer(cycle) and cycle >= 0 and is_integer(updated_at_us) do
-    previous_signals = signal_image(data)
+    previous_state = public_state(data)
 
     with {:ok, decoded_inputs} <- decoded_inputs(data),
          {:ok, next_state, next_driver_state, notices, faults} <-
@@ -70,7 +71,7 @@ defmodule EtherCAT.Slave.Runtime.DeviceState do
 
       signal_events =
         if initialized_projection?(data) do
-          signal_events(data.name, previous_signals, signal_image(updated), cycle, updated_at_us)
+          signal_events(data.name, previous_state, public_state(updated), cycle, updated_at_us)
         else
           []
         end
@@ -119,13 +120,22 @@ defmodule EtherCAT.Slave.Runtime.DeviceState do
 
   @spec snapshot(atom(), %Slave{}) :: slave_snapshot()
   def snapshot(al_state, %Slave{} = data) do
+    description =
+      effective_description(data,
+        al_state: al_state,
+        updated_at_us: data.device_updated_at_us,
+        faults: data.device_faults || []
+      )
+
     %SlaveSnapshot{
       name: data.name,
+      driver: data.driver,
       al_state: al_state,
       cycle: data.device_cycle,
-      device_type: Driver.Runtime.device_type(data.driver, data.config || %{}),
-      capabilities: Driver.Runtime.capabilities(data.driver, data.config || %{}),
-      state: signal_image(data),
+      device_type: description.device_type,
+      endpoints: description.endpoints,
+      commands: description.commands,
+      state: public_state(data, description),
       faults: data.device_faults || [],
       updated_at_us: data.device_updated_at_us,
       driver_error: data.driver_error
@@ -139,14 +149,19 @@ defmodule EtherCAT.Slave.Runtime.DeviceState do
     ts = System.monotonic_time(:microsecond)
     cycle = data.device_cycle
 
-    command = %{ref: ref, name: command_name, args: args}
-    previous_state = signal_image(data)
+    command = %{
+      ref: ref,
+      name: command_name,
+      args: resolve_command_args(data, command_name, args)
+    }
+
+    previous_state = public_state(data)
 
     case do_command(data, command, previous_state) do
       {:ok, next_data, notices} ->
         dispatch_events(
           next_data,
-          signal_events(data.name, previous_state, signal_image(next_data), cycle, ts) ++
+          signal_events(data.name, previous_state, public_state(next_data), cycle, ts) ++
             [Event.internal(data.name, {:command_accepted, ref}, cycle, ts)] ++
             notice_events(data.name, notices, cycle, ts)
         )
@@ -163,12 +178,12 @@ defmodule EtherCAT.Slave.Runtime.DeviceState do
     end
   end
 
-  defp do_command(data, command, state) do
+  defp do_command(data, command, _previous_public_state) do
     with {:ok, output_intents, next_driver_state, notices} <-
            Driver.Runtime.command(
              data.driver,
              command,
-             state,
+             signal_image(data),
              data.driver_state,
              data.config || %{}
            ),
@@ -183,6 +198,25 @@ defmodule EtherCAT.Slave.Runtime.DeviceState do
   @spec signal_image(%Slave{}) :: map()
   def signal_image(%Slave{} = data) do
     Map.merge(data.device_state || %{}, data.output_state || %{})
+  end
+
+  @spec public_state(%Slave{}, SlaveDescription.t() | nil) :: map()
+  def public_state(%Slave{} = data, description \\ nil) do
+    description = description || effective_description(data)
+    name_by_signal = SlaveDescription.effective_name_by_signal(description)
+
+    signal_image(data)
+    |> Enum.reduce(%{}, fn {signal_name, value}, acc ->
+      Map.put(acc, Map.get(name_by_signal, signal_name, signal_name), value)
+    end)
+  end
+
+  @spec public_signal_name(%Slave{}, atom()) :: atom()
+  def public_signal_name(%Slave{} = data, signal_name) when is_atom(signal_name) do
+    data
+    |> effective_description()
+    |> SlaveDescription.effective_name_by_signal()
+    |> Map.get(signal_name, signal_name)
   end
 
   @spec decoded_inputs(%Slave{}) :: {:ok, map()} | {:error, term()}
@@ -235,6 +269,43 @@ defmodule EtherCAT.Slave.Runtime.DeviceState do
         {:ok, data.driver.decode_signal(signal_name, data.config, raw)}
     end
   end
+
+  defp effective_description(data, opts \\ []) do
+    SlaveDescription.effective(
+      data.name,
+      data.driver,
+      data.config || %{},
+      data.endpoint_aliases || %{},
+      opts
+    )
+  end
+
+  defp resolve_command_args(data, :set_output, %{endpoint: endpoint_name} = args)
+       when is_atom(endpoint_name) do
+    description = effective_description(data)
+
+    case SlaveDescription.signal_for_name(description, endpoint_name) do
+      {:ok, signal_name} ->
+        args
+        |> Map.delete(:endpoint)
+        |> Map.put(:signal, signal_name)
+
+      :error ->
+        args
+    end
+  end
+
+  defp resolve_command_args(data, :set_output, %{signal: signal_name} = args)
+       when is_atom(signal_name) do
+    description = effective_description(data)
+
+    case SlaveDescription.signal_for_name(description, signal_name) do
+      {:ok, resolved_signal} -> Map.put(args, :signal, resolved_signal)
+      :error -> args
+    end
+  end
+
+  defp resolve_command_args(_data, _command_name, args), do: args
 
   defp apply_output_intents(data, intents) do
     updated_at_us = System.monotonic_time(:microsecond)

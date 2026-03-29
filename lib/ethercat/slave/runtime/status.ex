@@ -3,13 +3,13 @@ defmodule EtherCAT.Slave.Runtime.Status do
 
   alias EtherCAT.Domain
   alias EtherCAT.Slave
-  alias EtherCAT.Driver
   alias EtherCAT.Slave.Runtime.DeviceState
   alias EtherCAT.Slave.Runtime.Signals
 
   @spec info_snapshot(atom(), %Slave{}) :: map()
   def info_snapshot(state, data) do
     attachments = Signals.attachment_summaries(data.signal_registrations)
+    description = DeviceState.snapshot(state, data)
 
     %{
       name: data.name,
@@ -25,10 +25,12 @@ defmodule EtherCAT.Slave.Runtime.Status do
       pdo_health: pdo_health_snapshot(data.signal_registrations),
       signals: signal_summaries(data.signal_registrations),
       configuration_error: data.configuration_error,
-      device_type: Driver.Runtime.device_type(data.driver, data.config || %{}),
-      capabilities: Driver.Runtime.capabilities(data.driver, data.config || %{}),
+      device_type: description.device_type,
+      endpoints: description.endpoints,
+      commands: description.commands,
+      capabilities: description.commands,
       device_cycle: data.device_cycle,
-      device_state: DeviceState.signal_image(data),
+      device_state: description.state,
       device_faults: data.device_faults,
       driver_error: data.driver_error
     }

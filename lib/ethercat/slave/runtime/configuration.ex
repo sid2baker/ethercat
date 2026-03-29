@@ -57,6 +57,7 @@ defmodule EtherCAT.Slave.Runtime.Configuration do
   defp reconfigure_registered_preop(data, opts) do
     requested_driver = Keyword.get(opts, :driver, data.driver)
     requested_config = Keyword.get(opts, :config, data.config)
+    requested_aliases = Keyword.get(opts, :aliases, data.endpoint_aliases)
     requested_process_data = Keyword.get(opts, :process_data, data.process_data_request)
     requested_sync = Keyword.get(opts, :sync, data.sync_config)
     requested_health_poll_ms = Keyword.get(opts, :health_poll_ms, data.health_poll_ms)
@@ -65,7 +66,12 @@ defmodule EtherCAT.Slave.Runtime.Configuration do
          requested_process_data == data.process_data_request do
       case apply_sync_only_reconfigure(data, requested_sync) do
         {:ok, new_data} ->
-          {:ok, %{new_data | health_poll_ms: requested_health_poll_ms}}
+          {:ok,
+           %{
+             new_data
+             | endpoint_aliases: requested_aliases,
+               health_poll_ms: requested_health_poll_ms
+           }}
 
         {:error, reason} ->
           {:error, reason, data}
@@ -81,6 +87,7 @@ defmodule EtherCAT.Slave.Runtime.Configuration do
         data
         | driver: Keyword.get(opts, :driver, data.driver),
           config: Keyword.get(opts, :config, data.config),
+          endpoint_aliases: Keyword.get(opts, :aliases, data.endpoint_aliases),
           process_data_request: Keyword.get(opts, :process_data, data.process_data_request),
           sync_config: Keyword.get(opts, :sync, data.sync_config),
           health_poll_ms: Keyword.get(opts, :health_poll_ms, data.health_poll_ms)

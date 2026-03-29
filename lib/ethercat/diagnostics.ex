@@ -28,7 +28,7 @@ defmodule EtherCAT.Diagnostics do
           [atom()] | {:error, :not_found | :timeout | {:server_exit, term()}}
   def capabilities(slave_name) do
     with {:ok, description} <- EtherCAT.describe(slave_name) do
-      description.capabilities
+      description.commands
     end
   end
 

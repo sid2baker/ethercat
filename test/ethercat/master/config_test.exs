@@ -48,7 +48,9 @@ defmodule EtherCAT.Master.ConfigTest do
   test "normalize_runtime_slave_config merges updates into the current struct" do
     current = %SlaveConfig{
       name: :sensor,
+      driver: EtherCAT.Driver.EL2809,
       config: %{gain: 1},
+      aliases: %{ch1: :lamp},
       process_data: :none,
       health_poll_ms: 100
     }
@@ -56,15 +58,58 @@ defmodule EtherCAT.Master.ConfigTest do
     assert {:ok, %SlaveConfig{} = updated} =
              Config.normalize_runtime_slave_config(
                :sensor,
-               [config: %{gain: 2}, target_state: :preop, health_poll_ms: 250],
+               [
+                 config: %{gain: 2},
+                 aliases: %{ch1: :stack_lamp},
+                 target_state: :preop,
+                 health_poll_ms: 250
+               ],
                current
              )
 
     assert updated.name == :sensor
     assert updated.config == %{gain: 2}
+    assert updated.aliases == %{ch1: :stack_lamp}
     assert updated.process_data == :none
     assert updated.target_state == :preop
     assert updated.health_poll_ms == 250
+  end
+
+  test "normalize_start_options validates endpoint aliases per slave" do
+    assert {:ok, config} =
+             Config.normalize_start_options(
+               backend: raw_backend("eth0"),
+               slaves: [
+                 [name: :inputs, driver: EtherCAT.Driver.EL1809, aliases: %{ch1: :part_at_stop?}]
+               ]
+             )
+
+    assert [%SlaveConfig{aliases: %{ch1: :part_at_stop?}}] = config.slave_config
+
+    assert {:error,
+            {:invalid_slave_config, {:invalid_options, 0, {:unknown_endpoint_signal, :missing}}}} =
+             Config.normalize_start_options(
+               backend: raw_backend("eth0"),
+               slaves: [
+                 [
+                   name: :inputs,
+                   driver: EtherCAT.Driver.EL1809,
+                   aliases: %{missing: :part_at_stop?}
+                 ]
+               ]
+             )
+
+    assert {:error, {:invalid_slave_config, {:invalid_options, 0, :duplicate_endpoint_name}}} =
+             Config.normalize_start_options(
+               backend: raw_backend("eth0"),
+               slaves: [
+                 [
+                   name: :inputs,
+                   driver: EtherCAT.Driver.EL1809,
+                   aliases: %{ch1: :part_at_stop?, ch2: :part_at_stop?}
+                 ]
+               ]
+             )
   end
 
   test "local_config_changed? treats target-state updates as local preop reconfigure work" do

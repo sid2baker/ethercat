@@ -199,7 +199,7 @@ defmodule EtherCAT.Slave.Runtime.Calls do
     event =
       EtherCAT.Event.signal_changed(
         data.name,
-        signal_name,
+        DeviceState.public_signal_name(data, signal_name),
         value,
         data.device_cycle,
         updated_at_us

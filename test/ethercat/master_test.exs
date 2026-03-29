@@ -269,6 +269,7 @@ defmodule EtherCAT.MasterTest do
                     [
                       driver: EtherCAT.Driver.Default,
                       config: %{},
+                      aliases: %{},
                       process_data: :none,
                       sync: nil,
                       health_poll_ms: nil

@@ -1,6 +1,7 @@
 defmodule EtherCAT.Master.Config.Slave do
   @moduledoc false
 
+  alias EtherCAT.SlaveDescription
   alias EtherCAT.Slave.Config, as: SlaveConfig
   alias EtherCAT.Driver.Default, as: DefaultSlaveDriver
   alias EtherCAT.Slave.Sync.Config, as: SyncConfig
@@ -58,6 +59,7 @@ defmodule EtherCAT.Master.Config.Slave do
         name: slave_name,
         driver: normalize_driver(Keyword.get(opts, :driver, current_config.driver)),
         config: Keyword.get(opts, :config, current_config.config),
+        aliases: Keyword.get(opts, :aliases, current_config.aliases),
         process_data: Keyword.get(opts, :process_data, current_config.process_data),
         target_state: Keyword.get(opts, :target_state, current_config.target_state),
         sync: Keyword.get(opts, :sync, current_config.sync),
@@ -104,6 +106,7 @@ defmodule EtherCAT.Master.Config.Slave do
     current_config.target_state != updated_config.target_state or
       current_config.driver != updated_config.driver or
       current_config.config != updated_config.config or
+      current_config.aliases != updated_config.aliases or
       current_config.process_data != updated_config.process_data or
       current_config.sync != updated_config.sync or
       current_config.health_poll_ms != updated_config.health_poll_ms
@@ -127,6 +130,7 @@ defmodule EtherCAT.Master.Config.Slave do
         name: name,
         driver: normalize_driver(Keyword.get(opts, :driver)),
         config: Keyword.get(opts, :config, %{}),
+        aliases: Keyword.get(opts, :aliases, %{}),
         process_data: Keyword.get(opts, :process_data, :none),
         target_state: Keyword.get(opts, :target_state, :op),
         sync: Keyword.get(opts, :sync),
@@ -144,7 +148,8 @@ defmodule EtherCAT.Master.Config.Slave do
     with :ok <- validate_process_data_request(cfg.process_data),
          :ok <- validate_target_state(cfg.target_state),
          {:ok, sync_config} <- normalize_sync_config(cfg.sync),
-         :ok <- validate_health_poll_ms(cfg.health_poll_ms) do
+         :ok <- validate_health_poll_ms(cfg.health_poll_ms),
+         :ok <- validate_aliases(cfg.driver, cfg.config, cfg.aliases) do
       {:ok, %{cfg | driver: normalize_driver(cfg.driver), sync: sync_config}}
     end
   end
@@ -171,6 +176,15 @@ defmodule EtherCAT.Master.Config.Slave do
   defp validate_health_poll_ms(nil), do: :ok
   defp validate_health_poll_ms(ms) when is_integer(ms) and ms > 0, do: :ok
   defp validate_health_poll_ms(_ms), do: {:error, :invalid_health_poll_ms}
+
+  defp validate_aliases(driver, config, aliases) when is_map(aliases) do
+    case SlaveDescription.validate_aliases(normalize_driver(driver), config, aliases) do
+      :ok -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp validate_aliases(_driver, _config, _aliases), do: {:error, :invalid_aliases}
 
   defp normalize_sync_config(nil), do: {:ok, nil}
   defp normalize_sync_config(%SyncConfig{} = sync_config), do: validate_sync_config(sync_config)
@@ -272,6 +286,7 @@ defmodule EtherCAT.Master.Config.Slave do
         name: dynamic_name(pos),
         driver: DefaultSlaveDriver,
         config: %{},
+        aliases: %{},
         process_data: :none,
         target_state: :preop,
         sync: nil

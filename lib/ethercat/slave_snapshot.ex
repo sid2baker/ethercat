@@ -6,13 +6,17 @@ defmodule EtherCAT.SlaveSnapshot do
   aggregates these snapshots under one runtime-wide envelope.
   """
 
-  @enforce_keys [:name, :al_state, :capabilities, :state, :faults]
+  alias EtherCAT.Endpoint
+
+  @enforce_keys [:name, :driver, :al_state, :endpoints, :commands, :state, :faults]
   defstruct [
     :name,
+    :driver,
     :al_state,
     :cycle,
     :device_type,
-    capabilities: [],
+    endpoints: [],
+    commands: [],
     state: %{},
     faults: [],
     updated_at_us: nil,
@@ -21,10 +25,12 @@ defmodule EtherCAT.SlaveSnapshot do
 
   @type t :: %__MODULE__{
           name: atom(),
+          driver: module(),
           al_state: atom(),
           cycle: integer() | nil,
           device_type: atom() | nil,
-          capabilities: [atom()],
+          endpoints: [Endpoint.t()],
+          commands: [atom()],
           state: %{optional(atom()) => term()},
           faults: [term()],
           updated_at_us: integer() | nil,

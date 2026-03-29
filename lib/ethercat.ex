@@ -13,6 +13,7 @@ defmodule EtherCAT do
   - `snapshot/0`
   - `snapshot/1`
   - `describe/1`
+  - `inventory/0`
   - `subscribe/2`
   - `command/3`
 
@@ -29,11 +30,16 @@ defmodule EtherCAT do
   the latest observed domain cycle count across active domains when the
   snapshot is built; it is not a global atomic transaction boundary across all
   slaves.
+
+  Drivers describe native endpoints. Slave configs may alias those endpoint
+  names per slave. Public snapshots, descriptions, and `:signal_changed`
+  events use the effective alias-applied endpoint names.
   """
 
   alias EtherCAT.Domain
   alias EtherCAT.Event
   alias EtherCAT.Master
+  alias EtherCAT.SlaveDescription
   alias EtherCAT.SlaveSnapshot
   alias EtherCAT.Snapshot
   alias EtherCAT.Slave
@@ -65,12 +71,11 @@ defmodule EtherCAT do
   @typedoc "Configured runtime slave name."
   @type slave_name :: atom()
 
-  @typedoc "Compact public slave description."
-  @type description :: %{
-          required(:name) => slave_name(),
-          required(:device_type) => atom() | nil,
-          required(:capabilities) => [atom()]
-        }
+  @typedoc "Effective public slave description for one configured slave."
+  @type description :: SlaveDescription.t()
+
+  @typedoc "Effective descriptions for all configured slaves keyed by slave name."
+  @type inventory :: %{optional(slave_name()) => description()}
 
   @typedoc "Driver-backed aggregate snapshot for the current session."
   @type snapshot :: Snapshot.t()
@@ -154,18 +159,24 @@ defmodule EtherCAT do
   def snapshot(slave_name) when is_atom(slave_name), do: Slave.snapshot(slave_name)
 
   @doc """
-  Return a compact public description for one named slave.
+  Return the effective public description for one named slave.
   """
   @spec describe(slave_name()) ::
           {:ok, description()} | {:error, :not_found | :timeout | {:server_exit, term()}}
   def describe(slave_name) when is_atom(slave_name) do
     with {:ok, %SlaveSnapshot{} = snapshot} <- snapshot(slave_name) do
+      {:ok, SlaveDescription.from_snapshot(snapshot)}
+    end
+  end
+
+  @doc """
+  Return the effective public descriptions for all configured slaves.
+  """
+  @spec inventory() :: master_query_result(inventory())
+  def inventory do
+    with {:ok, %Snapshot{slaves: slaves}} <- snapshot() do
       {:ok,
-       %{
-         name: snapshot.name,
-         device_type: snapshot.device_type,
-         capabilities: snapshot.capabilities
-       }}
+       Map.new(slaves, fn {name, snapshot} -> {name, SlaveDescription.from_snapshot(snapshot)} end)}
     end
   end
 
@@ -192,6 +203,11 @@ defmodule EtherCAT do
 
   @doc """
   Execute one driver-backed command against a named slave.
+
+  For generic output writes, prefer
+  `EtherCAT.command(slave, :set_output, %{endpoint: endpoint_name, value: value})`.
+  The runtime resolves the effective public endpoint name back to the
+  driver's native backing signal before invoking the driver callback.
   """
   @spec command(slave_name(), atom(), map()) :: {:ok, reference()} | {:error, term()}
   def command(slave_name, command_name, args)

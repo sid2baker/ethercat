@@ -2,6 +2,7 @@ defmodule EtherCAT.Driver.EL1809 do
   @moduledoc "Beckhoff EL1809 16-channel digital input, 24 V DC."
 
   @behaviour EtherCAT.Driver
+  alias EtherCAT.Endpoint
 
   @vendor_id 0x0000_0002
   @product_code 0x0711_3052
@@ -50,7 +51,14 @@ defmodule EtherCAT.Driver.EL1809 do
   end
 
   @impl true
-  def describe(_config), do: %{device_type: :digital_input, capabilities: []}
+  def describe(_config) do
+    %{
+      device_type: :digital_input,
+      endpoints:
+        Enum.map(@channels, &%Endpoint{signal: &1, name: &1, direction: :input, type: :boolean}),
+      commands: []
+    }
+  end
 
   @impl true
   def project_state(decoded_inputs, prev_state, driver_state, _config) do

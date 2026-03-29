@@ -54,6 +54,7 @@ defmodule EtherCAT.Master.Preop do
         slave_name,
         driver: updated_config.driver,
         config: updated_config.config,
+        aliases: updated_config.aliases,
         process_data: updated_config.process_data,
         sync: updated_config.sync,
         health_poll_ms: runtime_health_poll_ms(data, updated_config)

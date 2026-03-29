@@ -105,7 +105,20 @@ defmodule MyApp.EL1809 do
   def decode_signal(_signal, _config, _), do: 0
 
   @impl true
-  def describe(_config), do: %{device_type: :digital_input, capabilities: [:read_input]}
+  def describe(_config) do
+    %{
+      device_type: :digital_input,
+      endpoints: [
+        %EtherCAT.Endpoint{
+          signal: :ch1,
+          name: :ch1,
+          direction: :input,
+          type: :boolean
+        }
+      ],
+      commands: []
+    }
+  end
 
   @impl true
   def init(_config), do: {:ok, %{}}
@@ -129,12 +142,14 @@ EtherCAT.start(
     %EtherCAT.Slave.Config{
       name: :inputs,
       driver: MyApp.EL1809,
+      aliases: %{ch1: :part_at_stop?},
       process_data: {:all, :io},
       target_state: :op
     },
     %EtherCAT.Slave.Config{
       name: :outputs,
       driver: MyApp.EL2809,
+      aliases: %{ch1: :run_lamp?},
       process_data: {:all, :io},
       target_state: :op
     }
@@ -144,13 +159,21 @@ EtherCAT.start(
 :ok = EtherCAT.await_operational()
 
 {:ok, input_snapshot} = EtherCAT.snapshot(:inputs)
-input_snapshot.state.ch1
+input_snapshot.state.part_at_stop?
 #=> false
+
+{:ok, input_description} = EtherCAT.describe(:inputs)
+input_description.endpoints
+#=> [%EtherCAT.Endpoint{signal: :ch1, name: :part_at_stop?, direction: :input, type: :boolean}]
+
+{:ok, inventory} = EtherCAT.inventory()
+Map.keys(inventory)
+#=> [:coupler, :inputs, :outputs]
 
 EtherCAT.subscribe(:inputs)
 #=> receive %EtherCAT.Event{
 #=>   kind: :signal_changed,
-#=>   signal: {:inputs, :ch1},
+#=>   signal: {:inputs, :part_at_stop?},
 #=>   slave: :inputs,
 #=>   value: true,
 #=>   cycle: 42,
@@ -158,20 +181,22 @@ EtherCAT.subscribe(:inputs)
 #=> }
 
 {:ok, ref} =
-  EtherCAT.command(:outputs, :set_output, %{signal: :ch1, value: true})
+  EtherCAT.command(:outputs, :set_output, %{endpoint: :run_lamp?, value: true})
 #=> later receive %EtherCAT.Event{kind: :event, data: {:command_completed, ^ref}, ...}
 ```
 
 Drivers still own the raw PDO mapping, but the public API is now slave-first:
-`slaves/0`, `snapshot/0`, `snapshot/1`, `describe/1`, `subscribe/2`, and
-`command/3`. If you need direct process-data access for diagnostics or
-low-level tooling, use `EtherCAT.Raw.read_input/2`,
+`slaves/0`, `snapshot/0`, `snapshot/1`, `describe/1`, `inventory/0`,
+`subscribe/2`, and `command/3`. Drivers expose native endpoints, slave config
+may alias them, and the public runtime surface uses those effective endpoint
+names. If you need direct process-data access for diagnostics or low-level
+tooling, use `EtherCAT.Raw.read_input/2`,
 `EtherCAT.Raw.write_output/3`, and `EtherCAT.Raw.subscribe/3`.
 
 The runtime owns the retained driver-backed slave state, including staged
 outputs, and derives normal `%EtherCAT.Event{kind: :signal_changed}` deltas by
-diffing that state. Drivers project slave state and may emit command lifecycle
-updates through the same top-level event stream.
+diffing that alias-applied public state image. Drivers project slave state and
+may emit command lifecycle updates through the same top-level event stream.
 
 `EtherCAT.subscribe(:all)` follows the runtime-wide slave event stream,
 including slaves that appear after the subscription is created.

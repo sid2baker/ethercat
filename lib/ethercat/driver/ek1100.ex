@@ -24,6 +24,9 @@ defmodule EtherCAT.Driver.EK1100 do
   def decode_signal(_signal, _config, _raw), do: nil
 
   @impl true
+  def describe(_config), do: %{device_type: :coupler, endpoints: [], commands: []}
+
+  @impl true
   def project_state(decoded_inputs, _prev_state, driver_state, _config) do
     {:ok, decoded_inputs, driver_state, [], []}
   end

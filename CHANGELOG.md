@@ -34,6 +34,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   master into `:recovering` (`473e224`).
 
 ### Changed
+- Driver descriptions are now endpoint-first: drivers expose native endpoint
+  metadata, slave configs can alias endpoint names per slave, `EtherCAT.describe/1`
+  returns the effective alias-applied slave description, `EtherCAT.inventory/0`
+  exposes the merged configured endpoint inventory, and public snapshot state
+  plus `:signal_changed` events now use effective endpoint names instead of raw
+  channel ids (`TBD`).
 - Master and simulator startup now attach through explicit `backend:` values,
   `EtherCAT.Backend` normalizes UDP/raw/redundant transport descriptions, and
   the runtime exposes first-class `%EtherCAT.Master.Status{}`,

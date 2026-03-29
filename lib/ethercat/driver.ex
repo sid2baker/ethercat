@@ -6,7 +6,7 @@ defmodule EtherCAT.Driver do
 
   - logical PDO layout
   - raw value encoding and decoding
-  - projected state
+  - native endpoint description plus projected state
   - specialist command planning
 
   The runtime derives normal `:signal_changed` events by diffing the retained
@@ -18,6 +18,10 @@ defmodule EtherCAT.Driver do
   - `EtherCAT.Driver.Provisioning` for mailbox startup/setup steps
   - `EtherCAT.Driver.Latch` for DC latch callbacks
   - `EtherCAT.Simulator.Adapter` for simulator-side companion definitions
+
+  `describe/1` should return the driver's native endpoint surface. Slave-local
+  aliases are applied later by `EtherCAT` when a configured slave is described
+  publicly.
 
   Drivers may also implement optional `identity/0` metadata for simulator
   hydration and generated capture scaffolds.
@@ -47,6 +51,8 @@ defmodule EtherCAT.Driver do
 
   @type description :: %{
           optional(:device_type) => atom(),
+          optional(:endpoints) => [EtherCAT.Endpoint.t() | map()],
+          optional(:commands) => [atom()],
           optional(:capabilities) => [atom()]
         }
 
