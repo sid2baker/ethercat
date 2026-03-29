@@ -43,7 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `EtherCAT.describe/1` and `EtherCAT.inventory/0` now come from the master's
   retained configured slave summaries instead of live snapshots, so interface
   description is separated from current endpoint values while `snapshot/0` and
-  `snapshot/1` remain the live state image (`TBD`).
+  `snapshot/1` remain the live state image (`ec6336a`).
 - Master and simulator startup now attach through explicit `backend:` values,
   `EtherCAT.Backend` normalizes UDP/raw/redundant transport descriptions, and
   the runtime exposes first-class `%EtherCAT.Master.Status{}`,
