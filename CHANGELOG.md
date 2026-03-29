@@ -39,7 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   returns the effective alias-applied slave description, `EtherCAT.inventory/0`
   exposes the merged configured endpoint inventory, and public snapshot state
   plus `:signal_changed` events now use effective endpoint names instead of raw
-  channel ids (`TBD`).
+  channel ids (`5a82418`).
 - Master and simulator startup now attach through explicit `backend:` values,
   `EtherCAT.Backend` normalizes UDP/raw/redundant transport descriptions, and
   the runtime exposes first-class `%EtherCAT.Master.Status{}`,
