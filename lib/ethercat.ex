@@ -34,6 +34,11 @@ defmodule EtherCAT do
   Drivers describe native endpoints. Slave configs may alias those endpoint
   names per slave. Public snapshots, descriptions, and `:signal_changed`
   events use the effective alias-applied endpoint names.
+
+  `describe/1` and `inventory/0` are built from the master's retained
+  configured slave summaries plus light runtime fields such as station, pid,
+  and tracked fault. Current endpoint values remain on `snapshot/0` and
+  `snapshot/1`.
   """
 
   alias EtherCAT.Domain
@@ -164,8 +169,9 @@ defmodule EtherCAT do
   @spec describe(slave_name()) ::
           {:ok, description()} | {:error, :not_found | :timeout | {:server_exit, term()}}
   def describe(slave_name) when is_atom(slave_name) do
-    with {:ok, %SlaveSnapshot{} = snapshot} <- snapshot(slave_name) do
-      {:ok, SlaveDescription.from_snapshot(snapshot)}
+    with {:ok, status} <- configured_status(),
+         {:ok, configured_slave} <- configured_slave(status, slave_name) do
+      {:ok, SlaveDescription.from_configured_slave(configured_slave)}
     end
   end
 
@@ -174,9 +180,11 @@ defmodule EtherCAT do
   """
   @spec inventory() :: master_query_result(inventory())
   def inventory do
-    with {:ok, %Snapshot{slaves: slaves}} <- snapshot() do
+    with {:ok, status} <- configured_status() do
       {:ok,
-       Map.new(slaves, fn {name, snapshot} -> {name, SlaveDescription.from_snapshot(snapshot)} end)}
+       Map.new(status.configured_slaves, fn configured_slave ->
+         {configured_slave.name, SlaveDescription.from_configured_slave(configured_slave)}
+       end)}
     end
   end
 
@@ -241,6 +249,26 @@ defmodule EtherCAT do
           {:halt, {:error, {:snapshot_failed, name, reason}}}
       end
     end)
+  end
+
+  defp configured_status do
+    case Master.status() do
+      %EtherCAT.Master.Status{lifecycle: lifecycle} when lifecycle in [:stopped, :idle] ->
+        {:error, :not_started}
+
+      %EtherCAT.Master.Status{} = status ->
+        {:ok, status}
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  defp configured_slave(%EtherCAT.Master.Status{configured_slaves: configured_slaves}, slave_name) do
+    case Enum.find(configured_slaves, &(&1.name == slave_name)) do
+      nil -> {:error, :not_found}
+      slave -> {:ok, slave}
+    end
   end
 
   defp snapshot_cycle do

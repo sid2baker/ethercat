@@ -189,8 +189,10 @@ Drivers still own the raw PDO mapping, but the public API is now slave-first:
 `slaves/0`, `snapshot/0`, `snapshot/1`, `describe/1`, `inventory/0`,
 `subscribe/2`, and `command/3`. Drivers expose native endpoints, slave config
 may alias them, and the public runtime surface uses those effective endpoint
-names. If you need direct process-data access for diagnostics or low-level
-tooling, use `EtherCAT.Raw.read_input/2`,
+names. `describe/1` and `inventory/0` are configuration-backed interface
+views; `snapshot/0` and `snapshot/1` remain the live value image. If you need
+direct process-data access for diagnostics or low-level tooling, use
+`EtherCAT.Raw.read_input/2`,
 `EtherCAT.Raw.write_output/3`, and `EtherCAT.Raw.subscribe/3`.
 
 The runtime owns the retained driver-backed slave state, including staged

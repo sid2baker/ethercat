@@ -118,6 +118,11 @@ defmodule EtherCATTest do
              match?(%EtherCAT.Master.Status{lifecycle: :idle}, status)
   end
 
+  test "describe and inventory report not_started without an active session" do
+    assert {:error, :not_started} = EtherCAT.describe(:sensor)
+    assert {:error, :not_started} = EtherCAT.inventory()
+  end
+
   test "await_running returns timeout instead of exiting when the master call itself times out" do
     _pid = ensure_master_running()
     :sys.suspend(EtherCAT.Master)

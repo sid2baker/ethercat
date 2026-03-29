@@ -40,6 +40,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exposes the merged configured endpoint inventory, and public snapshot state
   plus `:signal_changed` events now use effective endpoint names instead of raw
   channel ids (`5a82418`).
+- `EtherCAT.describe/1` and `EtherCAT.inventory/0` now come from the master's
+  retained configured slave summaries instead of live snapshots, so interface
+  description is separated from current endpoint values while `snapshot/0` and
+  `snapshot/1` remain the live state image (`TBD`).
 - Master and simulator startup now attach through explicit `backend:` values,
   `EtherCAT.Backend` normalizes UDP/raw/redundant transport descriptions, and
   the runtime exposes first-class `%EtherCAT.Master.Status{}`,

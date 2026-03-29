@@ -5,11 +5,17 @@ defmodule EtherCAT.SlaveDescription do
   Drivers describe native endpoints. `EtherCAT` applies slave-local aliases on
   top of that native surface so applications can bind against configured
   endpoint names while still seeing the backing raw signal for each endpoint.
+
+  This struct is intentionally configuration-backed. It carries the effective
+  interface plus light runtime summary fields such as station, pid, target
+  state, and tracked fault. Current endpoint values stay on
+  `EtherCAT.SlaveSnapshot`.
   """
 
   alias EtherCAT.Driver
   alias EtherCAT.Endpoint
   alias EtherCAT.Slave.ProcessData.Signal
+  alias EtherCAT.Master.Status
   alias EtherCAT.SlaveSnapshot
 
   @enforce_keys [:name, :driver, :endpoints]
@@ -17,22 +23,24 @@ defmodule EtherCAT.SlaveDescription do
     :name,
     :driver,
     :device_type,
-    :al_state,
+    :station,
+    :pid,
+    :target_state,
+    :fault,
     endpoints: [],
-    commands: [],
-    updated_at_us: nil,
-    faults: []
+    commands: []
   ]
 
   @type t :: %__MODULE__{
           name: atom(),
           driver: module(),
           device_type: atom() | nil,
-          al_state: atom() | nil,
+          station: non_neg_integer() | nil,
+          pid: pid() | nil,
+          target_state: :preop | :op | nil,
+          fault: term() | nil,
           endpoints: [Endpoint.t()],
-          commands: [atom()],
-          updated_at_us: integer() | nil,
-          faults: [term()]
+          commands: [atom()]
         }
 
   @type native_description :: %{
@@ -74,12 +82,33 @@ defmodule EtherCAT.SlaveDescription do
       name: name,
       driver: driver,
       device_type: native.device_type,
-      al_state: Keyword.get(opts, :al_state),
+      station: Keyword.get(opts, :station),
+      pid: Keyword.get(opts, :pid),
+      target_state: Keyword.get(opts, :target_state),
+      fault: Keyword.get(opts, :fault),
       endpoints: apply_aliases(native.endpoints, aliases),
-      commands: native.commands,
-      updated_at_us: Keyword.get(opts, :updated_at_us),
-      faults: Keyword.get(opts, :faults, [])
+      commands: native.commands
     }
+  end
+
+  @spec from_configured_slave(Status.configured_slave()) :: t()
+  def from_configured_slave(%{
+        name: name,
+        driver: driver,
+        config: config,
+        aliases: aliases,
+        station: station,
+        pid: pid,
+        target_state: target_state,
+        fault: fault
+      })
+      when is_atom(name) and is_atom(driver) and is_map(config) and is_map(aliases) do
+    effective(name, driver, config, aliases,
+      station: station,
+      pid: pid,
+      target_state: target_state,
+      fault: fault
+    )
   end
 
   @spec from_snapshot(SlaveSnapshot.t()) :: t()
@@ -88,11 +117,12 @@ defmodule EtherCAT.SlaveDescription do
       name: snapshot.name,
       driver: snapshot.driver,
       device_type: snapshot.device_type,
-      al_state: snapshot.al_state,
+      station: nil,
+      pid: nil,
+      target_state: nil,
+      fault: nil,
       endpoints: snapshot.endpoints,
-      commands: snapshot.commands,
-      updated_at_us: snapshot.updated_at_us,
-      faults: snapshot.faults
+      commands: snapshot.commands
     }
   end
 

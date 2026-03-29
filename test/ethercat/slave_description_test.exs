@@ -26,12 +26,16 @@ defmodule EtherCAT.SlaveDescriptionTest do
         EtherCAT.Driver.EL1809,
         %{},
         %{ch1: :part_at_stop?, ch2: :clamp_closed?},
-        al_state: :op
+        station: 0x1001,
+        target_state: :op,
+        fault: {:down, :link_lost}
       )
 
     assert description.name == :inputs
     assert description.driver == EtherCAT.Driver.EL1809
-    assert description.al_state == :op
+    assert description.station == 0x1001
+    assert description.target_state == :op
+    assert description.fault == {:down, :link_lost}
 
     assert {:ok, :ch1} = SlaveDescription.signal_for_name(description, :part_at_stop?)
     assert {:ok, :ch2} = SlaveDescription.signal_for_name(description, :clamp_closed?)
@@ -40,5 +44,30 @@ defmodule EtherCAT.SlaveDescriptionTest do
              description
              |> SlaveDescription.effective_name_by_signal()
              |> Map.take([:ch1, :ch2])
+  end
+
+  test "from_configured_slave builds descriptions from retained config plus runtime summary" do
+    description =
+      SlaveDescription.from_configured_slave(%{
+        name: :outputs,
+        station: 0x1002,
+        server: {:via, Registry, {EtherCAT.Registry, {:slave, :outputs}}},
+        pid: self(),
+        driver: EtherCAT.Driver.EL2809,
+        config: %{},
+        aliases: %{ch1: :lamp},
+        target_state: :op,
+        process_data: {:all, :io},
+        health_poll_ms: 250,
+        fault: nil
+      })
+
+    assert description.name == :outputs
+    assert description.station == 0x1002
+    assert description.pid == self()
+    assert description.target_state == :op
+    assert description.commands == []
+
+    assert {:ok, :ch1} = SlaveDescription.signal_for_name(description, :lamp)
   end
 end
