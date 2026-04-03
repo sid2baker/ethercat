@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - EtherCAT no longer autostarts as an OTP application; host applications now
   supervise `EtherCAT.Runtime` directly, while `EtherCAT.start/1` and
   `EtherCAT.stop/0` control the singleton session inside that host-owned
-  runtime (`912ecf6`).
+  runtime (`6bb51d3`).
 
 ### Fixed
 - `EtherCAT.Scan.scan/1` now refuses to probe a backend already owned by the
