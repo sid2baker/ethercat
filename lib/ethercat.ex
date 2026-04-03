@@ -25,6 +25,11 @@ defmodule EtherCAT do
   - `EtherCAT.Driver` for driver authors
   - `EtherCAT.Simulator` for testing and simulator workflows
 
+  Host applications must supervise `EtherCAT.Runtime` before calling the
+  public API in this module. `EtherCAT.start/1` and `stop/0` control the
+  singleton EtherCAT session inside that host-owned runtime; they do not boot
+  the supervision tree themselves.
+
   `snapshot/0` is a best-effort aggregate view. It assembles the latest retained
   slave snapshots across slave runtimes at query time. The root `:cycle` is
   the latest observed domain cycle count across active domains when the
@@ -94,6 +99,9 @@ defmodule EtherCAT do
   @doc """
   Start the master: open the interface, discover slaves, and begin
   self-driving configuration.
+
+  Requires `EtherCAT.Runtime` to already be running under the host
+  application's supervision tree.
   """
   @spec start(keyword()) :: :ok | {:error, term()}
   def start(opts \\ []), do: Master.start(opts)
@@ -196,7 +204,7 @@ defmodule EtherCAT do
 
   `subscribe(slave_name, pid)` subscribes only to one named slave's events.
 
-  Returns `{:error, :not_started}` if the application supervision tree is not
+  Returns `{:error, :not_started}` if the host-supervised runtime is not
   running.
 
   Event messages are emitted as `%EtherCAT.Event{}` structs.

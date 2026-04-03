@@ -24,6 +24,7 @@ defmodule Mix.Tasks.Ethercat.Capture do
   def run(args) do
     opts = parse_args!(args)
 
+    ensure_runtime_started!()
     ensure_session_available!()
 
     case EtherCAT.start(build_start_opts(opts)) do
@@ -41,6 +42,25 @@ defmodule Mix.Tasks.Ethercat.Capture do
       {:error, reason} ->
         _ = EtherCAT.stop()
         Mix.raise("capture session did not reach a usable PREOP state: #{inspect(reason)}")
+    end
+  end
+
+  defp ensure_runtime_started! do
+    case Process.whereis(EtherCAT.Master) do
+      pid when is_pid(pid) ->
+        :ok
+
+      nil ->
+        case EtherCAT.Runtime.start_link() do
+          {:ok, _pid} ->
+            :ok
+
+          {:error, {:already_started, _pid}} ->
+            :ok
+
+          {:error, reason} ->
+            Mix.raise("failed to start EtherCAT runtime: #{inspect(reason)}")
+        end
     end
   end
 

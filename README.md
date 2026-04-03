@@ -60,6 +60,19 @@ Link monitoring is handled internally.
 
 ## Quick Start
 
+### Supervise the runtime from your host app
+
+```elixir
+children = [
+  {EtherCAT.Runtime, []}
+]
+```
+
+EtherCAT is a library subsystem, not a standalone OTP application. The host
+application owns starting, stopping, and restarting `EtherCAT.Runtime`;
+`EtherCAT.start/1` only opens or tears down the singleton EtherCAT session
+inside that runtime.
+
 ### Discover a ring
 
 ```elixir
@@ -83,6 +96,9 @@ EtherCAT.Diagnostics.slaves()
 
 EtherCAT.stop()
 ```
+
+`EtherCAT.stop()` stops the current session and leaves `EtherCAT.Runtime`
+running under the host supervisor.
 
 If you start without explicit slave configs, EtherCAT still scans the ring, names each
 station, and brings every slave to `:preop`. That is the right entry point for

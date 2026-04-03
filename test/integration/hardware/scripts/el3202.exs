@@ -29,6 +29,8 @@
 
 alias EtherCAT.IntegrationSupport.Hardware
 
+EtherCAT.TestSupport.RuntimeHelper.ensure_started!()
+
 parse_channel = fn
   nil -> [:channel1, :channel2]
   "both" -> [:channel1, :channel2]

@@ -203,6 +203,8 @@ defmodule EtherCAT.TestHelper do
   end
 end
 
+EtherCAT.TestSupport.RuntimeHelper.ensure_started!()
+
 ExUnit.start(
   capture_log: true,
   formatters: [ExUnit.CLIFormatter, EtherCAT.TestProgressFormatter],

@@ -57,6 +57,8 @@
 
 alias EtherCAT.IntegrationSupport.Hardware
 
+EtherCAT.TestSupport.RuntimeHelper.ensure_started!()
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

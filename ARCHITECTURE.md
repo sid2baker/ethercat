@@ -17,36 +17,37 @@ distributed clock layer.
 ## Module Map
 
 ```
-EtherCAT.Application
-│
-├── EtherCAT                    (driver-backed runtime API)
-├── EtherCAT.Backend            (normalized backend description)
-├── EtherCAT.Scan               (one-shot observational topology scan)
-├── EtherCAT.Provisioning       (advanced PREOP/configuration/SDO API)
-├── EtherCAT.Diagnostics        (advanced inspection and runtime visibility API)
-├── EtherCAT.Driver             (public driver behaviour for extension authors)
-├── EtherCAT.Raw                 (advanced raw-process-data API)
-│
-├── EtherCAT.Master              (singleton gen_statem — bus lifecycle coordinator)
-│
-├── EtherCAT.SessionSupervisor   (dynamic supervisor for session-scoped runtime processes)
-│   ├── EtherCAT.Bus             (bus scheduler — all frame I/O goes here)
-│   │   ├── EtherCAT.Bus.Link.Single
-│   │   ├── EtherCAT.Bus.Link.Redundant
-│   │   ├── EtherCAT.Bus.Link.RedundantMerge
-│   │   └── EtherCAT.Bus.Transport.*      (raw/UDP transport boundary)
-│   ├── EtherCAT.DC              (gen_statem — DC maintenance + lock/status monitor)
-│   └── EtherCAT.Domain          (gen_statem per domain — cyclic LRW exchange)
-│
-├── EtherCAT.SlaveSupervisor     (dynamic supervisor — one_for_one slave runtime children)
-│   └── EtherCAT.Slave           (gen_statem per named slave — ESM lifecycle, checked PREOP setup, checked SAFEOP sync/latch setup)
-│       ├── EtherCAT.Slave.ESC.SII (EEPROM reader — stateless, called from Slave.init)
-│       ├── EtherCAT.Driver (behaviour contract for user drivers)
-│       ├── EtherCAT.Slave.Sync.Plan (pure sync/latch register planning)
-│       └── EtherCAT.Slave.ESC.Registers (ESC register address map — pure functions)
+Host application supervisor
+└── EtherCAT.Runtime
+    │
+    ├── EtherCAT                    (driver-backed runtime API)
+    ├── EtherCAT.Backend            (normalized backend description)
+    ├── EtherCAT.Scan               (one-shot observational topology scan)
+    ├── EtherCAT.Provisioning       (advanced PREOP/configuration/SDO API)
+    ├── EtherCAT.Diagnostics        (advanced inspection and runtime visibility API)
+    ├── EtherCAT.Driver             (public driver behaviour for extension authors)
+    ├── EtherCAT.Raw                (advanced raw-process-data API)
+    │
+    ├── EtherCAT.Master             (singleton gen_statem — bus lifecycle coordinator)
+    │
+    ├── EtherCAT.SessionSupervisor  (dynamic supervisor for session-scoped runtime processes)
+    │   ├── EtherCAT.Bus            (bus scheduler — all frame I/O goes here)
+    │   │   ├── EtherCAT.Bus.Link.Single
+    │   │   ├── EtherCAT.Bus.Link.Redundant
+    │   │   ├── EtherCAT.Bus.Link.RedundantMerge
+    │   │   └── EtherCAT.Bus.Transport.*      (raw/UDP transport boundary)
+    │   ├── EtherCAT.DC             (gen_statem — DC maintenance + lock/status monitor)
+    │   └── EtherCAT.Domain         (gen_statem per domain — cyclic LRW exchange)
+    │
+    ├── EtherCAT.SlaveSupervisor    (dynamic supervisor — one_for_one slave runtime children)
+    │   └── EtherCAT.Slave          (gen_statem per named slave — ESM lifecycle, checked PREOP setup, checked SAFEOP sync/latch setup)
+    │       ├── EtherCAT.Slave.ESC.SII (EEPROM reader — stateless, called from Slave.init)
+    │       ├── EtherCAT.Driver (behaviour contract for user drivers)
+    │       ├── EtherCAT.Slave.Sync.Plan (pure sync/latch register planning)
+    │       └── EtherCAT.Slave.ESC.Registers (ESC register address map — pure functions)
 ```
 
-Optional sibling runtime (started separately, not under `EtherCAT.Application`):
+Optional sibling runtime (started separately, not under `EtherCAT.Runtime`):
 
 ```
 EtherCAT.Simulator
@@ -73,6 +74,10 @@ state transitions and subsystem event routing. Low-level mechanics live in helpe
 (`EtherCAT.Master.*`, `EtherCAT.Slave.Runtime.*`, `EtherCAT.Domain.*`,
 `EtherCAT.DC.*`) so the FSM files can be checked against the EtherCAT model
 without mixing in all operational detail inline.
+
+`EtherCAT.Runtime` is the supported root boundary. Host applications own its
+lifecycle; `EtherCAT.start/1` and `stop/0` only control the singleton session
+running inside that supervisor.
 
 `EtherCAT.Simulator` follows the same boundary rule on the test/runtime side:
 the public simulator process owns segment state, datagram execution,

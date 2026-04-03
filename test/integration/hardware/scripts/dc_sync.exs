@@ -50,6 +50,8 @@
 
 alias EtherCAT.IntegrationSupport.Hardware
 
+EtherCAT.TestSupport.RuntimeHelper.ensure_started!()
+
 channel_name = fn
   n when is_integer(n) and n in 1..16 -> :"ch#{n}"
   n -> raise "channel must be 1..16, got: #{inspect(n)}"

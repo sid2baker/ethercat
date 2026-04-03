@@ -29,6 +29,8 @@ alias EtherCAT.Bus.Transaction
 alias EtherCAT.Slave.ESC.{Registers, SII}
 alias EtherCAT.IntegrationSupport.Hardware
 
+EtherCAT.TestSupport.RuntimeHelper.ensure_started!()
+
 {opts, _, _} = OptionParser.parse(System.argv(), switches: [interface: :string])
 interface = opts[:interface] || raise "pass --interface"
 

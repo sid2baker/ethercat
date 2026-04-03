@@ -62,6 +62,8 @@
 
 alias EtherCAT.IntegrationSupport.Hardware
 
+EtherCAT.TestSupport.RuntimeHelper.ensure_started!()
+
 defmodule MultiDomain.Telemetry do
   def handle(
         [:ethercat, :domain, :cycle, :done],
