@@ -1,10 +1,12 @@
 defmodule EtherCAT.IntegrationSupport.RedundantSimulatorRing do
   @moduledoc false
 
+  import ExUnit.CaptureLog
   alias EtherCAT.IntegrationSupport.{LinkToggle, RawSocketGuard, SimulatorRing}
   alias EtherCAT.Simulator
   alias EtherCAT.Simulator.Slave
   @raw_boot_attempts 3
+  @runtime_log_settle_ms 100
 
   @type endpoint() :: %{
           transport: :raw_redundant,
@@ -42,26 +44,34 @@ defmodule EtherCAT.IntegrationSupport.RedundantSimulatorRing do
 
   @spec disconnect_primary!() :: :ok
   def disconnect_primary! do
-    assert_ok!(Simulator.set_topology({:redundant, master_break: :primary}))
-    LinkToggle.set_down!(master_primary_interface())
+    capture_runtime_logs(fn ->
+      assert_ok!(Simulator.set_topology({:redundant, master_break: :primary}))
+      LinkToggle.set_down!(master_primary_interface())
+    end)
   end
 
   @spec reconnect_primary!() :: :ok
   def reconnect_primary! do
-    LinkToggle.set_up!(master_primary_interface())
-    assert_ok!(Simulator.set_topology(:redundant))
+    capture_runtime_logs(fn ->
+      LinkToggle.set_up!(master_primary_interface())
+      assert_ok!(Simulator.set_topology(:redundant))
+    end)
   end
 
   @spec disconnect_secondary!() :: :ok
   def disconnect_secondary! do
-    assert_ok!(Simulator.set_topology({:redundant, master_break: :secondary}))
-    LinkToggle.set_down!(master_secondary_interface())
+    capture_runtime_logs(fn ->
+      assert_ok!(Simulator.set_topology({:redundant, master_break: :secondary}))
+      LinkToggle.set_down!(master_secondary_interface())
+    end)
   end
 
   @spec reconnect_secondary!() :: :ok
   def reconnect_secondary! do
-    LinkToggle.set_up!(master_secondary_interface())
-    assert_ok!(Simulator.set_topology(:redundant))
+    capture_runtime_logs(fn ->
+      LinkToggle.set_up!(master_secondary_interface())
+      assert_ok!(Simulator.set_topology(:redundant))
+    end)
   end
 
   @spec start_simulator!(keyword()) :: endpoint()
@@ -145,12 +155,16 @@ defmodule EtherCAT.IntegrationSupport.RedundantSimulatorRing do
 
   @spec set_break_after!(pos_integer()) :: :ok
   def set_break_after!(break_after) do
-    assert_ok!(Simulator.set_topology({:redundant, break_after: break_after}))
+    capture_runtime_logs(fn ->
+      assert_ok!(Simulator.set_topology({:redundant, break_after: break_after}))
+    end)
   end
 
   @spec heal!() :: :ok
   def heal! do
-    assert_ok!(Simulator.set_topology(:redundant))
+    capture_runtime_logs(fn ->
+      assert_ok!(Simulator.set_topology(:redundant))
+    end)
   end
 
   defp assert_ok!(:ok), do: :ok
@@ -211,5 +225,16 @@ defmodule EtherCAT.IntegrationSupport.RedundantSimulatorRing do
     )
 
     boot_operational_with_retry(opts, attempts_left - 1)
+  end
+
+  defp capture_runtime_logs(fun) do
+    {result, _log} =
+      with_log(fn ->
+        result = fun.()
+        Process.sleep(@runtime_log_settle_ms)
+        result
+      end)
+
+    result
   end
 end
