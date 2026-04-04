@@ -44,7 +44,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   driver signal names only: slave-local endpoint aliasing is gone, endpoint
   metadata no longer carries a separate public `name`, and slave config
   normalization now rejects unknown options instead of silently carrying alias
-  data through the runtime (`a79e14c`).
+  data through the runtime; the public slave-description builder was also
+  renamed to match those configured canonical semantics (`a79e14c`,
+  `9a4395e`, `cd49dd2`).
 - `EtherCAT.describe/1` and `EtherCAT.inventory/0` now come from the master's
   retained configured slave summaries instead of live snapshots, so interface
   description is separated from current endpoint values while `snapshot/0` and
