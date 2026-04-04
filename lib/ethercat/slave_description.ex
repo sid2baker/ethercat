@@ -1,8 +1,8 @@
 defmodule EtherCAT.SlaveDescription do
   @moduledoc """
-  Public effective description for one configured slave.
+  Public description for one configured slave.
 
-  This struct is intentionally configuration-backed. It carries the effective
+  This struct is intentionally configuration-backed. It carries the
   interface plus light runtime summary fields such as station, pid, target
   state, and tracked fault. Current endpoint values stay on
   `EtherCAT.SlaveSnapshot`.

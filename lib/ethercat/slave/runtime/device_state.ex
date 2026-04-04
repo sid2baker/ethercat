@@ -145,36 +145,41 @@ defmodule EtherCAT.Slave.Runtime.DeviceState do
   @spec command(%Slave{}, atom(), map()) ::
           {:ok, reference(), %Slave{}} | {:error, term(), %Slave{}}
   def command(%Slave{} = data, command_name, args) when is_atom(command_name) and is_map(args) do
-    ref = make_ref()
-    ts = System.monotonic_time(:microsecond)
-    cycle = data.device_cycle
+    with :ok <- validate_command_args(command_name, args) do
+      ref = make_ref()
+      ts = System.monotonic_time(:microsecond)
+      cycle = data.device_cycle
 
-    command = %{
-      ref: ref,
-      name: command_name,
-      args: resolve_command_args(data, command_name, args)
-    }
+      command = %{
+        ref: ref,
+        name: command_name,
+        args: resolve_command_args(data, command_name, args)
+      }
 
-    previous_state = public_state(data)
+      previous_state = public_state(data)
 
-    case do_command(data, command, previous_state) do
-      {:ok, next_data, notices} ->
-        dispatch_events(
-          next_data,
-          signal_events(data.name, previous_state, public_state(next_data), cycle, ts) ++
-            [Event.internal(data.name, {:command_accepted, ref}, cycle, ts)] ++
-            notice_events(data.name, notices, cycle, ts)
-        )
+      case do_command(data, command, previous_state) do
+        {:ok, next_data, notices} ->
+          dispatch_events(
+            next_data,
+            signal_events(data.name, previous_state, public_state(next_data), cycle, ts) ++
+              [Event.internal(data.name, {:command_accepted, ref}, cycle, ts)] ++
+              notice_events(data.name, notices, cycle, ts)
+          )
 
-        {:ok, ref, next_data}
+          {:ok, ref, next_data}
 
-      {:error, reason, next_data} ->
-        dispatch_events(
-          next_data,
-          [Event.internal(data.name, {:command_failed, ref, reason}, cycle, ts)]
-        )
+        {:error, reason, next_data} ->
+          dispatch_events(
+            next_data,
+            [Event.internal(data.name, {:command_failed, ref, reason}, cycle, ts)]
+          )
 
-        {:error, reason, next_data}
+          {:error, reason, next_data}
+      end
+    else
+      {:error, reason} ->
+        {:error, reason, data}
     end
   end
 
@@ -263,6 +268,15 @@ defmodule EtherCAT.Slave.Runtime.DeviceState do
     )
   end
 
+  defp validate_command_args(:set_output, %{signal: signal_name, value: _value})
+       when is_atom(signal_name),
+       do: :ok
+
+  defp validate_command_args(:set_output, %{signal: signal_name})
+       when is_atom(signal_name),
+       do: {:error, :invalid_output_value}
+
+  defp validate_command_args(:set_output, _args), do: {:error, :invalid_output_signal}
   defp resolve_command_args(_data, _command_name, args), do: args
 
   defp apply_output_intents(data, intents) do

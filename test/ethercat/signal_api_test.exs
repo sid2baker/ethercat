@@ -234,6 +234,11 @@ defmodule EtherCAT.SlaveApiTest do
              DeviceState.snapshot(:op, data)
   end
 
+  test "set_output requires a canonical signal name", %{data: data} do
+    assert {:error, :invalid_output_signal, ^data} =
+             DeviceState.command(data, :set_output, %{value: true})
+  end
+
   test "subscribe(:all) follows slave events without enumerating current slaves", %{
     domain_id: domain_id,
     input_key: input_key,
