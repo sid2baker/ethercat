@@ -19,9 +19,7 @@ defmodule EtherCAT.Driver do
   - `EtherCAT.Driver.Latch` for DC latch callbacks
   - `EtherCAT.Simulator.Adapter` for simulator-side companion definitions
 
-  `describe/1` should return the driver's native endpoint surface. Slave-local
-  aliases are applied later by `EtherCAT` when a configured slave is described
-  publicly.
+  `describe/1` should return the driver's canonical endpoint surface.
 
   Drivers may also implement optional `identity/0` metadata for simulator
   hydration and generated capture scaffolds.

@@ -54,8 +54,7 @@ defmodule EtherCAT.Driver.EL1809 do
   def describe(_config) do
     %{
       device_type: :digital_input,
-      endpoints:
-        Enum.map(@channels, &%Endpoint{signal: &1, name: &1, direction: :input, type: :boolean}),
+      endpoints: Enum.map(@channels, &%Endpoint{signal: &1, direction: :input, type: :boolean}),
       commands: []
     }
   end

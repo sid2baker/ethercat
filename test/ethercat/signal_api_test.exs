@@ -24,8 +24,8 @@ defmodule EtherCAT.SlaveApiTest do
       %{
         device_type: :digital_io,
         endpoints: [
-          %Endpoint{signal: :coil, name: :coil, direction: :output, type: :boolean},
-          %Endpoint{signal: :ch1, name: :ch1, direction: :input, type: :boolean}
+          %Endpoint{signal: :coil, direction: :output, type: :boolean},
+          %Endpoint{signal: :ch1, direction: :input, type: :boolean}
         ],
         commands: []
       }
@@ -107,8 +107,7 @@ defmodule EtherCAT.SlaveApiTest do
         output_sm_images: %{{:sm, 2} => <<0>>},
         event_subscriptions: MapSet.new([self()]),
         subscriptions: %{},
-        subscriber_refs: %{},
-        endpoint_aliases: %{ch1: :part_at_stop?, coil: :lamp}
+        subscriber_refs: %{}
       }
       |> DeviceState.initialize()
 
@@ -141,15 +140,10 @@ defmodule EtherCAT.SlaveApiTest do
              updated_at_us: ^refreshed_at_us,
              faults: [],
              endpoints: [
-               %EtherCAT.Endpoint{signal: :coil, name: :lamp, direction: :output, type: :boolean},
-               %EtherCAT.Endpoint{
-                 signal: :ch1,
-                 name: :part_at_stop?,
-                 direction: :input,
-                 type: :boolean
-               }
+               %EtherCAT.Endpoint{signal: :coil, direction: :output, type: :boolean},
+               %EtherCAT.Endpoint{signal: :ch1, direction: :input, type: :boolean}
              ],
-             state: %{part_at_stop?: false}
+             state: %{ch1: false}
            } = DeviceState.snapshot(:op, data)
 
     refute_receive _
@@ -165,7 +159,7 @@ defmodule EtherCAT.SlaveApiTest do
 
     assert_receive %EtherCAT.Event{
       kind: :signal_changed,
-      signal: {:test_slave, :part_at_stop?},
+      signal: {:test_slave, :ch1},
       slave: :test_slave,
       value: true,
       cycle: ^next_cycle,
@@ -186,11 +180,11 @@ defmodule EtherCAT.SlaveApiTest do
     data = DeviceState.refresh(data, first_cycle, refreshed_at_us)
 
     assert {:ok, ref, data} =
-             DeviceState.command(data, :set_output, %{endpoint: :lamp, value: true})
+             DeviceState.command(data, :set_output, %{signal: :coil, value: true})
 
     assert_receive %EtherCAT.Event{
       kind: :signal_changed,
-      signal: {:test_slave, :lamp},
+      signal: {:test_slave, :coil},
       slave: :test_slave,
       value: true,
       cycle: ^first_cycle,
@@ -209,7 +203,7 @@ defmodule EtherCAT.SlaveApiTest do
 
     assert {:ok, <<1>>} = EtherCAT.Domain.read(domain_id, output_key)
 
-    assert %EtherCAT.SlaveSnapshot{state: %{part_at_stop?: false, lamp: true}} =
+    assert %EtherCAT.SlaveSnapshot{state: %{ch1: false, coil: true}} =
              DeviceState.snapshot(:op, data)
 
     next_cycle = 2
@@ -221,7 +215,7 @@ defmodule EtherCAT.SlaveApiTest do
 
     assert_receive %EtherCAT.Event{
       kind: :signal_changed,
-      signal: {:test_slave, :part_at_stop?},
+      signal: {:test_slave, :ch1},
       slave: :test_slave,
       value: true,
       cycle: ^next_cycle,
@@ -236,7 +230,7 @@ defmodule EtherCAT.SlaveApiTest do
       updated_at_us: ^changed_at_us
     }
 
-    assert %EtherCAT.SlaveSnapshot{state: %{part_at_stop?: true, lamp: true}} =
+    assert %EtherCAT.SlaveSnapshot{state: %{ch1: true, coil: true}} =
              DeviceState.snapshot(:op, data)
   end
 
@@ -263,7 +257,7 @@ defmodule EtherCAT.SlaveApiTest do
 
     assert_receive %EtherCAT.Event{
       kind: :signal_changed,
-      signal: {:test_slave, :part_at_stop?},
+      signal: {:test_slave, :ch1},
       slave: :test_slave,
       value: true,
       cycle: 7,
@@ -293,7 +287,7 @@ defmodule EtherCAT.SlaveApiTest do
 
     assert_receive %EtherCAT.Event{
       kind: :signal_changed,
-      signal: {:test_slave, :part_at_stop?},
+      signal: {:test_slave, :ch1},
       slave: :test_slave,
       value: true,
       cycle: 9,

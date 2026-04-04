@@ -7,9 +7,6 @@ defmodule EtherCAT.Slave.Config do
     - `:driver` — module implementing `EtherCAT.Driver`,
       defaults to the built-in default driver
     - `:config` — driver-specific configuration map, default `%{}`
-    - `:aliases` — optional `%{native_signal => effective_endpoint_name}` map
-      that renames driver-native endpoints for this configured slave without
-      changing the driver module itself
     - `:process_data` — one of:
       - `:none` — do not auto-register process data
       - `{:all, domain_id}` — register all signal names from the driver's
@@ -30,12 +27,10 @@ defmodule EtherCAT.Slave.Config do
 
   @type process_data_request :: :none | {:all, atom()} | [{atom(), atom()}]
   @type target_state :: :preop | :op
-  @type aliases :: %{optional(atom()) => atom()}
   @type t :: %__MODULE__{
           name: atom(),
           driver: module(),
           config: map(),
-          aliases: aliases(),
           process_data: process_data_request(),
           target_state: target_state(),
           sync: EtherCAT.Slave.Sync.Config.t() | nil,
@@ -49,7 +44,6 @@ defmodule EtherCAT.Slave.Config do
   defstruct name: nil,
             driver: EtherCAT.Driver.Default,
             config: %{},
-            aliases: %{},
             process_data: :none,
             target_state: :op,
             sync: nil,

@@ -201,23 +201,7 @@ defmodule EtherCAT.Slave.Runtime.DeviceState do
   end
 
   @spec public_state(%Slave{}, SlaveDescription.t() | nil) :: map()
-  def public_state(%Slave{} = data, description \\ nil) do
-    description = description || effective_description(data)
-    name_by_signal = SlaveDescription.effective_name_by_signal(description)
-
-    signal_image(data)
-    |> Enum.reduce(%{}, fn {signal_name, value}, acc ->
-      Map.put(acc, Map.get(name_by_signal, signal_name, signal_name), value)
-    end)
-  end
-
-  @spec public_signal_name(%Slave{}, atom()) :: atom()
-  def public_signal_name(%Slave{} = data, signal_name) when is_atom(signal_name) do
-    data
-    |> effective_description()
-    |> SlaveDescription.effective_name_by_signal()
-    |> Map.get(signal_name, signal_name)
-  end
+  def public_state(%Slave{} = data, _description \\ nil), do: signal_image(data)
 
   @spec decoded_inputs(%Slave{}) :: {:ok, map()} | {:error, term()}
   def decoded_inputs(%Slave{signal_registrations: registrations} = data)
@@ -270,39 +254,13 @@ defmodule EtherCAT.Slave.Runtime.DeviceState do
     end
   end
 
-  defp effective_description(data, opts \\ []) do
+  defp effective_description(data, opts) do
     SlaveDescription.effective(
       data.name,
       data.driver,
       data.config || %{},
-      data.endpoint_aliases || %{},
       opts
     )
-  end
-
-  defp resolve_command_args(data, :set_output, %{endpoint: endpoint_name} = args)
-       when is_atom(endpoint_name) do
-    description = effective_description(data)
-
-    case SlaveDescription.signal_for_name(description, endpoint_name) do
-      {:ok, signal_name} ->
-        args
-        |> Map.delete(:endpoint)
-        |> Map.put(:signal, signal_name)
-
-      :error ->
-        args
-    end
-  end
-
-  defp resolve_command_args(data, :set_output, %{signal: signal_name} = args)
-       when is_atom(signal_name) do
-    description = effective_description(data)
-
-    case SlaveDescription.signal_for_name(description, signal_name) do
-      {:ok, resolved_signal} -> Map.put(args, :signal, resolved_signal)
-      :error -> args
-    end
   end
 
   defp resolve_command_args(_data, _command_name, args), do: args

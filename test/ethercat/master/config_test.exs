@@ -50,7 +50,6 @@ defmodule EtherCAT.Master.ConfigTest do
       name: :sensor,
       driver: EtherCAT.Driver.EL2809,
       config: %{gain: 1},
-      aliases: %{ch1: :lamp},
       process_data: :none,
       health_poll_ms: 100
     }
@@ -60,7 +59,6 @@ defmodule EtherCAT.Master.ConfigTest do
                :sensor,
                [
                  config: %{gain: 2},
-                 aliases: %{ch1: :stack_lamp},
                  target_state: :preop,
                  health_poll_ms: 250
                ],
@@ -69,14 +67,13 @@ defmodule EtherCAT.Master.ConfigTest do
 
     assert updated.name == :sensor
     assert updated.config == %{gain: 2}
-    assert updated.aliases == %{ch1: :stack_lamp}
     assert updated.process_data == :none
     assert updated.target_state == :preop
     assert updated.health_poll_ms == 250
   end
 
-  test "normalize_start_options validates endpoint aliases per slave" do
-    assert {:ok, config} =
+  test "normalize_start_options rejects unknown slave options" do
+    assert {:error, {:invalid_slave_config, {:invalid_options, 0, {:unknown_option, :aliases}}}} =
              Config.normalize_start_options(
                backend: raw_backend("eth0"),
                slaves: [
@@ -84,31 +81,13 @@ defmodule EtherCAT.Master.ConfigTest do
                ]
              )
 
-    assert [%SlaveConfig{aliases: %{ch1: :part_at_stop?}}] = config.slave_config
+    current = %SlaveConfig{name: :inputs, driver: EtherCAT.Driver.EL1809}
 
-    assert {:error,
-            {:invalid_slave_config, {:invalid_options, 0, {:unknown_endpoint_signal, :missing}}}} =
-             Config.normalize_start_options(
-               backend: raw_backend("eth0"),
-               slaves: [
-                 [
-                   name: :inputs,
-                   driver: EtherCAT.Driver.EL1809,
-                   aliases: %{missing: :part_at_stop?}
-                 ]
-               ]
-             )
-
-    assert {:error, {:invalid_slave_config, {:invalid_options, 0, :duplicate_endpoint_name}}} =
-             Config.normalize_start_options(
-               backend: raw_backend("eth0"),
-               slaves: [
-                 [
-                   name: :inputs,
-                   driver: EtherCAT.Driver.EL1809,
-                   aliases: %{ch1: :part_at_stop?, ch2: :part_at_stop?}
-                 ]
-               ]
+    assert {:error, {:unknown_option, :aliases}} =
+             Config.normalize_runtime_slave_config(
+               :inputs,
+               [aliases: %{ch1: :part_at_stop?}],
+               current
              )
   end
 

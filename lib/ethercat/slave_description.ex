@@ -2,10 +2,6 @@ defmodule EtherCAT.SlaveDescription do
   @moduledoc """
   Public effective description for one configured slave.
 
-  Drivers describe native endpoints. `EtherCAT` applies slave-local aliases on
-  top of that native surface so applications can bind against configured
-  endpoint names while still seeing the backing raw signal for each endpoint.
-
   This struct is intentionally configuration-backed. It carries the effective
   interface plus light runtime summary fields such as station, pid, target
   state, and tracked fault. Current endpoint values stay on
@@ -71,11 +67,9 @@ defmodule EtherCAT.SlaveDescription do
     }
   end
 
-  @spec effective(atom(), module(), Driver.config(), %{optional(atom()) => atom()}, keyword()) ::
-          t()
-  def effective(name, driver, config, aliases, opts \\ [])
-      when is_atom(name) and is_atom(driver) and is_map(config) and is_map(aliases) and
-             is_list(opts) do
+  @spec effective(atom(), module(), Driver.config(), keyword()) :: t()
+  def effective(name, driver, config, opts \\ [])
+      when is_atom(name) and is_atom(driver) and is_map(config) and is_list(opts) do
     native = native_description(driver, config)
 
     %__MODULE__{
@@ -86,7 +80,7 @@ defmodule EtherCAT.SlaveDescription do
       pid: Keyword.get(opts, :pid),
       target_state: Keyword.get(opts, :target_state),
       fault: Keyword.get(opts, :fault),
-      endpoints: apply_aliases(native.endpoints, aliases),
+      endpoints: native.endpoints,
       commands: native.commands
     }
   end
@@ -96,14 +90,13 @@ defmodule EtherCAT.SlaveDescription do
         name: name,
         driver: driver,
         config: config,
-        aliases: aliases,
         station: station,
         pid: pid,
         target_state: target_state,
         fault: fault
       })
-      when is_atom(name) and is_atom(driver) and is_map(config) and is_map(aliases) do
-    effective(name, driver, config, aliases,
+      when is_atom(name) and is_atom(driver) and is_map(config) do
+    effective(name, driver, config,
       station: station,
       pid: pid,
       target_state: target_state,
@@ -126,44 +119,10 @@ defmodule EtherCAT.SlaveDescription do
     }
   end
 
-  @spec validate_aliases(module(), Driver.config(), %{optional(atom()) => atom()}) ::
-          :ok | {:error, term()}
-  def validate_aliases(driver, config, aliases)
-      when is_atom(driver) and is_map(config) and is_map(aliases) do
-    native_endpoints = native_description(driver, config).endpoints
-    native_signals = MapSet.new(Enum.map(native_endpoints, & &1.signal))
-
-    with :ok <- validate_alias_keys(aliases, native_signals),
-         :ok <- validate_alias_values(aliases),
-         :ok <- validate_unique_effective_names(native_endpoints, aliases) do
-      :ok
-    end
-  end
-
-  @spec effective_name_by_signal(t()) :: %{optional(atom()) => atom()}
-  def effective_name_by_signal(%__MODULE__{endpoints: endpoints}) do
-    Map.new(endpoints, &{&1.signal, &1.name})
-  end
-
-  @spec signal_for_name(t(), atom()) :: {:ok, atom()} | :error
-  def signal_for_name(%__MODULE__{endpoints: endpoints}, name) when is_atom(name) do
-    case Enum.find(endpoints, &(&1.name == name)) do
-      %Endpoint{signal: signal} -> {:ok, signal}
-      nil -> :error
-    end
-  end
-
-  defp apply_aliases(endpoints, aliases) do
-    Enum.map(endpoints, fn %Endpoint{} = endpoint ->
-      %{endpoint | name: Map.get(aliases, endpoint.signal, endpoint.name)}
-    end)
-  end
-
   defp normalize_endpoints(endpoints) when is_list(endpoints) do
     endpoints
     |> Enum.map(&normalize_endpoint!/1)
     |> ensure_unique!(:signal)
-    |> ensure_unique!(:name)
   end
 
   defp normalize_endpoints(_endpoints), do: []
@@ -180,7 +139,6 @@ defmodule EtherCAT.SlaveDescription do
 
       %Endpoint{
         signal: signal,
-        name: Map.get(attrs, :name, signal),
         direction: Map.fetch!(attrs, :direction),
         type: Map.fetch!(attrs, :type),
         label: Map.get(attrs, :label),
@@ -197,14 +155,13 @@ defmodule EtherCAT.SlaveDescription do
   defp validate_endpoint!(
          %Endpoint{
            signal: signal,
-           name: name,
            direction: direction,
            type: type,
            label: label,
            description: description
          } = endpoint
        )
-       when is_atom(signal) and is_atom(name) and direction in [:input, :output] and is_atom(type) and
+       when is_atom(signal) and direction in [:input, :output] and is_atom(type) and
               (is_binary(label) or is_nil(label)) and
               (is_binary(description) or is_nil(description)) do
     endpoint
@@ -232,7 +189,6 @@ defmodule EtherCAT.SlaveDescription do
     |> Enum.map(fn {signal_name, signal_model} ->
       %Endpoint{
         signal: signal_name,
-        name: signal_name,
         direction: infer_direction(signal_model),
         type: :raw
       }
@@ -247,43 +203,6 @@ defmodule EtherCAT.SlaveDescription do
 
   defp infer_direction(pdo_index) when is_integer(pdo_index) and pdo_index >= 0x1A00, do: :input
   defp infer_direction(_other), do: :input
-
-  defp validate_alias_keys(aliases, native_signals) do
-    Enum.reduce_while(aliases, :ok, fn
-      {signal, _name}, :ok when is_atom(signal) ->
-        if MapSet.member?(native_signals, signal) do
-          {:cont, :ok}
-        else
-          {:halt, {:error, {:unknown_endpoint_signal, signal}}}
-        end
-
-      {_signal, _name}, :ok ->
-        {:halt, {:error, :invalid_aliases}}
-    end)
-  end
-
-  defp validate_alias_values(aliases) do
-    Enum.reduce_while(aliases, :ok, fn
-      {_signal, name}, :ok when is_atom(name) ->
-        {:cont, :ok}
-
-      {_signal, _name}, :ok ->
-        {:halt, {:error, :invalid_aliases}}
-    end)
-  end
-
-  defp validate_unique_effective_names(native_endpoints, aliases) do
-    names =
-      native_endpoints
-      |> apply_aliases(aliases)
-      |> Enum.map(& &1.name)
-
-    if length(names) == length(Enum.uniq(names)) do
-      :ok
-    else
-      {:error, :duplicate_endpoint_name}
-    end
-  end
 
   defp ensure_unique!(entries, field) do
     values = Enum.map(entries, &Map.fetch!(&1, field))

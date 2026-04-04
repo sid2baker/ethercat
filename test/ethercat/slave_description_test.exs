@@ -13,19 +13,17 @@ defmodule EtherCAT.SlaveDescriptionTest do
 
     assert %Endpoint{
              signal: :ch1,
-             name: :ch1,
              direction: :input,
              type: :boolean
            } = hd(description.endpoints)
   end
 
-  test "effective applies slave-local aliases while keeping backing signals visible" do
+  test "effective keeps canonical endpoint names" do
     description =
       SlaveDescription.effective(
         :inputs,
         EtherCAT.Driver.EL1809,
         %{},
-        %{ch1: :part_at_stop?, ch2: :clamp_closed?},
         station: 0x1001,
         target_state: :op,
         fault: {:down, :link_lost}
@@ -37,13 +35,10 @@ defmodule EtherCAT.SlaveDescriptionTest do
     assert description.target_state == :op
     assert description.fault == {:down, :link_lost}
 
-    assert {:ok, :ch1} = SlaveDescription.signal_for_name(description, :part_at_stop?)
-    assert {:ok, :ch2} = SlaveDescription.signal_for_name(description, :clamp_closed?)
-
-    assert %{ch1: :part_at_stop?, ch2: :clamp_closed?} =
-             description
-             |> SlaveDescription.effective_name_by_signal()
-             |> Map.take([:ch1, :ch2])
+    assert Enum.take(description.endpoints, 2) == [
+             %Endpoint{signal: :ch1, direction: :input, type: :boolean},
+             %Endpoint{signal: :ch2, direction: :input, type: :boolean}
+           ]
   end
 
   test "from_configured_slave builds descriptions from retained config plus runtime summary" do
@@ -55,7 +50,6 @@ defmodule EtherCAT.SlaveDescriptionTest do
         pid: self(),
         driver: EtherCAT.Driver.EL2809,
         config: %{},
-        aliases: %{ch1: :lamp},
         target_state: :op,
         process_data: {:all, :io},
         health_poll_ms: 250,
@@ -68,6 +62,7 @@ defmodule EtherCAT.SlaveDescriptionTest do
     assert description.target_state == :op
     assert description.commands == []
 
-    assert {:ok, :ch1} = SlaveDescription.signal_for_name(description, :lamp)
+    assert Enum.at(description.endpoints, 0) ==
+             %Endpoint{signal: :ch1, direction: :output, type: :boolean}
   end
 end

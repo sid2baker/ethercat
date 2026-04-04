@@ -53,8 +53,7 @@ defmodule EtherCAT.Driver.EL2809 do
   def describe(_config) do
     %{
       device_type: :digital_output,
-      endpoints:
-        Enum.map(@channels, &%Endpoint{signal: &1, name: &1, direction: :output, type: :boolean}),
+      endpoints: Enum.map(@channels, &%Endpoint{signal: &1, direction: :output, type: :boolean}),
       commands: []
     }
   end

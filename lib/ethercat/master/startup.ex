@@ -458,7 +458,6 @@ defmodule EtherCAT.Master.Startup do
             name: name,
             driver: entry.driver,
             config: entry.config,
-            aliases: entry.aliases,
             process_data: entry.process_data,
             dc_cycle_ns: dc_cycle_ns,
             sync: entry.sync,

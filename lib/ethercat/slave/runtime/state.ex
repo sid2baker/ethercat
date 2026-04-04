@@ -13,7 +13,6 @@ defmodule EtherCAT.Slave.Runtime.State do
       name: Keyword.fetch!(opts, :name),
       driver: Keyword.get(opts, :driver, EtherCAT.Driver.Default),
       config: Keyword.get(opts, :config, %{}),
-      endpoint_aliases: Keyword.get(opts, :aliases, %{}),
       configuration_error: nil,
       esc_info: nil,
       dc_cycle_ns: Keyword.get(opts, :dc_cycle_ns),

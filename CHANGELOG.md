@@ -40,12 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   master into `:recovering` (`473e224`).
 
 ### Changed
-- Driver descriptions are now endpoint-first: drivers expose native endpoint
-  metadata, slave configs can alias endpoint names per slave, `EtherCAT.describe/1`
-  returns the effective alias-applied slave description, `EtherCAT.inventory/0`
-  exposes the merged configured endpoint inventory, and public snapshot state
-  plus `:signal_changed` events now use effective endpoint names instead of raw
-  channel ids (`5a82418`).
+- Driver descriptions, snapshots, commands, and events now use canonical
+  driver signal names only: slave-local endpoint aliasing is gone, endpoint
+  metadata no longer carries a separate public `name`, and slave config
+  normalization now rejects unknown options instead of silently carrying alias
+  data through the runtime (`PENDING`).
 - `EtherCAT.describe/1` and `EtherCAT.inventory/0` now come from the master's
   retained configured slave summaries instead of live snapshots, so interface
   description is separated from current endpoint values while `snapshot/0` and
