@@ -260,7 +260,7 @@ defmodule EtherCAT.Slave.Runtime.DeviceState do
   end
 
   defp effective_description(data, opts) do
-    SlaveDescription.effective(
+    SlaveDescription.configured(
       data.name,
       data.driver,
       data.config || %{},

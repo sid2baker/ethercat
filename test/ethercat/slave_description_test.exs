@@ -18,9 +18,9 @@ defmodule EtherCAT.SlaveDescriptionTest do
            } = hd(description.endpoints)
   end
 
-  test "effective keeps canonical endpoint names" do
+  test "configured keeps canonical endpoint names" do
     description =
-      SlaveDescription.effective(
+      SlaveDescription.configured(
         :inputs,
         EtherCAT.Driver.EL1809,
         %{},

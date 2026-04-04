@@ -67,8 +67,8 @@ defmodule EtherCAT.SlaveDescription do
     }
   end
 
-  @spec effective(atom(), module(), Driver.config(), keyword()) :: t()
-  def effective(name, driver, config, opts \\ [])
+  @spec configured(atom(), module(), Driver.config(), keyword()) :: t()
+  def configured(name, driver, config, opts \\ [])
       when is_atom(name) and is_atom(driver) and is_map(config) and is_list(opts) do
     native = native_description(driver, config)
 
@@ -96,7 +96,7 @@ defmodule EtherCAT.SlaveDescription do
         fault: fault
       })
       when is_atom(name) and is_atom(driver) and is_map(config) do
-    effective(name, driver, config,
+    configured(name, driver, config,
       station: station,
       pid: pid,
       target_state: target_state,
