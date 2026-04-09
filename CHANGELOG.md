@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Concrete sample drivers (`EK1100`, `EL1809`, `EL2809`, and the manual-based
   `ATV320`) now live in test support instead of `lib/`, so the published
   library ships only the generic driver contracts/helpers plus
-  `EtherCAT.Driver.Default`; consuming applications are expected to own real
+  the generic default driver; consuming applications are expected to own real
   device drivers (`d5497a7`).
 - EtherCAT no longer autostarts as an OTP application; host applications now
   supervise `EtherCAT.Runtime` directly, while `EtherCAT.start/1` and
@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Simulator slave behavior modules now use explicit overridable defaults through
-  `EtherCAT.Simulator.Slave.Behaviour`, so the runtime can call callbacks
+  the simulator slave behaviour helper, so the runtime can call callbacks
   directly instead of reflectively probing module load/export state while still
   allowing sparse simulator behavior implementations (`d5497a7`).
 - Driver-backed commands now pass through the generic slave runtime without
