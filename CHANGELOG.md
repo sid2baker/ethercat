@@ -8,12 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Concrete sample drivers (`EK1100`, `EL1809`, `EL2809`, and the manual-based
+  `ATV320`) now live in test support instead of `lib/`, so the published
+  library ships only the generic driver contracts/helpers plus
+  `EtherCAT.Driver.Default`; consuming applications are expected to own real
+  device drivers (`uncommitted`).
 - EtherCAT no longer autostarts as an OTP application; host applications now
   supervise `EtherCAT.Runtime` directly, while `EtherCAT.start/1` and
   `EtherCAT.stop/0` control the singleton session inside that host-owned
   runtime (`6bb51d3`).
 
 ### Fixed
+- Simulator slave behavior modules now use explicit overridable defaults through
+  `EtherCAT.Simulator.Slave.Behaviour`, so the runtime can call callbacks
+  directly instead of reflectively probing module load/export state while still
+  allowing sparse simulator behavior implementations (`uncommitted`).
+- Driver-backed commands now pass through the generic slave runtime without
+  crashing on non-`set_output` names, so drivers can expose custom command
+  surfaces such as `:shutdown` and `:enable_operation`
+  normally (`uncommitted`).
 - `EtherCAT.Scan.scan/1` now refuses to probe a backend already owned by the
   local master, so standalone discovery cannot reassign station addresses on a
   live runtime, and simulator status now infers backend identity from

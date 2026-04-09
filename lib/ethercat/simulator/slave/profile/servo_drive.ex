@@ -1,6 +1,8 @@
 defmodule EtherCAT.Simulator.Slave.Profile.ServoDrive do
   @moduledoc false
 
+  use EtherCAT.Simulator.Slave.Behaviour
+
   alias EtherCAT.Simulator.Slave.Object
 
   @switch_on_disabled 0x0040

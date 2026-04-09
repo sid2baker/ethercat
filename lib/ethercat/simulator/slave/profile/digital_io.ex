@@ -1,6 +1,8 @@
 defmodule EtherCAT.Simulator.Slave.Profile.DigitalIO do
   @moduledoc false
 
+  use EtherCAT.Simulator.Slave.Behaviour
+
   @default_output_pdo 0x1600
   @default_input_pdo 0x1A00
 

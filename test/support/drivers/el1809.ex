@@ -1,5 +1,5 @@
 defmodule EtherCAT.Driver.EL1809 do
-  @moduledoc "Beckhoff EL1809 16-channel digital input, 24 V DC."
+  @moduledoc false
 
   @behaviour EtherCAT.Driver
   alias EtherCAT.Endpoint

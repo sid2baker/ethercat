@@ -277,6 +277,7 @@ defmodule EtherCAT.Slave.Runtime.DeviceState do
        do: {:error, :invalid_output_value}
 
   defp validate_command_args(:set_output, _args), do: {:error, :invalid_output_signal}
+  defp validate_command_args(_command_name, _args), do: :ok
   defp resolve_command_args(_data, _command_name, args), do: args
 
   defp apply_output_intents(data, intents) do

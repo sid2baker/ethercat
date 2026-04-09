@@ -1,6 +1,8 @@
 defmodule EtherCAT.Simulator.Slave.Profile.AnalogIO do
   @moduledoc false
 
+  use EtherCAT.Simulator.Slave.Behaviour
+
   alias EtherCAT.Simulator.Slave.Object
 
   def spec(_opts) do

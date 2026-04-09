@@ -19,6 +19,10 @@ defmodule EtherCAT.Driver do
   - `EtherCAT.Driver.Latch` for DC latch callbacks
   - `EtherCAT.Simulator.Adapter` for simulator-side companion definitions
 
+  Concrete device drivers are normally application-owned. This library ships
+  the driver contract and the generic `EtherCAT.Driver.Default`, while sample
+  device-specific drivers live in test support only.
+
   `describe/1` should return the driver's canonical endpoint surface.
 
   Drivers may also implement optional `identity/0` metadata for simulator

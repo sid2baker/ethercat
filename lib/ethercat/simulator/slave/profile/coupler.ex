@@ -1,6 +1,8 @@
 defmodule EtherCAT.Simulator.Slave.Profile.Coupler do
   @moduledoc false
 
+  use EtherCAT.Simulator.Slave.Behaviour
+
   def spec(_opts) do
     %{
       profile: :coupler,

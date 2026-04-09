@@ -1,5 +1,5 @@
 defmodule EtherCAT.Driver.EK1100 do
-  @moduledoc "Beckhoff EK1100 EtherCAT coupler."
+  @moduledoc false
 
   @behaviour EtherCAT.Driver
 

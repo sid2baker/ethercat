@@ -25,7 +25,7 @@ defmodule EtherCAT.Capture do
         EtherCAT.Capture.write_capture(:slave_1, sdos: [{0x1008, 0x00}])
 
       {:ok, %{driver_path: driver_path}} =
-        EtherCAT.Capture.gen_driver(:slave_1, module: EtherCAT.Driver.EL1809)
+        EtherCAT.Capture.gen_driver(:slave_1, module: MyApp.EL1809)
 
       {:ok, %{module_path: module_path}} =
         EtherCAT.Capture.gen_simulator(
@@ -59,7 +59,7 @@ defmodule EtherCAT.Capture do
     IO.puts("""
     EtherCAT.Capture recommended command:
 
-      EtherCAT.Capture.gen_driver(:slave_1, module: EtherCAT.Driver.EL1809)
+      EtherCAT.Capture.gen_driver(:slave_1, module: MyApp.EL1809)
     """)
 
     :ok

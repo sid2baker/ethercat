@@ -1,6 +1,8 @@
 defmodule EtherCAT.Simulator.Slave.Profile.MailboxDevice do
   @moduledoc false
 
+  use EtherCAT.Simulator.Slave.Behaviour
+
   alias EtherCAT.Simulator.Slave.Object
 
   def spec(_opts) do

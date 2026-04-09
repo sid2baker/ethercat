@@ -2,8 +2,8 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Device do
   @moduledoc false
 
   alias EtherCAT.Slave.ESC.Registers
-  alias EtherCAT.Simulator.Slave.Runtime.AL
   alias EtherCAT.Simulator.Slave.Behaviour
+  alias EtherCAT.Simulator.Slave.Runtime.AL
   alias EtherCAT.Simulator.Slave.Runtime.CoE
   alias EtherCAT.Simulator.Slave.Runtime.DC
   alias EtherCAT.Simulator.Slave.Definition
@@ -110,12 +110,7 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Device do
   def new(definition, position) do
     %{eeprom: eeprom, memory: memory} = ESCImage.hydrate(definition)
 
-    behavior_state =
-      if function_exported?(definition.behavior, :init, 1) do
-        definition.behavior.init(definition)
-      else
-        %{}
-      end
+    behavior_state = Behaviour.init(definition.behavior, definition)
 
     %__MODULE__{
       name: definition.name,
