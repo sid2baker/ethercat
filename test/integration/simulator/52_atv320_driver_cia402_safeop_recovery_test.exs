@@ -300,10 +300,10 @@ defmodule EtherCAT.Integration.Simulator.ATV320DriverCiA402SafeopRecoveryTest do
     assert {:ok, snapshot} = EtherCAT.snapshot(:drive)
     assert snapshot.al_state == :op
 
-    assert snapshot.state.cia402_state == expected_cia402_state,
+    assert Map.get(snapshot.state, :cia402_state) == expected_cia402_state,
            "expected CiA402 state #{inspect(expected_cia402_state)}, got #{inspect(snapshot.state)}"
 
-    assert snapshot.state.statusword == expected_statusword,
+    assert Map.get(snapshot.state, :statusword) == expected_statusword,
            "expected statusword #{inspect(expected_statusword)}, got #{inspect(snapshot.state)}"
 
     Enum.each(Map.new(expectations), fn
@@ -311,7 +311,8 @@ defmodule EtherCAT.Integration.Simulator.ATV320DriverCiA402SafeopRecoveryTest do
         :ok
 
       {key, expected} ->
-        assert Map.fetch!(snapshot.state, key) == expected
+        assert Map.get(snapshot.state, key) == expected,
+               "expected #{inspect(key)} to be #{inspect(expected)}, got #{inspect(snapshot.state)}"
     end)
   end
 

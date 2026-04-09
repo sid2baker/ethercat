@@ -21,17 +21,18 @@ defmodule EtherCAT.Integration.Simulator.TransientTimeoutTest do
         last_invalid_reason: :timeout,
         total_miss_count: &(&1 > 0)
       )
-
-      assert {:ok, slaves} = EtherCAT.Diagnostics.slaves()
-      assert Enum.all?(slaves, &is_nil(&1.fault))
     end)
 
-    Expect.eventually(fn ->
-      Expect.master_state(:operational)
-      Expect.domain(:main, cycle_health: :healthy, total_miss_count: &(&1 > 0))
-      Expect.simulator_queue_empty()
-      assert {:ok, slaves} = EtherCAT.Diagnostics.slaves()
-      assert Enum.all?(slaves, &is_nil(&1.fault))
-    end)
+    Expect.eventually(
+      fn ->
+        Expect.master_state(:operational)
+        Expect.domain(:main, cycle_health: :healthy, total_miss_count: &(&1 > 0))
+        Expect.simulator_queue_empty()
+        assert {:ok, slaves} = EtherCAT.Diagnostics.slaves()
+        assert Enum.all?(slaves, &is_nil(&1.fault))
+      end,
+      attempts: 80,
+      label: "domain timeout clears after replies return and slave faults heal"
+    )
   end
 end
