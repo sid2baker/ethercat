@@ -93,7 +93,7 @@ defmodule EtherCAT.Slave.Runtime.Health do
          ) do
       {:ok, [%{data: al_bytes, wkc: wkc}]} when wkc > 0 ->
         {al_state, error_ind} = Registers.decode_al_status(al_bytes)
-        actual_state = al_state_atom(al_state)
+        actual_state = Utils.al_state_atom(al_state)
 
         cond do
           al_state == expected_code and not error_ind ->
@@ -153,18 +153,22 @@ defmodule EtherCAT.Slave.Runtime.Health do
   def health_poll_action(ms), do: {{:timeout, :health_poll}, ms, nil}
 
   defp report_down(data, reason, reason_text) do
-    EtherCAT.Telemetry.slave_down(data.name, data.station, reason)
+    name = data.name
+    station = data.station
+    reason_kind = Utils.reason_kind(reason)
+
+    EtherCAT.Telemetry.slave_down(name, station, reason)
 
     Logger.warning(
-      "[Slave #{data.name}] health poll: #{reason_text} — entering :down",
+      "[Slave #{name}] health poll: #{reason_text} — entering :down",
       component: :slave,
-      slave: data.name,
-      station: data.station,
+      slave: name,
+      station: station,
       event: :down,
-      reason_kind: Utils.reason_kind(reason)
+      reason_kind: reason_kind
     )
 
-    send(EtherCAT.Master, {:slave_down, data.name, Utils.reason_kind(reason)})
+    send(EtherCAT.Master, {:slave_down, name, reason_kind})
     {:next_state, :down, data}
   end
 
@@ -334,13 +338,6 @@ defmodule EtherCAT.Slave.Runtime.Health do
 
   defp al_state_code(:preop), do: 0x02
   defp al_state_code(:safeop), do: 0x04
-
-  defp al_state_atom(0x01), do: :init
-  defp al_state_atom(0x02), do: :preop
-  defp al_state_atom(0x03), do: :bootstrap
-  defp al_state_atom(0x04), do: :safeop
-  defp al_state_atom(0x08), do: :op
-  defp al_state_atom(_other), do: nil
 
   defp lower_than_expected?(actual_state, expected_state)
        when is_atom(actual_state) and is_atom(expected_state) do

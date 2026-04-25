@@ -138,11 +138,13 @@ defmodule EtherCAT.DC.Runtime do
 
         now_ms = System.system_time(:millisecond)
 
+        config = data.config
+
         {classified_state, max_sync_diff_ns} =
-          classify_lock(sync_diffs, data.config.lock_threshold_ns)
+          classify_lock(sync_diffs, config.lock_threshold_ns)
 
         lock_state =
-          apply_warmup(classified_state, data.cycle_count + 1, data.config.warmup_cycles)
+          apply_warmup(classified_state, data.cycle_count + 1, config.warmup_cycles)
 
         updated = %{
           data

@@ -1,7 +1,6 @@
 defmodule EtherCAT.Simulator.State do
   @moduledoc false
 
-  alias EtherCAT.Simulator
   alias EtherCAT.Simulator.Runtime.{Faults, Subscriptions, Topology}
   alias EtherCAT.Simulator.Slave.Runtime.Device
 
@@ -16,11 +15,17 @@ defmodule EtherCAT.Simulator.State do
     :topology
   ]
 
+  @type signal_ref :: {atom(), atom()}
+  @type connection :: %{
+          source: signal_ref(),
+          target: signal_ref()
+        }
+
   @type t :: %__MODULE__{
           backend: EtherCAT.Backend.t() | nil,
           slaves: [Device.t()],
           faults: Faults.t(),
-          connections: [Simulator.connection()],
+          connections: [connection()],
           subscriptions: Subscriptions.t(),
           scheduled_faults: [map()],
           topology: Topology.t()

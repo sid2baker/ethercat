@@ -24,6 +24,18 @@ defmodule EtherCAT.Utils do
 
   def ensure_expected_wkcs(_replies, _expected_wkc, error_tag), do: {:error, error_tag}
 
+  @spec al_state_atom(non_neg_integer()) :: :init | :preop | :bootstrap | :safeop | :op | nil
+  def al_state_atom(0x01), do: :init
+  def al_state_atom(0x02), do: :preop
+  def al_state_atom(0x03), do: :bootstrap
+  def al_state_atom(0x04), do: :safeop
+  def al_state_atom(0x08), do: :op
+  def al_state_atom(_other), do: nil
+
+  @spec binary_pad(binary(), non_neg_integer()) :: binary()
+  def binary_pad(data, size) when byte_size(data) >= size, do: binary_part(data, 0, size)
+  def binary_pad(data, size), do: data <> :binary.copy(<<0>>, size - byte_size(data))
+
   @spec expect_positive_wkc({:ok, [map()]} | {:error, term()}, term(), term()) ::
           :ok | {:error, term()}
   def expect_positive_wkc({:ok, [%{wkc: wkc}]}, _zero_reason, _unexpected_reason) when wkc > 0,

@@ -88,8 +88,9 @@ defmodule EtherCAT.Simulator.Slave.Profile.DigitalIO do
   defp channel_layout(direction, channel_count, opts)
        when direction in [:input, :output, :io] and is_integer(channel_count) and
               channel_count > 0 do
-    input_names = Keyword.get(opts, :input_names, default_names(channel_count))
-    output_names = Keyword.get(opts, :output_names, default_names(channel_count))
+    default_channel_names = default_names(channel_count)
+    input_names = Keyword.get(opts, :input_names, default_channel_names)
+    output_names = Keyword.get(opts, :output_names, default_channel_names)
     input_pdo_base = Keyword.get(opts, :input_pdo_base, @default_input_pdo)
     output_pdo_base = Keyword.get(opts, :output_pdo_base, @default_output_pdo)
 

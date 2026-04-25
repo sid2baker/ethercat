@@ -46,9 +46,11 @@ defmodule EtherCAT.Simulator.Slave.Runtime.CoE do
         status_offset,
         status_length
       ) do
+    zero = <<0>>
+
     slave
-    |> write_memory(send_offset, :binary.copy(<<0>>, send_size))
-    |> write_memory(status_offset, :binary.copy(<<0>>, status_length))
+    |> write_memory(send_offset, :binary.copy(zero, send_size))
+    |> write_memory(status_offset, :binary.copy(zero, status_length))
   end
 
   defp write_memory(%{memory: memory} = slave, offset, data) do

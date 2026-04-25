@@ -64,49 +64,46 @@ defmodule EtherCAT.Master.Activation do
   end
 
   defp do_activate_network(data) do
-    case preop_activation_failures(data.activatable_slaves) do
-      activation_failures when map_size(activation_failures) > 0 ->
-        Logger.warning(
-          "[Master] activation incomplete; blocked for #{inspect(Map.keys(activation_failures))}",
-          component: :master,
-          event: :activation_blocked,
-          runtime_target: Status.desired_runtime_target(data),
-          blocked_count: map_size(activation_failures)
-        )
+    activation_failures = preop_activation_failures(data.activatable_slaves)
+    blocked_count = map_size(activation_failures)
 
-        {:activation_blocked, %{data | activation_failures: activation_failures}}
+    if blocked_count > 0 do
+      log_activation_blocked(data, activation_failures, blocked_count)
+      {:activation_blocked, %{data | activation_failures: activation_failures}}
+    else
+      case start_dc_runtime(data) do
+        {:ok, dc_data} ->
+          with :ok <- start_domain_cycles(dc_data),
+               :ok <- await_dc_lock_if_requested(dc_data) do
+            activation_failures = activate_required_slaves(dc_data.activatable_slaves)
+            blocked_count = map_size(activation_failures)
+            activated_data = %{dc_data | activation_failures: activation_failures}
 
-      _none ->
-        case start_dc_runtime(data) do
-          {:ok, dc_data} ->
-            with :ok <- start_domain_cycles(dc_data),
-                 :ok <- await_dc_lock_if_requested(dc_data) do
-              activation_failures = activate_required_slaves(dc_data.activatable_slaves)
-
-              activated_data = %{dc_data | activation_failures: activation_failures}
-
-              if map_size(activation_failures) == 0 do
-                {:ok, :operational, activated_data}
-              else
-                Logger.warning(
-                  "[Master] activation incomplete; blocked for #{inspect(Map.keys(activation_failures))}",
-                  component: :master,
-                  event: :activation_blocked,
-                  runtime_target: Status.desired_runtime_target(data),
-                  blocked_count: map_size(activation_failures)
-                )
-
-                {:activation_blocked, activated_data}
-              end
+            if blocked_count == 0 do
+              {:ok, :operational, activated_data}
             else
-              {:error, reason} ->
-                {:error, reason, rollback_started_runtime(dc_data)}
+              log_activation_blocked(data, activation_failures, blocked_count)
+              {:activation_blocked, activated_data}
             end
+          else
+            {:error, reason} ->
+              {:error, reason, rollback_started_runtime(dc_data)}
+          end
 
-          {:error, reason} ->
-            {:error, reason, data}
-        end
+        {:error, reason} ->
+          {:error, reason, data}
+      end
     end
+  end
+
+  defp log_activation_blocked(data, activation_failures, blocked_count) do
+    Logger.warning(
+      "[Master] activation incomplete; blocked for #{inspect(Map.keys(activation_failures))}",
+      component: :master,
+      event: :activation_blocked,
+      runtime_target: Status.desired_runtime_target(data),
+      blocked_count: blocked_count
+    )
   end
 
   @spec start_dc_runtime(%EtherCAT.Master{}, keyword()) ::

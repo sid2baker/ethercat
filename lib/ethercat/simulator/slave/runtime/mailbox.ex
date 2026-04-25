@@ -317,13 +317,16 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
   end
 
   defp handle_upload_segment(command, %{mailbox_upload: transfer} = slave) do
-    case Dictionary.abort_code(slave, transfer.index, transfer.subindex, :upload_segment) do
+    index = transfer.index
+    subindex = transfer.subindex
+
+    case Dictionary.abort_code(slave, index, subindex, :upload_segment) do
       {:ok, abort_code} ->
         {:ok,
          response(
-           abort_response(transfer.index, transfer.subindex, abort_code),
-           transfer.index,
-           transfer.subindex,
+           abort_response(index, subindex, abort_code),
+           index,
+           subindex,
            :upload_segment
          ), %{slave | mailbox_upload: nil}}
 
@@ -435,8 +438,12 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
       payload::binary>>
   end
 
-  defp pad_send_mailbox(frame, send_size) when byte_size(frame) <= send_size do
-    frame <> :binary.copy(<<0>>, send_size - byte_size(frame))
+  defp pad_send_mailbox(frame, send_size) do
+    pad_send_mailbox(frame, send_size, byte_size(frame))
+  end
+
+  defp pad_send_mailbox(frame, send_size, frame_size) when frame_size <= send_size do
+    frame <> :binary.copy(<<0>>, send_size - frame_size)
   end
 
   defp expedited_upload_response(index, subindex, value) do
@@ -456,9 +463,15 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
     <<command::8, segment::binary>>
   end
 
-  defp upload_segment_payload(chunk, true) when byte_size(chunk) < 7 do
-    padding = 7 - byte_size(chunk)
-    {chunk <> :binary.copy(<<0>>, padding), padding}
+  defp upload_segment_payload(chunk, true) do
+    chunk_size = byte_size(chunk)
+
+    if chunk_size < 7 do
+      padding = 7 - chunk_size
+      {chunk <> :binary.copy(<<0>>, padding), padding}
+    else
+      {chunk, 0}
+    end
   end
 
   defp upload_segment_payload(chunk, _last_segment?), do: {chunk, 0}

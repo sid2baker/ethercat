@@ -149,6 +149,14 @@ defmodule EtherCAT.Bus.Link do
     {stamped, awaiting, next_idx}
   end
 
+  @doc false
+  @spec prepare_realtime_dispatch(Submission.t(), non_neg_integer()) ::
+          {[Datagram.t()], [{:gen_statem.from(), [byte()]}], non_neg_integer(), non_neg_integer()}
+  def prepare_realtime_dispatch(%Submission{} = submission, idx) do
+    {datagrams, awaiting, next_idx} = prepare_realtime(submission, idx)
+    {datagrams, awaiting, next_idx, length(datagrams)}
+  end
+
   @doc """
   Build the awaiting list and stamped datagrams for a reliable batch.
   """
@@ -168,6 +176,14 @@ defmodule EtherCAT.Bus.Link do
 
     all_datagrams = Enum.flat_map(stamped_batch, & &1)
     {all_datagrams, awaiting, next_idx}
+  end
+
+  @doc false
+  @spec prepare_reliable_dispatch([Submission.t()], non_neg_integer()) ::
+          {[Datagram.t()], [{:gen_statem.from(), [byte()]}], non_neg_integer(), non_neg_integer()}
+  def prepare_reliable_dispatch(batch, idx) when is_list(batch) do
+    {datagrams, awaiting, next_idx} = prepare_reliable(batch, idx)
+    {datagrams, awaiting, next_idx, length(datagrams)}
   end
 
   # -- Reply helpers --
@@ -209,6 +225,142 @@ defmodule EtherCAT.Bus.Link do
     Enum.each(submissions, fn %Submission{from: from} -> :gen_statem.reply(from, reply) end)
   end
 
+  @doc false
+  @spec dispatch_realtime(
+          Submission.t(),
+          map(),
+          non_neg_integer(),
+          (list(), list(), map(), non_neg_integer(), :realtime -> tuple()),
+          (map(), non_neg_integer() -> tuple())
+        ) :: tuple()
+  def dispatch_realtime(%Submission{} = submission, data, errors, send_frame, dispatch_next)
+      when is_function(send_frame, 5) and is_function(dispatch_next, 2) do
+    {datagrams, awaiting, next_idx, datagram_count} =
+      prepare_realtime_dispatch(submission, data.idx)
+
+    handle_realtime_dispatch_result(
+      send_frame.(datagrams, awaiting, data, next_idx, :realtime),
+      submission,
+      data.link_name,
+      datagram_count,
+      errors,
+      dispatch_next
+    )
+  end
+
+  @doc false
+  @spec dispatch_reliable(
+          [Submission.t()],
+          map(),
+          non_neg_integer(),
+          (list(), list(), map(), non_neg_integer(), :reliable -> tuple()),
+          (map(), non_neg_integer() -> tuple())
+        ) :: tuple()
+  def dispatch_reliable(batch, data, errors, send_frame, dispatch_next)
+      when is_list(batch) and is_function(send_frame, 5) and is_function(dispatch_next, 2) do
+    {datagrams, awaiting, next_idx, datagram_count} = prepare_reliable_dispatch(batch, data.idx)
+
+    handle_reliable_dispatch_result(
+      send_frame.(datagrams, awaiting, data, next_idx, :reliable),
+      batch,
+      data.link_name,
+      datagram_count,
+      errors,
+      dispatch_next
+    )
+  end
+
+  @doc false
+  @spec handle_realtime_dispatch_result(
+          tuple(),
+          Submission.t(),
+          String.t(),
+          non_neg_integer(),
+          non_neg_integer(),
+          (map(), non_neg_integer() -> tuple())
+        ) :: tuple()
+  def handle_realtime_dispatch_result(
+        result,
+        %Submission{} = submission,
+        link_name,
+        datagram_count,
+        errors,
+        dispatch_next
+      )
+      when is_function(dispatch_next, 2) do
+    case result do
+      {:ok, new_data, actions} ->
+        Telemetry.dispatch_sent(link_name, :realtime, 1, datagram_count)
+        {:next_state, :awaiting, new_data, actions}
+
+      {:error, :frame_too_large, new_data} ->
+        :gen_statem.reply(submission.from, {:error, :frame_too_large})
+        dispatch_next.(new_data, errors)
+
+      {:error, reason, new_data} ->
+        reply_submissions([submission], {:error, reason})
+        dispatch_next.(new_data, errors + 1)
+    end
+  end
+
+  @doc false
+  @spec handle_reliable_dispatch_result(
+          tuple(),
+          [Submission.t()],
+          String.t(),
+          non_neg_integer(),
+          non_neg_integer(),
+          (map(), non_neg_integer() -> tuple())
+        ) :: tuple()
+  def handle_reliable_dispatch_result(
+        result,
+        batch,
+        link_name,
+        datagram_count,
+        errors,
+        dispatch_next
+      )
+      when is_list(batch) and is_function(dispatch_next, 2) do
+    case result do
+      {:ok, new_data, actions} ->
+        Telemetry.dispatch_sent(link_name, :reliable, length(batch), datagram_count)
+        {:next_state, :awaiting, new_data, actions}
+
+      {:error, :frame_too_large, new_data} ->
+        reply_submissions(batch, {:error, :frame_too_large})
+        dispatch_next.(new_data, errors)
+
+      {:error, reason, new_data} ->
+        reply_submissions(batch, {:error, reason})
+        dispatch_next.(new_data, errors + 1)
+    end
+  end
+
+  @doc false
+  @spec handle_set_frame_timeout(:gen_statem.from(), term(), map()) :: tuple()
+  def handle_set_frame_timeout(from, timeout_ms, data)
+      when is_integer(timeout_ms) and timeout_ms > 0 do
+    {:keep_state, %{data | frame_timeout_ms: timeout_ms}, [{:reply, from, :ok}]}
+  end
+
+  def handle_set_frame_timeout(from, _timeout_ms, _data) do
+    {:keep_state_and_data, [{:reply, from, {:error, :invalid_timeout}}]}
+  end
+
+  @doc false
+  @spec start_named(module(), term(), keyword()) :: :gen_statem.start_ret()
+  def start_named(module, {:local, _name} = name, opts),
+    do: :gen_statem.start_link(name, module, opts, [])
+
+  def start_named(module, {:global, _name} = name, opts),
+    do: :gen_statem.start_link(name, module, opts, [])
+
+  def start_named(module, {:via, _mod, _name} = name, opts),
+    do: :gen_statem.start_link(name, module, opts, [])
+
+  def start_named(module, name, opts) when is_atom(name),
+    do: :gen_statem.start_link({:local, name}, module, opts, [])
+
   @doc "Reply to settle callers."
   @spec reply_settle_callers([term()], term()) :: :ok
   def reply_settle_callers(callers, reply) do
@@ -249,9 +401,10 @@ defmodule EtherCAT.Bus.Link do
   # -- Private --
 
   defp take_reliable_batch(reliable) do
+    reliable_list = :queue.to_list(reliable)
+
     {batch_rev, _} =
-      Enum.reduce_while(:queue.to_list(reliable), {[], 0}, fn %Submission{} = submission,
-                                                              {acc, size} ->
+      Enum.reduce_while(reliable_list, {[], 0}, fn %Submission{} = submission, {acc, size} ->
         tx_size =
           submission.tx
           |> Transaction.datagrams()
@@ -268,7 +421,7 @@ defmodule EtherCAT.Bus.Link do
       end)
 
     batch = Enum.reverse(batch_rev)
-    rest = reliable |> :queue.to_list() |> Enum.drop(length(batch)) |> :queue.from_list()
+    rest = reliable_list |> Enum.drop(length(batch)) |> :queue.from_list()
     {batch, rest}
   end
 

@@ -517,8 +517,9 @@ defmodule EtherCAT.Master.FSM do
       blocked_count: map_size(data.activation_failures)
     )
 
-    reply_await_callers(data.await_callers, Status.activation_blocked_reply(data))
-    reply_await_callers(data.await_operational_callers, Status.activation_blocked_reply(data))
+    reply = Status.activation_blocked_reply(data)
+    reply_await_callers(data.await_callers, reply)
+    reply_await_callers(data.await_operational_callers, reply)
 
     {:keep_state, %{data | await_callers: [], await_operational_callers: []},
      [{{:timeout, :retry}, @retry_ms, nil}]}
@@ -595,8 +596,9 @@ defmodule EtherCAT.Master.FSM do
       runtime_fault_count: map_size(data.runtime_faults)
     )
 
-    reply_await_callers(data.await_callers, Status.recovering_reply(data))
-    reply_await_callers(data.await_operational_callers, Status.recovering_reply(data))
+    reply = Status.recovering_reply(data)
+    reply_await_callers(data.await_callers, reply)
+    reply_await_callers(data.await_operational_callers, reply)
 
     {:keep_state, %{data | await_callers: [], await_operational_callers: []},
      [{{:timeout, :retry}, @retry_ms, nil}]}

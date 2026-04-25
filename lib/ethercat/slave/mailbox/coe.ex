@@ -106,12 +106,35 @@ defmodule EtherCAT.Slave.Mailbox.CoE do
           binary()
         ) :: {:ok, 1..7} | {:error, term()}
   def download_sdo(bus, station, mailbox_config, mailbox_counter, index, subindex, data)
-      when is_binary(data) and byte_size(data) > 0 do
+      when is_binary(data) do
+    download_sdo_with_size(
+      bus,
+      station,
+      mailbox_config,
+      mailbox_counter,
+      index,
+      subindex,
+      data,
+      byte_size(data)
+    )
+  end
+
+  defp download_sdo_with_size(
+         bus,
+         station,
+         mailbox_config,
+         mailbox_counter,
+         index,
+         subindex,
+         data,
+         data_size
+       )
+       when data_size > 0 do
     transfer = %Download{
       index: index,
       subindex: subindex,
       data: data,
-      remaining: byte_size(data),
+      remaining: data_size,
       mailbox_counter: mailbox_counter
     }
 
@@ -351,8 +374,9 @@ defmodule EtherCAT.Slave.Mailbox.CoE do
   end
 
   defp build_expedited_download_frame(index, subindex, data, mailbox_counter) do
-    command = expedited_download_command(byte_size(data))
-    padded = data <> :binary.copy(<<0>>, 4 - byte_size(data))
+    data_size = byte_size(data)
+    command = expedited_download_command(data_size)
+    padded = data <> :binary.copy(<<0>>, 4 - data_size)
 
     build_mailbox_frame(
       mailbox_counter,
@@ -371,9 +395,12 @@ defmodule EtherCAT.Slave.Mailbox.CoE do
   end
 
   defp build_download_segment_frame(data, last_segment?, toggle, mailbox_counter) do
+    data_size = byte_size(data)
+
     {chunk, padding_count} =
-      if last_segment? and byte_size(data) < 7 do
-        {data <> :binary.copy(<<0>>, 7 - byte_size(data)), 7 - byte_size(data)}
+      if last_segment? and data_size < 7 do
+        padding = 7 - data_size
+        {data <> :binary.copy(<<0>>, padding), padding}
       else
         {data, 0}
       end
@@ -421,16 +448,26 @@ defmodule EtherCAT.Slave.Mailbox.CoE do
   defp expedited_download_command(3), do: 0x27
   defp expedited_download_command(4), do: 0x23
 
-  defp initial_download_capacity(%{recv_size: recv_size})
-       when recv_size >= @init_request_overhead do
-    {:ok, recv_size - @init_request_overhead}
+  defp initial_download_capacity(%{recv_size: recv_size}) do
+    overhead = @init_request_overhead
+
+    if recv_size >= overhead do
+      {:ok, recv_size - overhead}
+    else
+      {:error, :mailbox_too_small}
+    end
   end
 
   defp initial_download_capacity(_mailbox_config), do: {:error, :mailbox_too_small}
 
-  defp segment_download_capacity(%{recv_size: recv_size})
-       when recv_size > @segment_request_overhead do
-    {:ok, recv_size - @segment_request_overhead}
+  defp segment_download_capacity(%{recv_size: recv_size}) do
+    overhead = @segment_request_overhead
+
+    if recv_size > overhead do
+      {:ok, recv_size - overhead}
+    else
+      {:error, :mailbox_too_small}
+    end
   end
 
   defp segment_download_capacity(_mailbox_config), do: {:error, :mailbox_too_small}
@@ -445,11 +482,15 @@ defmodule EtherCAT.Slave.Mailbox.CoE do
     end
   end
 
-  defp pad_mailbox_frame(frame, recv_size) when byte_size(frame) <= recv_size do
-    {:ok, frame <> :binary.copy(<<0>>, recv_size - byte_size(frame))}
-  end
+  defp pad_mailbox_frame(frame, recv_size) do
+    frame_size = byte_size(frame)
 
-  defp pad_mailbox_frame(_frame, _recv_size), do: {:error, :mailbox_too_small}
+    if frame_size <= recv_size do
+      {:ok, frame <> :binary.copy(<<0>>, recv_size - frame_size)}
+    else
+      {:error, :mailbox_too_small}
+    end
+  end
 
   defp write_mailbox(bus, station, recv_offset, frame) do
     Utils.expect_positive_wkc(

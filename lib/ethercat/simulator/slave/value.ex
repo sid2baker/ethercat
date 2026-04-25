@@ -189,9 +189,14 @@ defmodule EtherCAT.Simulator.Slave.Value do
     {:ok, <<value::signed-little-size(bits)>>}
   end
 
-  defp encode_typed_binary({:binary, size}, value)
-       when is_binary(value) and byte_size(value) <= size do
-    {:ok, value <> :binary.copy(<<0>>, size - byte_size(value))}
+  defp encode_typed_binary({:binary, size}, value) when is_binary(value) do
+    value_size = byte_size(value)
+
+    if value_size <= size do
+      {:ok, value <> :binary.copy(<<0>>, size - value_size)}
+    else
+      {:error, :invalid_value}
+    end
   end
 
   defp encode_typed_binary(_type, _value), do: {:error, :invalid_value}
@@ -279,8 +284,8 @@ defmodule EtherCAT.Simulator.Slave.Value do
         raw >= 0 and raw < Integer.pow(2, bits)
 
       type ->
-        raw >= signed_min(type, bit_width(metadata)) and
-          raw <= signed_max(type, bit_width(metadata))
+        bits = bit_width(metadata)
+        raw >= signed_min(type, bits) and raw <= signed_max(type, bits)
     end
   end
 

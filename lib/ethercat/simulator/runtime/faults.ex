@@ -1,45 +1,12 @@
 defmodule EtherCAT.Simulator.Runtime.Faults do
   @moduledoc false
 
-  @command_names [
-    :aprd,
-    :apwr,
-    :aprw,
-    :fprd,
-    :fpwr,
-    :fprw,
-    :brd,
-    :bwr,
-    :brw,
-    :lrd,
-    :lwr,
-    :lrw,
-    :armw,
-    :frmw
-  ]
+  alias EtherCAT.Simulator.FaultSpec
 
-  @type sticky_fault ::
-          :drop_responses
-          | {:wkc_offset, integer()}
-          | {:command_wkc_offset, command_name(), integer()}
-          | {:logical_wkc_offset, atom(), integer()}
-          | {:disconnect, atom()}
+  require FaultSpec
 
-  @type command_name ::
-          :aprd
-          | :apwr
-          | :aprw
-          | :fprd
-          | :fpwr
-          | :fprw
-          | :brd
-          | :bwr
-          | :brw
-          | :lrd
-          | :lwr
-          | :lrw
-          | :armw
-          | :frmw
+  @type sticky_fault :: FaultSpec.exchange_fault()
+  @type command_name :: FaultSpec.command_name()
 
   @type exchange_fault :: sticky_fault()
 
@@ -118,7 +85,7 @@ defmodule EtherCAT.Simulator.Runtime.Faults do
   end
 
   def inject(%__MODULE__{} = faults, {:command_wkc_offset, command_name, delta})
-      when command_name in @command_names and is_integer(delta) do
+      when FaultSpec.exchange_command?(command_name) and is_integer(delta) do
     %{faults | command_wkc_offsets: Map.put(faults.command_wkc_offsets, command_name, delta)}
   end
 
@@ -191,7 +158,7 @@ defmodule EtherCAT.Simulator.Runtime.Faults do
     do: %{faults | wkc_offset: delta}
 
   def apply_pending(%__MODULE__{} = faults, {:command_wkc_offset, command_name, delta})
-      when command_name in @command_names and is_integer(delta) do
+      when FaultSpec.exchange_command?(command_name) and is_integer(delta) do
     %{faults | command_wkc_offsets: Map.put(faults.command_wkc_offsets, command_name, delta)}
   end
 
@@ -217,19 +184,8 @@ defmodule EtherCAT.Simulator.Runtime.Faults do
     }
   end
 
-  defp valid_exchange_fault?(:drop_responses), do: true
-  defp valid_exchange_fault?({:wkc_offset, delta}) when is_integer(delta), do: true
-
-  defp valid_exchange_fault?({:command_wkc_offset, command_name, delta})
-       when command_name in @command_names and is_integer(delta),
-       do: true
-
-  defp valid_exchange_fault?({:logical_wkc_offset, slave_name, delta})
-       when is_atom(slave_name) and is_integer(delta),
-       do: true
-
-  defp valid_exchange_fault?({:disconnect, slave_name}) when is_atom(slave_name), do: true
-  defp valid_exchange_fault?(_fault), do: false
+  @spec valid_exchange_fault?(term()) :: boolean()
+  def valid_exchange_fault?(fault), do: FaultSpec.valid_exchange_fault?(fault)
 
   defp next_fault_info([]), do: nil
   defp next_fault_info([%{fault: fault} | _rest]), do: {:next_exchange, fault}

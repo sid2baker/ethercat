@@ -640,11 +640,13 @@ defmodule EtherCAT.Capture do
         end
       )
 
+    offsets = layout.offsets
+
     %{
       pdo_entries: layout.pdo_entries,
       signals: layout.signals,
-      output_size: bit_bytes(layout.offsets.output),
-      input_size: bit_bytes(layout.offsets.input)
+      output_size: bit_bytes(offsets.output),
+      input_size: bit_bytes(offsets.input)
     }
   end
 

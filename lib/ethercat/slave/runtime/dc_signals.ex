@@ -130,10 +130,12 @@ defmodule EtherCAT.Slave.Runtime.DCSignals do
     do: {:ok, nil, nil}
 
   defp read_sync_snapshot(data, _sync_config) do
+    station = data.station
+
     snapshot_tx =
       Transaction.new()
-      |> Transaction.fprd(data.station, Registers.dc_system_time())
-      |> Transaction.fprd(data.station, Registers.dc_system_time_diff())
+      |> Transaction.fprd(station, Registers.dc_system_time())
+      |> Transaction.fprd(station, Registers.dc_system_time_diff())
 
     case Bus.transaction(data.bus, snapshot_tx) do
       {:ok,
@@ -158,17 +160,19 @@ defmodule EtherCAT.Slave.Runtime.DCSignals do
   end
 
   defp send_sync_plan(data, %Plan{} = plan) do
+    station = data.station
+
     tx =
       Transaction.new()
-      |> Transaction.fpwr(data.station, Registers.dc_activation(0x00))
-      |> append_sync_timing(data.station, plan)
-      |> Transaction.fpwr(data.station, Registers.dc_latch0_control(plan.latch0_control))
-      |> Transaction.fpwr(data.station, Registers.dc_latch1_control(plan.latch1_control))
+      |> Transaction.fpwr(station, Registers.dc_activation(0x00))
+      |> append_sync_timing(station, plan)
+      |> Transaction.fpwr(station, Registers.dc_latch0_control(plan.latch0_control))
+      |> Transaction.fpwr(station, Registers.dc_latch1_control(plan.latch1_control))
       |> Transaction.fpwr(
-        data.station,
+        station,
         Registers.dc_cyclic_unit_control(plan.cyclic_unit_control)
       )
-      |> Transaction.fpwr(data.station, Registers.dc_activation(plan.activation))
+      |> Transaction.fpwr(station, Registers.dc_activation(plan.activation))
 
     case Bus.transaction(data.bus, tx) do
       {:ok, replies} -> {:ok, replies}

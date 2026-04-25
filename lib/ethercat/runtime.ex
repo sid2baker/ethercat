@@ -35,11 +35,14 @@ defmodule EtherCAT.Runtime do
 
   @impl true
   def init(:ok) do
+    registry = Registry
+    dynamic_supervisor = DynamicSupervisor
+
     children = [
-      {Registry, keys: :unique, name: EtherCAT.Registry},
-      {Registry, keys: :duplicate, name: EtherCAT.SubscriptionRegistry},
-      {DynamicSupervisor, name: EtherCAT.SlaveSupervisor, strategy: :one_for_one},
-      {DynamicSupervisor, name: EtherCAT.SessionSupervisor, strategy: :one_for_one},
+      {registry, keys: :unique, name: EtherCAT.Registry},
+      {registry, keys: :duplicate, name: EtherCAT.SubscriptionRegistry},
+      {dynamic_supervisor, name: EtherCAT.SlaveSupervisor, strategy: :one_for_one},
+      {dynamic_supervisor, name: EtherCAT.SessionSupervisor, strategy: :one_for_one},
       EtherCAT.Master
     ]
 

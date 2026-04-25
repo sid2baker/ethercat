@@ -300,18 +300,20 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Device do
   end
 
   @spec write_register(t(), non_neg_integer(), binary()) :: t()
-  def write_register(%__MODULE__{} = slave, @station_address, <<station::16-little>>) do
+  def write_register(%__MODULE__{} = slave, offset, <<station::16-little>>)
+      when offset == @station_address do
     slave
     |> Map.put(:station, station)
-    |> write_memory(@station_address, <<station::16-little>>)
+    |> write_memory(offset, <<station::16-little>>)
   end
 
-  def write_register(%__MODULE__{} = slave, @al_control, <<control::16-little>>) do
+  def write_register(%__MODULE__{} = slave, offset, <<control::16-little>>)
+      when offset == @al_control do
     <<low::8, _high::8>> = <<control::16-little>>
     request = rem(low, 16)
 
     slave
-    |> write_memory(@al_control, <<control::16-little>>)
+    |> write_memory(offset, <<control::16-little>>)
     |> then(fn updated_slave ->
       case AL.apply_control(updated_slave, request) do
         {:ok, transitioned_slave} -> ProcessImage.refresh_inputs(transitioned_slave)
@@ -320,13 +322,14 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Device do
     end)
   end
 
-  def write_register(%__MODULE__{} = slave, @eeprom_control, <<low::8, high::8>> = control) do
+  def write_register(%__MODULE__{} = slave, offset, <<low::8, high::8>> = control)
+      when offset == @eeprom_control do
     slave =
       slave
-      |> write_memory(@eeprom_control, control)
+      |> write_memory(offset, control)
       |> load_eeprom_data(high)
 
-    write_memory(slave, @eeprom_control, <<max(low, 1)::8, high::8>>)
+    write_memory(slave, offset, <<max(low, 1)::8, high::8>>)
   end
 
   def write_register(%__MODULE__{dc_capable?: true} = slave, offset, data) do

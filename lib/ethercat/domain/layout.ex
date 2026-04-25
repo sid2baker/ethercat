@@ -84,17 +84,19 @@ defmodule EtherCAT.Domain.Layout do
           | {:error, :nothing_registered | {:image_too_large, integer(), integer()}}
   def prepare(%__MODULE__{image_size: 0}), do: {:error, :nothing_registered}
 
-  def prepare(%__MODULE__{image_size: image_size}) when image_size > @max_lrw_image_bytes do
-    {:error, {:image_too_large, image_size, @max_lrw_image_bytes}}
-  end
+  def prepare(%__MODULE__{image_size: image_size} = layout) do
+    max_image_size = @max_lrw_image_bytes
 
-  def prepare(%__MODULE__{} = layout) do
-    {:ok,
-     %CyclePlan{
-       image_size: layout.image_size,
-       output_patches: Enum.reverse(layout.output_patches_rev),
-       input_slices: Enum.reverse(layout.input_slices_rev),
-       expected_wkc: expected_wkc(layout)
-     }}
+    if image_size > max_image_size do
+      {:error, {:image_too_large, image_size, max_image_size}}
+    else
+      {:ok,
+       %CyclePlan{
+         image_size: layout.image_size,
+         output_patches: Enum.reverse(layout.output_patches_rev),
+         input_slices: Enum.reverse(layout.input_slices_rev),
+         expected_wkc: expected_wkc(layout)
+       }}
+    end
   end
 end

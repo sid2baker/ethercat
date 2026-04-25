@@ -145,7 +145,7 @@ defmodule EtherCAT.Bus.Link.Redundant do
   def start_link(opts) do
     case opts[:name] do
       nil -> :gen_statem.start_link(__MODULE__, opts, [])
-      name -> start_named(name, opts)
+      name -> Link.start_named(__MODULE__, name, opts)
     end
   end
 
@@ -230,13 +230,8 @@ defmodule EtherCAT.Bus.Link.Redundant do
 
   # -- Set frame timeout --
 
-  def handle_event({:call, from}, {:set_frame_timeout, timeout_ms}, _state, data)
-      when is_integer(timeout_ms) and timeout_ms > 0 do
-    {:keep_state, %{data | frame_timeout_ms: timeout_ms}, [{:reply, from, :ok}]}
-  end
-
-  def handle_event({:call, from}, {:set_frame_timeout, _timeout_ms}, _state, _data) do
-    {:keep_state_and_data, [{:reply, from, {:error, :invalid_timeout}}]}
+  def handle_event({:call, from}, {:set_frame_timeout, timeout_ms}, _state, data) do
+    Link.handle_set_frame_timeout(from, timeout_ms, data)
   end
 
   # -- Settle --
@@ -321,41 +316,11 @@ defmodule EtherCAT.Bus.Link.Redundant do
   end
 
   defp do_send_realtime(%Submission{} = submission, data, errors) do
-    {datagrams, awaiting, next_idx} = Link.prepare_realtime(submission, data.idx)
-    datagram_count = length(datagrams)
-
-    case send_frame(datagrams, awaiting, data, next_idx, :realtime) do
-      {:ok, new_data, actions} ->
-        Telemetry.dispatch_sent(data.link_name, :realtime, 1, datagram_count)
-        {:next_state, :awaiting, new_data, actions}
-
-      {:error, :frame_too_large, new_data} ->
-        :gen_statem.reply(submission.from, {:error, :frame_too_large})
-        dispatch_next(new_data, errors)
-
-      {:error, reason, new_data} ->
-        Link.reply_submissions([submission], {:error, reason})
-        dispatch_next(new_data, errors + 1)
-    end
+    Link.dispatch_realtime(submission, data, errors, &send_frame/5, &dispatch_next/2)
   end
 
   defp do_send_reliable(batch, data, errors) do
-    {datagrams, awaiting, next_idx} = Link.prepare_reliable(batch, data.idx)
-    datagram_count = length(datagrams)
-
-    case send_frame(datagrams, awaiting, data, next_idx, :reliable) do
-      {:ok, new_data, actions} ->
-        Telemetry.dispatch_sent(data.link_name, :reliable, length(batch), datagram_count)
-        {:next_state, :awaiting, new_data, actions}
-
-      {:error, :frame_too_large, new_data} ->
-        Link.reply_submissions(batch, {:error, :frame_too_large})
-        dispatch_next(new_data, errors)
-
-      {:error, reason, new_data} ->
-        Link.reply_submissions(batch, {:error, reason})
-        dispatch_next(new_data, errors + 1)
-    end
+    Link.dispatch_reliable(batch, data, errors, &send_frame/5, &dispatch_next/2)
   end
 
   defp send_frame(datagrams, awaiting, data, next_idx, tx_class) do
@@ -1122,16 +1087,4 @@ defmodule EtherCAT.Bus.Link.Redundant do
   defp resolve_transport_mod(opts) do
     opts[:transport_mod] || RawSocket
   end
-
-  defp start_named({:local, _name} = name, opts),
-    do: :gen_statem.start_link(name, __MODULE__, opts, [])
-
-  defp start_named({:global, _name} = name, opts),
-    do: :gen_statem.start_link(name, __MODULE__, opts, [])
-
-  defp start_named({:via, _mod, _name} = name, opts),
-    do: :gen_statem.start_link(name, __MODULE__, opts, [])
-
-  defp start_named(name, opts) when is_atom(name),
-    do: :gen_statem.start_link({:local, name}, __MODULE__, opts, [])
 end

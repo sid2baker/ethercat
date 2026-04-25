@@ -166,13 +166,17 @@ defmodule EtherCAT.Slave.FSM do
   # -- :down state (slave physically disconnected, polling for reconnect) -----
 
   def handle_event(:enter, _old, :down, data) do
+    name = data.name
+    station = data.station
+    health_poll_ms = data.health_poll_ms
+
     Logger.info(
-      "[Slave #{data.name}] entering :down — reconnect poll every #{data.health_poll_ms}ms",
+      "[Slave #{name}] entering :down — reconnect poll every #{health_poll_ms}ms",
       component: :slave,
-      slave: data.name,
-      station: data.station,
+      slave: name,
+      station: station,
       event: :down_entered,
-      health_poll_ms: data.health_poll_ms
+      health_poll_ms: health_poll_ms
     )
 
     {:keep_state_and_data, Polling.down_enter_actions(data)}

@@ -27,33 +27,13 @@ defmodule EtherCAT.Simulator.Fault do
       Fault.describe(Fault.disconnect(:outputs) |> Fault.next(3))
   """
 
-  @exchange_commands [
-    :aprd,
-    :apwr,
-    :aprw,
-    :fprd,
-    :fpwr,
-    :fprw,
-    :brd,
-    :bwr,
-    :brw,
-    :lrd,
-    :lwr,
-    :lrw,
-    :armw,
-    :frmw
-  ]
+  alias EtherCAT.Simulator.FaultSpec
 
-  @mailbox_steps [:request, :upload_init, :upload_segment, :download_init, :download_segment]
-  @mailbox_abort_steps [:request, :upload_segment, :download_segment]
+  require FaultSpec
 
-  @type mailbox_step ::
-          :request | :upload_init | :upload_segment | :download_init | :download_segment
+  @type mailbox_step :: FaultSpec.mailbox_step()
 
-  @type milestone ::
-          {:healthy_exchanges, pos_integer()}
-          | {:healthy_polls, atom(), pos_integer()}
-          | {:mailbox_step, atom(), mailbox_step(), pos_integer()}
+  @type milestone :: FaultSpec.milestone()
 
   @type schedule ::
           :immediate
@@ -62,9 +42,9 @@ defmodule EtherCAT.Simulator.Fault do
           | {:after_milestone, milestone()}
 
   @type raw_fault ::
-          EtherCAT.Simulator.fault()
-          | EtherCAT.Simulator.immediate_fault()
-          | EtherCAT.Simulator.fault_script_step()
+          FaultSpec.fault()
+          | FaultSpec.immediate_fault()
+          | FaultSpec.fault_script_step()
 
   @type effect ::
           :drop_responses
@@ -98,7 +78,7 @@ defmodule EtherCAT.Simulator.Fault do
 
   @spec command_wkc_offset(atom(), integer()) :: t()
   def command_wkc_offset(command_name, delta)
-      when command_name in @exchange_commands and is_integer(delta) do
+      when FaultSpec.exchange_command?(command_name) and is_integer(delta) do
     %__MODULE__{effect: {:command_wkc_offset, command_name, delta}}
   end
 
@@ -147,7 +127,7 @@ defmodule EtherCAT.Simulator.Fault do
         ) :: t()
   def mailbox_protocol_fault(slave_name, index, subindex, stage, fault_kind)
       when is_atom(slave_name) and is_integer(index) and index >= 0 and is_integer(subindex) and
-             subindex >= 0 and stage in @mailbox_steps do
+             subindex >= 0 and FaultSpec.mailbox_step?(stage) do
     %__MODULE__{
       effect: {:mailbox_protocol_fault, slave_name, index, subindex, stage, fault_kind}
     }
@@ -189,7 +169,8 @@ defmodule EtherCAT.Simulator.Fault do
 
   @spec mailbox_step(atom(), mailbox_step(), pos_integer()) :: milestone()
   def mailbox_step(slave_name, step, count)
-      when is_atom(slave_name) and step in @mailbox_steps and is_integer(count) and count > 0 do
+      when is_atom(slave_name) and FaultSpec.milestone_mailbox_step?(step) and
+             is_integer(count) and count > 0 do
     {:mailbox_step, slave_name, step, count}
   end
 
@@ -256,57 +237,6 @@ defmodule EtherCAT.Simulator.Fault do
 
   def describe(other), do: inspect(other)
 
-  defp normalize_effect(:drop_responses), do: {:ok, :drop_responses}
-
-  defp normalize_effect({:wkc_offset, delta}) when is_integer(delta),
-    do: {:ok, {:wkc_offset, delta}}
-
-  defp normalize_effect({:command_wkc_offset, command_name, delta})
-       when command_name in @exchange_commands and is_integer(delta) do
-    {:ok, {:command_wkc_offset, command_name, delta}}
-  end
-
-  defp normalize_effect({:logical_wkc_offset, slave_name, delta})
-       when is_atom(slave_name) and is_integer(delta) do
-    {:ok, {:logical_wkc_offset, slave_name, delta}}
-  end
-
-  defp normalize_effect({:disconnect, slave_name}) when is_atom(slave_name) do
-    {:ok, {:disconnect, slave_name}}
-  end
-
-  defp normalize_effect({:retreat_to_safeop, slave_name}) when is_atom(slave_name) do
-    {:ok, {:retreat_to_safeop, slave_name}}
-  end
-
-  defp normalize_effect({:power_cycle, slave_name}) when is_atom(slave_name) do
-    {:ok, {:power_cycle, slave_name}}
-  end
-
-  defp normalize_effect({:latch_al_error, slave_name, code})
-       when is_atom(slave_name) and is_integer(code) and code >= 0 do
-    {:ok, {:latch_al_error, slave_name, code}}
-  end
-
-  defp normalize_effect({:mailbox_abort, slave_name, index, subindex, abort_code, nil})
-       when is_atom(slave_name) and is_integer(index) and index >= 0 and is_integer(subindex) and
-              subindex >= 0 and is_integer(abort_code) and abort_code >= 0 do
-    {:ok, {:mailbox_abort, slave_name, index, subindex, abort_code}}
-  end
-
-  defp normalize_effect({:mailbox_abort, slave_name, index, subindex, abort_code, stage})
-       when is_atom(slave_name) and is_integer(index) and index >= 0 and is_integer(subindex) and
-              subindex >= 0 and is_integer(abort_code) and abort_code >= 0 and
-              stage in @mailbox_abort_steps do
-    {:ok, {:mailbox_abort, slave_name, index, subindex, abort_code, stage}}
-  end
-
-  defp normalize_effect({:mailbox_protocol_fault, slave_name, index, subindex, stage, fault_kind})
-       when is_atom(slave_name) and is_integer(index) and index >= 0 and is_integer(subindex) and
-              subindex >= 0 and stage in @mailbox_steps do
-    {:ok, {:mailbox_protocol_fault, slave_name, index, subindex, stage, fault_kind}}
-  end
-
   defp normalize_effect({:nested, %__MODULE__{} = nested_fault}) do
     normalize(nested_fault)
   end
@@ -325,7 +255,7 @@ defmodule EtherCAT.Simulator.Fault do
     {:ok, {:wait_for_milestone, milestone}}
   end
 
-  defp normalize_effect(_effect), do: :error
+  defp normalize_effect(effect), do: FaultSpec.normalize_effect(effect)
 
   defp normalize_script_steps(steps) do
     Enum.reduce_while(steps, {:ok, []}, fn

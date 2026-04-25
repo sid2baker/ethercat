@@ -219,25 +219,25 @@ defmodule EtherCAT.Master.Recovery do
   end
 
   @spec put_slave_fault(%EtherCAT.Master{}, atom(), term()) :: %EtherCAT.Master{}
-  def put_slave_fault(data, name, reason) do
-    previous = Map.get(data.slave_faults, name)
+  def put_slave_fault(%{slave_faults: slave_faults} = data, name, reason) do
+    previous = Map.get(slave_faults, name)
 
     if previous != reason do
       Telemetry.master_slave_fault_changed(name, previous, reason)
     end
 
-    %{data | slave_faults: Map.put(data.slave_faults, name, reason)}
+    %{data | slave_faults: Map.put(slave_faults, name, reason)}
   end
 
   @spec clear_slave_fault(%EtherCAT.Master{}, atom()) :: %EtherCAT.Master{}
-  def clear_slave_fault(data, name) do
-    previous = Map.get(data.slave_faults, name)
+  def clear_slave_fault(%{slave_faults: slave_faults} = data, name) do
+    previous = Map.get(slave_faults, name)
 
     if not is_nil(previous) do
       Telemetry.master_slave_fault_changed(name, previous, nil)
     end
 
-    %{data | slave_faults: Map.delete(data.slave_faults, name)}
+    %{data | slave_faults: Map.delete(slave_faults, name)}
   end
 
   @spec maybe_resume_running(%EtherCAT.Master{}) ::
@@ -246,12 +246,13 @@ defmodule EtherCAT.Master.Recovery do
   def maybe_resume_running(data) do
     if map_size(data.activation_failures) == 0 and map_size(data.runtime_faults) == 0 do
       next_state = Status.desired_public_state(data)
+      runtime_target = Status.desired_runtime_target(data)
 
       Logger.info(
-        "[Master] recovery succeeded; desired runtime target #{inspect(Status.desired_runtime_target(data))} is healthy again",
+        "[Master] recovery succeeded; desired runtime target #{inspect(runtime_target)} is healthy again",
         component: :master,
         event: :recovery_succeeded,
-        runtime_target: Status.desired_runtime_target(data)
+        runtime_target: runtime_target
       )
 
       {:ok, next_state, %{data | activation_failures: %{}, runtime_faults: %{}}}
@@ -283,12 +284,13 @@ defmodule EtherCAT.Master.Recovery do
 
       true ->
         next_state = Status.desired_public_state(data)
+        runtime_target = Status.desired_runtime_target(data)
 
         Logger.info(
-          "[Master] transition retries succeeded; desired runtime target #{inspect(Status.desired_runtime_target(data))} is healthy again",
+          "[Master] transition retries succeeded; desired runtime target #{inspect(runtime_target)} is healthy again",
           component: :master,
           event: :activation_retry_succeeded,
-          runtime_target: Status.desired_runtime_target(data)
+          runtime_target: runtime_target
         )
 
         {:ok, next_state, %{data | activation_failures: %{}, runtime_faults: %{}}}

@@ -37,12 +37,13 @@ defmodule EtherCAT.Slave.Runtime.Configuration do
           {:ok, %Slave{}} | {:error, term(), %Slave{}}
   def post_transition(:preop, data) do
     new_data = configure_preop_process_data(data)
+    name = data.name
 
     Logger.debug(
-      "[Slave #{data.name}] preop: ready (#{map_size(new_data.signal_registrations)} signal(s) registered)"
+      "[Slave #{name}] preop: ready (#{map_size(new_data.signal_registrations)} signal(s) registered)"
     )
 
-    send(EtherCAT.Master, {:slave_ready, data.name, :preop})
+    send(EtherCAT.Master, {:slave_ready, name, :preop})
     {:ok, new_data}
   end
 

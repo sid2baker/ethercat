@@ -39,6 +39,8 @@ defmodule EtherCAT.Slave.Sync.Plan do
           {:ok, t()} | {:error, term()}
   def build(%Config{} = config, cycle_ns, local_time_ns, sync_diff_ns)
       when is_integer(cycle_ns) and cycle_ns > 0 do
+    mode = config.mode
+
     latch_names =
       Enum.into(config.latches, %{}, fn {name, key} -> {key, name} end)
 
@@ -48,13 +50,13 @@ defmodule EtherCAT.Slave.Sync.Plan do
       |> Enum.sort()
 
     plan = %__MODULE__{
-      mode: config.mode,
-      cyclic_unit_control: cyclic_unit_control(config.mode),
-      activation: activation(config.mode),
-      sync0_cycle_ns: sync0_cycle_ns(config.mode, cycle_ns),
-      sync1_cycle_ns: sync1_cycle_ns(config.mode, cycle_ns, config.sync1),
-      pulse_ns: pulse_ns(config.mode, config.sync0),
-      start_time_ns: start_time_ns(config.mode, cycle_ns, config, local_time_ns),
+      mode: mode,
+      cyclic_unit_control: cyclic_unit_control(mode),
+      activation: activation(mode),
+      sync0_cycle_ns: sync0_cycle_ns(mode, cycle_ns),
+      sync1_cycle_ns: sync1_cycle_ns(mode, cycle_ns, config.sync1),
+      pulse_ns: pulse_ns(mode, config.sync0),
+      start_time_ns: start_time_ns(mode, cycle_ns, config, local_time_ns),
       sync_diff_ns: sync_diff_ns,
       latch_names: latch_names,
       active_latches: active_latches,

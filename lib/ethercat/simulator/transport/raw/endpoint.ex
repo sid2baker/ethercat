@@ -52,7 +52,7 @@ defmodule EtherCAT.Simulator.Transport.Raw.Endpoint do
 
   @spec info(GenServer.server()) :: {:ok, map()} | {:error, :not_found}
   def info(name \\ endpoint_name(:primary)) do
-    GenServer.call(name, :info)
+    GenServer.call(name, {:info})
   catch
     :exit, {:noproc, _} -> {:error, :not_found}
     :exit, _reason -> {:error, :not_found}
@@ -70,7 +70,7 @@ defmodule EtherCAT.Simulator.Transport.Raw.Endpoint do
 
   @spec clear_response_delay_fault(GenServer.server()) :: :ok | {:error, :not_found}
   def clear_response_delay_fault(name) do
-    GenServer.call(name, :clear_response_delay_fault)
+    GenServer.call(name, {:clear_response_delay_fault})
   catch
     :exit, {:noproc, _} -> {:error, :not_found}
     :exit, _reason -> {:error, :not_found}
@@ -123,7 +123,7 @@ defmodule EtherCAT.Simulator.Transport.Raw.Endpoint do
   end
 
   @impl true
-  def handle_call(:info, _from, state) do
+  def handle_call({:info}, _from, state) do
     {:reply,
      {:ok,
       %{
@@ -148,7 +148,7 @@ defmodule EtherCAT.Simulator.Transport.Raw.Endpoint do
      }}
   end
 
-  def handle_call(:clear_response_delay_fault, _from, state) do
+  def handle_call({:clear_response_delay_fault}, _from, state) do
     {:reply, :ok,
      %{
        state

@@ -163,16 +163,19 @@ defmodule EtherCAT.Master.Startup do
           :ok | {:error, term()}
   def validate_topology_addressing(%{base_station: base_station}, slave_count)
       when is_integer(base_station) and is_integer(slave_count) and slave_count >= 0 do
-    cond do
-      slave_count > @max_auto_increment_slaves ->
-        {:error,
-         {:unsupported_topology,
-          {:too_many_slaves_for_auto_increment, slave_count, @max_auto_increment_slaves}}}
+    max_auto_increment_slaves = @max_auto_increment_slaves
+    max_station_address = @max_station_address
 
-      slave_count > 0 and base_station + slave_count - 1 > @max_station_address ->
+    cond do
+      slave_count > max_auto_increment_slaves ->
         {:error,
          {:unsupported_topology,
-          {:station_address_overflow, base_station, slave_count, @max_station_address}}}
+          {:too_many_slaves_for_auto_increment, slave_count, max_auto_increment_slaves}}}
+
+      slave_count > 0 and base_station + slave_count - 1 > max_station_address ->
+        {:error,
+         {:unsupported_topology,
+          {:station_address_overflow, base_station, slave_count, max_station_address}}}
 
       true ->
         :ok

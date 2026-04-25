@@ -6,6 +6,8 @@ defmodule EtherCAT.Simulator do
   alias EtherCAT.Backend
   alias EtherCAT.Bus.Datagram
   alias EtherCAT.Simulator.Fault
+  alias EtherCAT.Simulator.FaultSpec
+  alias EtherCAT.Simulator.Runtime.FaultApplier
   alias EtherCAT.Simulator.Runtime.FaultEngine
   alias EtherCAT.Simulator.Runtime.Faults
   alias EtherCAT.Simulator.Runtime.Router
@@ -20,69 +22,13 @@ defmodule EtherCAT.Simulator do
   alias EtherCAT.Simulator.Runtime.Wiring
   alias EtherCAT.Utils
 
-  @type exchange_fault ::
-          :drop_responses
-          | {:wkc_offset, integer()}
-          | {:command_wkc_offset,
-             :aprd
-             | :apwr
-             | :aprw
-             | :fprd
-             | :fpwr
-             | :fprw
-             | :brd
-             | :bwr
-             | :brw
-             | :lrd
-             | :lwr
-             | :lrw
-             | :armw
-             | :frmw, integer()}
-          | {:logical_wkc_offset, atom(), integer()}
-          | {:disconnect, atom()}
-
-  @type milestone ::
-          {:healthy_exchanges, pos_integer()}
-          | {:healthy_polls, atom(), pos_integer()}
-          | {:mailbox_step, atom(),
-             :upload_init | :upload_segment | :download_init | :download_segment, pos_integer()}
-  @type slave_fault ::
-          {:retreat_to_safeop, atom()}
-          | {:power_cycle, atom()}
-          | {:latch_al_error, atom(), non_neg_integer()}
-          | {:mailbox_abort, atom(), non_neg_integer(), non_neg_integer(), non_neg_integer()}
-          | {:mailbox_abort, atom(), non_neg_integer(), non_neg_integer(), non_neg_integer(),
-             :request | :upload_segment | :download_segment}
-          | {:mailbox_protocol_fault, atom(), non_neg_integer(), non_neg_integer(),
-             :request | :upload_init | :upload_segment | :download_init | :download_segment,
-             :drop_response
-             | :counter_mismatch
-             | :toggle_mismatch
-             | {:mailbox_type, 0..15}
-             | {:coe_service, 0..15}
-             | :invalid_coe_payload
-             | {:sdo_command, 0..255}
-             | :invalid_segment_padding
-             | {:segment_command, 0..255}}
-
-  @type fault_script_step ::
-          exchange_fault()
-          | slave_fault()
-          | {:wait_for_milestone, milestone()}
-
-  @type immediate_fault ::
-          exchange_fault()
-          | {:next_exchange, exchange_fault()}
-          | {:next_exchanges, pos_integer(), exchange_fault()}
-          | {:fault_script, [fault_script_step(), ...]}
-          | slave_fault()
-
-  @type schedulable_fault ::
-          immediate_fault()
-          | {:after_ms, non_neg_integer(), schedulable_fault()}
-          | {:after_milestone, milestone(), schedulable_fault()}
-
-  @type fault :: schedulable_fault()
+  @type exchange_fault :: FaultSpec.exchange_fault()
+  @type milestone :: FaultSpec.milestone()
+  @type slave_fault :: FaultSpec.slave_fault()
+  @type fault_script_step :: FaultSpec.fault_script_step()
+  @type immediate_fault :: FaultSpec.immediate_fault()
+  @type schedulable_fault :: FaultSpec.schedulable_fault()
+  @type fault :: FaultSpec.fault()
   @type call_error_reason :: :not_found | :timeout | {:server_exit, term()}
 
   @type signal_ref :: {atom(), atom()}
@@ -404,7 +350,11 @@ defmodule EtherCAT.Simulator do
 
     if effective_faults.drop_responses? do
       {:reply, {:error, :no_response},
-       FaultEngine.resume_after_planned_fault(state, planned_fault_entry, fault_callbacks())}
+       FaultEngine.resume_after_planned_fault(
+         state,
+         planned_fault_entry,
+         FaultApplier.callbacks()
+       )}
     else
       before_signals = Wiring.capture_signal_values(slaves)
 
@@ -428,7 +378,7 @@ defmodule EtherCAT.Simulator do
           responses,
           faults,
           planned_fault_entry,
-          fault_callbacks()
+          FaultApplier.callbacks()
         )
 
       {:reply, {:ok, responses}, state}
@@ -455,7 +405,7 @@ defmodule EtherCAT.Simulator do
   end
 
   def handle_call({:inject_fault, fault}, _from, state) do
-    case FaultEngine.inject(state, fault, fault_callbacks()) do
+    case FaultEngine.inject(state, fault, FaultApplier.callbacks()) do
       {:ok, state} ->
         {:reply, :ok, state}
 
@@ -624,7 +574,7 @@ defmodule EtherCAT.Simulator do
   end
 
   def handle_info({:apply_scheduled_fault, id, _fault}, state) do
-    {:noreply, FaultEngine.handle_timer(state, id, fault_callbacks())}
+    {:noreply, FaultEngine.handle_timer(state, id, FaultApplier.callbacks())}
   end
 
   defp finalize_signal_changes(
@@ -634,112 +584,5 @@ defmodule EtherCAT.Simulator do
     {slaves, changes} = Wiring.settle(slaves, connections, before_signals)
     :ok = Subscriptions.notify(subscriptions, self(), changes)
     %{state | slaves: slaves}
-  end
-
-  defp apply_immediate_fault(state, :drop_responses) do
-    {:ok, %{state | faults: Faults.inject(state.faults, :drop_responses)}}
-  end
-
-  defp apply_immediate_fault(state, {:wkc_offset, delta}) when is_integer(delta) do
-    {:ok, %{state | faults: Faults.inject(state.faults, {:wkc_offset, delta})}}
-  end
-
-  defp apply_immediate_fault(state, {:command_wkc_offset, command_name, delta})
-       when is_atom(command_name) and is_integer(delta) do
-    {:ok,
-     %{state | faults: Faults.inject(state.faults, {:command_wkc_offset, command_name, delta})}}
-  end
-
-  defp apply_immediate_fault(state, {:logical_wkc_offset, slave_name, delta})
-       when is_atom(slave_name) and is_integer(delta) do
-    {:ok,
-     %{state | faults: Faults.inject(state.faults, {:logical_wkc_offset, slave_name, delta})}}
-  end
-
-  defp apply_immediate_fault(state, {:disconnect, slave_name}) when is_atom(slave_name) do
-    {:ok, %{state | faults: Faults.inject(state.faults, {:disconnect, slave_name})}}
-  end
-
-  defp apply_immediate_fault(state, {:retreat_to_safeop, slave_name}) do
-    apply_slave_update(state, slave_name, &Device.retreat_to_safeop/1)
-  end
-
-  defp apply_immediate_fault(state, {:power_cycle, slave_name}) do
-    apply_slave_update(state, slave_name, &Device.power_cycle/1)
-  end
-
-  defp apply_immediate_fault(state, {:latch_al_error, slave_name, code})
-       when is_integer(code) and code >= 0 do
-    apply_slave_update(state, slave_name, &Device.latch_al_error(&1, code))
-  end
-
-  defp apply_immediate_fault(state, {:mailbox_abort, slave_name, index, subindex, abort_code})
-       when is_integer(index) and index >= 0 and is_integer(subindex) and subindex >= 0 and
-              is_integer(abort_code) and abort_code >= 0 do
-    apply_slave_update(
-      state,
-      slave_name,
-      &Device.inject_mailbox_abort(&1, index, subindex, abort_code)
-    )
-  end
-
-  defp apply_immediate_fault(
-         state,
-         {:mailbox_abort, slave_name, index, subindex, abort_code, stage}
-       )
-       when is_integer(index) and index >= 0 and is_integer(subindex) and subindex >= 0 and
-              is_integer(abort_code) and abort_code >= 0 do
-    apply_slave_update(
-      state,
-      slave_name,
-      &Device.inject_mailbox_abort(&1, index, subindex, abort_code, stage)
-    )
-  end
-
-  defp apply_immediate_fault(
-         state,
-         {:mailbox_protocol_fault, slave_name, index, subindex, stage, fault_kind}
-       )
-       when is_integer(index) and index >= 0 and is_integer(subindex) and subindex >= 0 do
-    apply_slave_update(
-      state,
-      slave_name,
-      &Device.inject_mailbox_protocol_fault(&1, index, subindex, stage, fault_kind)
-    )
-  end
-
-  defp apply_immediate_fault(_state, _fault), do: {:error, :invalid_fault}
-
-  defp apply_script_step(
-         state,
-         {:mailbox_protocol_fault, slave_name, index, subindex, stage, fault_kind}
-       )
-       when is_integer(index) and index >= 0 and is_integer(subindex) and subindex >= 0 do
-    apply_slave_update(
-      state,
-      slave_name,
-      &Device.inject_mailbox_protocol_fault_once(&1, index, subindex, stage, fault_kind)
-    )
-  end
-
-  defp apply_script_step(state, step), do: apply_immediate_fault(state, step)
-
-  defp apply_slave_update(state, slave_name, fun) do
-    before_signals = Wiring.capture_signal_values(state.slaves)
-
-    case Slaves.update(state.slaves, slave_name, fun) do
-      {:ok, slaves} ->
-        {:ok, %{state | slaves: slaves} |> finalize_signal_changes(before_signals)}
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
-
-  defp fault_callbacks do
-    %{
-      apply_immediate_fault: &apply_immediate_fault/2,
-      apply_script_step: &apply_script_step/2
-    }
   end
 end

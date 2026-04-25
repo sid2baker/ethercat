@@ -67,20 +67,21 @@ defmodule EtherCAT.Slave.Runtime.Bootstrap do
     case read_sii(data.bus, data.station) do
       {:ok, esc_info, identity, mailbox_config, sm_configs, pdo_configs} ->
         sii_ms = System.monotonic_time(:millisecond) - t0
+        pdo_count = length(pdo_configs)
 
         Logger.debug(
           "[Slave #{data.name}] SII ok in #{sii_ms}ms — " <>
             "vendor=0x#{Integer.to_string(identity.vendor_id, 16)} " <>
             "product=0x#{Integer.to_string(identity.product_code, 16)} " <>
             "fmmus=#{esc_info.fmmu_count} " <>
-            "mbx_recv=#{mailbox_config.recv_size} pdos=#{length(pdo_configs)}",
+            "mbx_recv=#{mailbox_config.recv_size} pdos=#{pdo_count}",
           event: :sii_read_completed,
           duration_ms: sii_ms,
           vendor_id: identity.vendor_id,
           product_code: identity.product_code,
           fmmu_count: esc_info.fmmu_count,
           mailbox_recv_size: mailbox_config.recv_size,
-          pdo_count: length(pdo_configs)
+          pdo_count: pdo_count
         )
 
         {:ok,

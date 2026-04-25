@@ -171,10 +171,12 @@ defmodule EtherCAT.Simulator.Slave.Runtime.ProcessImage do
          %{mirror_output_to_input?: true, input_phys: input_phys, input_size: input_size} = slave,
          bytes
        ) do
+    bytes_size = byte_size(bytes)
+
     mirrored =
       bytes
-      |> binary_part(0, min(byte_size(bytes), input_size))
-      |> Kernel.<>(:binary.copy(<<0>>, max(input_size - byte_size(bytes), 0)))
+      |> binary_part(0, min(bytes_size, input_size))
+      |> Kernel.<>(:binary.copy(<<0>>, max(input_size - bytes_size, 0)))
 
     write_memory(slave, input_phys, mirrored)
   end

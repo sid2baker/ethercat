@@ -188,15 +188,19 @@ defmodule EtherCAT.Master.Config do
 
   defp normalize_dc_config(_dc_config), do: {:error, {:invalid_start_options, :invalid_dc}}
 
-  defp validate_dc_config(%DCConfig{} = dc_config)
-       when is_integer(dc_config.cycle_ns) and dc_config.cycle_ns >= 1_000_000 and
-              rem(dc_config.cycle_ns, 1_000_000) == 0 and
-              is_boolean(dc_config.await_lock?) and
-              dc_config.lock_policy in [:advisory, :recovering, :fatal] and
-              is_integer(dc_config.lock_threshold_ns) and dc_config.lock_threshold_ns > 0 and
-              is_integer(dc_config.lock_timeout_ms) and dc_config.lock_timeout_ms > 0 and
-              is_integer(dc_config.warmup_cycles) and dc_config.warmup_cycles >= 0 do
-    {:ok, dc_config}
+  defp validate_dc_config(%DCConfig{} = dc_config) do
+    cycle_ns = dc_config.cycle_ns
+
+    if is_integer(cycle_ns) and cycle_ns >= 1_000_000 and rem(cycle_ns, 1_000_000) == 0 and
+         is_boolean(dc_config.await_lock?) and
+         dc_config.lock_policy in [:advisory, :recovering, :fatal] and
+         is_integer(dc_config.lock_threshold_ns) and dc_config.lock_threshold_ns > 0 and
+         is_integer(dc_config.lock_timeout_ms) and dc_config.lock_timeout_ms > 0 and
+         is_integer(dc_config.warmup_cycles) and dc_config.warmup_cycles >= 0 do
+      {:ok, dc_config}
+    else
+      {:error, {:invalid_start_options, :invalid_dc}}
+    end
   end
 
   defp validate_dc_config(_dc_config), do: {:error, {:invalid_start_options, :invalid_dc}}

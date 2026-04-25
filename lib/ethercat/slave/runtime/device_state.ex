@@ -120,11 +120,14 @@ defmodule EtherCAT.Slave.Runtime.DeviceState do
 
   @spec snapshot(atom(), %Slave{}) :: slave_snapshot()
   def snapshot(al_state, %Slave{} = data) do
+    faults = data.device_faults || []
+    updated_at_us = data.device_updated_at_us
+
     description =
       effective_description(data,
         al_state: al_state,
-        updated_at_us: data.device_updated_at_us,
-        faults: data.device_faults || []
+        updated_at_us: updated_at_us,
+        faults: faults
       )
 
     %SlaveSnapshot{
@@ -136,8 +139,8 @@ defmodule EtherCAT.Slave.Runtime.DeviceState do
       endpoints: description.endpoints,
       commands: description.commands,
       state: public_state(data, description),
-      faults: data.device_faults || [],
-      updated_at_us: data.device_updated_at_us,
+      faults: faults,
+      updated_at_us: updated_at_us,
       driver_error: data.driver_error
     }
   end

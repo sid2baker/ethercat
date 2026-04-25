@@ -3,6 +3,7 @@ defmodule EtherCAT.Domain.Image do
 
   alias EtherCAT.Domain
   alias EtherCAT.Domain.Freshness
+  alias EtherCAT.Utils
 
   @type table :: atom() | :ets.tid()
   @type domain_status :: %{
@@ -139,11 +140,8 @@ defmodule EtherCAT.Domain.Image do
     ]
   end
 
-  defp replacement_value({:ok, value}, size), do: binary_pad(value, size)
+  defp replacement_value({:ok, value}, size), do: Utils.binary_pad(value, size)
   defp replacement_value({:error, :not_found}, size), do: :binary.copy(<<0>>, size)
-
-  defp binary_pad(data, size) when byte_size(data) >= size, do: binary_part(data, 0, size)
-  defp binary_pad(data, size), do: data <> :binary.copy(<<0>>, size - byte_size(data))
 
   defp sample_payload(table, value, {:input, changed_at_us}) do
     %{last_valid_cycle_at_us: last_valid_cycle_at_us, stale_after_us: stale_after_us} =

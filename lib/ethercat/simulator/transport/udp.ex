@@ -62,7 +62,7 @@ defmodule EtherCAT.Simulator.Transport.Udp do
 
   @spec info() :: {:ok, map()} | {:error, term()}
   def info do
-    GenServer.call(__MODULE__, :info)
+    GenServer.call(__MODULE__, {:info})
   catch
     :exit, {:noproc, _} -> {:error, :not_found}
   end
@@ -84,7 +84,7 @@ defmodule EtherCAT.Simulator.Transport.Udp do
 
   @spec clear_faults() :: :ok | {:error, :not_found}
   def clear_faults do
-    GenServer.call(__MODULE__, :clear_faults)
+    GenServer.call(__MODULE__, {:clear_faults})
   catch
     :exit, {:noproc, _} -> {:error, :not_found}
   end
@@ -122,7 +122,7 @@ defmodule EtherCAT.Simulator.Transport.Udp do
   end
 
   @impl true
-  def handle_call(:info, _from, state) do
+  def handle_call({:info}, _from, state) do
     info = %{
       ip: state.ip,
       port: state.port,
@@ -144,7 +144,7 @@ defmodule EtherCAT.Simulator.Transport.Udp do
     end
   end
 
-  def handle_call(:clear_faults, _from, state) do
+  def handle_call({:clear_faults}, _from, state) do
     {:reply, :ok, %{state | pending_faults: []}}
   end
 

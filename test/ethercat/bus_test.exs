@@ -796,8 +796,6 @@ defmodule EtherCAT.BusTest do
     pri_mac = fake_mac("pri")
     {:ok, bus} = start_redundant_circuit_bus(frame_timeout_ms: 50)
 
-    started_at_us = System.monotonic_time(:microsecond)
-
     read =
       Task.async(fn ->
         Bus.transaction(bus, Transaction.brd({0x0000, 1}), 100_000)
@@ -805,11 +803,12 @@ defmodule EtherCAT.BusTest do
 
     primary = assert_sent_transport("pri")
     _secondary = assert_sent_transport("sec")
+    sent_at_us = System.convert_time_unit(primary.tx_at, :native, :microsecond)
 
     reply_transport(bus, primary, &%{&1 | wkc: 1}, src_mac: pri_mac)
 
     assert {:ok, [%{wkc: 1}]} = Task.await(read)
-    assert System.monotonic_time(:microsecond) - started_at_us < 10_000
+    assert System.monotonic_time(:microsecond) - sent_at_us < 10_000
   end
 
   test "redundant realtime logical exchange merges complementary bounces before completing" do
@@ -910,17 +909,17 @@ defmodule EtherCAT.BusTest do
     pri_mac = fake_mac("pri")
     {:ok, bus} = start_redundant_circuit_bus(frame_timeout_ms: 10)
 
-    started_at_us = System.monotonic_time(:microsecond)
     read = Task.async(fn -> Bus.transaction(bus, Transaction.brd({0x0000, 1})) end)
 
     primary = assert_sent_transport("pri")
     _secondary = assert_sent_transport("sec")
+    sent_at_us = System.convert_time_unit(primary.tx_at, :native, :microsecond)
 
-    wait_until_elapsed_us(started_at_us, 8_000)
+    wait_until_elapsed_us(sent_at_us, 8_000)
     reply_transport(bus, primary, &%{&1 | wkc: 1}, src_mac: pri_mac)
 
     assert {:ok, [%{wkc: 1}]} = Task.await(read)
-    assert System.monotonic_time(:microsecond) - started_at_us < 20_000
+    assert System.monotonic_time(:microsecond) - sent_at_us < 20_000
   end
 
   test "redundant bus still attempts a previously degraded port on the next exchange" do
@@ -1203,9 +1202,9 @@ defmodule EtherCAT.BusTest do
   end
 
   defp assert_sent_transport(interface) do
-    assert_receive {:fake_transport_sent, ^interface, raw, payload, _tx_at}, 200
+    assert_receive {:fake_transport_sent, ^interface, raw, payload, tx_at}, 200
     assert {:ok, datagrams} = Frame.decode(payload)
-    %{datagrams: datagrams, interface: interface, raw: raw}
+    %{datagrams: datagrams, interface: interface, raw: raw, tx_at: tx_at}
   end
 
   defp fake_mac(interface) do

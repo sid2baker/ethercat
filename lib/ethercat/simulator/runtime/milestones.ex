@@ -2,6 +2,7 @@ defmodule EtherCAT.Simulator.Runtime.Milestones do
   @moduledoc false
 
   alias EtherCAT.Bus.Datagram
+  alias EtherCAT.Simulator.FaultSpec
   alias EtherCAT.Simulator.Runtime.Faults
   alias EtherCAT.Simulator.Slave.Runtime.Device
   alias EtherCAT.Slave.ESC.Registers
@@ -9,6 +10,8 @@ defmodule EtherCAT.Simulator.Runtime.Milestones do
   @fprd 4
   @op_code 0x08
   @al_status Registers.al_status()
+  @al_status_offset elem(@al_status, 0)
+  @al_status_size elem(@al_status, 1)
   @mailbox_type_coe 0x03
   @service_sdo_response 0x03
   @command_abort 0x80
@@ -31,19 +34,7 @@ defmodule EtherCAT.Simulator.Runtime.Milestones do
         }
 
   @spec valid?(term()) :: boolean()
-  def valid?({:healthy_exchanges, count}) when is_integer(count) and count > 0, do: true
-
-  def valid?({:healthy_polls, slave_name, count})
-      when is_atom(slave_name) and is_integer(count) and count > 0,
-      do: true
-
-  def valid?({:mailbox_step, slave_name, step, count})
-      when is_atom(slave_name) and
-             step in [:upload_init, :upload_segment, :download_init, :download_segment] and
-             is_integer(count) and count > 0,
-      do: true
-
-  def valid?(_milestone), do: false
+  def valid?(milestone), do: FaultSpec.valid_milestone?(milestone)
 
   @spec initial_remaining(milestone()) :: pos_integer()
   def initial_remaining({:healthy_exchanges, count}), do: count
@@ -123,15 +114,21 @@ defmodule EtherCAT.Simulator.Runtime.Milestones do
          %Datagram{wkc: wkc, data: al_status},
          stations_to_names
        )
-       when offset == elem(@al_status, 0) and byte_size(request_data) == elem(@al_status, 1) and
-              wkc > 0 and
-              byte_size(al_status) == elem(@al_status, 1) do
-    with {:ok, slave_name} <- Map.fetch(stations_to_names, station),
-         {al_state, false} <- Registers.decode_al_status(al_status),
-         true <- al_state == @op_code do
-      {:ok, slave_name}
+       when wkc > 0 do
+    al_status_offset = @al_status_offset
+    al_status_size = @al_status_size
+
+    if offset == al_status_offset and byte_size(request_data) == al_status_size and
+         byte_size(al_status) == al_status_size do
+      with {:ok, slave_name} <- Map.fetch(stations_to_names, station),
+           {al_state, false} <- Registers.decode_al_status(al_status),
+           true <- al_state == @op_code do
+        {:ok, slave_name}
+      else
+        _other -> :error
+      end
     else
-      _other -> :error
+      :error
     end
   end
 

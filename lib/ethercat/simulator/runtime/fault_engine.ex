@@ -2,45 +2,20 @@ defmodule EtherCAT.Simulator.Runtime.FaultEngine do
   @moduledoc false
 
   alias EtherCAT.Bus.Datagram
-  alias EtherCAT.Simulator
+  alias EtherCAT.Simulator.FaultSpec
   alias EtherCAT.Simulator.Runtime.Faults
   alias EtherCAT.Simulator.Runtime.Milestones
   alias EtherCAT.Simulator.State
 
-  @exchange_commands [
-    :aprd,
-    :apwr,
-    :aprw,
-    :fprd,
-    :fpwr,
-    :fprw,
-    :brd,
-    :bwr,
-    :brw,
-    :lrd,
-    :lwr,
-    :lrw,
-    :armw,
-    :frmw
-  ]
-  @mailbox_abort_stages [:request, :upload_segment, :download_segment]
-  @mailbox_protocol_stages [
-    :request,
-    :upload_init,
-    :upload_segment,
-    :download_init,
-    :download_segment
-  ]
-
   @type apply_result :: {:ok, State.t()} | {:error, term()}
   @type callbacks :: %{
-          required(:apply_immediate_fault) => (State.t(), Simulator.immediate_fault() ->
+          required(:apply_immediate_fault) => (State.t(), FaultSpec.immediate_fault() ->
                                                  apply_result()),
-          required(:apply_script_step) => (State.t(), Simulator.fault_script_step() ->
+          required(:apply_script_step) => (State.t(), FaultSpec.fault_script_step() ->
                                              apply_result())
         }
 
-  @spec inject(State.t(), Simulator.fault(), callbacks()) :: apply_result()
+  @spec inject(State.t(), FaultSpec.fault(), callbacks()) :: apply_result()
   def inject(state, {:after_ms, delay_ms, fault}, _callbacks)
       when is_integer(delay_ms) and delay_ms >= 0 do
     schedule_fault(state, delay_ms, fault)
@@ -346,11 +321,11 @@ defmodule EtherCAT.Simulator.Runtime.FaultEngine do
   defp fault_entry_fault(%{fault: fault}), do: fault
 
   defp valid_schedulable_fault?({:next_exchange, fault}),
-    do: valid_exchange_fault?(fault)
+    do: Faults.valid_exchange_fault?(fault)
 
   defp valid_schedulable_fault?({:next_exchanges, count, fault})
        when is_integer(count) and count > 0 do
-    valid_exchange_fault?(fault)
+    Faults.valid_exchange_fault?(fault)
   end
 
   defp valid_schedulable_fault?({:after_ms, delay_ms, fault})
@@ -367,7 +342,7 @@ defmodule EtherCAT.Simulator.Runtime.FaultEngine do
   end
 
   defp valid_schedulable_fault?(fault),
-    do: valid_exchange_fault?(fault) or valid_slave_fault?(fault)
+    do: Faults.valid_exchange_fault?(fault) or FaultSpec.valid_slave_fault?(fault)
 
   defp valid_fault_script_steps?(steps) when is_list(steps) do
     steps != [] and Enum.all?(steps, &valid_fault_script_step?/1)
@@ -376,89 +351,8 @@ defmodule EtherCAT.Simulator.Runtime.FaultEngine do
   defp valid_fault_script_step?({:wait_for_milestone, milestone}),
     do: Milestones.valid?(milestone)
 
-  defp valid_fault_script_step?(step), do: valid_exchange_fault?(step) or valid_slave_fault?(step)
+  defp valid_fault_script_step?(step),
+    do: Faults.valid_exchange_fault?(step) or FaultSpec.valid_slave_fault?(step)
 
-  defp fault_script_exchange_step?(step), do: valid_exchange_fault?(step)
-
-  defp valid_mailbox_protocol_fault?(stage, :counter_mismatch)
-       when stage in @mailbox_protocol_stages,
-       do: true
-
-  defp valid_mailbox_protocol_fault?(stage, :drop_response)
-       when stage in @mailbox_protocol_stages,
-       do: true
-
-  defp valid_mailbox_protocol_fault?(stage, :toggle_mismatch)
-       when stage in [:upload_segment, :download_segment],
-       do: true
-
-  defp valid_mailbox_protocol_fault?(stage, {:mailbox_type, mailbox_type})
-       when stage in @mailbox_protocol_stages and is_integer(mailbox_type) and
-              mailbox_type >= 0 and mailbox_type <= 15,
-       do: true
-
-  defp valid_mailbox_protocol_fault?(stage, {:coe_service, service})
-       when stage in @mailbox_protocol_stages and is_integer(service) and service >= 0 and
-              service <= 15,
-       do: true
-
-  defp valid_mailbox_protocol_fault?(stage, :invalid_coe_payload)
-       when stage in @mailbox_protocol_stages,
-       do: true
-
-  defp valid_mailbox_protocol_fault?(stage, {:sdo_command, command})
-       when stage == :upload_init and is_integer(command) and command >= 0 and command <= 255,
-       do: true
-
-  defp valid_mailbox_protocol_fault?(stage, :invalid_segment_padding)
-       when stage == :upload_segment,
-       do: true
-
-  defp valid_mailbox_protocol_fault?(stage, {:segment_command, command})
-       when stage in [:upload_segment, :download_segment] and is_integer(command) and
-              command >= 0 and command <= 255,
-       do: true
-
-  defp valid_mailbox_protocol_fault?(_stage, _fault_kind), do: false
-
-  defp valid_exchange_fault?(:drop_responses), do: true
-  defp valid_exchange_fault?({:wkc_offset, delta}) when is_integer(delta), do: true
-
-  defp valid_exchange_fault?({:command_wkc_offset, command_name, delta})
-       when command_name in @exchange_commands and is_integer(delta),
-       do: true
-
-  defp valid_exchange_fault?({:logical_wkc_offset, slave_name, delta})
-       when is_atom(slave_name) and is_integer(delta),
-       do: true
-
-  defp valid_exchange_fault?({:disconnect, slave_name}) when is_atom(slave_name), do: true
-  defp valid_exchange_fault?(_fault), do: false
-
-  defp valid_slave_fault?({:retreat_to_safeop, slave_name}) when is_atom(slave_name), do: true
-  defp valid_slave_fault?({:power_cycle, slave_name}) when is_atom(slave_name), do: true
-
-  defp valid_slave_fault?({:latch_al_error, slave_name, code})
-       when is_atom(slave_name) and is_integer(code) and code >= 0,
-       do: true
-
-  defp valid_slave_fault?({:mailbox_abort, slave_name, index, subindex, abort_code})
-       when is_atom(slave_name) and is_integer(index) and index >= 0 and is_integer(subindex) and
-              subindex >= 0 and is_integer(abort_code) and abort_code >= 0,
-       do: true
-
-  defp valid_slave_fault?({:mailbox_abort, slave_name, index, subindex, abort_code, stage})
-       when is_atom(slave_name) and is_integer(index) and index >= 0 and is_integer(subindex) and
-              subindex >= 0 and is_integer(abort_code) and abort_code >= 0 and
-              stage in @mailbox_abort_stages,
-       do: true
-
-  defp valid_slave_fault?(
-         {:mailbox_protocol_fault, slave_name, index, subindex, stage, fault_kind}
-       )
-       when is_atom(slave_name) and is_integer(index) and index >= 0 and is_integer(subindex) and
-              subindex >= 0,
-       do: valid_mailbox_protocol_fault?(stage, fault_kind)
-
-  defp valid_slave_fault?(_fault), do: false
+  defp fault_script_exchange_step?(step), do: Faults.valid_exchange_fault?(step)
 end

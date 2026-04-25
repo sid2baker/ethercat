@@ -99,6 +99,8 @@ defmodule EtherCAT.Simulator.Slave.Runtime.ESCImage do
   defp maybe_put_dc_registers(memory, false), do: memory
 
   defp maybe_put_dc_registers(memory, true) do
+    zero8 = <<0::8>>
+
     memory
     |> Memory.replace(0x0900, <<10::32-little, 20::32-little, 30::32-little, 40::32-little>>)
     |> Memory.replace(0x0910, <<1_000_000::64-little>>)
@@ -109,13 +111,13 @@ defmodule EtherCAT.Simulator.Slave.Runtime.ESCImage do
     |> Memory.replace(0x0930, <<0::16-little>>)
     |> Memory.replace(0x0934, <<0::16-little>>)
     |> Memory.replace(0x0980, <<0::16-little>>)
-    |> Memory.replace(0x0981, <<0::8>>)
+    |> Memory.replace(0x0981, zero8)
     |> Memory.replace(0x0982, <<0::16-little>>)
     |> Memory.replace(0x0990, <<0::64-little>>)
     |> Memory.replace(0x09A0, <<0::32-little>>)
     |> Memory.replace(0x09A4, <<0::32-little>>)
-    |> Memory.replace(0x09A8, <<0::8>>)
-    |> Memory.replace(0x09A9, <<0::8>>)
+    |> Memory.replace(0x09A8, zero8)
+    |> Memory.replace(0x09A9, zero8)
     |> Memory.replace(0x09AE, <<0::16-little>>)
     |> Memory.replace(0x09B0, <<0::64-little>>)
     |> Memory.replace(0x09B8, <<0::64-little>>)
@@ -179,13 +181,9 @@ defmodule EtherCAT.Simulator.Slave.Runtime.ESCImage do
         pdo_index::16-little,
         1::8,
         sm_index::8,
-        0::8,
-        0::8,
-        0::16-little,
+        0::32-little,
         pdo_index::16-little,
-        0::8,
-        0::8,
-        0::8,
+        0::24-little,
         bit_size::8,
         0::16-little
       >>

@@ -26,13 +26,15 @@ defmodule EtherCAT.Slave.ProcessData do
   def configure_preop(data, opts) do
     run_mailbox_config = Keyword.fetch!(opts, :run_mailbox_config)
 
+    name = data.name
+
     Logger.debug(
-      "[Slave #{data.name}] preop: running mailbox configuration",
+      "[Slave #{name}] preop: running mailbox configuration",
       event: :mailbox_configuration_started
     )
 
     Logger.debug(
-      "[Slave #{data.name}] preop: configuring process-data SyncManagers/FMMUs",
+      "[Slave #{name}] preop: configuring process-data SyncManagers/FMMUs",
       event: :process_data_configuration_started
     )
 
@@ -76,7 +78,7 @@ defmodule EtherCAT.Slave.ProcessData do
   def current_output_sm_image(data, domain_id, sm_key, sm_size) do
     case Map.fetch(data.output_sm_images || %{}, sm_key) do
       {:ok, image} when byte_size(image) == sm_size -> {:ok, image}
-      {:ok, image} -> {:ok, binary_pad(image, sm_size)}
+      {:ok, image} -> {:ok, Utils.binary_pad(image, sm_size)}
       :error -> read_output_sm_image_from_domain(data, domain_id, sm_key, sm_size)
     end
   end
@@ -373,7 +375,7 @@ defmodule EtherCAT.Slave.ProcessData do
 
     Enum.find_value(domain_ids, :binary.copy(<<0>>, sm_size), fn domain_id ->
       case Domain.read(domain_id, key) do
-        {:ok, image} -> binary_pad(image, sm_size)
+        {:ok, image} -> Utils.binary_pad(image, sm_size)
         {:error, _} -> nil
       end
     end)
@@ -381,7 +383,7 @@ defmodule EtherCAT.Slave.ProcessData do
 
   defp read_output_sm_image_from_domain(data, domain_id, sm_key, sm_size) do
     case Domain.read(domain_id, {data.name, sm_key}) do
-      {:ok, image} -> {:ok, binary_pad(image, sm_size)}
+      {:ok, image} -> {:ok, Utils.binary_pad(image, sm_size)}
       {:error, _} = err -> err
     end
   end
@@ -529,8 +531,7 @@ defmodule EtherCAT.Slave.ProcessData do
 
   defp write_process_data_sync_manager(data, %SmGroup{} = sm_group) do
     sm_reg =
-      <<sm_group.phys::16-little, sm_group.total_sm_size::16-little, sm_group.ctrl::8, 0::8,
-        0x00::8, 0::8>>
+      <<sm_group.phys::16-little, sm_group.total_sm_size::16-little, sm_group.ctrl::8, 0::24>>
 
     case Bus.transaction(
            data.bus,
@@ -579,7 +580,4 @@ defmodule EtherCAT.Slave.ProcessData do
   defp call_signal_model(data) do
     Driver.Runtime.signal_model(data.driver, data.config, data.sii_pdo_configs)
   end
-
-  defp binary_pad(data, size) when byte_size(data) >= size, do: binary_part(data, 0, size)
-  defp binary_pad(data, size), do: data <> :binary.copy(<<0>>, size - byte_size(data))
 end

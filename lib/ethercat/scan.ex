@@ -17,6 +17,7 @@ defmodule EtherCAT.Scan do
   alias EtherCAT.Master.Status, as: MasterStatus
   alias EtherCAT.Scan.Result
   alias EtherCAT.Slave.ESC.{Registers, SII}
+  alias EtherCAT.Utils
 
   @base_station 0x1000
 
@@ -173,7 +174,7 @@ defmodule EtherCAT.Scan do
 
         status = %{
           raw: al_status_raw,
-          state: al_state_atom(al_status_raw),
+          state: Utils.al_state_atom(al_status_raw),
           error?: error?,
           error_code: if(error?, do: read_al_status_code(bus, station), else: nil)
         }
@@ -222,11 +223,4 @@ defmodule EtherCAT.Scan do
   end
 
   defp al_fault_from_snapshot(_slave), do: []
-
-  defp al_state_atom(0x01), do: :init
-  defp al_state_atom(0x02), do: :preop
-  defp al_state_atom(0x03), do: :bootstrap
-  defp al_state_atom(0x04), do: :safeop
-  defp al_state_atom(0x08), do: :op
-  defp al_state_atom(_other), do: nil
 end
