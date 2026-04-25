@@ -31,9 +31,9 @@ defmodule EtherCAT.Simulator.Fault do
 
   require FaultSpec
 
-  @type mailbox_step :: FaultSpec.mailbox_step()
+  @type mailbox_step :: EtherCAT.Simulator.mailbox_step()
 
-  @type milestone :: FaultSpec.milestone()
+  @type milestone :: EtherCAT.Simulator.milestone()
 
   @type schedule ::
           :immediate
@@ -42,9 +42,9 @@ defmodule EtherCAT.Simulator.Fault do
           | {:after_milestone, milestone()}
 
   @type raw_fault ::
-          FaultSpec.fault()
-          | FaultSpec.immediate_fault()
-          | FaultSpec.fault_script_step()
+          EtherCAT.Simulator.fault()
+          | EtherCAT.Simulator.immediate_fault()
+          | EtherCAT.Simulator.fault_script_step()
 
   @type effect ::
           :drop_responses

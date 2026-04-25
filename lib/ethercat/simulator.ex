@@ -6,7 +6,6 @@ defmodule EtherCAT.Simulator do
   alias EtherCAT.Backend
   alias EtherCAT.Bus.Datagram
   alias EtherCAT.Simulator.Fault
-  alias EtherCAT.Simulator.FaultSpec
   alias EtherCAT.Simulator.Runtime.FaultApplier
   alias EtherCAT.Simulator.Runtime.FaultEngine
   alias EtherCAT.Simulator.Runtime.Faults
@@ -22,13 +21,81 @@ defmodule EtherCAT.Simulator do
   alias EtherCAT.Simulator.Runtime.Wiring
   alias EtherCAT.Utils
 
-  @type exchange_fault :: FaultSpec.exchange_fault()
-  @type milestone :: FaultSpec.milestone()
-  @type slave_fault :: FaultSpec.slave_fault()
-  @type fault_script_step :: FaultSpec.fault_script_step()
-  @type immediate_fault :: FaultSpec.immediate_fault()
-  @type schedulable_fault :: FaultSpec.schedulable_fault()
-  @type fault :: FaultSpec.fault()
+  @type exchange_command ::
+          :aprd
+          | :apwr
+          | :aprw
+          | :fprd
+          | :fpwr
+          | :fprw
+          | :brd
+          | :bwr
+          | :brw
+          | :lrd
+          | :lwr
+          | :lrw
+          | :armw
+          | :frmw
+
+  @type mailbox_step ::
+          :request | :upload_init | :upload_segment | :download_init | :download_segment
+
+  @type mailbox_abort_stage :: :request | :upload_segment | :download_segment
+
+  @type milestone_mailbox_step ::
+          :upload_init | :upload_segment | :download_init | :download_segment
+
+  @type mailbox_protocol_fault_kind ::
+          :drop_response
+          | :counter_mismatch
+          | :toggle_mismatch
+          | {:mailbox_type, 0..15}
+          | {:coe_service, 0..15}
+          | :invalid_coe_payload
+          | {:sdo_command, 0..255}
+          | :invalid_segment_padding
+          | {:segment_command, 0..255}
+
+  @type exchange_fault ::
+          :drop_responses
+          | {:wkc_offset, integer()}
+          | {:command_wkc_offset, exchange_command(), integer()}
+          | {:logical_wkc_offset, atom(), integer()}
+          | {:disconnect, atom()}
+
+  @type milestone ::
+          {:healthy_exchanges, pos_integer()}
+          | {:healthy_polls, atom(), pos_integer()}
+          | {:mailbox_step, atom(), milestone_mailbox_step(), pos_integer()}
+
+  @type slave_fault ::
+          {:retreat_to_safeop, atom()}
+          | {:power_cycle, atom()}
+          | {:latch_al_error, atom(), non_neg_integer()}
+          | {:mailbox_abort, atom(), non_neg_integer(), non_neg_integer(), non_neg_integer()}
+          | {:mailbox_abort, atom(), non_neg_integer(), non_neg_integer(), non_neg_integer(),
+             mailbox_abort_stage()}
+          | {:mailbox_protocol_fault, atom(), non_neg_integer(), non_neg_integer(),
+             mailbox_step(), mailbox_protocol_fault_kind()}
+
+  @type fault_script_step ::
+          exchange_fault()
+          | slave_fault()
+          | {:wait_for_milestone, milestone()}
+
+  @type immediate_fault ::
+          exchange_fault()
+          | {:next_exchange, exchange_fault()}
+          | {:next_exchanges, pos_integer(), exchange_fault()}
+          | {:fault_script, [fault_script_step(), ...]}
+          | slave_fault()
+
+  @type schedulable_fault ::
+          immediate_fault()
+          | {:after_ms, non_neg_integer(), schedulable_fault()}
+          | {:after_milestone, milestone(), schedulable_fault()}
+
+  @type fault :: schedulable_fault()
   @type call_error_reason :: :not_found | :timeout | {:server_exit, term()}
 
   @type signal_ref :: {atom(), atom()}
