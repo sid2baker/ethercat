@@ -41,15 +41,10 @@ defmodule EtherCAT.Bus.Frame do
   def decode(<<ecat_header::little-unsigned-16, rest::binary>>) do
     <<type::4, _r::1, _len::11>> = <<ecat_header::big-unsigned-16>>
 
-    case type do
-      1 ->
-        case Datagram.decode(rest) do
-          {:ok, datagrams} -> {:ok, datagrams}
-          error -> error
-        end
-
-      _ ->
-        {:error, :unsupported_type}
+    if type == 1 do
+      Datagram.decode(rest)
+    else
+      {:error, :unsupported_type}
     end
   end
 

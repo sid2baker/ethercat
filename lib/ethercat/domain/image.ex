@@ -49,10 +49,9 @@ defmodule EtherCAT.Domain.Image do
 
   @spec write(table(), Domain.pdo_key(), binary(), integer()) :: :ok | {:error, :not_found}
   def write(table, key, binary, updated_at_us) do
-    case :ets.update_element(table, key, [{2, binary}, {3, {:output, updated_at_us}}]) do
-      true -> :ok
-      false -> {:error, :not_found}
-    end
+    if :ets.update_element(table, key, [{2, binary}, {3, {:output, updated_at_us}}]),
+      do: :ok,
+      else: {:error, :not_found}
   end
 
   @spec read(table(), Domain.pdo_key()) :: {:ok, binary() | :unset} | {:error, :not_found}

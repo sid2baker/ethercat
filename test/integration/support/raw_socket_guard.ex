@@ -46,10 +46,7 @@ defmodule EtherCAT.IntegrationSupport.RawSocketGuard do
   end
 
   defp read_packet_table do
-    case File.read("/proc/net/packet") do
-      {:ok, packet_table} -> {:ok, packet_table}
-      {:error, reason} -> {:error, reason}
-    end
+    File.read("/proc/net/packet")
   end
 
   defp resolve_ifindexes(interfaces, ifindex_resolver) do
@@ -64,10 +61,7 @@ defmodule EtherCAT.IntegrationSupport.RawSocketGuard do
   end
 
   defp ifindex_for(interface) do
-    case :net.if_name2index(String.to_charlist(interface)) do
-      {:ok, ifindex} -> {:ok, ifindex}
-      {:error, reason} -> {:error, reason}
-    end
+    :net.if_name2index(String.to_charlist(interface))
   end
 
   defp parse_packet_table(packet_table) do

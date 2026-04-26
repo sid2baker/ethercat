@@ -100,13 +100,11 @@ defmodule EtherCAT.Bus.Link do
         {:realtime, submission, %{data | realtime: realtime}}
 
       {:empty, _} ->
-        case :queue.is_empty(data.reliable) do
-          true ->
-            :empty
-
-          false ->
-            {batch, rest} = take_reliable_batch(data.reliable)
-            {:reliable, batch, %{data | reliable: rest}}
+        if :queue.is_empty(data.reliable) do
+          :empty
+        else
+          {batch, rest} = take_reliable_batch(data.reliable)
+          {:reliable, batch, %{data | reliable: rest}}
         end
     end
   end

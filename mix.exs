@@ -37,7 +37,8 @@ defmodule EtherCAT.MixProject do
       {:ex_doc, "~> 0.36", only: :dev, runtime: false},
       {:usage_rules, "~> 1.1", only: [:dev]},
       {:ex_dna, "~> 1.1", only: [:dev, :test], runtime: false},
-      {:reach, "~> 1.1", only: [:dev, :test], runtime: false}
+      {:reach, "~> 1.1", only: [:dev, :test], runtime: false},
+      {:ex_slop, "~> 0.1", only: [:dev, :test], runtime: false}
     ]
   end
 

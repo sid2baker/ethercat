@@ -3,6 +3,7 @@ defmodule EtherCAT.Integration.Simulator.RedundantSecondaryDisconnectCycleBudget
 
   alias EtherCAT.Integration.Expect
   alias EtherCAT.IntegrationSupport.{Hardware, RedundantSimulatorRing, SimulatorRing}
+  alias EtherCAT.Raw
   alias EtherCAT.Simulator
 
   setup do
@@ -68,17 +69,17 @@ defmodule EtherCAT.Integration.Simulator.RedundantSecondaryDisconnectCycleBudget
   end
 
   defp assert_loopback_io do
-    assert :ok = EtherCAT.Raw.write_output(:outputs, :ch1, 1)
-    assert :ok = EtherCAT.Raw.write_output(:outputs, :ch16, 1)
+    assert :ok = Raw.write_output(:outputs, :ch1, 1)
+    assert :ok = Raw.write_output(:outputs, :ch16, 1)
 
     Expect.eventually(fn ->
       Expect.master_state(:operational)
       Expect.domain(:main, cycle_health: :healthy)
 
-      assert {:ok, {true, ch1_updated_at_us}} = EtherCAT.Raw.read_input(:inputs, :ch1)
+      assert {:ok, {true, ch1_updated_at_us}} = Raw.read_input(:inputs, :ch1)
       assert is_integer(ch1_updated_at_us)
 
-      assert {:ok, {true, ch16_updated_at_us}} = EtherCAT.Raw.read_input(:inputs, :ch16)
+      assert {:ok, {true, ch16_updated_at_us}} = Raw.read_input(:inputs, :ch16)
       assert is_integer(ch16_updated_at_us)
 
       Expect.signal(:outputs, :ch1, value: true)

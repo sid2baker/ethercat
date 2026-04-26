@@ -97,8 +97,6 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
         {:drop_response, updated_slave} ->
           {:drop_response, updated_slave}
       end
-    else
-      :ignore -> :ignore
     end
   end
 

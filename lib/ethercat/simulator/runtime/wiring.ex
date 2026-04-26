@@ -110,17 +110,12 @@ defmodule EtherCAT.Simulator.Runtime.Wiring do
   end
 
   defp signal_changes(previous_signals, current_signals) do
-    Enum.flat_map(current_signals, fn {slave_name, values} ->
-      previous_values = Map.get(previous_signals, slave_name, %{})
-
-      Enum.flat_map(values, fn {signal_name, value} ->
-        if Map.get(previous_values, signal_name) != value do
-          [{slave_name, signal_name, value}]
-        else
-          []
-        end
-      end)
-    end)
+    for {slave_name, values} <- current_signals,
+        {signal_name, value} <- values,
+        previous_values = Map.get(previous_signals, slave_name, %{}),
+        Map.get(previous_values, signal_name) != value do
+      {slave_name, signal_name, value}
+    end
   end
 
   defp propagate_connections(slaves, changes, connections) do

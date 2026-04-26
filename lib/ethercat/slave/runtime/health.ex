@@ -215,13 +215,9 @@ defmodule EtherCAT.Slave.Runtime.Health do
   end
 
   defp reconnect_probe(data) do
-    case station_alive?(data) do
-      true ->
-        {:ok, data, :station_restored}
-
-      false ->
-        recover_station_from_position(data)
-    end
+    if station_alive?(data),
+      do: {:ok, data, :station_restored},
+      else: recover_station_from_position(data)
   end
 
   defp station_alive?(data) do
