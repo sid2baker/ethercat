@@ -297,9 +297,6 @@ defmodule EtherCAT.Master.Recovery do
     end
   end
 
-  @spec unrecoverable_recovery_reason(%EtherCAT.Master{}) :: term() | nil
-  def unrecoverable_recovery_reason(_data), do: nil
-
   @spec maybe_restart_dc_runtime(%EtherCAT.Master{}) :: %EtherCAT.Master{}
   def maybe_restart_dc_runtime(%{runtime_faults: runtime_faults} = data) do
     if Status.desired_runtime_target(data) == :op and

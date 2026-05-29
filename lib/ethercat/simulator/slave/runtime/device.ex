@@ -271,7 +271,7 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Device do
   def set_value(%__MODULE__{} = slave, signal_name, value),
     do: ProcessImage.set_value(slave, signal_name, value)
 
-  @spec signal_definition(t(), atom()) :: {:ok, map()} | :error
+  @spec signal_definition(t(), atom()) :: {:ok, Signals.definition()} | :error
   def signal_definition(%__MODULE__{signals: signals}, signal_name),
     do: Map.fetch(signals, signal_name)
 

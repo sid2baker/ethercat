@@ -47,7 +47,7 @@ defmodule EtherCAT.Bus.Transport.RawSocket do
 
     with {:ok, idx} <- ifindex(interface),
          {:ok, src_mac} <- mac_address(interface),
-         {:ok, raw} <- :socket.open(@af_packet, :raw, {:raw, @ethertype}) do
+         {:ok, raw} <- :socket.open(@af_packet, :raw, @ethertype) do
       case :socket.bind(raw, sockaddr_ll(idx)) do
         :ok ->
           case enable_ignore_outgoing(raw) do
@@ -279,7 +279,7 @@ defmodule EtherCAT.Bus.Transport.RawSocket do
   # SOL_SOCKET=1, SO_TIMESTAMPING=37
   # Flags: SOF_TIMESTAMPING_RX_SOFTWARE(0x08) | SOF_TIMESTAMPING_SOFTWARE(0x10) = 0x18
   defp enable_rx_timestamping(raw) do
-    :socket.setopt(raw, {1, 37}, <<0x18::native-32>>)
+    :socket.setopt_native(raw, {1, 37}, <<0x18::native-32>>)
   catch
     _, _ -> :ok
   end
@@ -289,14 +289,14 @@ defmodule EtherCAT.Bus.Transport.RawSocket do
   # (e.g. Intel). Silently ignored on NICs without NAPI busy-poll support (e.g.
   # bcmgenet on RPi 4) — harmless either way.
   defp enable_busy_poll(raw) do
-    :socket.setopt(raw, {1, 46}, <<100::native-32>>)
+    :socket.setopt_native(raw, {1, 46}, <<100::native-32>>)
   catch
     _, _ -> :ok
   end
 
   # SOL_SOCKET=1, SCM_TIMESTAMPING=37
-  defp extract_timestamp(%{ctrl: ctrl}) when is_list(ctrl) do
-    case Enum.find(ctrl, &match?(%{level: 1, type: 37}, &1)) do
+  defp extract_timestamp(msg) do
+    case msg |> Map.get(:ctrl, []) |> Enum.find(&match?(%{level: 1, type: 37}, &1)) do
       %{data: <<sec::native-64, nsec::native-64, _::binary>>} ->
         System.convert_time_unit(sec * 1_000_000_000 + nsec, :nanosecond, :native)
 
@@ -304,8 +304,6 @@ defmodule EtherCAT.Bus.Transport.RawSocket do
         System.monotonic_time()
     end
   end
-
-  defp extract_timestamp(_), do: System.monotonic_time()
 
   defp msg_data(%{iov: [data | _]}), do: data
   defp msg_data(%{iov: _}), do: <<>>

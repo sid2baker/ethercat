@@ -610,22 +610,7 @@ defmodule EtherCAT.Master.FSM do
         {:next_state, next_state, healed_data}
 
       {:recovering, still_recovering} ->
-        case Recovery.unrecoverable_recovery_reason(still_recovering) do
-          nil ->
-            {:keep_state, still_recovering, [{{:timeout, :retry}, @retry_ms, nil}]}
-
-          reason ->
-            Logger.error(
-              "[Master] recovery failed and requires full restart: #{inspect(reason)}",
-              component: :master,
-              event: :recovery_unrecoverable,
-              reason_kind: Utils.reason_kind(reason)
-            )
-
-            stop_session(still_recovering)
-
-            {:next_state, :idle, reset_master(failure_snapshot(:recovery_unrecoverable, reason))}
-        end
+        {:keep_state, still_recovering, [{{:timeout, :retry}, @retry_ms, nil}]}
     end
   end
 
@@ -1269,7 +1254,7 @@ defmodule EtherCAT.Master.FSM do
   defp reset_master(last_failure), do: %Master{last_failure: last_failure}
 
   defp runtime_target_from_configs(slave_configs) do
-    if Config.activatable_slave_names(slave_configs || []) == [] do
+    if Config.activatable_slave_names(slave_configs) == [] do
       :preop
     else
       :op
@@ -1280,7 +1265,6 @@ defmodule EtherCAT.Master.FSM do
   defp runtime_target_from_names(_activatable_slaves), do: :op
 
   defp deactivated_target_settled?(state, _data, :safeop) when state == :deactivated, do: true
-  defp deactivated_target_settled?(state, _data, :preop) when state == :preop_ready, do: true
   defp deactivated_target_settled?(_state, _data, _target), do: false
 
   defp reply_running_waiters(%{await_callers: []} = data), do: data

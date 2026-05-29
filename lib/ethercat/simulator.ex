@@ -439,7 +439,7 @@ defmodule EtherCAT.Simulator do
 
       state =
         %{state | slaves: slaves}
-        |> finalize_signal_changes(before_signals)
+        |> Wiring.settle_and_notify(before_signals)
         |> FaultEngine.after_exchange(
           datagrams,
           responses,
@@ -488,7 +488,7 @@ defmodule EtherCAT.Simulator do
 
     state =
       %{state | slaves: slaves, faults: Faults.clear(state.faults), scheduled_faults: []}
-      |> finalize_signal_changes(before_signals)
+      |> Wiring.settle_and_notify(before_signals)
 
     {:reply, :ok, state}
   end
@@ -546,7 +546,7 @@ defmodule EtherCAT.Simulator do
 
     case Slaves.update(slaves, slave_name, &Device.set_value(&1, signal_name, value)) do
       {:ok, updated_slaves} ->
-        state = %{state | slaves: updated_slaves} |> finalize_signal_changes(before_signals)
+        state = %{state | slaves: updated_slaves} |> Wiring.settle_and_notify(before_signals)
 
         {:reply, :ok, state}
 
@@ -575,7 +575,7 @@ defmodule EtherCAT.Simulator do
            ) do
       state =
         %{state | connections: connections, slaves: slaves}
-        |> finalize_signal_changes(before_signals)
+        |> Wiring.settle_and_notify(before_signals)
 
       {:reply, :ok, state}
     else
@@ -642,14 +642,5 @@ defmodule EtherCAT.Simulator do
 
   def handle_info({:apply_scheduled_fault, id, _fault}, state) do
     {:noreply, FaultEngine.handle_timer(state, id, FaultApplier.callbacks())}
-  end
-
-  defp finalize_signal_changes(
-         %{slaves: slaves, connections: connections, subscriptions: subscriptions} = state,
-         before_signals
-       ) do
-    {slaves, changes} = Wiring.settle(slaves, connections, before_signals)
-    :ok = Subscriptions.notify(subscriptions, self(), changes)
-    %{state | slaves: slaves}
   end
 end

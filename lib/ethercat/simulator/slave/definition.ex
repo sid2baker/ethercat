@@ -23,28 +23,28 @@ defmodule EtherCAT.Simulator.Slave.Definition do
         }
 
   @typedoc "High-level, authored simulator device definition."
-  @opaque t :: %__MODULE__{
-            name: atom(),
-            profile: atom(),
-            behavior: module(),
-            vendor_id: non_neg_integer(),
-            product_code: non_neg_integer(),
-            revision: non_neg_integer(),
-            serial_number: non_neg_integer(),
-            esc_type: byte(),
-            fmmu_count: pos_integer(),
-            sm_count: pos_integer(),
-            output_phys: non_neg_integer(),
-            output_size: non_neg_integer(),
-            input_phys: non_neg_integer(),
-            input_size: non_neg_integer(),
-            mirror_output_to_input?: boolean(),
-            pdo_entries: [map()],
-            signals: %{optional(atom()) => map()},
-            mailbox_config: mailbox_config(),
-            objects: %{optional({non_neg_integer(), non_neg_integer()}) => Object.t()},
-            dc_capable?: boolean()
-          }
+  @type t :: %__MODULE__{
+          name: atom(),
+          profile: atom(),
+          behavior: module(),
+          vendor_id: non_neg_integer(),
+          product_code: non_neg_integer(),
+          revision: non_neg_integer(),
+          serial_number: non_neg_integer(),
+          esc_type: byte(),
+          fmmu_count: pos_integer(),
+          sm_count: pos_integer(),
+          output_phys: non_neg_integer(),
+          output_size: non_neg_integer(),
+          input_phys: non_neg_integer(),
+          input_size: non_neg_integer(),
+          mirror_output_to_input?: boolean(),
+          pdo_entries: [map()],
+          signals: %{optional(atom()) => map()},
+          mailbox_config: mailbox_config(),
+          objects: %{optional({non_neg_integer(), non_neg_integer()}) => Object.t()},
+          dc_capable?: boolean()
+        }
 
   @enforce_keys [
     :name,

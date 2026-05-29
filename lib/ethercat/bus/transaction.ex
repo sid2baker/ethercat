@@ -36,7 +36,7 @@ defmodule EtherCAT.Bus.Transaction do
   @armw 13
   @frmw 14
 
-  @opaque t :: %__MODULE__{datagrams_rev: [Datagram.t()]}
+  @type t :: %__MODULE__{datagrams_rev: [Datagram.t()]}
 
   defstruct datagrams_rev: []
 

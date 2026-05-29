@@ -355,9 +355,6 @@ defmodule EtherCAT.Slave.Mailbox.CoE do
         data = :erlang.iolist_to_binary(Enum.reverse(next_upload.data_rev))
 
         case next_upload.size do
-          nil ->
-            {:ok, data, next_counter}
-
           size when byte_size(data) == size ->
             {:ok, data, next_counter}
 

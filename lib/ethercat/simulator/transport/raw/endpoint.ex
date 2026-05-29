@@ -90,7 +90,7 @@ defmodule EtherCAT.Simulator.Transport.Raw.Endpoint do
 
     with {:ok, ifindex} <- :net.if_name2index(String.to_charlist(interface)),
          {:ok, src_mac} <- InterfaceInfo.mac_address(interface),
-         {:ok, socket} <- :socket.open(@af_packet, :raw, {:raw, @ethertype}),
+         {:ok, socket} <- :socket.open(@af_packet, :raw, @ethertype),
          :ok <- :socket.bind(socket, sockaddr_ll(ifindex)) do
       Logger.metadata(
         component: :simulator,

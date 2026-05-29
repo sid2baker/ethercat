@@ -142,14 +142,14 @@ defmodule EtherCAT.Driver.ATV320 do
   def command(%{name: :set_target_velocity}, _state, _driver_state, _config),
     do: {:error, :invalid_target_velocity}
 
-  def command(%{ref: ref, name: name}, _state, driver_state, _config)
+  def command(%{ref: ref, name: name, args: _args} = command, _state, driver_state, _config)
       when is_map(driver_state) and is_atom(name) do
     case Map.fetch(@controlword_commands, name) do
       {:ok, {controlword, expected_states}} ->
         stage_controlword(ref, controlword, pending_command(ref, expected_states), driver_state)
 
       :error ->
-        EtherCAT.Driver.unsupported_command(%{name: name})
+        EtherCAT.Driver.unsupported_command(command)
     end
   end
 

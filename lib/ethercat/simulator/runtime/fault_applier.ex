@@ -4,7 +4,6 @@ defmodule EtherCAT.Simulator.Runtime.FaultApplier do
   alias EtherCAT.Simulator.FaultSpec
   alias EtherCAT.Simulator.Runtime.Faults
   alias EtherCAT.Simulator.Runtime.Slaves
-  alias EtherCAT.Simulator.Runtime.Subscriptions
   alias EtherCAT.Simulator.Runtime.Wiring
   alias EtherCAT.Simulator.Slave.Runtime.Device
   alias EtherCAT.Simulator.State
@@ -120,19 +119,10 @@ defmodule EtherCAT.Simulator.Runtime.FaultApplier do
 
     case Slaves.update(state.slaves, slave_name, fun) do
       {:ok, slaves} ->
-        {:ok, %{state | slaves: slaves} |> finalize_signal_changes(before_signals)}
+        {:ok, %{state | slaves: slaves} |> Wiring.settle_and_notify(before_signals)}
 
       {:error, reason} ->
         {:error, reason}
     end
-  end
-
-  defp finalize_signal_changes(
-         %{slaves: slaves, connections: connections, subscriptions: subscriptions} = state,
-         before_signals
-       ) do
-    {slaves, changes} = Wiring.settle(slaves, connections, before_signals)
-    :ok = Subscriptions.notify(subscriptions, self(), changes)
-    %{state | slaves: slaves}
   end
 end

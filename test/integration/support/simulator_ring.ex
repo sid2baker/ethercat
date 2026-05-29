@@ -259,7 +259,6 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
   end
 
   defp assert_ok!(:ok), do: :ok
-  defp assert_ok!({:ok, _value}), do: :ok
 
   defp assert_ok!(other) do
     stop_all!()
@@ -389,11 +388,14 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
   end
 
   defp capture_cleanup_logs(fun) do
-    capture_log(fn ->
-      result = fun.()
-      Process.sleep(50)
-      result
-    end)
+    {result, _log} =
+      with_log(fn ->
+        result = fun.()
+        Process.sleep(50)
+        result
+      end)
+
+    result
   end
 
   defp start_master_transport_opts(%{transport: :udp} = endpoint, _transport_override) do
@@ -409,6 +411,14 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
 
   defp start_master_transport_opts(%{transport: :raw} = endpoint, _transport_override) do
     [backend: raw_backend(Map.fetch!(endpoint, :master_interface))]
+  end
+
+  defp start_master_transport_opts(port, {:raw, _opts}) when is_integer(port) do
+    raise ArgumentError, "raw master startup requires the simulator endpoint map, not just a port"
+  end
+
+  defp start_master_transport_opts(port, :raw) when is_integer(port) do
+    raise ArgumentError, "raw master startup requires the simulator endpoint map, not just a port"
   end
 
   defp start_master_transport_opts(port, nil) when is_integer(port) do
@@ -430,15 +440,12 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
     }
   end
 
-  defp start_simulator_context_from_port(_port, {:raw, _opts}) do
-    raise ArgumentError, "raw master startup requires the simulator endpoint map, not just a port"
-  end
-
   defp start_simulator_context_from_port(port, :udp),
     do: start_simulator_context_from_port(port, {:udp, []})
 
-  defp start_simulator_context_from_port(port, :raw),
-    do: start_simulator_context_from_port(port, {:raw, []})
+  defp start_simulator_context_from_port(_port, transport) do
+    raise ArgumentError, "unsupported simulator transport override: #{inspect(transport)}"
+  end
 
   defp maybe_put_transport(simulator_opts, parent_opts) do
     case Keyword.fetch(parent_opts, :transport) do

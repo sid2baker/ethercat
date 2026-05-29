@@ -24,7 +24,7 @@ defmodule EtherCAT.Simulator.Runtime.Router do
   @spec process_datagrams(
           [Datagram.t()],
           [Device.t()],
-          MapSet.t(atom()),
+          %{optional(atom()) => true},
           integer(),
           %{optional(Faults.command_name()) => integer()},
           %{optional(atom()) => integer()},
@@ -45,7 +45,9 @@ defmodule EtherCAT.Simulator.Runtime.Router do
     slaves = Enum.map(slaves, &Device.prepare/1)
 
     disconnected =
-      MapSet.union(disconnected, Topology.unreachable_slaves(topology, ingress, slaves))
+      topology
+      |> Topology.unreachable_slaves(ingress, slaves)
+      |> Enum.reduce(disconnected, &Map.put(&2, &1, true))
 
     {responses, slaves} =
       Enum.map_reduce(datagrams, slaves, fn datagram, current_slaves ->
@@ -77,7 +79,7 @@ defmodule EtherCAT.Simulator.Runtime.Router do
       end)
 
     # Spec §2.4.1: each reachable slave decrements the position field by 1
-    reachable_count = Enum.count(slaves, &(not MapSet.member?(disconnected, &1.name)))
+    reachable_count = Enum.count(slaves, &(not disconnected?(disconnected, &1.name)))
     response_position = position - reachable_count
     response_address = <<response_position::little-signed-16, offset::little-unsigned-16>>
 
@@ -116,7 +118,7 @@ defmodule EtherCAT.Simulator.Runtime.Router do
 
     {slaves, response_data, wkc} =
       Enum.reduce(slaves, {[], datagram.data, 0}, fn slave, {acc, _response_data, wkc} ->
-        if MapSet.member?(disconnected, slave.name) do
+        if disconnected?(disconnected, slave.name) do
           {[slave | acc], datagram.data, wkc}
         else
           {updated_slave, new_response_data, increment} =
@@ -127,7 +129,7 @@ defmodule EtherCAT.Simulator.Runtime.Router do
       end)
 
     # Spec §2.4.1: each reachable slave decrements the position field by 1
-    reachable_count = Enum.count(slaves, &(not MapSet.member?(disconnected, &1.name)))
+    reachable_count = Enum.count(slaves, &(not disconnected?(disconnected, &1.name)))
     response_position = position - reachable_count
     response_address = <<response_position::little-signed-16, offset::little-unsigned-16>>
 
@@ -140,7 +142,7 @@ defmodule EtherCAT.Simulator.Runtime.Router do
 
     {slaves, response_data, wkc} =
       Enum.reduce(slaves, {[], datagram.data, 0}, fn slave, {acc, response_data, wkc} ->
-        if MapSet.member?(disconnected, slave.name) do
+        if disconnected?(disconnected, slave.name) do
           {[slave | acc], response_data, wkc}
         else
           {updated_slave, new_response_data, increment} =
@@ -200,7 +202,7 @@ defmodule EtherCAT.Simulator.Runtime.Router do
   defp update_single(slaves, disconnected, target_position, default_response_data, fun) do
     {slaves, response_data, wkc, matched?} =
       Enum.reduce(slaves, {[], nil, 0, false}, fn slave, {acc, response_data, wkc, matched?} ->
-        if slave.position == target_position and not MapSet.member?(disconnected, slave.name) do
+        if slave.position == target_position and not disconnected?(disconnected, slave.name) do
           {updated_slave, current_response_data, current_wkc} = fun.(slave)
           {[updated_slave | acc], current_response_data, current_wkc, true}
         else
@@ -222,7 +224,7 @@ defmodule EtherCAT.Simulator.Runtime.Router do
           matched? ->
             {{slave, nil, 0}, true}
 
-          MapSet.member?(disconnected, slave.name) ->
+          disconnected?(disconnected, slave.name) ->
             {{slave, nil, 0}, false}
 
           matcher.(slave) ->
@@ -252,6 +254,8 @@ defmodule EtherCAT.Simulator.Runtime.Router do
       {default_response_data, 0, slaves}
     end
   end
+
+  defp disconnected?(disconnected, slave_name), do: Map.has_key?(disconnected, slave_name)
 
   defp command_name(@aprd), do: :aprd
   defp command_name(@apwr), do: :apwr

@@ -34,7 +34,7 @@ defmodule EtherCAT.Simulator.Adapter do
 
   def resolve(_driver, _simulator), do: nil
 
-  @spec definition_options(module(), map()) :: definition_options()
+  @spec definition_options(module(), map()) :: term()
   def definition_options(adapter, config) when is_atom(adapter) and is_map(config) do
     apply(adapter, :definition_options, [config])
   end

@@ -1,12 +1,14 @@
 defmodule EtherCAT.Simulator.Slave.Signals do
   @moduledoc false
 
+  alias EtherCAT.Simulator.Slave.Value
+
   @type definition :: %{
           required(:direction) => :input | :output,
           required(:pdo_index) => non_neg_integer(),
           required(:bit_offset) => non_neg_integer(),
           required(:bit_size) => pos_integer(),
-          required(:type) => atom() | tuple(),
+          required(:type) => Value.scalar_type(),
           optional(:unit) => binary(),
           optional(:scale) => number(),
           optional(:offset) => number(),

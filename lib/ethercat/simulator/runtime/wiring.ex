@@ -1,7 +1,7 @@
 defmodule EtherCAT.Simulator.Runtime.Wiring do
   @moduledoc false
 
-  alias EtherCAT.Simulator.Runtime.Slaves
+  alias EtherCAT.Simulator.Runtime.{Slaves, Subscriptions}
   alias EtherCAT.Simulator.Slave.Runtime.Device
 
   @type signal_ref :: {atom(), atom()}
@@ -15,6 +15,19 @@ defmodule EtherCAT.Simulator.Runtime.Wiring do
         }
   def capture_signal_values(slaves) do
     Map.new(slaves, fn slave -> {slave.name, Device.signal_values(slave)} end)
+  end
+
+  @spec settle_and_notify(
+          map(),
+          %{optional(atom()) => %{optional(atom()) => term()}}
+        ) :: map()
+  def settle_and_notify(
+        %{slaves: slaves, connections: connections, subscriptions: subscriptions} = state,
+        before_signals
+      ) do
+    {slaves, changes} = settle(slaves, connections, before_signals)
+    :ok = Subscriptions.notify(subscriptions, self(), changes)
+    %{state | slaves: slaves}
   end
 
   @spec connect([Device.t()], [connection()], signal_ref(), signal_ref()) ::

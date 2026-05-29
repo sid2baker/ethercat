@@ -504,9 +504,6 @@ defmodule EtherCAT.Bus.Link.Redundant do
     expected_count = expected_reply_count(exchange)
 
     case arrivals do
-      [] ->
-        :waiting
-
       [single] ->
         cond do
           wait_for_complementary_realtime_bounce?(single, expected_count, exchange) ->
@@ -624,7 +621,7 @@ defmodule EtherCAT.Bus.Link.Redundant do
         end
 
       # Two unknowns (UDP, or MAC not matching either NIC) → fall back to interpret/3
-      classes == MapSet.new([:unknown]) ->
+      MapSet.size(classes) == 1 and MapSet.member?(classes, :unknown) ->
         {pri_dg, sec_dg} = port_datagrams_from_arrivals([a, b])
         interpretation = RedundantMerge.interpret(exchange.datagrams, pri_dg, sec_dg)
 

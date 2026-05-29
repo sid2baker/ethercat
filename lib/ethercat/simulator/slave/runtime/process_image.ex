@@ -47,16 +47,13 @@ defmodule EtherCAT.Simulator.Slave.Runtime.ProcessImage do
 
   @spec refresh_inputs(map()) :: map()
   def refresh_inputs(slave) do
-    case Behaviour.refresh_inputs(slave.behavior, slave, slave.behavior_state) do
-      {:ok, values, behavior_state} ->
-        slave
-        |> Map.put(:behavior_state, behavior_state)
-        |> apply_behavior_inputs(values)
-        |> apply_input_overrides()
+    {:ok, values, behavior_state} =
+      Behaviour.refresh_inputs(slave.behavior, slave, slave.behavior_state)
 
-      _ ->
-        apply_input_overrides(slave)
-    end
+    slave
+    |> Map.put(:behavior_state, behavior_state)
+    |> apply_behavior_inputs(values)
+    |> apply_input_overrides()
   end
 
   @spec write_register(map(), non_neg_integer(), binary()) :: map()

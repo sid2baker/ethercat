@@ -17,6 +17,7 @@ defmodule EtherCAT.MixProject do
       deps: deps(),
       docs: docs(),
       aliases: aliases(),
+      dialyzer: dialyzer(),
       usage_rules: usage_rules(),
       source_url: @source_url
     ]
@@ -28,17 +29,26 @@ defmodule EtherCAT.MixProject do
     ]
   end
 
+  def cli do
+    [
+      preferred_envs: [ci: :test]
+    ]
+  end
+
   defp elixirc_paths(:test), do: ["lib", "test/support", "test/integration/support"]
   defp elixirc_paths(_env), do: ["lib"]
 
   defp deps do
     [
+      {:dialyxir, "~> 1.0", only: [:dev, :test], runtime: false},
+      {:credo, "~> 1.0", only: [:dev, :test], runtime: false},
+      {:vibe_kit, "~> 0.1"},
       {:telemetry, "~> 1.0"},
       {:ex_doc, "~> 0.36", only: :dev, runtime: false},
       {:usage_rules, "~> 1.1", only: [:dev]},
-      {:ex_dna, "~> 1.1", only: [:dev, :test], runtime: false},
-      {:reach, "~> 1.1", only: [:dev, :test], runtime: false},
-      {:ex_slop, "~> 0.1", only: [:dev, :test], runtime: false}
+      {:ex_dna, "~> 1.0", only: [:dev, :test], runtime: false},
+      {:reach, "~> 2.0", only: [:dev, :test], runtime: false},
+      {:ex_slop, "~> 0.4", only: [:dev, :test], runtime: false}
     ]
   end
 
@@ -66,7 +76,22 @@ defmodule EtherCAT.MixProject do
 
   defp aliases do
     [
-      "docs.fresh": ["compile --force", "docs"]
+      "docs.fresh": ["compile --force", "docs"],
+      ci: [
+        "compile --warnings-as-errors",
+        "format --check-formatted",
+        "test --warnings-as-errors",
+        "credo --strict",
+        "dialyzer",
+        "ex_dna --max-clones 0",
+        "reach.check --arch --smells"
+      ]
+    ]
+  end
+
+  defp dialyzer do
+    [
+      plt_add_apps: [:mix, :ex_unit, :iex]
     ]
   end
 

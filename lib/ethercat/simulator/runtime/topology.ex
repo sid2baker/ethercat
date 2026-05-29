@@ -40,21 +40,21 @@ defmodule EtherCAT.Simulator.Runtime.Topology do
     |> maybe_put_master_break(master_break)
   end
 
-  @spec unreachable_slaves(t(), ingress(), [map()]) :: MapSet.t(atom())
-  def unreachable_slaves(%{mode: :linear}, _ingress, _slaves), do: MapSet.new()
+  @spec unreachable_slaves(t(), ingress(), [map()]) :: [atom()]
+  def unreachable_slaves(%{mode: :linear}, _ingress, _slaves), do: []
 
   def unreachable_slaves(%{mode: :redundant, master_break: :primary}, :primary, slaves),
     do: names(slaves)
 
   def unreachable_slaves(%{mode: :redundant, master_break: :primary}, :secondary, _slaves),
-    do: MapSet.new()
+    do: []
 
   def unreachable_slaves(%{mode: :redundant, master_break: :secondary}, :secondary, slaves),
     do: names(slaves)
 
   def unreachable_slaves(%{mode: :redundant, master_break: :secondary}, ingress, _slaves)
       when ingress in [nil, :primary],
-      do: MapSet.new()
+      do: []
 
   def unreachable_slaves(%{mode: :redundant, break_after: nil}, :secondary, slaves) do
     names(slaves)
@@ -62,7 +62,7 @@ defmodule EtherCAT.Simulator.Runtime.Topology do
 
   def unreachable_slaves(%{mode: :redundant, break_after: nil}, ingress, _slaves)
       when ingress in [nil, :primary] do
-    MapSet.new()
+    []
   end
 
   def unreachable_slaves(%{mode: :redundant, break_after: break_after}, ingress, slaves)
@@ -117,7 +117,7 @@ defmodule EtherCAT.Simulator.Runtime.Topology do
   defp compatible_breaks?(_break_after, _master_break), do: false
 
   defp names(slaves) do
-    MapSet.new(slaves, & &1.name)
+    Enum.map(slaves, & &1.name)
   end
 
   defp maybe_put_master_break(info, nil), do: info

@@ -168,7 +168,6 @@ defmodule EtherCAT.IntegrationSupport.RedundantSimulatorRing do
   end
 
   defp assert_ok!(:ok), do: :ok
-  defp assert_ok!({:ok, _value}), do: :ok
 
   defp assert_ok!(other) do
     stop_all!()

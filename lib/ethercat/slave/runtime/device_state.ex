@@ -348,8 +348,6 @@ defmodule EtherCAT.Slave.Runtime.DeviceState do
   end
 
   defp signal_events(slave, previous, current, cycle, ts) do
-    previous = previous || %{}
-    current = current || %{}
     missing = make_ref()
 
     previous
@@ -373,7 +371,6 @@ defmodule EtherCAT.Slave.Runtime.DeviceState do
 
   defp fault_events(slave, previous, current, cycle, ts) do
     previous = previous || []
-    current = current || []
 
     raised =
       Enum.reduce(current, [], fn fault, acc ->
@@ -395,7 +392,7 @@ defmodule EtherCAT.Slave.Runtime.DeviceState do
   end
 
   defp notice_events(slave, notices, cycle, ts) do
-    Enum.map(notices || [], &Event.internal(slave, &1, cycle, ts))
+    Enum.map(notices, &Event.internal(slave, &1, cycle, ts))
   end
 
   defp initialized_projection?(%Slave{device_cycle: nil, device_state: state})

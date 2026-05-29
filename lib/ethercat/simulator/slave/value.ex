@@ -18,10 +18,11 @@ defmodule EtherCAT.Simulator.Slave.Value do
           | {:binary, pos_integer()}
 
   @type metadata :: %{
-          optional(:type) => scalar_type(),
+          required(:type) => scalar_type(),
           optional(:bit_size) => pos_integer(),
           optional(:scale) => number(),
-          optional(:offset) => number()
+          optional(:offset) => number(),
+          optional(atom()) => term()
         }
 
   @spec bit_width(metadata()) :: pos_integer()
@@ -289,7 +290,6 @@ defmodule EtherCAT.Simulator.Slave.Value do
     end
   end
 
-  defp encode_integer_bits(:bool, _bits, raw), do: raw
   defp encode_integer_bits(:u8, _bits, raw), do: raw
   defp encode_integer_bits(:u16, _bits, raw), do: raw
   defp encode_integer_bits(:u32, _bits, raw), do: raw
@@ -304,7 +304,6 @@ defmodule EtherCAT.Simulator.Slave.Value do
     end
   end
 
-  defp decode_integer_bits(:bool, _bits, raw), do: raw
   defp decode_integer_bits(:u8, _bits, raw), do: raw
   defp decode_integer_bits(:u16, _bits, raw), do: raw
   defp decode_integer_bits(:u32, _bits, raw), do: raw
@@ -336,7 +335,6 @@ defmodule EtherCAT.Simulator.Slave.Value do
   defp apply_scale(value, 1, 0), do: value
   defp apply_scale(value, scale, offset), do: value * scale + offset
 
-  defp nearly_equal?(left, right) when is_integer(left) and is_integer(right), do: left == right
   defp nearly_equal?(left, right), do: abs(left - right) < 1.0e-9
 
   defp pad_trailing_zeros(binary, size) when byte_size(binary) >= size do

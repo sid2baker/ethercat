@@ -1,7 +1,9 @@
 defmodule EtherCAT.Simulator.Runtime.Slaves do
   @moduledoc false
 
-  @spec fetch([%{name: atom()}], atom()) :: {:ok, map()} | {:error, :not_found}
+  alias EtherCAT.Simulator.Slave.Runtime.Device
+
+  @spec fetch([Device.t()], atom()) :: {:ok, Device.t()} | {:error, :not_found}
   def fetch(slaves, slave_name) do
     case Enum.find(slaves, &(&1.name == slave_name)) do
       nil -> {:error, :not_found}
@@ -9,8 +11,12 @@ defmodule EtherCAT.Simulator.Runtime.Slaves do
     end
   end
 
-  @spec update([%{name: atom()}], atom(), (map() -> map() | {:ok, map()} | {:error, term()})) ::
-          {:ok, [map()]} | {:error, term()}
+  @spec update(
+          [Device.t()],
+          atom(),
+          (Device.t() -> Device.t() | {:ok, Device.t()} | {:error, term()})
+        ) ::
+          {:ok, [Device.t()]} | {:error, term()}
   def update(slaves, slave_name, fun) do
     {entries, matched?} =
       Enum.map_reduce(slaves, false, fn slave, matched? ->

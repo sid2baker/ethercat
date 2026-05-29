@@ -203,8 +203,6 @@ defmodule EtherCAT.Master.Config do
     end
   end
 
-  defp validate_dc_config(_dc_config), do: {:error, {:invalid_start_options, :invalid_dc}}
-
   defp validate_frame_timeout_override_ms(nil), do: :ok
 
   defp validate_frame_timeout_override_ms(timeout_ms)
