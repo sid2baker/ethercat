@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   runtime (`6bb51d3`).
 
 ### Fixed
+- Public `EtherCAT.subscribe/2` now honors explicit subscriber pids; SII
+  category parsing returns structured errors for malformed EEPROM data; and
+  capture/simulator generated signal names are bounded before atom interning
+  while generated-source formatting failures return explicit errors
+  (`263204d`).
 - Simulator slave behavior modules now use explicit overridable defaults through
   the simulator slave behaviour helper, so the runtime can call callbacks
   directly instead of reflectively probing module load/export state while still
