@@ -5,15 +5,16 @@ defmodule EtherCAT.Slave.FSM do
 
   require Logger
 
+  alias EtherCAT.Domain
+  alias EtherCAT.Slave
+  alias EtherCAT.Slave.Mailbox
   alias EtherCAT.Slave.Runtime.Bootstrap
-  alias EtherCAT.Slave.Runtime.Calls
   alias EtherCAT.Slave.Runtime.Configuration
   alias EtherCAT.Slave.Runtime.DCSignals
   alias EtherCAT.Slave.Runtime.Health
-  alias EtherCAT.Slave.Runtime.Polling
   alias EtherCAT.Slave.Runtime.DeviceState
+  alias EtherCAT.Slave.Runtime.Outputs
   alias EtherCAT.Slave.Runtime.Signals
-  alias EtherCAT.Slave.Runtime.State
   alias EtherCAT.Slave.Runtime.Transition
 
   @al_codes %{init: 0x01, preop: 0x02, bootstrap: 0x03, safeop: 0x04, op: 0x08}
@@ -67,7 +68,7 @@ defmodule EtherCAT.Slave.FSM do
     )
 
     opts
-    |> State.new()
+    |> new_slave_state()
     |> initialize_to_preop()
   end
 
@@ -77,15 +78,15 @@ defmodule EtherCAT.Slave.FSM do
   def handle_event(:enter, _old, :init, _data), do: :keep_state_and_data
 
   def handle_event(:enter, _old, :preop, data) do
-    {:keep_state_and_data, Polling.preop_enter_actions(data)}
+    {:keep_state_and_data, health_poll_actions(data)}
   end
 
   def handle_event(:enter, _old, :safeop, data) do
-    {:keep_state_and_data, Polling.safeop_enter_actions(data)}
+    {:keep_state_and_data, health_poll_actions(data)}
   end
 
   def handle_event(:enter, _old, :op, data) do
-    {:keep_state_and_data, Polling.op_enter_actions(data)}
+    {:keep_state_and_data, latch_poll_actions(data) ++ health_poll_actions(data)}
   end
 
   def handle_event(:enter, _old, :bootstrap, _data), do: :keep_state_and_data
@@ -105,15 +106,7 @@ defmodule EtherCAT.Slave.FSM do
   # -- ESM API calls ---------------------------------------------------------
 
   def handle_event({:call, from}, event, state, data) do
-    Calls.handle(
-      from,
-      event,
-      state,
-      data,
-      paths: @paths,
-      initialize_to_preop: &initialize_to_preop/1,
-      walk_path: &walk_path/2
-    )
+    handle_call(from, event, state, data)
   end
 
   # -- Domain input change notification (sent by Domain on cycle) ------------
@@ -146,7 +139,7 @@ defmodule EtherCAT.Slave.FSM do
   def handle_event(:state_timeout, :latch_poll, :op, %{latch_poll_ms: poll_ms} = data)
       when is_integer(poll_ms) and poll_ms > 0 do
     DCSignals.poll_latches(data)
-    {:keep_state_and_data, Polling.reschedule_latch_poll(poll_ms)}
+    {:keep_state_and_data, reschedule_latch_poll(poll_ms)}
   end
 
   # -- AL Status health poll (background check per spec §20.4) ---------------
@@ -179,7 +172,7 @@ defmodule EtherCAT.Slave.FSM do
       health_poll_ms: health_poll_ms
     )
 
-    {:keep_state_and_data, Polling.down_enter_actions(data)}
+    {:keep_state_and_data, down_enter_actions(data)}
   end
 
   def handle_event({:timeout, :health_poll}, nil, :down, data) do
@@ -189,6 +182,343 @@ defmodule EtherCAT.Slave.FSM do
   # -- Catch-all -------------------------------------------------------------
 
   def handle_event(_type, _event, _state, _data), do: :keep_state_and_data
+
+  # -- Call handling ---------------------------------------------------------
+
+  defp handle_call(from, :state, state, _data) do
+    {:keep_state_and_data, [{:reply, from, state}]}
+  end
+
+  defp handle_call(from, :identity, _state, data) do
+    {:keep_state_and_data, [{:reply, from, data.identity}]}
+  end
+
+  defp handle_call(from, :error, _state, data) do
+    {:keep_state_and_data, [{:reply, from, data.error_code}]}
+  end
+
+  defp handle_call(from, :info, state, data) do
+    {:keep_state_and_data, [{:reply, from, {:ok, info_snapshot(state, data)}}]}
+  end
+
+  defp handle_call(from, :snapshot, state, data) do
+    {:keep_state_and_data, [{:reply, from, {:ok, DeviceState.snapshot(state, data)}}]}
+  end
+
+  defp handle_call(from, :capabilities, _state, data) do
+    {:keep_state_and_data,
+     [{:reply, from, EtherCAT.Driver.Runtime.capabilities(data.driver, data.config || %{})}]}
+  end
+
+  defp handle_call(from, {:request, target}, state, _data) when state == target do
+    {:keep_state_and_data, [{:reply, from, :ok}]}
+  end
+
+  defp handle_call(
+         from,
+         {:request, target},
+         :preop,
+         %{configuration_error: reason}
+       )
+       when target in [:safeop, :op] and not is_nil(reason) do
+    {:keep_state_and_data, [{:reply, from, {:error, {:preop_configuration_failed, reason}}}]}
+  end
+
+  defp handle_call(from, {:request, target}, state, data) do
+    case Map.get(@paths, {state, target}) do
+      nil ->
+        {:keep_state_and_data, [{:reply, from, {:error, :invalid_transition}}]}
+
+      steps ->
+        case walk_path(data, steps) do
+          {:ok, new_data} ->
+            {:next_state, target, new_data, [{:reply, from, :ok}]}
+
+          {:error, reason, new_data} ->
+            {:keep_state, new_data, [{:reply, from, {:error, reason}}]}
+        end
+    end
+  end
+
+  defp handle_call(from, {:configure, opts}, :preop, data) do
+    case Configuration.maybe_reconfigure_preop(data, opts) do
+      {:ok, new_data} ->
+        {:keep_state, new_data, [{:reply, from, :ok} | health_poll_reset_actions(new_data)]}
+
+      {:error, reason, new_data} ->
+        {:keep_state, new_data, [{:reply, from, {:error, reason}}]}
+    end
+  end
+
+  defp handle_call(from, {:configure, _opts}, _state, _data) do
+    {:keep_state_and_data, [{:reply, from, {:error, :not_preop}}]}
+  end
+
+  defp handle_call(from, :retry_preop_configuration, :preop, %{configuration_error: nil}) do
+    {:keep_state_and_data, [{:reply, from, :ok}]}
+  end
+
+  defp handle_call(from, :retry_preop_configuration, :preop, data) do
+    case Configuration.retry_failed_preop(data) do
+      {:ok, new_data} ->
+        {:keep_state, new_data, [{:reply, from, :ok}]}
+
+      {:error, reason, new_data} ->
+        {:keep_state, new_data, [{:reply, from, {:error, reason}}]}
+    end
+  end
+
+  defp handle_call(from, :retry_preop_configuration, _state, _data) do
+    {:keep_state_and_data, [{:reply, from, {:error, :not_preop}}]}
+  end
+
+  defp handle_call(from, {:subscribe, signal_name, pid}, _state, data) do
+    case Signals.subscribe_pid(data, signal_name, pid) do
+      {:ok, new_data} ->
+        {:keep_state, new_data, [{:reply, from, :ok}]}
+
+      {:error, reason} ->
+        {:keep_state_and_data, [{:reply, from, {:error, reason}}]}
+    end
+  end
+
+  defp handle_call(from, {:subscribe_events, pid}, _state, data) do
+    {:keep_state, DeviceState.event_subscribe(data, pid), [{:reply, from, :ok}]}
+  end
+
+  defp handle_call(from, {:write_output, _signal_name, _value}, :down, _data) do
+    {:keep_state_and_data, [{:reply, from, {:error, :slave_down}}]}
+  end
+
+  defp handle_call(from, {:write_output, signal_name, value}, _state, data) do
+    previous_value = Map.get(DeviceState.signal_image(data), signal_name, :unset)
+
+    case Outputs.write_signal(data, signal_name, value) do
+      {:ok, new_data} ->
+        updated_at_us = System.monotonic_time(:microsecond)
+        next_data = DeviceState.record_output_value(new_data, signal_name, value, updated_at_us)
+
+        if previous_value != value do
+          dispatch_output_event(next_data, signal_name, value, updated_at_us)
+        end
+
+        {:keep_state, next_data, [{:reply, from, :ok}]}
+
+      {:error, reason} ->
+        {:keep_state_and_data, [{:reply, from, {:error, reason}}]}
+    end
+  end
+
+  defp handle_call(from, {:read_input, signal_name}, _state, data) do
+    {:keep_state_and_data, [{:reply, from, Signals.read_input(data, signal_name)}]}
+  end
+
+  defp handle_call(from, {:command, _command_name, _args}, :down, _data) do
+    {:keep_state_and_data, [{:reply, from, {:error, :slave_down}}]}
+  end
+
+  defp handle_call(from, {:command, command_name, args}, _state, data)
+       when is_atom(command_name) and is_map(args) do
+    case DeviceState.command(data, command_name, args) do
+      {:ok, ref, new_data} ->
+        {:keep_state, new_data, [{:reply, from, {:ok, ref}}]}
+
+      {:error, reason, new_data} ->
+        {:keep_state, new_data, [{:reply, from, {:error, reason}}]}
+    end
+  end
+
+  defp handle_call(from, {:download_sdo, index, subindex, sdo_data}, state, data)
+       when state in [:preop, :safeop, :op] do
+    case Mailbox.download_sdo(data, index, subindex, sdo_data) do
+      {:ok, new_data} ->
+        {:keep_state, new_data, [{:reply, from, :ok}]}
+
+      {:error, reason} ->
+        {:keep_state_and_data, [{:reply, from, {:error, reason}}]}
+    end
+  end
+
+  defp handle_call(from, {:download_sdo, _index, _subindex, _sdo_data}, _state, _data) do
+    {:keep_state_and_data, [{:reply, from, {:error, :mailbox_not_ready}}]}
+  end
+
+  defp handle_call(from, {:upload_sdo, index, subindex}, state, data)
+       when state in [:preop, :safeop, :op] do
+    case Mailbox.upload_sdo(data, index, subindex) do
+      {:ok, value, new_data} ->
+        {:keep_state, new_data, [{:reply, from, {:ok, value}}]}
+
+      {:error, reason} ->
+        {:keep_state_and_data, [{:reply, from, {:error, reason}}]}
+    end
+  end
+
+  defp handle_call(from, {:upload_sdo, _index, _subindex}, _state, _data) do
+    {:keep_state_and_data, [{:reply, from, {:error, :mailbox_not_ready}}]}
+  end
+
+  # -- State data and snapshots ---------------------------------------------
+
+  defp new_slave_state(opts) do
+    %Slave{
+      bus: Keyword.fetch!(opts, :bus),
+      position: Keyword.get(opts, :position, 0),
+      station: Keyword.fetch!(opts, :station),
+      name: Keyword.fetch!(opts, :name),
+      driver: Keyword.get(opts, :driver, EtherCAT.Driver.Default),
+      config: Keyword.get(opts, :config, %{}),
+      configuration_error: nil,
+      esc_info: nil,
+      dc_cycle_ns: Keyword.get(opts, :dc_cycle_ns),
+      sync_config: Keyword.get(opts, :sync),
+      mailbox_counter: 0,
+      sii_sm_configs: [],
+      sii_pdo_configs: [],
+      process_data_request: Keyword.get(opts, :process_data, :none),
+      latch_names: %{},
+      active_latches: nil,
+      latch_poll_ms: nil,
+      health_poll_ms:
+        Keyword.get(opts, :health_poll_ms, EtherCAT.Slave.Config.default_health_poll_ms()),
+      startup_retry_phase: nil,
+      startup_retry_count: 0,
+      signal_registrations: %{},
+      signal_registrations_by_sm: %{},
+      output_domain_ids_by_sm: %{},
+      output_sm_images: %{},
+      subscriptions: %{},
+      event_subscriptions: MapSet.new(),
+      subscriber_refs: %{}
+    }
+    |> DeviceState.initialize()
+  end
+
+  defp info_snapshot(state, data) do
+    attachments = Signals.attachment_summaries(data.signal_registrations)
+    description = DeviceState.snapshot(state, data)
+
+    %{
+      name: data.name,
+      station: data.station,
+      al_state: state,
+      identity: data.identity,
+      esc: data.esc_info,
+      driver: data.driver,
+      coe: match?(%{recv_size: n} when n > 0, data.mailbox_config),
+      available_fmmus: data.esc_info && data.esc_info.fmmu_count,
+      used_fmmus: length(attachments),
+      attachments: attachments,
+      pdo_health: pdo_health_snapshot(data.signal_registrations),
+      signals: signal_summaries(data.signal_registrations),
+      configuration_error: data.configuration_error,
+      device_type: description.device_type,
+      endpoints: description.endpoints,
+      commands: description.commands,
+      capabilities: description.commands,
+      device_cycle: data.device_cycle,
+      device_state: description.state,
+      device_faults: data.device_faults,
+      driver_error: data.driver_error
+    }
+  end
+
+  defp signal_summaries(nil), do: []
+
+  defp signal_summaries(registrations) do
+    registrations
+    |> Enum.map(fn {name, reg} ->
+      %{
+        name: name,
+        domain: reg.domain_id,
+        direction: reg.direction,
+        sm_index: elem(reg.sm_key, 1),
+        bit_offset: reg.bit_offset,
+        bit_size: reg.bit_size
+      }
+    end)
+    |> Enum.sort_by(&{&1.sm_index, &1.bit_offset})
+  end
+
+  defp pdo_health_snapshot(nil), do: %{state: :unattached, domains: []}
+
+  defp pdo_health_snapshot(registrations) when is_map(registrations) do
+    domains =
+      registrations
+      |> Enum.map(fn {_name, registration} -> registration.domain_id end)
+      |> Enum.uniq()
+      |> Enum.sort()
+      |> Enum.map(&domain_health_snapshot/1)
+
+    %{state: aggregate_pdo_health(domains), domains: domains}
+  end
+
+  defp domain_health_snapshot(domain_id) do
+    case Domain.info(domain_id) do
+      {:ok, %{freshness: freshness}} ->
+        Map.put(freshness, :id, domain_id)
+
+      {:error, _reason} ->
+        %{
+          id: domain_id,
+          state: :not_ready,
+          refreshed_at_us: nil,
+          age_us: nil,
+          stale_after_us: nil
+        }
+    end
+  end
+
+  defp aggregate_pdo_health([]), do: :unattached
+
+  defp aggregate_pdo_health(domains) do
+    cond do
+      Enum.any?(domains, &(&1.state == :stale)) -> :stale
+      Enum.any?(domains, &(&1.state == :not_ready)) -> :not_ready
+      true -> :fresh
+    end
+  end
+
+  defp dispatch_output_event(data, signal_name, value, updated_at_us) do
+    event =
+      EtherCAT.Event.signal_changed(
+        data.name,
+        signal_name,
+        value,
+        data.device_cycle,
+        updated_at_us
+      )
+
+    DeviceState.dispatch_event(data, event)
+  end
+
+  # -- Poll scheduling -------------------------------------------------------
+
+  defp down_enter_actions(%{health_poll_ms: poll_ms}) do
+    [Health.health_poll_action(poll_ms)]
+  end
+
+  defp reschedule_latch_poll(poll_ms), do: [{:state_timeout, poll_ms, :latch_poll}]
+
+  defp latch_poll_actions(%{latch_poll_ms: poll_ms}) when is_integer(poll_ms) and poll_ms > 0 do
+    reschedule_latch_poll(poll_ms)
+  end
+
+  defp latch_poll_actions(_data), do: []
+
+  defp health_poll_actions(%{health_poll_ms: poll_ms})
+       when is_integer(poll_ms) and poll_ms > 0 do
+    [Health.health_poll_action(poll_ms)]
+  end
+
+  defp health_poll_actions(_data), do: []
+
+  defp health_poll_reset_actions(%{health_poll_ms: poll_ms})
+       when is_integer(poll_ms) and poll_ms > 0 do
+    [Health.health_poll_action(poll_ms)]
+  end
+
+  defp health_poll_reset_actions(_data), do: [{{:timeout, :health_poll}, :cancel}]
 
   # -- Auto-advance helper (called from gen_statem init/1 and retry handler) -
 

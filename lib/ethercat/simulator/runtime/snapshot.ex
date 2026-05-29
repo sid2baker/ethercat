@@ -92,29 +92,25 @@ defmodule EtherCAT.Simulator.Runtime.Snapshot do
         }
 
       %{kind: :milestone, milestone: milestone, remaining: remaining, fault: fault} ->
-        %{
-          fault: fault,
-          waiting_on: milestone,
-          remaining: remaining
-        }
+        waiting_fault(fault, milestone, remaining)
 
       %{
         kind: :script_resume,
         remaining_exchange_steps: remaining_exchange_steps,
         steps: steps
       } ->
-        %{
-          fault: {:fault_script, steps},
-          waiting_on: {:queued_exchange_steps, remaining_exchange_steps},
-          remaining: remaining_exchange_steps
-        }
+        waiting_fault(
+          {:fault_script, steps},
+          {:queued_exchange_steps, remaining_exchange_steps},
+          remaining_exchange_steps
+        )
 
       %{kind: :script_milestone, milestone: milestone, remaining: remaining, steps: steps} ->
-        %{
-          fault: {:fault_script, steps},
-          waiting_on: milestone,
-          remaining: remaining
-        }
+        waiting_fault({:fault_script, steps}, milestone, remaining)
     end)
+  end
+
+  defp waiting_fault(fault, waiting_on, remaining) do
+    %{fault: fault, waiting_on: waiting_on, remaining: remaining}
   end
 end

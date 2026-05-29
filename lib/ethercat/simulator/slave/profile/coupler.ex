@@ -3,8 +3,11 @@ defmodule EtherCAT.Simulator.Slave.Profile.Coupler do
 
   use EtherCAT.Simulator.Slave.Behaviour
 
+  alias EtherCAT.Simulator.Slave.Definition
+  alias EtherCAT.Slave.Mailbox
+
   def spec(_opts) do
-    %{
+    Definition.profile_spec(
       profile: :coupler,
       vendor_id: 0x0000_0ACE,
       product_code: 0x0000_1100,
@@ -19,12 +22,12 @@ defmodule EtherCAT.Simulator.Slave.Profile.Coupler do
       input_size: 0,
       mirror_output_to_input?: false,
       pdo_entries: [],
-      mailbox_config: %{recv_offset: 0, recv_size: 0, send_offset: 0, send_size: 0},
+      mailbox_config: Mailbox.disabled_config(),
       objects: %{},
       dc_capable?: false,
       signals: signal_specs(),
       behavior: __MODULE__
-    }
+    )
   end
 
   def signal_specs, do: %{}

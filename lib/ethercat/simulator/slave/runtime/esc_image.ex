@@ -125,20 +125,15 @@ defmodule EtherCAT.Simulator.Slave.Runtime.ESCImage do
     |> Memory.replace(0x09C8, <<0::64-little>>)
   end
 
-  defp mailbox_sm_entries(%{recv_offset: 0, recv_size: 0, send_offset: 0, send_size: 0}) do
-    [{0, 0x0000, 0, 0x00}, {1, 0x0000, 0, 0x00}]
-  end
-
-  defp mailbox_sm_entries(%{
-         recv_offset: recv_offset,
-         recv_size: recv_size,
-         send_offset: send_offset,
-         send_size: send_size
-       }) do
-    [
-      {0, recv_offset, recv_size, 0x26},
-      {1, send_offset, send_size, 0x22}
-    ]
+  defp mailbox_sm_entries(mailbox_config) do
+    if mailbox_config.recv_size == 0 and mailbox_config.send_size == 0 do
+      [{0, 0x0000, 0, 0x00}, {1, 0x0000, 0, 0x00}]
+    else
+      [
+        {0, mailbox_config.recv_offset, mailbox_config.recv_size, 0x26},
+        {1, mailbox_config.send_offset, mailbox_config.send_size, 0x22}
+      ]
+    end
   end
 
   defp sm_ctrl(_direction, 0), do: 0x00
@@ -168,12 +163,12 @@ defmodule EtherCAT.Simulator.Slave.Runtime.ESCImage do
   defp pdo_direction_rank(:output), do: 0
   defp pdo_direction_rank(:input), do: 1
 
-  defp pdo_category(%{
-         index: pdo_index,
-         direction: direction,
-         sm_index: sm_index,
-         bit_size: bit_size
-       }) do
+  defp pdo_category(pdo) do
+    pdo_index = pdo.index
+    direction = pdo.direction
+    sm_index = pdo.sm_index
+    bit_size = pdo.bit_size
+
     category_type = if direction == :input, do: 0x0032, else: 0x0033
 
     data =

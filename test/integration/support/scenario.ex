@@ -116,10 +116,10 @@ defmodule EtherCAT.Integration.Scenario do
     try do
       Enum.reduce(scenario.steps, ctx, &run_step/2)
       :ok
-    rescue
-      error ->
+    catch
+      kind, reason ->
         maybe_dump_trace(trace)
-        reraise error, __STACKTRACE__
+        :erlang.raise(kind, reason, __STACKTRACE__)
     after
       run_teardowns(teardowns)
       stop_trigger_supervisor(trigger_supervisor)

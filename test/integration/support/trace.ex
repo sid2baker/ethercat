@@ -69,9 +69,7 @@ defmodule EtherCAT.Integration.Trace do
       end
 
     formatted_entries =
-      visible_entries
-      |> Enum.map(&format_entry/1)
-      |> Enum.join("\n")
+      Enum.map_join(visible_entries, "\n", &format_entry/1)
 
     [title, header, formatted_entries]
     |> Enum.reject(&(&1 == ""))

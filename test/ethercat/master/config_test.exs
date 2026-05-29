@@ -3,11 +3,10 @@ defmodule EtherCAT.Master.ConfigTest do
 
   alias EtherCAT.DC.Config, as: DCConfig
   alias EtherCAT.Master.Config
-  alias EtherCAT.Master.Config.DomainPlan
   alias EtherCAT.Slave.Config, as: SlaveConfig
   alias EtherCAT.Slave.Sync.Config, as: SyncConfig
 
-  test "normalize_start_options stores internal config as structs" do
+  test "normalize_start_options stores normalized internal config" do
     assert {:ok, config} =
              Config.normalize_start_options(
                backend: redundant_backend("eth0", "eth1"),
@@ -16,7 +15,7 @@ defmodule EtherCAT.Master.ConfigTest do
                dc: [cycle_ns: 1_000_000]
              )
 
-    assert [%DomainPlan{id: :main, cycle_time_us: 1_000, logical_base: 0}] =
+    assert [%{id: :main, cycle_time_us: 1_000, logical_base: 0}] =
              config.domain_config
 
     assert %DCConfig{cycle_ns: 1_000_000, lock_policy: :advisory} = config.dc_config
@@ -294,7 +293,7 @@ defmodule EtherCAT.Master.ConfigTest do
                domains: [[id: :fast, cycle_time_us: 1_000], [id: :slow, cycle_time_us: 10_000]]
              )
 
-    assert [%DomainPlan{id: :fast, logical_base: 0}, %DomainPlan{id: :slow, logical_base: 2048}] =
+    assert [%{id: :fast, logical_base: 0}, %{id: :slow, logical_base: 2048}] =
              config.domain_config
   end
 

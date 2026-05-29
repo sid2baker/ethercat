@@ -374,11 +374,11 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
     end
   end
 
-  defp maybe_apply_protocol_fault(
-         %{index: index, subindex: subindex, stage: stage} = response,
-         request_counter,
-         slave
-       ) do
+  defp maybe_apply_protocol_fault(response, request_counter, slave) do
+    index = response.index
+    subindex = response.subindex
+    stage = response.stage
+
     case protocol_fault(slave, index, subindex, stage) do
       {:ok, :drop_response, updated_slave} ->
         {:drop_response, updated_slave}
@@ -608,13 +608,11 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
        when stage in [:request, :upload_init, :upload_segment, :download_init, :download_segment],
        do: true
 
-  defp valid_protocol_fault?(stage, {:sdo_command, command})
-       when stage == :upload_init and is_integer(command) and command >= 0 and command <= 255,
+  defp valid_protocol_fault?(:upload_init, {:sdo_command, command})
+       when is_integer(command) and command >= 0 and command <= 255,
        do: true
 
-  defp valid_protocol_fault?(stage, :invalid_segment_padding)
-       when stage == :upload_segment,
-       do: true
+  defp valid_protocol_fault?(:upload_segment, :invalid_segment_padding), do: true
 
   defp valid_protocol_fault?(stage, {:segment_command, command})
        when stage in [:upload_segment, :download_segment] and is_integer(command) and
@@ -623,7 +621,11 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
 
   defp valid_protocol_fault?(_stage, _fault_kind), do: false
 
-  defp upsert_protocol_fault_rule(slave, %{index: index, subindex: subindex, stage: stage} = rule) do
+  defp upsert_protocol_fault_rule(slave, rule) do
+    index = rule.index
+    subindex = rule.subindex
+    stage = rule.stage
+
     filtered =
       Enum.reject(slave.mailbox_protocol_fault_rules, fn existing ->
         existing.index == index and existing.subindex == subindex and existing.stage == stage

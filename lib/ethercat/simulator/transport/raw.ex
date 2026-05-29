@@ -36,8 +36,7 @@ defmodule EtherCAT.Simulator.Transport.Raw do
   def clear_faults do
     with {:ok, endpoints} <- Endpoint.infos() do
       endpoints
-      |> Map.keys()
-      |> Enum.map(fn ingress -> Endpoint.endpoint_name(ingress) end)
+      |> Enum.map(fn {ingress, _endpoint} -> Endpoint.endpoint_name(ingress) end)
       |> apply_endpoint_faults()
     end
   end

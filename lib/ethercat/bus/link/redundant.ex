@@ -133,12 +133,14 @@ defmodule EtherCAT.Bus.Link.Redundant do
 
   @doc false
   def child_spec(opts) do
-    %{
-      id: __MODULE__,
-      start: {__MODULE__, :start_link, [opts]},
+    Supervisor.child_spec(
+      %{
+        id: __MODULE__,
+        start: {__MODULE__, :start_link, [opts]}
+      },
       restart: :temporary,
       shutdown: 5000
-    }
+    )
   end
 
   @spec start_link(keyword()) :: :gen_statem.start_ret()
@@ -363,22 +365,20 @@ defmodule EtherCAT.Bus.Link.Redundant do
     transport = port_transport(data, port_id)
     endpoint = data.transport_mod.name(transport)
 
-    cond do
-      not data.transport_mod.open?(transport) ->
-        {mark_port_down(data, port_id, endpoint, :transport_closed), false, nil}
+    if data.transport_mod.open?(transport) do
+      data.transport_mod.set_active_once(transport)
 
-      true ->
-        data.transport_mod.set_active_once(transport)
+      case data.transport_mod.send(transport, payload) do
+        {:ok, tx_at} ->
+          data = mark_port_up(data, port_id, endpoint)
+          Telemetry.frame_sent(data.link_name, endpoint, port_id, byte_size(payload), tx_at)
+          {data, true, tx_at}
 
-        case data.transport_mod.send(transport, payload) do
-          {:ok, tx_at} ->
-            data = mark_port_up(data, port_id, endpoint)
-            Telemetry.frame_sent(data.link_name, endpoint, port_id, byte_size(payload), tx_at)
-            {data, true, tx_at}
-
-          {:error, reason} ->
-            {mark_port_down(data, port_id, endpoint, reason), false, nil}
-        end
+        {:error, reason} ->
+          {mark_port_down(data, port_id, endpoint, reason), false, nil}
+      end
+    else
+      {mark_port_down(data, port_id, endpoint, :transport_closed), false, nil}
     end
   end
 
@@ -751,19 +751,17 @@ defmodule EtherCAT.Bus.Link.Redundant do
       pri_bounce = Enum.find(arrivals, &(&1.class == :pri_bounce))
       sec_bounce = Enum.find(arrivals, &(&1.class == :sec_bounce))
 
-      cond do
-        pri_bounce && sec_bounce ->
-          RedundantMerge.merge_bounces(
-            exchange.datagrams,
-            pri_bounce.datagrams,
-            sec_bounce.datagrams
-          )
-
-        true ->
-          case Enum.find(arrivals, &(&1.class != :reverse_cross)) do
-            %{datagrams: datagrams} -> datagrams
-            nil -> nil
-          end
+      if pri_bounce && sec_bounce do
+        RedundantMerge.merge_bounces(
+          exchange.datagrams,
+          pri_bounce.datagrams,
+          sec_bounce.datagrams
+        )
+      else
+        case Enum.find(arrivals, &(&1.class != :reverse_cross)) do
+          %{datagrams: datagrams} -> datagrams
+          nil -> nil
+        end
       end
     end
   end

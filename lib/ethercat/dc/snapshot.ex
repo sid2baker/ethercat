@@ -74,10 +74,10 @@ defmodule EtherCAT.DC.Snapshot do
 
     port_statuses =
       [
-        {0, %{phy: phy0, loop: loop0, comm: comm0}},
-        {1, %{phy: phy1, loop: loop1, comm: comm1}},
-        {2, %{phy: phy2, loop: loop2, comm: comm2}},
-        {3, %{phy: phy3, loop: loop3, comm: comm3}}
+        {0, {phy0, loop0, comm0}},
+        {1, {phy1, loop1, comm1}},
+        {2, {phy2, loop2, comm2}},
+        {3, {phy3, loop3, comm3}}
       ]
       |> Map.new()
 
@@ -86,8 +86,8 @@ defmodule EtherCAT.DC.Snapshot do
     end)
   end
 
-  defp port_active?(%{comm: 1}), do: true
-  defp port_active?(%{phy: 1, loop: 0}), do: true
+  defp port_active?({_phy, _loop, 1}), do: true
+  defp port_active?({1, 0, _comm}), do: true
   defp port_active?(_), do: false
 
   defp active_timestamps(active_ports, port_times) do

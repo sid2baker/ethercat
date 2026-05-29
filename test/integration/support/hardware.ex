@@ -1,6 +1,7 @@
 defmodule EtherCAT.IntegrationSupport.Hardware do
   @moduledoc false
 
+  alias EtherCAT.Backend
   alias EtherCAT.Domain.Config, as: DomainConfig
   alias EtherCAT.Driver.{EK1100, EL1809, EL2809}
   alias EtherCAT.IntegrationSupport.Drivers.EL3202
@@ -59,13 +60,13 @@ defmodule EtherCAT.IntegrationSupport.Hardware do
     case {interface(), backup_interface()} do
       {{:ok, primary}, {:ok, secondary}} ->
         [
-          %{
-            id: :raw_redundant,
-            label: "redundant raw",
-            transport: :raw,
-            redundant?: true,
-            start_opts: [backend: redundant_backend(primary, secondary)]
-          }
+          transport_profile(
+            :raw_redundant,
+            "redundant raw",
+            :raw,
+            true,
+            backend: redundant_backend(primary, secondary)
+          )
         ]
 
       _ ->
@@ -192,13 +193,7 @@ defmodule EtherCAT.IntegrationSupport.Hardware do
   defp raw_profile do
     case interface() do
       {:ok, interface} ->
-        %{
-          id: :raw,
-          label: "raw",
-          transport: :raw,
-          redundant?: false,
-          start_opts: [backend: raw_backend(interface)]
-        }
+        transport_profile(:raw, "raw", :raw, false, backend: raw_backend(interface))
 
       {:error, _reason} ->
         nil
@@ -218,14 +213,18 @@ defmodule EtherCAT.IntegrationSupport.Hardware do
           [backend: udp_backend(parse_ip!(host, "ETHERCAT_UDP_HOST"), udp_port())]
           |> maybe_put_udp_bind_ip()
 
-        %{
-          id: :udp,
-          label: "udp",
-          transport: :udp,
-          redundant?: false,
-          start_opts: start_opts
-        }
+        transport_profile(:udp, "udp", :udp, false, start_opts)
     end
+  end
+
+  defp transport_profile(id, label, transport, redundant?, start_opts) do
+    %{
+      id: id,
+      label: label,
+      transport: transport,
+      redundant?: redundant?,
+      start_opts: start_opts
+    }
   end
 
   defp maybe_put_udp_bind_ip(start_opts) do
@@ -334,9 +333,9 @@ defmodule EtherCAT.IntegrationSupport.Hardware do
     {:redundant, %{primary: raw_backend(primary), secondary: raw_backend(secondary)}}
   end
 
-  defp udp_backend(host, port), do: {:udp, %{host: host, port: port}}
+  defp udp_backend(host, port), do: {:udp, Backend.udp_options(host, port)}
 
   defp put_udp_bind_ip({:udp, %{host: host, port: port}}, bind_ip) do
-    {:udp, %{host: host, bind_ip: bind_ip, port: port}}
+    {:udp, Backend.udp_options(host, port, bind_ip)}
   end
 end

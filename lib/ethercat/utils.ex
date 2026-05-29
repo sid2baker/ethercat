@@ -84,30 +84,24 @@ defmodule EtherCAT.Utils do
   def cycle_reason_metadata({:wkc_mismatch, %{expected: expected_wkc, actual: actual_wkc}})
       when is_integer(expected_wkc) and expected_wkc >= 0 and is_integer(actual_wkc) and
              actual_wkc >= 0 do
-    %{
-      reason: :wkc_mismatch,
-      expected_wkc: expected_wkc,
-      actual_wkc: actual_wkc,
-      reply_count: 1
-    }
+    cycle_metadata(:wkc_mismatch, expected_wkc, actual_wkc, 1)
   end
 
   def cycle_reason_metadata({:unexpected_reply, reply_count})
       when is_integer(reply_count) and reply_count >= 0 do
-    %{
-      reason: :unexpected_reply,
-      expected_wkc: nil,
-      actual_wkc: nil,
-      reply_count: reply_count
-    }
+    cycle_metadata(:unexpected_reply, nil, nil, reply_count)
   end
 
   def cycle_reason_metadata(reason) do
+    cycle_metadata(reason_kind(reason), nil, nil, nil)
+  end
+
+  defp cycle_metadata(reason, expected_wkc, actual_wkc, reply_count) do
     %{
-      reason: reason_kind(reason),
-      expected_wkc: nil,
-      actual_wkc: nil,
-      reply_count: nil
+      reason: reason,
+      expected_wkc: expected_wkc,
+      actual_wkc: actual_wkc,
+      reply_count: reply_count
     }
   end
 

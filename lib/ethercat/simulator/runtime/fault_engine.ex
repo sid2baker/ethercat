@@ -231,9 +231,9 @@ defmodule EtherCAT.Simulator.Runtime.FaultEngine do
           next_remaining = max(remaining - progress, 0)
 
           if next_remaining == 0 do
-            {kept, ready ++ [{:fault, fault}]}
+            {kept, [{:fault, fault} | ready]}
           else
-            {kept ++ [%{entry | remaining: next_remaining}], ready}
+            {[%{entry | remaining: next_remaining} | kept], ready}
           end
 
         %{kind: :script_milestone, milestone: milestone, remaining: remaining, steps: steps} =
@@ -243,14 +243,17 @@ defmodule EtherCAT.Simulator.Runtime.FaultEngine do
           next_remaining = max(remaining - progress, 0)
 
           if next_remaining == 0 do
-            {kept, ready ++ [{:script, entry.script_id, steps}]}
+            {kept, [{:script, entry.script_id, steps} | ready]}
           else
-            {kept ++ [%{entry | remaining: next_remaining}], ready}
+            {[%{entry | remaining: next_remaining} | kept], ready}
           end
 
         entry, {kept, ready} ->
-          {kept ++ [entry], ready}
+          {[entry | kept], ready}
       end)
+
+    scheduled_faults = Enum.reverse(scheduled_faults)
+    ready_actions = Enum.reverse(ready_actions)
 
     Enum.reduce(ready_actions, %{state | scheduled_faults: scheduled_faults}, fn
       {:fault, fault}, current_state ->

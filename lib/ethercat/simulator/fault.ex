@@ -258,17 +258,18 @@ defmodule EtherCAT.Simulator.Fault do
   defp normalize_effect(effect), do: FaultSpec.normalize_effect(effect)
 
   defp normalize_script_steps(steps) do
-    Enum.reduce_while(steps, {:ok, []}, fn
+    steps
+    |> Enum.reduce_while({:ok, []}, fn
       %__MODULE__{schedule: :immediate, effect: {:wait_for_milestone, milestone}}, {:ok, acc} ->
-        {:cont, {:ok, acc ++ [{:wait_for_milestone, milestone}]}}
+        {:cont, {:ok, [{:wait_for_milestone, milestone} | acc]}}
 
       %__MODULE__{schedule: :immediate} = step, {:ok, acc} ->
         case normalize_effect(step.effect) do
           {:ok, {:wait_for_milestone, milestone}} ->
-            {:cont, {:ok, acc ++ [{:wait_for_milestone, milestone}]}}
+            {:cont, {:ok, [{:wait_for_milestone, milestone} | acc]}}
 
           {:ok, raw_step} ->
-            {:cont, {:ok, acc ++ [raw_step]}}
+            {:cont, {:ok, [raw_step | acc]}}
 
           :error ->
             {:halt, :error}
@@ -278,8 +279,12 @@ defmodule EtherCAT.Simulator.Fault do
         {:halt, :error}
 
       raw_step, {:ok, acc} ->
-        {:cont, {:ok, acc ++ [raw_step]}}
+        {:cont, {:ok, [raw_step | acc]}}
     end)
+    |> case do
+      {:ok, normalized_steps} -> {:ok, Enum.reverse(normalized_steps)}
+      :error -> :error
+    end
   end
 
   defp apply_schedule({:wait_for_milestone, _milestone}, :immediate), do: :error

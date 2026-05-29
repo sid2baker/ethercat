@@ -5,6 +5,29 @@ defmodule EtherCAT.Slave.Mailbox do
   alias EtherCAT.Slave
   alias EtherCAT.Slave.Mailbox.CoE
 
+  @type config :: %{
+          recv_offset: non_neg_integer(),
+          recv_size: non_neg_integer(),
+          send_offset: non_neg_integer(),
+          send_size: non_neg_integer()
+        }
+
+  @doc false
+  @spec config(non_neg_integer(), non_neg_integer(), non_neg_integer(), non_neg_integer()) ::
+          config()
+  def config(recv_offset, recv_size, send_offset, send_size) do
+    %{
+      recv_offset: recv_offset,
+      recv_size: recv_size,
+      send_offset: send_offset,
+      send_size: send_size
+    }
+  end
+
+  @doc false
+  @spec disabled_config() :: config()
+  def disabled_config, do: config(0, 0, 0, 0)
+
   @spec run_preop_config(%Slave{}) :: {:ok, %Slave{}} | {:error, term()}
   def run_preop_config(%{driver: nil} = data), do: {:ok, data}
 

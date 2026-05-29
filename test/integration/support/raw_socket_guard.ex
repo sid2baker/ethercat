@@ -93,11 +93,11 @@ defmodule EtherCAT.IntegrationSupport.RawSocketGuard do
     Path.wildcard("/proc/[0-9]*/fd/[0-9]*")
     |> Enum.reduce(%{}, fn fd_path, acc ->
       case File.read_link(fd_path) do
-        {:ok, "socket:[" <> rest} ->
+        {:ok, <<"socket:[", rest::binary>>} ->
           case Integer.parse(String.trim_trailing(rest, "]")) do
             {inode, ""} ->
               if MapSet.member?(wanted_inodes, inode) do
-                pid = fd_path |> Path.split() |> Enum.at(2)
+                ["/", "proc", pid, "fd", _fd] = Path.split(fd_path)
                 owner = %{pid: pid, command: process_command(pid)}
                 Map.update(acc, inode, [owner], &[owner | &1])
               else

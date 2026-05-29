@@ -6,7 +6,6 @@ defmodule EtherCAT.MasterActivationTest do
   alias EtherCAT.Domain, as: DomainAPI
   alias EtherCAT.Master
   alias EtherCAT.Master.Activation
-  alias EtherCAT.Master.Config.DomainPlan
   alias EtherCAT.TestSupport.FakeBus
 
   defmodule FakeSlave do
@@ -91,14 +90,14 @@ defmodule EtherCAT.MasterActivationTest do
       dc_stations: [0x1000],
       dc_config: %DCConfig{cycle_ns: 100_000_000, await_lock?: false},
       domain_configs: [
-        %DomainPlan{
+        %{
           id: domain_id,
           cycle_time_us: 1_000,
           miss_threshold: 500,
           recovery_threshold: 3,
           logical_base: 0
         },
-        %DomainPlan{
+        %{
           id: missing_domain_id,
           cycle_time_us: 1_000,
           miss_threshold: 500,

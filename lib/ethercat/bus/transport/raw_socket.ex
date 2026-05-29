@@ -46,7 +46,7 @@ defmodule EtherCAT.Bus.Transport.RawSocket do
     interface = Keyword.fetch!(opts, :interface)
 
     with {:ok, idx} <- ifindex(interface),
-         {:ok, src_mac} <- mac_address(interface),
+         {:ok, src_mac} <- InterfaceInfo.mac_address(interface),
          {:ok, raw} <- :socket.open(@af_packet, :raw, @ethertype) do
       case :socket.bind(raw, sockaddr_ll(idx)) do
         :ok ->
@@ -315,10 +315,6 @@ defmodule EtherCAT.Bus.Transport.RawSocket do
       {:ok, _idx} = ok -> ok
       {:error, _} = err -> err
     end
-  end
-
-  defp mac_address(interface) do
-    InterfaceInfo.mac_address(interface)
   end
 
   # -- sockaddr_ll ------------------------------------------------------------

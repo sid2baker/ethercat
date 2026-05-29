@@ -24,7 +24,7 @@ defmodule EtherCAT.Simulator.Runtime.Router do
   @spec process_datagrams(
           [Datagram.t()],
           [Device.t()],
-          %{optional(atom()) => true},
+          MapSet.t(atom()),
           integer(),
           %{optional(Faults.command_name()) => integer()},
           %{optional(atom()) => integer()},
@@ -47,7 +47,7 @@ defmodule EtherCAT.Simulator.Runtime.Router do
     disconnected =
       topology
       |> Topology.unreachable_slaves(ingress, slaves)
-      |> Enum.reduce(disconnected, &Map.put(&2, &1, true))
+      |> Enum.reduce(disconnected, &MapSet.put(&2, &1))
 
     {responses, slaves} =
       Enum.map_reduce(datagrams, slaves, fn datagram, current_slaves ->
@@ -255,7 +255,7 @@ defmodule EtherCAT.Simulator.Runtime.Router do
     end
   end
 
-  defp disconnected?(disconnected, slave_name), do: Map.has_key?(disconnected, slave_name)
+  defp disconnected?(disconnected, slave_name), do: MapSet.member?(disconnected, slave_name)
 
   defp command_name(@aprd), do: :aprd
   defp command_name(@apwr), do: :apwr

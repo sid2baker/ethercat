@@ -38,9 +38,16 @@ defmodule EtherCAT.Domain do
   distinction stays in bus telemetry.
   """
 
-  alias EtherCAT.Domain.FSM
+  @behaviour :gen_statem
+
+  require Logger
+
+  alias EtherCAT.Domain.Cycle
+  alias EtherCAT.Domain.Freshness
   alias EtherCAT.Domain.Image
   alias EtherCAT.Domain.Layout
+  alias EtherCAT.Domain.State
+  alias EtherCAT.Domain.Status
   alias EtherCAT.Utils
 
   @type domain_id :: atom()
@@ -88,17 +95,21 @@ defmodule EtherCAT.Domain do
   def child_spec(opts) do
     id = Keyword.fetch!(opts, :id)
 
-    %{
-      id: {__MODULE__, id},
-      start: {FSM, :start_link, [opts]},
+    Supervisor.child_spec(
+      %{
+        id: {__MODULE__, id},
+        start: {__MODULE__, :start_link, [opts]}
+      },
       restart: :temporary,
       shutdown: 5000
-    }
+    )
   end
 
   @doc false
   @spec start_link(keyword()) :: :gen_statem.start_ret()
-  def start_link(opts), do: FSM.start_link(opts)
+  def start_link(opts) do
+    :gen_statem.start_link(__MODULE__, opts, [])
+  end
 
   @doc """
   Register one PDO entry in the domain layout while the domain is open.
@@ -191,6 +202,74 @@ defmodule EtherCAT.Domain do
     safe_call(domain_id, {:update_cycle_time, cycle_time_us})
   end
 
+  @impl true
+  def callback_mode, do: [:handle_event_function, :state_enter]
+
+  @impl true
+  def init(opts) do
+    Logger.metadata(component: :domain, domain: Keyword.fetch!(opts, :id))
+    {:ok, :open, State.new(opts)}
+  end
+
+  @impl true
+  def handle_event(:enter, _old, :open, _data), do: :keep_state_and_data
+
+  def handle_event(:enter, _old, :cycling, data),
+    do: {:keep_state_and_data, Cycle.enter_actions(data)}
+
+  def handle_event(:enter, _old, :stopped, _data), do: :keep_state_and_data
+
+  def handle_event({:call, from}, {:register_pdo, key, size, direction}, :open, data) do
+    {offset, layout} = Layout.register(data.layout, key, size, direction)
+    Image.insert_registration_entry(data.table, key, size, direction)
+
+    new_data = %{data | layout: layout}
+
+    {:keep_state, new_data, [{:reply, from, {:ok, data.logical_base + offset}}]}
+  end
+
+  def handle_event({:call, from}, {:register_pdo, _, _, _}, _state, _data) do
+    {:keep_state_and_data, [{:reply, from, {:error, :not_open}}]}
+  end
+
+  def handle_event({:call, from}, :start_cycling, :cycling, _data) do
+    {:keep_state_and_data, [{:reply, from, {:error, :already_cycling}}]}
+  end
+
+  def handle_event({:call, from}, :start_cycling, state, data)
+      when state in [:open, :stopped] do
+    Cycle.start_reply(from, data, reset_miss_count?(state))
+  end
+
+  def handle_event({:call, from}, :stop_cycling, state, _data)
+      when state in [:open, :stopped] do
+    {:keep_state_and_data, [{:reply, from, :ok}]}
+  end
+
+  def handle_event({:call, from}, :stop_cycling, :cycling, data) do
+    {:next_state, :stopped, data, [{:reply, from, :ok}]}
+  end
+
+  def handle_event(:state_timeout, :tick, :cycling, data), do: Cycle.handle_tick(data)
+
+  def handle_event({:call, from}, :stats, state, data) do
+    {:keep_state_and_data, [{:reply, from, {:ok, Status.stats_snapshot(state, data)}}]}
+  end
+
+  def handle_event({:call, from}, :info, state, data) do
+    {:keep_state_and_data, [{:reply, from, {:ok, Status.info_snapshot(state, data)}}]}
+  end
+
+  def handle_event({:call, from}, {:update_cycle_time, new_us}, _state, data) do
+    new_stale_after_us = Freshness.default_stale_after_us(new_us)
+    Image.put_domain_status(data.table, data.last_valid_cycle_at_us, new_stale_after_us)
+
+    {:keep_state, %{data | period_us: new_us, stale_after_us: new_stale_after_us},
+     [{:reply, from, :ok}]}
+  end
+
+  def handle_event(_type, _event, _state, _data), do: :keep_state_and_data
+
   defp safe_call(domain_id, msg) do
     try do
       :gen_statem.call(via(domain_id), msg)
@@ -200,4 +279,7 @@ defmodule EtherCAT.Domain do
   end
 
   defp via(domain_id), do: {:via, Registry, {EtherCAT.Registry, {:domain, domain_id}}}
+
+  defp reset_miss_count?(:stopped), do: true
+  defp reset_miss_count?(:open), do: false
 end

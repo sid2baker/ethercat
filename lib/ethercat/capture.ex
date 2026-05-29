@@ -36,10 +36,12 @@ defmodule EtherCAT.Capture do
   """
 
   alias EtherCAT.Bus
+  alias EtherCAT.Simulator.Slave.Definition
   alias EtherCAT.Simulator.Slave.Object
   alias EtherCAT.Driver.Default, as: DefaultDriver
   alias EtherCAT.SignalName
   alias EtherCAT.Slave.ESC.SII
+  alias EtherCAT.Slave.Mailbox
 
   @capture_format 1
   @capture_file_extension ".capture"
@@ -499,12 +501,10 @@ defmodule EtherCAT.Capture do
   defp normalize_sdo_refs(opts) do
     sdos = Keyword.get(opts, :sdos, [])
 
-    cond do
-      is_list(sdos) and Enum.all?(sdos, &valid_sdo_ref?/1) ->
-        {:ok, Enum.uniq(sdos)}
-
-      true ->
-        {:error, {:invalid_sdos, sdos}}
+    if is_list(sdos) and Enum.all?(sdos, &valid_sdo_ref?/1) do
+      {:ok, Enum.uniq(sdos)}
+    else
+      {:error, {:invalid_sdos, sdos}}
     end
   end
 
@@ -517,15 +517,20 @@ defmodule EtherCAT.Capture do
   defp read_sdo_snapshots(_slave_name, []), do: {:ok, []}
 
   defp read_sdo_snapshots(slave_name, sdos) do
-    Enum.reduce_while(sdos, {:ok, []}, fn {index, subindex}, {:ok, acc} ->
+    sdos
+    |> Enum.reduce_while({:ok, []}, fn {index, subindex}, {:ok, acc} ->
       case EtherCAT.Provisioning.upload_sdo(slave_name, index, subindex) do
         {:ok, data} ->
-          {:cont, {:ok, acc ++ [%{index: index, subindex: subindex, data: data}]}}
+          {:cont, {:ok, [sdo_snapshot(index, subindex, data) | acc]}}
 
         {:error, reason} ->
           {:halt, {:error, {:sdo_upload_failed, index, subindex, reason}}}
       end
     end)
+    |> case do
+      {:ok, snapshots} -> {:ok, Enum.reverse(snapshots)}
+      {:error, _reason} = error -> error
+    end
   end
 
   defp normalize_sm_configs(sm_configs) do
@@ -534,13 +539,17 @@ defmodule EtherCAT.Capture do
     end)
   end
 
+  defp sdo_snapshot(index, subindex, data) do
+    %{index: index, subindex: subindex, data: data}
+  end
+
   defp normalize_mailbox_config(mailbox_config) do
-    %{
-      recv_offset: mailbox_config.recv_offset,
-      recv_size: mailbox_config.recv_size,
-      send_offset: mailbox_config.send_offset,
-      send_size: mailbox_config.send_size
-    }
+    Mailbox.config(
+      mailbox_config.recv_offset,
+      mailbox_config.recv_size,
+      mailbox_config.send_offset,
+      mailbox_config.send_size
+    )
   end
 
   defp normalize_pdo_configs(pdo_configs) do
@@ -639,7 +648,7 @@ defmodule EtherCAT.Capture do
             Map.get(signal_names, pdo.index, generated_signal_name(pdo.index))
 
           signal =
-            %{
+            Definition.signal(
               direction: direction,
               pdo_index: pdo.index,
               bit_offset: bit_offset,
@@ -647,21 +656,20 @@ defmodule EtherCAT.Capture do
               type: signal_type(pdo.bit_size),
               label: pdo_label(pdo.index),
               group: signal_group(direction)
-            }
+            )
+
+          pdo_entry =
+            Definition.pdo_entry(
+              pdo.index,
+              direction,
+              simulator_sm_index(direction),
+              pdo.bit_size
+            )
 
           %{
             acc
             | offsets: Map.put(acc.offsets, direction, bit_offset + pdo.bit_size),
-              pdo_entries:
-                acc.pdo_entries ++
-                  [
-                    %{
-                      index: pdo.index,
-                      direction: direction,
-                      sm_index: simulator_sm_index(direction),
-                      bit_size: pdo.bit_size
-                    }
-                  ],
+              pdo_entries: [pdo_entry | acc.pdo_entries],
               signals: Map.put(acc.signals, signal_name, signal)
           }
         end
@@ -670,7 +678,7 @@ defmodule EtherCAT.Capture do
     offsets = layout.offsets
 
     %{
-      pdo_entries: layout.pdo_entries,
+      pdo_entries: Enum.reverse(layout.pdo_entries),
       signals: layout.signals,
       output_size: bit_bytes(offsets.output),
       input_size: bit_bytes(offsets.input)
@@ -678,7 +686,10 @@ defmodule EtherCAT.Capture do
   end
 
   defp captured_objects(sdos) do
-    Enum.into(sdos, %{}, fn %{index: index, subindex: subindex, data: data} ->
+    Enum.into(sdos, %{}, fn sdo ->
+      index = sdo.index
+      subindex = sdo.subindex
+      data = sdo.data
       size = max(byte_size(data), 1)
 
       {{index, subindex},
@@ -740,7 +751,7 @@ defmodule EtherCAT.Capture do
   defp generated_signal_name(index), do: SignalName.pdo_atom(index)
 
   defp zero_mailbox_config do
-    %{recv_offset: 0, recv_size: 0, send_offset: 0, send_size: 0}
+    Mailbox.disabled_config()
   end
 
   defp capture_path(capture, opts_or_path) when is_list(opts_or_path) do
@@ -1270,8 +1281,8 @@ defmodule EtherCAT.Capture do
   defp driver_mailbox_steps(capture) do
     capture
     |> Map.get(:sdos, [])
-    |> Enum.map(fn %{index: index, subindex: subindex, data: data} ->
-      {:sdo_download, index, subindex, data}
+    |> Enum.map(fn sdo ->
+      {:sdo_download, sdo.index, sdo.subindex, sdo.data}
     end)
   end
 
@@ -1415,11 +1426,13 @@ defmodule EtherCAT.Capture do
       ]
       |> maybe_append_identity_revision(identity)
 
-    "%{\n" <>
-      (fields
-       |> Enum.map(fn {key, value, width} -> "  #{key}: #{hex_literal(value, width)}" end)
-       |> Enum.join(",\n")) <>
+    IO.iodata_to_binary([
+      "%{\n",
+      Enum.map_join(fields, ",\n", fn {key, value, width} ->
+        "  #{key}: #{hex_literal(value, width)}"
+      end),
       "\n}"
+    ])
   end
 
   defp maybe_append_identity_revision(fields, %{revision: revision})
@@ -1432,17 +1445,17 @@ defmodule EtherCAT.Capture do
   defp render_signal_model_literal([]), do: "[]"
 
   defp render_signal_model_literal(signal_model) do
-    "[\n" <>
-      (signal_model
-       |> Enum.map(fn {name, index} ->
-         "  #{signal_name_key_literal(name)}: #{hex_literal(index, 4)}"
-       end)
-       |> Enum.join(",\n")) <>
+    IO.iodata_to_binary([
+      "[\n",
+      Enum.map_join(signal_model, ",\n", fn {name, index} ->
+        "  #{signal_name_key_literal(name)}: #{hex_literal(index, 4)}"
+      end),
       "\n]"
+    ])
   end
 
   defp render_signal_name_list_literal(list) do
-    "[" <> Enum.map_join(list, ", ", &signal_name_literal/1) <> "]"
+    IO.iodata_to_binary(["[", Enum.map_join(list, ", ", &signal_name_literal/1), "]"])
   end
 
   defp inline_literal(prefix, literal) do
@@ -1563,36 +1576,39 @@ defmodule EtherCAT.Capture do
   defp render_literal({:__signal_name__, :literal, name}), do: signal_name_literal(name)
 
   defp render_literal(%module{} = struct) do
-    "%" <>
-      inspect(module) <>
-      render_struct_body(Map.from_struct(struct))
+    IO.iodata_to_binary(["%", inspect(module), render_struct_body(Map.from_struct(struct))])
   end
 
   defp render_literal(map) when is_map(map) do
-    "%{" <>
-      (map
-       |> Enum.map(fn {key, value} -> "#{render_literal(key)} => #{render_literal(value)}" end)
-       |> Enum.join(", ")) <> "}"
+    IO.iodata_to_binary([
+      "%{",
+      Enum.map_join(map, ", ", fn {key, value} ->
+        "#{render_literal(key)} => #{render_literal(value)}"
+      end),
+      "}"
+    ])
   end
 
   defp render_literal(list) when is_list(list) do
     if Keyword.keyword?(list) do
-      "[" <>
-        (list
-         |> Enum.map(fn {key, value} ->
-           "#{render_keyword_key(key)}: #{render_literal(value)}"
-         end)
-         |> Enum.join(", ")) <> "]"
+      IO.iodata_to_binary([
+        "[",
+        Enum.map_join(list, ", ", fn {key, value} ->
+          "#{render_keyword_key(key)}: #{render_literal(value)}"
+        end),
+        "]"
+      ])
     else
-      "[" <> Enum.map_join(list, ", ", &render_literal/1) <> "]"
+      IO.iodata_to_binary(["[", Enum.map_join(list, ", ", &render_literal/1), "]"])
     end
   end
 
   defp render_literal(tuple) when is_tuple(tuple) do
-    "{" <>
-      (tuple
-       |> Tuple.to_list()
-       |> Enum.map_join(", ", &render_literal/1)) <> "}"
+    IO.iodata_to_binary([
+      "{",
+      tuple |> Tuple.to_list() |> Enum.map_join(", ", &render_literal/1),
+      "}"
+    ])
   end
 
   defp render_literal(value) when is_atom(value), do: inspect(value)
@@ -1603,10 +1619,13 @@ defmodule EtherCAT.Capture do
   defp render_literal(nil), do: "nil"
 
   defp render_struct_body(map) do
-    "{" <>
-      (map
-       |> Enum.map(fn {key, value} -> "#{render_map_key(key)}: #{render_literal(value)}" end)
-       |> Enum.join(", ")) <> "}"
+    IO.iodata_to_binary([
+      "{",
+      Enum.map_join(map, ", ", fn {key, value} ->
+        "#{render_map_key(key)}: #{render_literal(value)}"
+      end),
+      "}"
+    ])
   end
 
   defp render_map_key(key) when is_atom(key), do: render_keyword_key(key)
@@ -1710,7 +1729,7 @@ defmodule EtherCAT.Capture do
       |> String.split("\n")
       |> Enum.map(&String.trim/1)
       |> Enum.reject(&(&1 == "" or String.starts_with?(&1, "#")))
-      |> Enum.join("")
+      |> Enum.join()
 
     if payload == "", do: {:error, :missing_payload}, else: {:ok, payload}
   end
@@ -1741,15 +1760,13 @@ defmodule EtherCAT.Capture do
   end
 
   defp write_generated_file(path, contents, overwrite?) do
-    cond do
-      File.exists?(path) and not overwrite? ->
-        {:error, {:already_exists, path}}
-
-      true ->
-        with :ok <- File.mkdir_p(Path.dirname(path)),
-             :ok <- File.write(path, contents) do
-          :ok
-        end
+    if File.exists?(path) and not overwrite? do
+      {:error, {:already_exists, path}}
+    else
+      with :ok <- File.mkdir_p(Path.dirname(path)),
+           :ok <- File.write(path, contents) do
+        :ok
+      end
     end
   end
 

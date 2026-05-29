@@ -206,6 +206,8 @@ defmodule EtherCAT.Slave.Runtime.Signals do
 
   defp subscribable_name?(data, signal_name) do
     Map.has_key?(data.signal_registrations || %{}, signal_name) or
-      Enum.any?(Map.values(data.latch_names || %{}), &(&1 == signal_name))
+      Enum.any?(data.latch_names || %{}, fn {_latch_name, registered_name} ->
+        registered_name == signal_name
+      end)
   end
 end

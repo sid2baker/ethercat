@@ -14,13 +14,26 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Device do
   alias EtherCAT.Simulator.Slave.Runtime.Dictionary
   alias EtherCAT.Simulator.Slave.Runtime.Memory
   alias EtherCAT.Simulator.Slave.Runtime.ProcessImage
-  alias EtherCAT.Simulator.Slave.Signals
+  alias EtherCAT.Simulator.Slave.Value
 
   @station_address elem(Registers.station_address(), 0)
   @al_control elem(Registers.al_control(), 0)
   @eeprom_control elem(Registers.eeprom_control(), 0)
   @sm1_status elem(Registers.sm_status(1), 0)
   @sm1_status_length elem(Registers.sm_status(1), 1)
+
+  @type signal_definition :: %{
+          required(:direction) => :input | :output,
+          required(:pdo_index) => non_neg_integer(),
+          required(:bit_offset) => non_neg_integer(),
+          required(:bit_size) => pos_integer(),
+          required(:type) => Value.scalar_type(),
+          optional(:unit) => binary(),
+          optional(:scale) => number(),
+          optional(:offset) => number(),
+          optional(:label) => binary(),
+          optional(:group) => atom()
+        }
 
   @type t :: %__MODULE__{
           name: atom(),
@@ -37,7 +50,7 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Device do
           input_phys: non_neg_integer(),
           input_size: non_neg_integer(),
           mirror_output_to_input?: boolean(),
-          signals: %{optional(atom()) => Signals.definition()},
+          signals: %{optional(atom()) => signal_definition()},
           input_overrides: %{optional(atom()) => term()},
           mailbox_config: Mailbox.mailbox_config(),
           objects: %{optional({non_neg_integer(), non_neg_integer()}) => Object.t()},
@@ -260,7 +273,7 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Device do
   @spec output_image(t()) :: binary()
   def output_image(%__MODULE__{} = slave), do: ProcessImage.output_image(slave)
 
-  @spec signals(t()) :: %{optional(atom()) => Signals.definition()}
+  @spec signals(t()) :: %{optional(atom()) => signal_definition()}
   def signals(%__MODULE__{signals: signals}), do: signals
 
   @spec get_value(t(), atom()) :: {:ok, term()} | {:error, :unknown_signal}
@@ -271,7 +284,7 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Device do
   def set_value(%__MODULE__{} = slave, signal_name, value),
     do: ProcessImage.set_value(slave, signal_name, value)
 
-  @spec signal_definition(t(), atom()) :: {:ok, Signals.definition()} | :error
+  @spec signal_definition(t(), atom()) :: {:ok, signal_definition()} | :error
   def signal_definition(%__MODULE__{signals: signals}, signal_name),
     do: Map.fetch(signals, signal_name)
 

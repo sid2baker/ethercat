@@ -3,6 +3,8 @@ defmodule EtherCAT.Simulator.Slave.Profile.DigitalIO do
 
   use EtherCAT.Simulator.Slave.Behaviour
   alias EtherCAT.SignalName
+  alias EtherCAT.Simulator.Slave.Definition
+  alias EtherCAT.Slave.Mailbox
 
   @default_output_pdo 0x1600
   @default_input_pdo 0x1A00
@@ -22,7 +24,7 @@ defmodule EtherCAT.Simulator.Slave.Profile.DigitalIO do
           {image_pdo_entries(), image_signal_specs(), 1, 1, true}
       end
 
-    %{
+    Definition.profile_spec(
       profile: :digital_io,
       vendor_id: Keyword.get(opts, :vendor_id, 0x0000_0ACE),
       product_code: Keyword.get(opts, :product_code, 0x0000_1601),
@@ -37,12 +39,12 @@ defmodule EtherCAT.Simulator.Slave.Profile.DigitalIO do
       input_size: input_size,
       mirror_output_to_input?: mirror_output_to_input?,
       pdo_entries: pdo_entries,
-      mailbox_config: %{recv_offset: 0, recv_size: 0, send_offset: 0, send_size: 0},
+      mailbox_config: Mailbox.disabled_config(),
       objects: %{},
       dc_capable?: false,
       signals: signals,
       behavior: __MODULE__
-    }
+    )
   end
 
   def channel_signal_specs(direction, channel_count, opts \\ []) do
@@ -59,31 +61,33 @@ defmodule EtherCAT.Simulator.Slave.Profile.DigitalIO do
 
   defp image_signal_specs do
     %{
-      out: %{
-        direction: :output,
-        pdo_index: @default_output_pdo,
-        bit_offset: 0,
-        bit_size: 8,
-        type: :u8,
-        label: "Output",
-        group: :outputs
-      },
-      in: %{
-        direction: :input,
-        pdo_index: @default_input_pdo,
-        bit_offset: 0,
-        bit_size: 8,
-        type: :u8,
-        label: "Input",
-        group: :inputs
-      }
+      out:
+        Definition.signal(
+          direction: :output,
+          pdo_index: @default_output_pdo,
+          bit_offset: 0,
+          bit_size: 8,
+          type: :u8,
+          label: "Output",
+          group: :outputs
+        ),
+      in:
+        Definition.signal(
+          direction: :input,
+          pdo_index: @default_input_pdo,
+          bit_offset: 0,
+          bit_size: 8,
+          type: :u8,
+          label: "Input",
+          group: :inputs
+        )
     }
   end
 
   defp image_pdo_entries do
     [
-      %{index: @default_output_pdo, direction: :output, sm_index: 2, bit_size: 8},
-      %{index: @default_input_pdo, direction: :input, sm_index: 3, bit_size: 8}
+      Definition.pdo_entry(@default_output_pdo, :output, 2, 8),
+      Definition.pdo_entry(@default_input_pdo, :input, 3, 8)
     ]
   end
 
@@ -142,7 +146,7 @@ defmodule EtherCAT.Simulator.Slave.Profile.DigitalIO do
     names
     |> Enum.with_index()
     |> Enum.map(fn {_name, index} ->
-      %{index: base + index, direction: direction, sm_index: sm_index, bit_size: 1}
+      Definition.pdo_entry(base + index, direction, sm_index, 1)
     end)
   end
 
@@ -151,7 +155,7 @@ defmodule EtherCAT.Simulator.Slave.Profile.DigitalIO do
     |> Enum.with_index()
     |> Enum.into(%{}, fn {name, index} ->
       {name,
-       %{
+       Definition.signal(
          direction: direction,
          pdo_index: pdo_base + index,
          bit_offset: lsb_first_bit_offset(index),
@@ -159,7 +163,7 @@ defmodule EtherCAT.Simulator.Slave.Profile.DigitalIO do
          type: :bool,
          label: default_label(direction, index + 1),
          group: default_group(direction)
-       }}
+       )}
     end)
   end
 

@@ -3,10 +3,12 @@ defmodule EtherCAT.Simulator.Slave.Profile.AnalogIO do
 
   use EtherCAT.Simulator.Slave.Behaviour
 
+  alias EtherCAT.Simulator.Slave.Definition
   alias EtherCAT.Simulator.Slave.Object
+  alias EtherCAT.Slave.Mailbox
 
   def spec(_opts) do
-    %{
+    Definition.profile_spec(
       profile: :analog_io,
       vendor_id: 0x0000_0ACE,
       product_code: 0x0000_1701,
@@ -20,10 +22,10 @@ defmodule EtherCAT.Simulator.Slave.Profile.AnalogIO do
       input_phys: 0x1180,
       input_size: 2,
       mirror_output_to_input?: false,
-      mailbox_config: %{recv_offset: 0x1000, recv_size: 64, send_offset: 0x1040, send_size: 64},
+      mailbox_config: Mailbox.config(0x1000, 64, 0x1040, 64),
       pdo_entries: [
-        %{index: 0x1600, direction: :output, sm_index: 2, bit_size: 16},
-        %{index: 0x1A00, direction: :input, sm_index: 3, bit_size: 16}
+        Definition.pdo_entry(0x1600, :output, 2, 16),
+        Definition.pdo_entry(0x1A00, :input, 3, 16)
       ],
       objects: %{
         {0x3000, 0x01} =>
@@ -54,33 +56,35 @@ defmodule EtherCAT.Simulator.Slave.Profile.AnalogIO do
       dc_capable?: false,
       signals: signal_specs(),
       behavior: __MODULE__
-    }
+    )
   end
 
   def signal_specs do
     %{
-      ao0: %{
-        direction: :output,
-        pdo_index: 0x1600,
-        bit_offset: 0,
-        bit_size: 16,
-        type: :i16,
-        scale: 0.1,
-        unit: "V",
-        label: "Analog Output 0",
-        group: :outputs
-      },
-      ai0: %{
-        direction: :input,
-        pdo_index: 0x1A00,
-        bit_offset: 0,
-        bit_size: 16,
-        type: :i16,
-        scale: 0.1,
-        unit: "V",
-        label: "Analog Input 0",
-        group: :inputs
-      }
+      ao0:
+        Definition.signal(
+          direction: :output,
+          pdo_index: 0x1600,
+          bit_offset: 0,
+          bit_size: 16,
+          type: :i16,
+          scale: 0.1,
+          unit: "V",
+          label: "Analog Output 0",
+          group: :outputs
+        ),
+      ai0:
+        Definition.signal(
+          direction: :input,
+          pdo_index: 0x1A00,
+          bit_offset: 0,
+          bit_size: 16,
+          type: :i16,
+          scale: 0.1,
+          unit: "V",
+          label: "Analog Input 0",
+          group: :inputs
+        )
     }
   end
 

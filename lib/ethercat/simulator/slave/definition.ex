@@ -12,14 +12,28 @@ defmodule EtherCAT.Simulator.Slave.Definition do
   alias EtherCAT.Driver.Runtime, as: DriverRuntime
   alias EtherCAT.Simulator.Adapter
   alias EtherCAT.Simulator.Slave.Object
-  alias EtherCAT.Simulator.Slave.Profile
+  alias EtherCAT.Slave.Mailbox
 
   @typedoc "Mailbox SM layout declared by the simulated device."
-  @type mailbox_config :: %{
-          recv_offset: non_neg_integer(),
-          recv_size: non_neg_integer(),
-          send_offset: non_neg_integer(),
-          send_size: non_neg_integer()
+  @type mailbox_config :: Mailbox.config()
+
+  @type pdo_entry :: %{
+          index: non_neg_integer(),
+          direction: :input | :output,
+          sm_index: non_neg_integer(),
+          bit_size: pos_integer()
+        }
+
+  @type signal_spec :: %{
+          required(:direction) => :input | :output,
+          required(:pdo_index) => non_neg_integer(),
+          required(:bit_offset) => non_neg_integer(),
+          required(:bit_size) => pos_integer(),
+          required(:type) => atom(),
+          required(:label) => binary(),
+          required(:group) => atom(),
+          optional(:scale) => number(),
+          optional(:unit) => binary()
         }
 
   @typedoc "High-level, authored simulator device definition."
@@ -39,8 +53,8 @@ defmodule EtherCAT.Simulator.Slave.Definition do
           input_phys: non_neg_integer(),
           input_size: non_neg_integer(),
           mirror_output_to_input?: boolean(),
-          pdo_entries: [map()],
-          signals: %{optional(atom()) => map()},
+          pdo_entries: [pdo_entry()],
+          signals: %{optional(atom()) => signal_spec()},
           mailbox_config: mailbox_config(),
           objects: %{optional({non_neg_integer(), non_neg_integer()}) => Object.t()},
           dc_capable?: boolean()
@@ -70,9 +84,61 @@ defmodule EtherCAT.Simulator.Slave.Definition do
   ]
   defstruct @enforce_keys
 
+  @doc false
+  @spec profile_spec(keyword()) :: map()
+  def profile_spec(opts) do
+    %{
+      profile: Keyword.fetch!(opts, :profile),
+      vendor_id: Keyword.fetch!(opts, :vendor_id),
+      product_code: Keyword.fetch!(opts, :product_code),
+      revision: Keyword.fetch!(opts, :revision),
+      serial_number: Keyword.fetch!(opts, :serial_number),
+      esc_type: Keyword.fetch!(opts, :esc_type),
+      fmmu_count: Keyword.fetch!(opts, :fmmu_count),
+      sm_count: Keyword.fetch!(opts, :sm_count),
+      output_phys: Keyword.fetch!(opts, :output_phys),
+      output_size: Keyword.fetch!(opts, :output_size),
+      input_phys: Keyword.fetch!(opts, :input_phys),
+      input_size: Keyword.fetch!(opts, :input_size),
+      mirror_output_to_input?: Keyword.fetch!(opts, :mirror_output_to_input?),
+      pdo_entries: Keyword.fetch!(opts, :pdo_entries),
+      mailbox_config: Keyword.fetch!(opts, :mailbox_config),
+      objects: Keyword.fetch!(opts, :objects),
+      dc_capable?: Keyword.fetch!(opts, :dc_capable?),
+      signals: Keyword.fetch!(opts, :signals),
+      behavior: Keyword.fetch!(opts, :behavior)
+    }
+  end
+
+  @doc false
+  @spec pdo_entry(non_neg_integer(), :input | :output, non_neg_integer(), pos_integer()) ::
+          pdo_entry()
+  def pdo_entry(index, direction, sm_index, bit_size) do
+    %{index: index, direction: direction, sm_index: sm_index, bit_size: bit_size}
+  end
+
+  @doc false
+  @spec signal(keyword()) :: signal_spec()
+  def signal(opts) do
+    base = %{
+      direction: Keyword.fetch!(opts, :direction),
+      pdo_index: Keyword.fetch!(opts, :pdo_index),
+      bit_offset: Keyword.fetch!(opts, :bit_offset),
+      bit_size: Keyword.fetch!(opts, :bit_size),
+      type: Keyword.fetch!(opts, :type),
+      label: Keyword.fetch!(opts, :label),
+      group: Keyword.fetch!(opts, :group)
+    }
+
+    opts
+    |> Keyword.take([:scale, :unit])
+    |> Map.new()
+    |> Map.merge(base, fn _key, _optional, required -> required end)
+  end
+
   @spec build(atom(), keyword()) :: t()
   def build(profile, opts \\ []) do
-    profile_spec = Profile.spec(profile, opts)
+    profile_spec = profile_spec(profile, opts)
     name = Keyword.get(opts, :name, :sim)
     vendor_id = Keyword.get(opts, :vendor_id, profile_spec.vendor_id)
     product_code = Keyword.get(opts, :product_code, profile_spec.product_code)
@@ -176,4 +242,14 @@ defmodule EtherCAT.Simulator.Slave.Definition do
         opts
     end
   end
+
+  defp profile_spec(profile, opts), do: profile_module(profile).spec(opts)
+
+  defp profile_module(:coupler), do: EtherCAT.Simulator.Slave.Profile.Coupler
+  defp profile_module(:digital_io), do: EtherCAT.Simulator.Slave.Profile.DigitalIO
+  defp profile_module(:mailbox_device), do: EtherCAT.Simulator.Slave.Profile.MailboxDevice
+  defp profile_module(:lan9252_demo), do: EtherCAT.Simulator.Slave.Profile.MailboxDevice
+  defp profile_module(:analog_io), do: EtherCAT.Simulator.Slave.Profile.AnalogIO
+  defp profile_module(:temperature_input), do: EtherCAT.Simulator.Slave.Profile.TemperatureInput
+  defp profile_module(:servo_drive), do: EtherCAT.Simulator.Slave.Profile.ServoDrive
 end

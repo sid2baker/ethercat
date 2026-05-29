@@ -24,6 +24,7 @@ defmodule EtherCAT.Slave.ESC.SII do
 
   alias EtherCAT.Bus
   alias EtherCAT.Bus.Transaction
+  alias EtherCAT.Slave.Mailbox
   alias EtherCAT.Slave.ESC.Registers
   alias EtherCAT.Utils
 
@@ -92,7 +93,7 @@ defmodule EtherCAT.Slave.ESC.SII do
   def read_mailbox_config(bus, station) do
     with {:ok, <<ro::16-little, rs::16-little, so::16-little, ss::16-little>>} <-
            read(bus, station, 0x18, 4) do
-      {:ok, %{recv_offset: ro, recv_size: rs, send_offset: so, send_size: ss}}
+      {:ok, Mailbox.config(ro, rs, so, ss)}
     end
   end
 
@@ -397,7 +398,7 @@ defmodule EtherCAT.Slave.ESC.SII do
 
   defp wait_busy(bus, station, remaining) do
     case read_reg(bus, station, Registers.eeprom_control()) do
-      {:ok, <<_lo, busy::1, _::7>>} when busy == 0 ->
+      {:ok, <<_lo, 0::1, _::7>>} ->
         :ok
 
       {:ok, _} ->

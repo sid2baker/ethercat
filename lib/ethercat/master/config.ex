@@ -4,7 +4,6 @@ defmodule EtherCAT.Master.Config do
   alias EtherCAT.Backend
   alias EtherCAT.DC.Config, as: DCConfig
   alias EtherCAT.Master.Config.Domain
-  alias EtherCAT.Master.Config.DomainPlan
   alias EtherCAT.Master.Config.Slave
   alias EtherCAT.Slave.Config, as: SlaveConfig
 
@@ -16,7 +15,7 @@ defmodule EtherCAT.Master.Config do
           backend: Backend.t(),
           bus_opts: keyword(),
           dc_config: DCConfig.t() | nil,
-          domain_config: [DomainPlan.t()],
+          domain_config: [Domain.plan()],
           slave_config: [SlaveConfig.t()],
           frame_timeout_floor_ms: pos_integer(),
           frame_timeout_override_ms: pos_integer() | nil,
@@ -87,10 +86,10 @@ defmodule EtherCAT.Master.Config do
   def effective_slave_config(slave_config, bus_count),
     do: Slave.effective_config(slave_config, bus_count)
 
-  @spec domain_ids([DomainPlan.t()]) :: [atom()]
+  @spec domain_ids([Domain.plan()]) :: [atom()]
   def domain_ids(domain_config), do: Domain.ids(domain_config)
 
-  @spec unknown_domain_ids([DomainPlan.t()], SlaveConfig.t()) :: [atom()]
+  @spec unknown_domain_ids([Domain.plan()], SlaveConfig.t()) :: [atom()]
   def unknown_domain_ids(domain_config, %SlaveConfig{} = slave_config) do
     known_domains = MapSet.new(Domain.ids(domain_config))
 
@@ -115,8 +114,8 @@ defmodule EtherCAT.Master.Config do
   def local_config_changed?(%SlaveConfig{} = current_config, %SlaveConfig{} = updated_config),
     do: Slave.local_config_changed?(current_config, updated_config)
 
-  @spec domain_start_opts(DomainPlan.t()) :: keyword()
-  def domain_start_opts(%DomainPlan{} = config), do: Domain.start_opts(config)
+  @spec domain_start_opts(Domain.plan()) :: keyword()
+  def domain_start_opts(config), do: Domain.start_opts(config)
 
   defp build_bus_start_opts(backend, frame_timeout_override_ms) do
     backend

@@ -3,7 +3,9 @@ defmodule EtherCAT.Simulator.Slave.Profile.ServoDrive do
 
   use EtherCAT.Simulator.Slave.Behaviour
 
+  alias EtherCAT.Simulator.Slave.Definition
   alias EtherCAT.Simulator.Slave.Object
+  alias EtherCAT.Slave.Mailbox
 
   @switch_on_disabled 0x0040
   @ready_to_switch_on 0x0021
@@ -12,7 +14,7 @@ defmodule EtherCAT.Simulator.Slave.Profile.ServoDrive do
   @fault 0x0008
 
   def spec(_opts) do
-    %{
+    Definition.profile_spec(
       profile: :servo_drive,
       vendor_id: 0x0000_0ACE,
       product_code: 0x0000_2402,
@@ -26,10 +28,10 @@ defmodule EtherCAT.Simulator.Slave.Profile.ServoDrive do
       input_phys: 0x1180,
       input_size: 7,
       mirror_output_to_input?: false,
-      mailbox_config: %{recv_offset: 0x1000, recv_size: 64, send_offset: 0x1040, send_size: 64},
+      mailbox_config: Mailbox.config(0x1000, 64, 0x1040, 64),
       pdo_entries: [
-        %{index: 0x1600, direction: :output, sm_index: 2, bit_size: 56},
-        %{index: 0x1A00, direction: :input, sm_index: 3, bit_size: 56}
+        Definition.pdo_entry(0x1600, :output, 2, 56),
+        Definition.pdo_entry(0x1A00, :input, 3, 56)
       ],
       objects: %{
         {0x6040, 0x00} =>
@@ -96,65 +98,71 @@ defmodule EtherCAT.Simulator.Slave.Profile.ServoDrive do
       dc_capable?: true,
       signals: signal_specs(),
       behavior: __MODULE__
-    }
+    )
   end
 
   def signal_specs do
     %{
-      controlword: %{
-        direction: :output,
-        pdo_index: 0x1600,
-        bit_offset: 0,
-        bit_size: 16,
-        type: :u16,
-        label: "Controlword",
-        group: :command
-      },
-      target_position: %{
-        direction: :output,
-        pdo_index: 0x1600,
-        bit_offset: 16,
-        bit_size: 32,
-        type: :i32,
-        label: "Target Position",
-        group: :command
-      },
-      mode_of_operation: %{
-        direction: :output,
-        pdo_index: 0x1600,
-        bit_offset: 48,
-        bit_size: 8,
-        type: :i8,
-        label: "Mode Of Operation",
-        group: :command
-      },
-      statusword: %{
-        direction: :input,
-        pdo_index: 0x1A00,
-        bit_offset: 0,
-        bit_size: 16,
-        type: :u16,
-        label: "Statusword",
-        group: :status
-      },
-      position_actual: %{
-        direction: :input,
-        pdo_index: 0x1A00,
-        bit_offset: 16,
-        bit_size: 32,
-        type: :i32,
-        label: "Position Actual",
-        group: :status
-      },
-      mode_display: %{
-        direction: :input,
-        pdo_index: 0x1A00,
-        bit_offset: 48,
-        bit_size: 8,
-        type: :i8,
-        label: "Mode Display",
-        group: :status
-      }
+      controlword:
+        Definition.signal(
+          direction: :output,
+          pdo_index: 0x1600,
+          bit_offset: 0,
+          bit_size: 16,
+          type: :u16,
+          label: "Controlword",
+          group: :command
+        ),
+      target_position:
+        Definition.signal(
+          direction: :output,
+          pdo_index: 0x1600,
+          bit_offset: 16,
+          bit_size: 32,
+          type: :i32,
+          label: "Target Position",
+          group: :command
+        ),
+      mode_of_operation:
+        Definition.signal(
+          direction: :output,
+          pdo_index: 0x1600,
+          bit_offset: 48,
+          bit_size: 8,
+          type: :i8,
+          label: "Mode Of Operation",
+          group: :command
+        ),
+      statusword:
+        Definition.signal(
+          direction: :input,
+          pdo_index: 0x1A00,
+          bit_offset: 0,
+          bit_size: 16,
+          type: :u16,
+          label: "Statusword",
+          group: :status
+        ),
+      position_actual:
+        Definition.signal(
+          direction: :input,
+          pdo_index: 0x1A00,
+          bit_offset: 16,
+          bit_size: 32,
+          type: :i32,
+          label: "Position Actual",
+          group: :status
+        ),
+      mode_display:
+        Definition.signal(
+          direction: :input,
+          pdo_index: 0x1A00,
+          bit_offset: 48,
+          bit_size: 8,
+          type: :i8,
+          label: "Mode Display",
+          group: :status
+        )
     }
   end
 

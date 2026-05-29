@@ -118,7 +118,11 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Dictionary do
     %{slave | objects: Map.put(slave.objects, {entry.index, entry.subindex}, entry)}
   end
 
-  defp upsert_abort_rule(rules, %{index: index, subindex: subindex, stage: stage} = rule) do
+  defp upsert_abort_rule(rules, rule) do
+    index = rule.index
+    subindex = rule.subindex
+    stage = rule.stage
+
     filtered =
       Enum.reject(rules, fn existing ->
         existing.index == index and existing.subindex == subindex and existing.stage == stage

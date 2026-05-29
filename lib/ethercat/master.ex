@@ -178,12 +178,14 @@ defmodule EtherCAT.Master do
 
   @doc false
   def child_spec(arg) do
-    %{
-      id: __MODULE__,
-      start: {FSM, :start_link, [arg]},
+    Supervisor.child_spec(
+      %{
+        id: __MODULE__,
+        start: {FSM, :start_link, [arg]}
+      },
       restart: :permanent,
       shutdown: 5000
-    }
+    )
   end
 
   @doc false

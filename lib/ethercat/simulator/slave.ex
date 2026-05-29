@@ -87,15 +87,13 @@ defmodule EtherCAT.Simulator.Slave do
   end
 
   @spec subscribe(atom(), atom() | :all) :: :ok | {:error, :not_found}
-  def subscribe(slave_name, signal_name)
-      when is_atom(slave_name) and (is_atom(signal_name) or signal_name == :all) do
+  def subscribe(slave_name, signal_name) when is_atom(slave_name) and is_atom(signal_name) do
     Simulator.subscribe(slave_name, signal_name, self())
   end
 
   @spec subscribe(atom(), atom() | :all, pid()) :: :ok | {:error, :not_found}
   def subscribe(slave_name, signal_name, subscriber)
-      when is_atom(slave_name) and (is_atom(signal_name) or signal_name == :all) and
-             is_pid(subscriber) do
+      when is_atom(slave_name) and is_atom(signal_name) and is_pid(subscriber) do
     Simulator.subscribe(slave_name, signal_name, subscriber)
   end
 
@@ -105,15 +103,13 @@ defmodule EtherCAT.Simulator.Slave do
   end
 
   @spec unsubscribe(atom(), atom() | :all) :: :ok | {:error, :not_found}
-  def unsubscribe(slave_name, signal_name)
-      when is_atom(slave_name) and (is_atom(signal_name) or signal_name == :all) do
+  def unsubscribe(slave_name, signal_name) when is_atom(slave_name) and is_atom(signal_name) do
     Simulator.unsubscribe(slave_name, signal_name, self())
   end
 
   @spec unsubscribe(atom(), atom() | :all, pid()) :: :ok | {:error, :not_found}
   def unsubscribe(slave_name, signal_name, subscriber)
-      when is_atom(slave_name) and (is_atom(signal_name) or signal_name == :all) and
-             is_pid(subscriber) do
+      when is_atom(slave_name) and is_atom(signal_name) and is_pid(subscriber) do
     Simulator.unsubscribe(slave_name, signal_name, subscriber)
   end
 

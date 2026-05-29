@@ -2,6 +2,7 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
   @moduledoc false
 
   import ExUnit.CaptureLog
+  alias EtherCAT.Backend
   alias EtherCAT.Domain.Config, as: DomainConfig
   alias EtherCAT.Driver.{EK1100, EL1809, EL2809}
 
@@ -96,11 +97,13 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
   end
 
   def devices(:hardware) do
-    devices(:default) ++ [Slave.from_driver(EL3202, name: :rtd)]
+    Enum.concat(devices(:default), [Slave.from_driver(EL3202, name: :rtd)])
   end
 
   def devices(:segmented) do
-    devices(:default) ++ [Slave.from_driver(SegmentedConfiguredMailboxDevice, name: :mailbox)]
+    Enum.concat(devices(:default), [
+      Slave.from_driver(SegmentedConfiguredMailboxDevice, name: :mailbox)
+    ])
   end
 
   @spec connections(ring()) :: [{{atom(), atom()}, {atom(), atom()}}]
@@ -456,11 +459,11 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
 
   defp udp_backend(opts) when is_list(opts) do
     {:udp,
-     %{
-       host: Keyword.get(opts, :host, udp_simulator_ip(opts)),
-       bind_ip: Keyword.get(opts, :bind_ip, Keyword.get(opts, :master_ip)),
-       port: Keyword.get(opts, :port, Keyword.get(opts, :simulator_port, 0))
-     }}
+     Backend.udp_options(
+       Keyword.get(opts, :host, udp_simulator_ip(opts)),
+       Keyword.get(opts, :port, Keyword.get(opts, :simulator_port, 0)),
+       Keyword.get(opts, :bind_ip, Keyword.get(opts, :master_ip))
+     )}
   end
 
   defp raw_backend(interface), do: {:raw, %{interface: interface}}

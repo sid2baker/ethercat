@@ -27,18 +27,16 @@ defmodule EtherCAT.Simulator.Runtime.Slaves do
         end
       end)
 
-    cond do
-      not matched? ->
-        {:error, :not_found}
+    if matched? do
+      case Enum.find(entries, &match?({:error, _}, &1)) do
+        {:error, reason} ->
+          {:error, reason}
 
-      true ->
-        case Enum.find(entries, &match?({:error, _}, &1)) do
-          {:error, reason} ->
-            {:error, reason}
-
-          nil ->
-            {:ok, Enum.map(entries, fn {:ok, slave} -> slave end)}
-        end
+        nil ->
+          {:ok, Enum.map(entries, fn {:ok, slave} -> slave end)}
+      end
+    else
+      {:error, :not_found}
     end
   end
 

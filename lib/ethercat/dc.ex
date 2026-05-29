@@ -34,10 +34,14 @@ defmodule EtherCAT.DC do
   - `:locked` - sync diffs are within threshold
   """
 
+  @behaviour :gen_statem
+
+  require Logger
+
   alias EtherCAT.Bus
-  alias EtherCAT.DC.FSM
   alias EtherCAT.DC.Init
   alias EtherCAT.DC.Runtime
+  alias EtherCAT.DC.State
 
   @type server :: :gen_statem.server_ref()
 
@@ -82,17 +86,21 @@ defmodule EtherCAT.DC do
 
   @doc false
   def child_spec(opts) do
-    %{
-      id: __MODULE__,
-      start: {FSM, :start_link, [opts]},
+    Supervisor.child_spec(
+      %{
+        id: __MODULE__,
+        start: {__MODULE__, :start_link, [opts]}
+      },
       restart: :temporary,
       shutdown: 5000
-    }
+    )
   end
 
   @doc false
   @spec start_link(keyword()) :: :gen_statem.start_ret()
-  def start_link(opts), do: FSM.start_link(opts)
+  def start_link(opts) do
+    :gen_statem.start_link({:local, __MODULE__}, __MODULE__, opts, [])
+  end
 
   @doc """
   Perform one-time DC clock initialization for the given scanned slave
@@ -124,4 +132,28 @@ defmodule EtherCAT.DC do
       when is_integer(timeout_ms) and timeout_ms > 0 do
     Runtime.await_locked(server, timeout_ms, &status/1)
   end
+
+  @impl true
+  def callback_mode, do: [:handle_event_function, :state_enter]
+
+  @impl true
+  def init(opts) do
+    Logger.metadata(component: :dc, ref_station: Keyword.fetch!(opts, :ref_station))
+    {:ok, :running, State.new(opts)}
+  end
+
+  @impl true
+  def handle_event(:enter, _old, :running, data) do
+    {:keep_state_and_data, Runtime.enter_actions(data)}
+  end
+
+  def handle_event({:call, from}, :status, :running, data) do
+    Runtime.status_reply(from, data)
+  end
+
+  def handle_event(:state_timeout, :tick, :running, data) do
+    Runtime.handle_tick(data)
+  end
+
+  def handle_event(_type, _event, _state, _data), do: :keep_state_and_data
 end

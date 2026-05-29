@@ -36,12 +36,14 @@ defmodule EtherCAT.Bus do
 
   @doc false
   def child_spec(opts) do
-    %{
-      id: __MODULE__,
-      start: {__MODULE__, :start_link, [opts]},
+    Supervisor.child_spec(
+      %{
+        id: __MODULE__,
+        start: {__MODULE__, :start_link, [opts]}
+      },
       restart: :temporary,
       shutdown: 5000
-    }
+    )
   end
 
   @spec start_link(keyword()) :: :gen_statem.start_ret()
@@ -162,7 +164,7 @@ defmodule EtherCAT.Bus do
 
           stop_meta = %{
             datagram_count: datagram_count,
-            total_wkc: Enum.sum(Enum.map(results, & &1.wkc)),
+            total_wkc: Enum.reduce(results, 0, fn result, total -> total + result.wkc end),
             class: class,
             status: :ok,
             error_kind: nil

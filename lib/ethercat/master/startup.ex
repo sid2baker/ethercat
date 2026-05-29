@@ -7,9 +7,7 @@ defmodule EtherCAT.Master.Startup do
   alias EtherCAT.Bus.Transaction
   alias EtherCAT.Master.Config
   alias EtherCAT.Master.Status
-  alias EtherCAT.Master.Startup.InitRecovery
   alias EtherCAT.Master.Startup.Reset, as: InitReset
-  alias EtherCAT.Master.Startup.Verification, as: InitVerification
   alias EtherCAT.Slave.ESC.Registers
 
   @frame_timeout_base_us 200
@@ -182,6 +180,27 @@ defmodule EtherCAT.Master.Startup do
     end
   end
 
+  @doc false
+  @spec blocking_init_statuses([map()]) :: [map()]
+  def blocking_init_statuses(statuses) when is_list(statuses) do
+    Enum.reject(statuses, &ready_for_configuration?/1)
+  end
+
+  @doc false
+  @spec lingering_init_error_statuses([map()]) :: [map()]
+  def lingering_init_error_statuses(statuses) when is_list(statuses) do
+    Enum.filter(statuses, &lingering_init_error?/1)
+  end
+
+  @doc false
+  @spec init_recovery_actions([map()]) :: [
+          {:ack_error, non_neg_integer(), non_neg_integer()}
+          | {:request_init, non_neg_integer(), 0x01}
+        ]
+  def init_recovery_actions(statuses) when is_list(statuses) do
+    Enum.flat_map(statuses, &init_recovery_actions_for_status/1)
+  end
+
   defp ceil_div(value, divisor) when is_integer(value) and is_integer(divisor) and divisor > 0 do
     div(value + divisor - 1, divisor)
   end
@@ -295,10 +314,10 @@ defmodule EtherCAT.Master.Startup do
 
   defp verify_init_states(stations, attempts_left) do
     statuses = Enum.map(stations, &read_init_status/1)
-    blocking = InitVerification.blocking_statuses(statuses)
+    blocking = blocking_init_statuses(statuses)
 
     if blocking == [] do
-      log_lingering_init_errors(InitVerification.lingering_error_statuses(statuses))
+      log_lingering_init_errors(lingering_init_error_statuses(statuses))
       :ok
     else
       if attempts_left == 1 do
@@ -314,7 +333,7 @@ defmodule EtherCAT.Master.Startup do
 
   defp recover_init_states(statuses) do
     statuses
-    |> InitRecovery.actions()
+    |> init_recovery_actions()
     |> Enum.reduce_while(:ok, fn
       {:ack_error, station, control}, :ok ->
         case write_al_control(station, control) do
@@ -329,6 +348,27 @@ defmodule EtherCAT.Master.Startup do
         end
     end)
   end
+
+  defp ready_for_configuration?(%{state: 0x01}), do: true
+  defp ready_for_configuration?(_status), do: false
+
+  defp lingering_init_error?(%{state: 0x01, error: 1}), do: true
+  defp lingering_init_error?(_status), do: false
+
+  defp init_recovery_actions_for_status(%{station: station, state: state, error: 1})
+       when is_integer(state) and state >= 0 and state <= 0x0F and state != 0x01 do
+    [
+      {:ack_error, station, state + 0x10},
+      {:request_init, station, 0x01}
+    ]
+  end
+
+  defp init_recovery_actions_for_status(%{station: station, state: state, error: 0})
+       when is_integer(state) and state != 0x01 do
+    [{:request_init, station, 0x01}]
+  end
+
+  defp init_recovery_actions_for_status(_status), do: []
 
   defp write_al_control(station, control) do
     case Bus.transaction(Bus, Transaction.fpwr(station, Registers.al_control(control))) do
@@ -425,10 +465,11 @@ defmodule EtherCAT.Master.Startup do
       domain_opts = Config.domain_start_opts(entry)
       id = entry.id
       frame_timeout_ms = recommended_frame_timeout_ms(data, data.slave_count)
+      start_opts = [{:bus, Bus}, {:frame_timeout_ms, frame_timeout_ms} | domain_opts]
 
       case DynamicSupervisor.start_child(
              EtherCAT.SessionSupervisor,
-             {Domain, [bus: Bus, frame_timeout_ms: frame_timeout_ms] ++ domain_opts}
+             {Domain, start_opts}
            ) do
         {:ok, pid} ->
           {:cont, {:ok, Map.put(refs, Process.monitor(pid), id)}}

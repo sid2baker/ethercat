@@ -54,12 +54,14 @@ defmodule EtherCAT.Bus.Link.Single do
 
   @doc false
   def child_spec(opts) do
-    %{
-      id: __MODULE__,
-      start: {__MODULE__, :start_link, [opts]},
+    Supervisor.child_spec(
+      %{
+        id: __MODULE__,
+        start: {__MODULE__, :start_link, [opts]}
+      },
       restart: :temporary,
       shutdown: 5000
-    }
+    )
   end
 
   @spec start_link(keyword()) :: :gen_statem.start_ret()
@@ -245,7 +247,8 @@ defmodule EtherCAT.Bus.Link.Single do
   end
 
   defp send_frame(datagrams, awaiting, data, next_idx, tx_class) do
-    datagram_bytes = Enum.sum(Enum.map(datagrams, &Datagram.wire_size/1))
+    datagram_bytes =
+      Enum.reduce(datagrams, 0, fn datagram, total -> total + Datagram.wire_size(datagram) end)
 
     cond do
       datagram_bytes > Link.max_datagram_bytes() ->

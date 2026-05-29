@@ -5,14 +5,11 @@ defmodule EtherCAT.Master.FSM do
 
   require Logger
 
-  alias EtherCAT.{Bus, Telemetry, Utils}
+  alias EtherCAT.{Bus, DC, Domain, Slave, Telemetry, Utils}
   alias EtherCAT.Bus.Transaction
   alias EtherCAT.Master
   alias EtherCAT.Master.Activation
-  alias EtherCAT.Master.Calls
   alias EtherCAT.Master.Config
-  alias EtherCAT.Master.Deactivation
-  alias EtherCAT.Master.Preop
   alias EtherCAT.Master.Recovery
   alias EtherCAT.Master.Session
   alias EtherCAT.Master.Startup
@@ -55,7 +52,7 @@ defmodule EtherCAT.Master.FSM do
   end
 
   def handle_event({:call, from}, {:start, opts}, :idle, data) do
-    with {:ok, start_config} <- normalize_start_options(opts),
+    with {:ok, start_config} <- Config.normalize_start_options(opts),
          {:ok, bus_pid} <- start_session_bus(start_config.bus_opts) do
       bus_ref = Process.monitor(bus_pid)
 
@@ -451,7 +448,7 @@ defmodule EtherCAT.Master.FSM do
         :preop_ready,
         data
       ) do
-    case Preop.configure_discovered_slave(data, slave_name, spec) do
+    case configure_discovered_slave(data, slave_name, spec) do
       {:ok, new_data} ->
         {:keep_state, new_data, [{:reply, from, :ok}]}
 
@@ -491,7 +488,7 @@ defmodule EtherCAT.Master.FSM do
     if deactivated_target_settled?(state, data, target) do
       {:keep_state, %{data | desired_runtime_target: target}, [{:reply, from, :ok}]}
     else
-      case Deactivation.deactivate_network(%{data | desired_runtime_target: target}, target) do
+      case deactivate_network(%{data | desired_runtime_target: target}, target) do
         {:ok, next_state, deactivated_data} ->
           {:next_state, next_state, deactivated_data, [{:reply, from, :ok}]}
 
@@ -648,7 +645,7 @@ defmodule EtherCAT.Master.FSM do
              :activation_blocked,
              :recovering
            ] do
-    Calls.handle_active(from, event, state, data)
+    handle_active_call(from, event, state, data)
   end
 
   # Bus crashed — clean up and return to idle
@@ -1240,10 +1237,6 @@ defmodule EtherCAT.Master.FSM do
       hd(counts) > 0
   end
 
-  # -- Startup normalization -------------------------------------------------
-
-  defp normalize_start_options(opts), do: Config.normalize_start_options(opts)
-
   defp start_session_bus(bus_opts) do
     DynamicSupervisor.start_child(
       EtherCAT.SessionSupervisor,
@@ -1264,7 +1257,7 @@ defmodule EtherCAT.Master.FSM do
   defp runtime_target_from_names([]), do: :preop
   defp runtime_target_from_names(_activatable_slaves), do: :op
 
-  defp deactivated_target_settled?(state, _data, :safeop) when state == :deactivated, do: true
+  defp deactivated_target_settled?(:deactivated, _data, :safeop), do: true
   defp deactivated_target_settled?(_state, _data, _target), do: false
 
   defp reply_running_waiters(%{await_callers: []} = data), do: data
@@ -1377,6 +1370,140 @@ defmodule EtherCAT.Master.FSM do
 
   # -- Session teardown ------------------------------------------------------
 
+  defp configure_discovered_slave(data, slave_name, spec) do
+    with {:ok, current_config, config_idx} <-
+           Config.fetch_slave_config(data.slave_configs, slave_name),
+         {:ok, updated_config} <-
+           Config.normalize_runtime_slave_config(slave_name, spec, current_config),
+         :ok <- ensure_known_domains(data, updated_config),
+         :ok <- ensure_slave_in_preop(slave_name),
+         :ok <-
+           maybe_apply_slave_configuration(data, slave_name, current_config, updated_config) do
+      updated_slave_configs = List.replace_at(data.slave_configs, config_idx, updated_config)
+
+      {:ok,
+       %{
+         data
+         | slave_configs: updated_slave_configs,
+           activatable_slaves: Config.activatable_slave_names(updated_slave_configs)
+       }}
+    end
+  end
+
+  defp ensure_known_domains(data, slave_config) do
+    case Config.unknown_domain_ids(data.domain_configs || [], slave_config) do
+      [] -> :ok
+      domains -> {:error, {:unknown_domains, domains}}
+    end
+  end
+
+  defp ensure_slave_in_preop(slave_name) do
+    case Slave.state(slave_name) do
+      :preop -> :ok
+      {:error, _} = err -> err
+      other -> {:error, {:slave_not_preop, other}}
+    end
+  end
+
+  defp maybe_apply_slave_configuration(data, slave_name, current_config, updated_config) do
+    if Config.local_config_changed?(current_config, updated_config) do
+      Slave.configure(
+        slave_name,
+        driver: updated_config.driver,
+        config: updated_config.config,
+        process_data: updated_config.process_data,
+        sync: updated_config.sync,
+        health_poll_ms: runtime_health_poll_ms(data, updated_config)
+      )
+    else
+      :ok
+    end
+  end
+
+  defp runtime_health_poll_ms(data, %{target_state: :preop, health_poll_ms: health_poll_ms}) do
+    if Status.desired_runtime_target(data) == :preop do
+      nil
+    else
+      health_poll_ms
+    end
+  end
+
+  defp runtime_health_poll_ms(_data, %{health_poll_ms: health_poll_ms}), do: health_poll_ms
+
+  defp deactivate_network(data, target) when target in [:safeop, :preop] do
+    Logger.info(
+      "[Master] deactivating — stopping cyclic runtime and retreating activatable slaves to :#{target}",
+      component: :master,
+      event: :deactivation_started,
+      target_state: target
+    )
+
+    stopped_data =
+      data
+      |> stop_domain_cycles()
+      |> Session.stop_dc_runtime()
+      |> Map.put(:desired_runtime_target, target)
+      |> Map.put(:runtime_faults, %{})
+      |> Map.put(:activation_failures, %{})
+
+    {activation_failures, slave_faults} =
+      Enum.reduce(stopped_data.activatable_slaves, {%{}, stopped_data.slave_faults}, fn name,
+                                                                                        {failures,
+                                                                                         faults} ->
+        case Slave.request(name, target) do
+          :ok ->
+            {failures, Map.delete(faults, name)}
+
+          {:error, reason} ->
+            Logger.warning(
+              "[Master] slave #{inspect(name)} → #{target} failed during deactivation: #{inspect(reason)}",
+              component: :master,
+              event: :slave_deactivation_failed,
+              slave: name,
+              target_state: target,
+              reason_kind: Utils.reason_kind(reason)
+            )
+
+            {Map.put(failures, name, {target, reason}), faults}
+        end
+      end)
+
+    updated_data = %{
+      stopped_data
+      | activation_failures: activation_failures,
+        slave_faults: slave_faults
+    }
+
+    if map_size(activation_failures) == 0 do
+      {:ok, Status.desired_public_state(updated_data), updated_data}
+    else
+      {:activation_blocked, updated_data}
+    end
+  end
+
+  defp stop_domain_cycles(data) do
+    Enum.each(Config.domain_ids(data.domain_configs || []), fn domain_id ->
+      case Domain.stop_cycling(domain_id) do
+        :ok ->
+          :ok
+
+        {:error, :not_found} ->
+          :ok
+
+        {:error, reason} ->
+          Logger.warning(
+            "[Master] failed to stop domain #{domain_id} during deactivation: #{inspect(reason)}",
+            component: :master,
+            event: :domain_stop_failed,
+            domain: domain_id,
+            reason_kind: Utils.reason_kind(reason)
+          )
+      end
+    end)
+
+    data
+  end
+
   defp stop_session(data) do
     Session.stop(data)
   end
@@ -1405,5 +1532,84 @@ defmodule EtherCAT.Master.FSM do
 
   defp reply_await_callers(callers, reply) do
     Enum.each(callers, fn from -> :gen_statem.reply(from, reply) end)
+  end
+
+  defp handle_active_call(from, :state, state, _data) do
+    {:keep_state_and_data, [{:reply, from, state}]}
+  end
+
+  defp handle_active_call(from, :status, state, data) do
+    {:keep_state_and_data, [{:reply, from, Status.from_runtime(state, data)}]}
+  end
+
+  defp handle_active_call(from, :last_failure, _state, data) do
+    {:keep_state_and_data, [{:reply, from, data.last_failure}]}
+  end
+
+  defp handle_active_call(from, :dc_status, _state, data) do
+    {:keep_state_and_data, [{:reply, from, Status.dc_status(data)}]}
+  end
+
+  defp handle_active_call(from, :reference_clock, _state, data) do
+    {:keep_state_and_data, [{:reply, from, Status.reference_clock_reply(Status.dc_status(data))}]}
+  end
+
+  defp handle_active_call(from, :dc_runtime, _state, %{dc_config: nil}) do
+    {:keep_state_and_data, [{:reply, from, {:error, :dc_disabled}}]}
+  end
+
+  defp handle_active_call(from, :dc_runtime, _state, _data) do
+    if dc_running?() do
+      {:keep_state_and_data, [{:reply, from, {:ok, DC}}]}
+    else
+      {:keep_state_and_data, [{:reply, from, {:error, :dc_inactive}}]}
+    end
+  end
+
+  defp handle_active_call(from, :slaves, _state, data) do
+    {:keep_state_and_data, [{:reply, from, Status.slaves(data)}]}
+  end
+
+  defp handle_active_call(from, :domains, _state, data) do
+    {:keep_state_and_data, [{:reply, from, Status.domains(data)}]}
+  end
+
+  defp handle_active_call(from, :bus, _state, data) do
+    {:keep_state_and_data, [{:reply, from, Status.bus_public_ref(data)}]}
+  end
+
+  defp handle_active_call(
+         from,
+         {:update_domain_cycle_time, domain_id, cycle_time_us},
+         _state,
+         data
+       )
+       when is_atom(domain_id) and is_integer(cycle_time_us) and cycle_time_us > 0 do
+    case update_domain_cycle_time(data, domain_id, cycle_time_us) do
+      :ok ->
+        {:keep_state_and_data, [{:reply, from, :ok}]}
+
+      {:error, :unknown_domain} ->
+        {:keep_state_and_data, [{:reply, from, {:error, {:unknown_domain, domain_id}}}]}
+
+      {:error, reason} ->
+        {:keep_state_and_data, [{:reply, from, {:error, reason}}]}
+    end
+  end
+
+  defp handle_active_call(from, _event, state, _data) do
+    {:keep_state_and_data, [{:reply, from, {:error, state}}]}
+  end
+
+  defp update_domain_cycle_time(%{domain_configs: domain_configs}, domain_id, cycle_time_us) do
+    if Enum.any?(domain_configs || [], &(&1.id == domain_id)) do
+      Domain.update_cycle_time(domain_id, cycle_time_us)
+    else
+      {:error, :unknown_domain}
+    end
+  end
+
+  defp dc_running? do
+    is_pid(Process.whereis(DC))
   end
 end

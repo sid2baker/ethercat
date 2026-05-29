@@ -5,7 +5,6 @@ defmodule EtherCAT.MasterTest do
   alias EtherCAT.DC.Status, as: DCStatus
   alias EtherCAT.Domain
   alias EtherCAT.Domain, as: DomainAPI
-  alias EtherCAT.Master.Config.DomainPlan
   alias EtherCAT.Slave.Config, as: SlaveConfig
   alias EtherCAT.TestSupport.FakeBus
 
@@ -887,7 +886,7 @@ defmodule EtherCAT.MasterTest do
 
     data = %EtherCAT.Master{
       domain_configs: [
-        %DomainPlan{
+        %{
           id: domain_id,
           cycle_time_us: 1_000,
           miss_threshold: 500,
@@ -939,7 +938,7 @@ defmodule EtherCAT.MasterTest do
                :operational,
                %EtherCAT.Master{
                  domain_configs: [
-                   %DomainPlan{
+                   %{
                      id: domain_id,
                      cycle_time_us: 1_000,
                      miss_threshold: 500,

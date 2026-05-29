@@ -186,25 +186,22 @@ defmodule EtherCAT.DC.Runtime do
       send(EtherCAT.Master, {:dc_runtime_failed, reason})
     end
 
-    updated =
-      if diagnostics? and data.monitored_stations != [] do
-        now_ms = System.system_time(:millisecond)
-        next_state = if data.monitored_stations == [], do: :unavailable, else: :locking
+    if diagnostics? and data.monitored_stations != [] do
+      now_ms = System.system_time(:millisecond)
+      next_state = if data.monitored_stations == [], do: :unavailable, else: :locking
 
-        new_data = %{
-          data
-          | fail_count: failures,
-            lock_state: next_state,
-            last_sync_check_at_ms: now_ms
-        }
+      new_data = %{
+        data
+        | fail_count: failures,
+          lock_state: next_state,
+          last_sync_check_at_ms: now_ms
+      }
 
-        emit_monitor_telemetry(data, new_data)
-        new_data
-      else
-        %{data | fail_count: failures}
-      end
-
-    updated
+      emit_monitor_telemetry(data, new_data)
+      new_data
+    else
+      %{data | fail_count: failures}
+    end
   end
 
   defp maybe_log_runtime_recovered(0), do: :ok

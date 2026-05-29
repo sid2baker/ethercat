@@ -28,8 +28,8 @@ defmodule EtherCAT.Domain.Layout do
           image_size: non_neg_integer(),
           output_patches_rev: [output_patch()],
           input_slices_rev: [input_slice()],
-          output_slave_names: %{optional(atom()) => true},
-          input_slave_names: %{optional(atom()) => true}
+          output_slave_names: %MapSet{},
+          input_slave_names: %MapSet{}
         }
 
   # One LRW datagram must fit within the 2047-byte EtherCAT payload limit.
@@ -39,8 +39,8 @@ defmodule EtherCAT.Domain.Layout do
   defstruct image_size: 0,
             output_patches_rev: [],
             input_slices_rev: [],
-            output_slave_names: %{},
-            input_slave_names: %{}
+            output_slave_names: MapSet.new(),
+            input_slave_names: MapSet.new()
 
   @spec new() :: t()
   def new, do: %__MODULE__{}
@@ -55,7 +55,7 @@ defmodule EtherCAT.Domain.Layout do
        layout
        | image_size: offset + size,
          output_patches_rev: [{offset, size, key} | layout.output_patches_rev],
-         output_slave_names: Map.put(layout.output_slave_names, slave_name, true)
+         output_slave_names: MapSet.put(layout.output_slave_names, slave_name)
      }}
   end
 
@@ -67,7 +67,7 @@ defmodule EtherCAT.Domain.Layout do
        layout
        | image_size: offset + size,
          input_slices_rev: [{offset, size, key} | layout.input_slices_rev],
-         input_slave_names: Map.put(layout.input_slave_names, slave_name, true)
+         input_slave_names: MapSet.put(layout.input_slave_names, slave_name)
      }}
   end
 
@@ -76,7 +76,7 @@ defmodule EtherCAT.Domain.Layout do
 
   @spec expected_wkc(t()) :: non_neg_integer()
   def expected_wkc(%__MODULE__{} = layout) do
-    map_size(layout.output_slave_names) * 2 + map_size(layout.input_slave_names)
+    MapSet.size(layout.output_slave_names) * 2 + MapSet.size(layout.input_slave_names)
   end
 
   @spec prepare(t()) ::

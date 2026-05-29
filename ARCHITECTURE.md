@@ -68,12 +68,13 @@ Domains register as `{:domain, id}`.
 The normal runtime surface is `EtherCAT`. `EtherCAT.Provisioning`,
 `EtherCAT.Diagnostics`, `EtherCAT.Raw`, and `EtherCAT.Driver` are specialist
 public modules. `EtherCAT.Master`, `EtherCAT.Slave`, `EtherCAT.Domain`, and
-`EtherCAT.DC` are the core runtime processes behind that surface. Their
-internal `*.FSM` modules are the small `gen_statem` entry points that own
-state transitions and subsystem event routing. Low-level mechanics live in helper namespaces
-(`EtherCAT.Master.*`, `EtherCAT.Slave.Runtime.*`, `EtherCAT.Domain.*`,
-`EtherCAT.DC.*`) so the FSM files can be checked against the EtherCAT model
-without mixing in all operational detail inline.
+`EtherCAT.DC` are the core runtime processes behind that surface. `Domain` and
+`DC` own their small `gen_statem` callbacks directly; larger lifecycle
+boundaries such as `Master` and `Slave` keep dedicated FSM modules so their
+state transitions can still be audited separately from operational helpers.
+Low-level mechanics live in helper namespaces (`EtherCAT.Master.*`,
+`EtherCAT.Slave.Runtime.*`, `EtherCAT.Domain.*`, `EtherCAT.DC.*`) only where
+they carry real protocol or lifecycle weight.
 
 `EtherCAT.Runtime` is the supported root boundary. Host applications own its
 lifecycle; `EtherCAT.start/1` and `stop/0` only control the singleton session

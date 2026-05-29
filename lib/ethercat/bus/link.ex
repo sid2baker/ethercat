@@ -406,8 +406,7 @@ defmodule EtherCAT.Bus.Link do
         tx_size =
           submission.tx
           |> Transaction.datagrams()
-          |> Enum.map(&Datagram.wire_size/1)
-          |> Enum.sum()
+          |> Enum.reduce(0, fn datagram, total -> total + Datagram.wire_size(datagram) end)
 
         new_size = size + tx_size
 

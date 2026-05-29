@@ -35,42 +35,35 @@ defmodule EtherCAT.Bus.Link.RedundantMerge do
   @spec interpret([Datagram.t()], [Datagram.t()] | nil, [Datagram.t()] | nil) ::
           interpretation_t()
   def interpret(sent_datagrams, nil, nil) when is_list(sent_datagrams) do
-    %{
-      status: :timeout,
-      redundancy: :none,
-      path_shape: :no_valid_return,
-      primary_rx_kind: :none,
-      secondary_rx_kind: :none,
-      datagrams: nil
-    }
+    interpretation(:timeout, :none, :no_valid_return, :none, :none, nil)
   end
 
   def interpret(sent_datagrams, primary_datagrams, nil)
       when is_list(sent_datagrams) and is_list(primary_datagrams) do
     primary_rx_kind = classify_single_side(sent_datagrams, primary_datagrams)
 
-    %{
-      status: single_side_status(primary_rx_kind),
-      redundancy: :degraded,
-      path_shape: :primary_only,
-      primary_rx_kind: primary_rx_kind,
-      secondary_rx_kind: :none,
-      datagrams: primary_datagrams
-    }
+    interpretation(
+      single_side_status(primary_rx_kind),
+      :degraded,
+      :primary_only,
+      primary_rx_kind,
+      :none,
+      primary_datagrams
+    )
   end
 
   def interpret(sent_datagrams, nil, secondary_datagrams)
       when is_list(sent_datagrams) and is_list(secondary_datagrams) do
     secondary_rx_kind = classify_single_side(sent_datagrams, secondary_datagrams)
 
-    %{
-      status: single_side_status(secondary_rx_kind),
-      redundancy: :degraded,
-      path_shape: :secondary_only,
-      primary_rx_kind: :none,
-      secondary_rx_kind: secondary_rx_kind,
-      datagrams: secondary_datagrams
-    }
+    interpretation(
+      single_side_status(secondary_rx_kind),
+      :degraded,
+      :secondary_only,
+      :none,
+      secondary_rx_kind,
+      secondary_datagrams
+    )
   end
 
   def interpret(sent_datagrams, primary_datagrams, secondary_datagrams)
@@ -81,75 +74,58 @@ defmodule EtherCAT.Bus.Link.RedundantMerge do
 
     cond do
       primary_passthrough? and not secondary_passthrough? ->
-        %{
-          status: :ok,
-          redundancy: :full,
-          path_shape: :full_redundancy,
-          primary_rx_kind: :passthrough,
-          secondary_rx_kind: :processed,
-          datagrams: secondary_datagrams
-        }
+        interpretation(
+          :ok,
+          :full,
+          :full_redundancy,
+          :passthrough,
+          :processed,
+          secondary_datagrams
+        )
 
       secondary_passthrough? and not primary_passthrough? ->
-        %{
-          status: :ok,
-          redundancy: :full,
-          path_shape: :full_redundancy,
-          primary_rx_kind: :processed,
-          secondary_rx_kind: :passthrough,
-          datagrams: primary_datagrams
-        }
+        interpretation(:ok, :full, :full_redundancy, :processed, :passthrough, primary_datagrams)
 
       primary_passthrough? and secondary_passthrough? ->
-        %{
-          status: :partial,
-          redundancy: :none,
-          path_shape: :no_valid_return,
-          primary_rx_kind: :passthrough,
-          secondary_rx_kind: :passthrough,
-          datagrams: primary_datagrams
-        }
+        interpretation(
+          :partial,
+          :none,
+          :no_valid_return,
+          :passthrough,
+          :passthrough,
+          primary_datagrams
+        )
 
       merged != primary_datagrams and merged != secondary_datagrams ->
-        %{
-          status: :ok,
-          redundancy: :degraded,
-          path_shape: :complementary_partials,
-          primary_rx_kind: :partial,
-          secondary_rx_kind: :partial,
-          datagrams: merged
-        }
+        interpretation(:ok, :degraded, :complementary_partials, :partial, :partial, merged)
 
       primary_datagrams == secondary_datagrams ->
-        %{
-          status: :ok,
-          redundancy: :full,
-          path_shape: :full_redundancy,
-          primary_rx_kind: :processed,
-          secondary_rx_kind: :processed,
-          datagrams: primary_datagrams
-        }
+        interpretation(:ok, :full, :full_redundancy, :processed, :processed, primary_datagrams)
 
       total_wkc(secondary_datagrams) > total_wkc(primary_datagrams) ->
-        %{
-          status: :ok,
-          redundancy: :full,
-          path_shape: :full_redundancy,
-          primary_rx_kind: :processed,
-          secondary_rx_kind: :processed,
-          datagrams: secondary_datagrams
-        }
+        interpretation(:ok, :full, :full_redundancy, :processed, :processed, secondary_datagrams)
 
       true ->
-        %{
-          status: :ok,
-          redundancy: :full,
-          path_shape: :full_redundancy,
-          primary_rx_kind: :processed,
-          secondary_rx_kind: :processed,
-          datagrams: primary_datagrams
-        }
+        interpretation(:ok, :full, :full_redundancy, :processed, :processed, primary_datagrams)
     end
+  end
+
+  defp interpretation(
+         status,
+         redundancy,
+         path_shape,
+         primary_rx_kind,
+         secondary_rx_kind,
+         datagrams
+       ) do
+    %{
+      status: status,
+      redundancy: redundancy,
+      path_shape: path_shape,
+      primary_rx_kind: primary_rx_kind,
+      secondary_rx_kind: secondary_rx_kind,
+      datagrams: datagrams
+    }
   end
 
   defp classify_single_side(sent_datagrams, response_datagrams) do
@@ -164,7 +140,8 @@ defmodule EtherCAT.Bus.Link.RedundantMerge do
     do: sent_datagrams == response_datagrams
 
   @spec total_wkc([Datagram.t()]) :: non_neg_integer()
-  defp total_wkc(datagrams), do: Enum.sum(Enum.map(datagrams, & &1.wkc))
+  defp total_wkc(datagrams),
+    do: Enum.reduce(datagrams, 0, fn datagram, total -> total + datagram.wkc end)
 
   @doc """
   Merge two bounced replies from a broken ring.

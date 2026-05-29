@@ -111,7 +111,7 @@ defmodule EtherCAT.Scan do
     Enum.reduce(0..(slave_count - 1), {[], []}, fn position, {slaves, faults} ->
       station = @base_station + position
       {slave, slave_faults} = discover_slave(bus, position, station)
-      {[slave | slaves], Enum.reverse(slave_faults) ++ faults}
+      {[slave | slaves], Enum.reverse(slave_faults, faults)}
     end)
     |> then(fn {slaves, faults} -> {Enum.reverse(slaves), Enum.reverse(faults)} end)
   end
@@ -150,10 +150,10 @@ defmodule EtherCAT.Scan do
         {dl_status, []}
 
       {:ok, [%{wkc: wkc}]} ->
-        {nil, [%{kind: :dl_status_read_failed, station: station, reason: {:unexpected_wkc, wkc}}]}
+        {nil, [scan_fault(:dl_status_read_failed, station, {:unexpected_wkc, wkc})]}
 
       {:error, reason} ->
-        {nil, [%{kind: :dl_status_read_failed, station: station, reason: reason}]}
+        {nil, [scan_fault(:dl_status_read_failed, station, reason)]}
     end
   end
 
@@ -163,7 +163,7 @@ defmodule EtherCAT.Scan do
         {identity, []}
 
       {:error, reason} ->
-        {nil, [%{kind: :identity_read_failed, station: station, reason: reason}]}
+        {nil, [scan_fault(:identity_read_failed, station, reason)]}
     end
   end
 
@@ -172,22 +172,21 @@ defmodule EtherCAT.Scan do
       {:ok, [%{data: al_bytes, wkc: 1}]} when is_binary(al_bytes) ->
         {al_status_raw, error?} = Registers.decode_al_status(al_bytes)
 
-        status = %{
-          raw: al_status_raw,
-          state: Utils.al_state_atom(al_status_raw),
-          error?: error?,
-          error_code: if(error?, do: read_al_status_code(bus, station), else: nil)
-        }
+        status =
+          al_status(
+            Utils.al_state_atom(al_status_raw),
+            al_status_raw,
+            error?,
+            if(error?, do: read_al_status_code(bus, station), else: nil)
+          )
 
         {status, []}
 
       {:ok, [%{wkc: wkc}]} ->
-        {%{raw: nil, state: nil, error?: nil, error_code: nil},
-         [%{kind: :al_status_read_failed, station: station, reason: {:unexpected_wkc, wkc}}]}
+        {empty_al_status(), [scan_fault(:al_status_read_failed, station, {:unexpected_wkc, wkc})]}
 
       {:error, reason} ->
-        {%{raw: nil, state: nil, error?: nil, error_code: nil},
-         [%{kind: :al_status_read_failed, station: station, reason: reason}]}
+        {empty_al_status(), [scan_fault(:al_status_read_failed, station, reason)]}
     end
   end
 
@@ -201,13 +200,16 @@ defmodule EtherCAT.Scan do
   defp build_al_state_index(discovered_slaves) do
     Map.new(discovered_slaves, fn slave ->
       {slave.station,
-       %{
-         state: slave.al_state,
-         raw: slave.al_status_raw,
-         error?: slave.al_error?,
-         error_code: slave.al_status_code
-       }}
+       al_status(slave.al_state, slave.al_status_raw, slave.al_error?, slave.al_status_code)}
     end)
+  end
+
+  defp scan_fault(kind, station, reason), do: %{kind: kind, station: station, reason: reason}
+
+  defp empty_al_status, do: al_status(nil, nil, nil, nil)
+
+  defp al_status(state, raw, error?, error_code) do
+    %{state: state, raw: raw, error?: error?, error_code: error_code}
   end
 
   defp al_fault_from_snapshot(%{station: station, al_error?: true} = slave) do

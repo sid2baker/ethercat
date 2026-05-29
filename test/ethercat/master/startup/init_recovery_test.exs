@@ -1,7 +1,7 @@
-defmodule EtherCAT.Master.Startup.InitRecoveryTest do
+defmodule EtherCAT.Master.StartupInitRecoveryTest do
   use ExUnit.Case, async: true
 
-  alias EtherCAT.Master.Startup.InitRecovery
+  alias EtherCAT.Master.Startup
 
   test "returns no actions for clean init slaves" do
     statuses = [
@@ -9,7 +9,7 @@ defmodule EtherCAT.Master.Startup.InitRecoveryTest do
       %{station: 0x1001, state: 0x01, error: 0}
     ]
 
-    assert InitRecovery.actions(statuses) == []
+    assert Startup.init_recovery_actions(statuses) == []
   end
 
   test "does not try to recover slaves that are already in init" do
@@ -17,7 +17,7 @@ defmodule EtherCAT.Master.Startup.InitRecoveryTest do
       %{station: 0x1000, state: 0x01, error: 1}
     ]
 
-    assert InitRecovery.actions(statuses) == []
+    assert Startup.init_recovery_actions(statuses) == []
   end
 
   test "acknowledges non-init errors and then re-requests init" do
@@ -26,7 +26,7 @@ defmodule EtherCAT.Master.Startup.InitRecoveryTest do
       %{station: 0x1001, state: 0x04, error: 0}
     ]
 
-    assert InitRecovery.actions(statuses) == [
+    assert Startup.init_recovery_actions(statuses) == [
              {:ack_error, 0x1000, 0x12},
              {:request_init, 0x1000, 0x01},
              {:request_init, 0x1001, 0x01}
@@ -39,6 +39,6 @@ defmodule EtherCAT.Master.Startup.InitRecoveryTest do
       %{station: 0x1001, state: nil, error: 1}
     ]
 
-    assert InitRecovery.actions(statuses) == []
+    assert Startup.init_recovery_actions(statuses) == []
   end
 end

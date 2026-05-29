@@ -78,7 +78,7 @@ defmodule EtherCAT.Simulator.Runtime.Milestones do
       faults.wkc_offset != 0 ->
         false
 
-      map_size(faults.disconnected) > 0 ->
+      MapSet.size(faults.disconnected) > 0 ->
         false
 
       not is_nil(planned_fault) ->

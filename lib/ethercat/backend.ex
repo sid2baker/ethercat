@@ -69,6 +69,12 @@ defmodule EtherCAT.Backend do
 
   @type t :: Udp.t() | Raw.t() | Redundant.t()
 
+  @doc false
+  @spec udp_options(:inet.ip_address(), :inet.port_number(), :inet.ip_address() | nil) :: map()
+  def udp_options(host, port, bind_ip \\ nil)
+  def udp_options(host, port, nil), do: %{host: host, port: port}
+  def udp_options(host, port, bind_ip), do: %{host: host, bind_ip: bind_ip, port: port}
+
   @spec normalize(term()) :: {:ok, t()} | {:error, term()}
   def normalize(%Udp{} = backend), do: {:ok, backend}
   def normalize(%Raw{} = backend), do: {:ok, backend}

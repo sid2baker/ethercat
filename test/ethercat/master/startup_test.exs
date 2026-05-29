@@ -3,14 +3,13 @@ defmodule EtherCAT.Master.StartupTest do
 
   alias EtherCAT.DC.Config, as: DCConfig
   alias EtherCAT.Master
-  alias EtherCAT.Master.Config.DomainPlan
   alias EtherCAT.Master.Startup
 
   test "recommended frame timeout uses the UDP transport floor for short simulator cycles" do
     data = %Master{
       frame_timeout_floor_ms: 5,
       domain_configs: [
-        %DomainPlan{
+        %{
           id: :main,
           cycle_time_us: 10_000,
           miss_threshold: 1000,
@@ -27,7 +26,7 @@ defmodule EtherCAT.Master.StartupTest do
     data = %Master{
       frame_timeout_floor_ms: 5,
       domain_configs: [
-        %DomainPlan{
+        %{
           id: :fast,
           cycle_time_us: 1_000,
           miss_threshold: 1000,

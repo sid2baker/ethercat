@@ -48,7 +48,7 @@ defmodule EtherCAT.DC.RuntimeTest do
               max_sync_diff_ns: nil,
               last_sync_check_at_ms: nil
             }} =
-             DC.FSM.init(
+             DC.init(
                bus: bus,
                ref_station: 0x1000,
                monitored_stations: [0x1000],

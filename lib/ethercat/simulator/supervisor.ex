@@ -50,17 +50,15 @@ defmodule EtherCAT.Simulator.Supervisor do
   end
 
   defp normalize_raw_endpoints(raw_opts) do
-    cond do
-      Keyword.has_key?(raw_opts, :primary) or Keyword.has_key?(raw_opts, :secondary) ->
-        []
-        |> maybe_add_raw_endpoint(:primary, Keyword.get(raw_opts, :primary))
-        |> maybe_add_raw_endpoint(:secondary, Keyword.get(raw_opts, :secondary))
-
-      true ->
-        [
-          {Keyword.get(raw_opts, :name, Endpoint.endpoint_name(:primary)),
-           Keyword.put(raw_opts, :ingress, :primary)}
-        ]
+    if Keyword.has_key?(raw_opts, :primary) or Keyword.has_key?(raw_opts, :secondary) do
+      []
+      |> maybe_add_raw_endpoint(:primary, Keyword.get(raw_opts, :primary))
+      |> maybe_add_raw_endpoint(:secondary, Keyword.get(raw_opts, :secondary))
+    else
+      [
+        {Keyword.get(raw_opts, :name, Endpoint.endpoint_name(:primary)),
+         Keyword.put(raw_opts, :ingress, :primary)}
+      ]
     end
   end
 

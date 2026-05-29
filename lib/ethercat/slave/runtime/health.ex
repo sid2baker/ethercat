@@ -221,10 +221,10 @@ defmodule EtherCAT.Slave.Runtime.Health do
   end
 
   defp station_alive?(data) do
-    case Bus.transaction(data.bus, Transaction.fprd(data.station, Registers.al_status())) do
-      {:ok, [%{wkc: wkc}]} when wkc > 0 -> true
-      _ -> false
-    end
+    match?(
+      {:ok, [%{wkc: wkc}]} when wkc > 0,
+      Bus.transaction(data.bus, Transaction.fprd(data.station, Registers.al_status()))
+    )
   end
 
   defp recover_station_from_position(data) do

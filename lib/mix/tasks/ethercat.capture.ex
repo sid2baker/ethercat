@@ -225,12 +225,6 @@ defmodule Mix.Tasks.Ethercat.Capture do
     host = Keyword.get(opts, :host, {255, 255, 255, 255})
     port = Keyword.get(opts, :port, 0x88A4)
 
-    case Keyword.get(opts, :bind_ip) do
-      nil ->
-        {:udp, %{host: host, port: port}}
-
-      bind_ip ->
-        {:udp, %{host: host, bind_ip: bind_ip, port: port}}
-    end
+    {:udp, EtherCAT.Backend.udp_options(host, port, Keyword.get(opts, :bind_ip))}
   end
 end

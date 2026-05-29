@@ -29,7 +29,7 @@ defmodule EtherCAT.Simulator.Runtime.Faults do
           wkc_offset: integer(),
           command_wkc_offsets: %{optional(command_name()) => integer()},
           logical_wkc_offsets: %{optional(atom()) => integer()},
-          disconnected: %{optional(atom()) => true},
+          disconnected: %MapSet{},
           pending_faults: [pending_fault_entry()]
         }
 
@@ -57,7 +57,7 @@ defmodule EtherCAT.Simulator.Runtime.Faults do
       wkc_offset: 0,
       command_wkc_offsets: %{},
       logical_wkc_offsets: %{},
-      disconnected: %{},
+      disconnected: MapSet.new(),
       pending_faults: []
     }
   end
@@ -69,7 +69,7 @@ defmodule EtherCAT.Simulator.Runtime.Faults do
       wkc_offset: faults.wkc_offset,
       command_wkc_offsets: faults.command_wkc_offsets,
       logical_wkc_offsets: faults.logical_wkc_offsets,
-      disconnected: Map.keys(faults.disconnected),
+      disconnected: MapSet.to_list(faults.disconnected),
       next_fault: next_fault_info(faults.pending_faults),
       pending_faults: Enum.map(faults.pending_faults, & &1.fault)
     }
@@ -95,7 +95,7 @@ defmodule EtherCAT.Simulator.Runtime.Faults do
   end
 
   def inject(%__MODULE__{} = faults, {:disconnect, slave_name}) when is_atom(slave_name) do
-    %{faults | disconnected: Map.put(faults.disconnected, slave_name, true)}
+    %{faults | disconnected: MapSet.put(faults.disconnected, slave_name)}
   end
 
   @spec enqueue(t(), planned_fault()) :: {:ok, t()} | :error
@@ -168,7 +168,7 @@ defmodule EtherCAT.Simulator.Runtime.Faults do
   end
 
   def apply_pending(%__MODULE__{} = faults, {:disconnect, slave_name}) when is_atom(slave_name) do
-    %{faults | disconnected: Map.put(faults.disconnected, slave_name, true)}
+    %{faults | disconnected: MapSet.put(faults.disconnected, slave_name)}
   end
 
   @spec clear(t()) :: t()
@@ -179,7 +179,7 @@ defmodule EtherCAT.Simulator.Runtime.Faults do
         wkc_offset: 0,
         command_wkc_offsets: %{},
         logical_wkc_offsets: %{},
-        disconnected: %{},
+        disconnected: MapSet.new(),
         pending_faults: []
     }
   end

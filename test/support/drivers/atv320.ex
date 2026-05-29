@@ -113,37 +113,34 @@ defmodule EtherCAT.Driver.ATV320 do
   end
 
   @impl true
-  def command(
-        %{ref: ref, name: :set_controlword, args: %{value: value}},
-        _state,
-        driver_state,
-        _config
-      )
-      when is_map(driver_state) and is_integer(value) and value >= 0 and value <= 0xFFFF do
+  def command(command, _state, driver_state, _config)
+      when is_map(command) and is_map(driver_state) do
+    command_name = Map.get(command, :name)
+    command_args = Map.get(command, :args, %{})
+    command_ref = Map.get(command, :ref)
+    handle_command(command_name, command_args, command_ref, command, driver_state)
+  end
+
+  defp handle_command(:set_controlword, %{value: value}, ref, _command, driver_state)
+       when is_integer(value) and value >= 0 and value <= 0xFFFF do
     stage_controlword(ref, value, pending_for_controlword(ref, value), driver_state)
   end
 
-  def command(%{name: :set_controlword}, _state, _driver_state, _config),
+  defp handle_command(:set_controlword, _args, _ref, _command, _driver_state),
     do: {:error, :invalid_controlword}
 
-  def command(
-        %{ref: ref, name: :set_target_velocity, args: %{value: value}},
-        _state,
-        driver_state,
-        _config
-      )
-      when is_map(driver_state) and is_integer(value) and value >= -32_768 and value <= 32_767 do
+  defp handle_command(:set_target_velocity, %{value: value}, ref, _command, driver_state)
+       when is_integer(value) and value >= -32_768 and value <= 32_767 do
     next_driver_state = Map.put(driver_state, :pending_command, nil)
 
     {:ok, [{:write, @target_velocity_signal, value}], next_driver_state,
      [{:command_completed, ref}]}
   end
 
-  def command(%{name: :set_target_velocity}, _state, _driver_state, _config),
+  defp handle_command(:set_target_velocity, _args, _ref, _command, _driver_state),
     do: {:error, :invalid_target_velocity}
 
-  def command(%{ref: ref, name: name, args: _args} = command, _state, driver_state, _config)
-      when is_map(driver_state) and is_atom(name) do
+  defp handle_command(name, _args, ref, command, driver_state) when is_atom(name) do
     case Map.fetch(@controlword_commands, name) do
       {:ok, {controlword, expected_states}} ->
         stage_controlword(ref, controlword, pending_command(ref, expected_states), driver_state)
@@ -151,6 +148,10 @@ defmodule EtherCAT.Driver.ATV320 do
       :error ->
         EtherCAT.Driver.unsupported_command(command)
     end
+  end
+
+  defp handle_command(_name, _args, _ref, command, _driver_state) do
+    EtherCAT.Driver.unsupported_command(command)
   end
 
   defp configured_extra_names(config, key) do
@@ -395,6 +396,8 @@ defmodule EtherCAT.Driver.ATV320.Simulator do
   @behaviour EtherCAT.Simulator.Adapter
 
   alias EtherCAT.Driver.ATV320
+  alias EtherCAT.Simulator.Slave.Definition
+  alias EtherCAT.Slave.Mailbox
 
   @output_pdo_index 0x1600
   @input_pdo_index 0x1A00
@@ -419,10 +422,10 @@ defmodule EtherCAT.Driver.ATV320.Simulator do
       input_phys: @input_phys,
       input_size: div(@scanner_word_count * @word_bits, 8),
       mirror_output_to_input?: false,
-      mailbox_config: %{recv_offset: 0x1000, recv_size: 64, send_offset: 0x1040, send_size: 64},
+      mailbox_config: Mailbox.config(0x1000, 64, 0x1040, 64),
       pdo_entries: [
-        %{index: @output_pdo_index, direction: :output, sm_index: 2, bit_size: 96},
-        %{index: @input_pdo_index, direction: :input, sm_index: 3, bit_size: 96}
+        Definition.pdo_entry(@output_pdo_index, :output, 2, 96),
+        Definition.pdo_entry(@input_pdo_index, :input, 3, 96)
       ],
       objects: %{},
       dc_capable?: false,
@@ -437,7 +440,7 @@ defmodule EtherCAT.Driver.ATV320.Simulator do
       |> Enum.with_index()
       |> Enum.map(fn {signal_name, slot_index} ->
         {signal_name,
-         %{
+         Definition.signal(
            direction: :output,
            pdo_index: @output_pdo_index,
            bit_offset: slot_index * @word_bits,
@@ -445,7 +448,7 @@ defmodule EtherCAT.Driver.ATV320.Simulator do
            type: signal_type(signal_name),
            label: simulator_label(signal_name),
            group: simulator_group(signal_name)
-         }}
+         )}
       end)
 
     input_definitions =
@@ -454,7 +457,7 @@ defmodule EtherCAT.Driver.ATV320.Simulator do
       |> Enum.with_index()
       |> Enum.map(fn {signal_name, slot_index} ->
         {signal_name,
-         %{
+         Definition.signal(
            direction: :input,
            pdo_index: @input_pdo_index,
            bit_offset: slot_index * @word_bits,
@@ -462,7 +465,7 @@ defmodule EtherCAT.Driver.ATV320.Simulator do
            type: signal_type(signal_name),
            label: simulator_label(signal_name),
            group: simulator_group(signal_name)
-         }}
+         )}
       end)
 
     Map.new(output_definitions ++ input_definitions)

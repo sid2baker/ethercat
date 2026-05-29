@@ -720,17 +720,11 @@ defmodule EtherCAT.Slave.Mailbox.CoE do
   defp require_sdo_response(_payload), do: {:error, :invalid_coe_response}
 
   defp expedited_upload_response?(command) do
-    case <<command::8>> do
-      <<0::1, 1::1, 0::1, _::1, _unused::2, 1::1, _::1>> -> true
-      _ -> false
-    end
+    match?(<<0::1, 1::1, 0::1, _::1, _unused::2, 1::1, _::1>>, <<command::8>>)
   end
 
   defp normal_upload_response?(command) do
-    case <<command::8>> do
-      <<0::1, 1::1, 0::1, _::1, _unused::2, 0::1, _::1>> -> true
-      _ -> false
-    end
+    match?(<<0::1, 1::1, 0::1, _::1, _unused::2, 0::1, _::1>>, <<command::8>>)
   end
 
   defp expedited_upload_data(command, data) do

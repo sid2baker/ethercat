@@ -31,9 +31,6 @@ defmodule EtherCAT.IntegrationSupport.LinkToggle do
   end
 
   defp running_as_root? do
-    case System.cmd("id", ["-u"], stderr_to_stdout: true) do
-      {"0\n", 0} -> true
-      _other -> false
-    end
+    match?({"0\n", 0}, System.cmd("id", ["-u"], stderr_to_stdout: true))
   end
 end

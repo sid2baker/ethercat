@@ -168,7 +168,7 @@ defmodule EtherCAT.DomainTest do
     }
 
     assert {:keep_state, invalid_data, _actions} =
-             Domain.FSM.handle_event(:state_timeout, :tick, :cycling, data)
+             Domain.handle_event(:state_timeout, :tick, :cycling, data)
 
     assert invalid_data.cycle_health ==
              {:invalid, {:wkc_mismatch, %{expected: 1, actual: 0}}}
@@ -190,7 +190,7 @@ defmodule EtherCAT.DomainTest do
     assert invalid_at_us == invalid_data.last_invalid_cycle_at_us
 
     assert {:keep_state, recovered_data, _actions} =
-             Domain.FSM.handle_event(:state_timeout, :tick, :cycling, invalid_data)
+             Domain.handle_event(:state_timeout, :tick, :cycling, invalid_data)
 
     assert recovered_data.cycle_health == :healthy
     assert recovered_data.miss_count == 0
@@ -224,7 +224,7 @@ defmodule EtherCAT.DomainTest do
     }
 
     assert {:keep_state, missed_data, _actions} =
-             Domain.FSM.handle_event(:state_timeout, :tick, :cycling, data)
+             Domain.handle_event(:state_timeout, :tick, :cycling, data)
 
     assert missed_data.miss_count == 1
     assert missed_data.total_miss_count == 1
@@ -272,7 +272,7 @@ defmodule EtherCAT.DomainTest do
     }
 
     assert {:keep_state, missed_data, _actions} =
-             Domain.FSM.handle_event(:state_timeout, :tick, :cycling, data)
+             Domain.handle_event(:state_timeout, :tick, :cycling, data)
 
     assert missed_data.cycle_health == {:invalid, :timeout}
     assert missed_data.last_invalid_reason == :timeout
@@ -313,7 +313,7 @@ defmodule EtherCAT.DomainTest do
     {:ok, first_relay} = Relay.start_link(name: relay_name, test_pid: self())
 
     assert {:keep_state, next_data, _actions} =
-             Domain.FSM.handle_event(:state_timeout, :tick, :cycling, data)
+             Domain.handle_event(:state_timeout, :tick, :cycling, data)
 
     assert_receive {:relay, ^first_relay,
                     {:domain_inputs, :main, first_cycle_index, [{^key, :unset, <<0>>}],
@@ -329,7 +329,7 @@ defmodule EtherCAT.DomainTest do
     {:ok, second_relay} = Relay.start_link(name: relay_name, test_pid: self())
 
     assert {:keep_state, _final_data, _actions} =
-             Domain.FSM.handle_event(:state_timeout, :tick, :cycling, next_data)
+             Domain.handle_event(:state_timeout, :tick, :cycling, next_data)
 
     assert_receive {:relay, ^second_relay,
                     {:domain_inputs, :main, second_cycle_index, [{^key, <<0>>, <<1>>}],

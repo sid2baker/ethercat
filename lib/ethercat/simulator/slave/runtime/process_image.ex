@@ -3,7 +3,6 @@ defmodule EtherCAT.Simulator.Slave.Runtime.ProcessImage do
 
   alias EtherCAT.Simulator.Slave.Behaviour
   alias EtherCAT.Simulator.Slave.Runtime.Memory
-  alias EtherCAT.Simulator.Slave.Signals
   alias EtherCAT.Simulator.Slave.Value
 
   @spec output_image(map()) :: binary()
@@ -23,7 +22,7 @@ defmodule EtherCAT.Simulator.Slave.Runtime.ProcessImage do
 
   @spec get_value(map(), atom()) :: {:ok, term()} | {:error, :unknown_signal}
   def get_value(%{signals: signals} = slave, signal_name) do
-    case Signals.fetch(signals, signal_name) do
+    case Map.fetch(signals, signal_name) do
       {:ok, definition} ->
         image = signal_image(slave, definition.direction)
         {:ok, extract_value(image, definition)}
@@ -36,7 +35,7 @@ defmodule EtherCAT.Simulator.Slave.Runtime.ProcessImage do
   @spec set_value(map(), atom(), term()) ::
           {:ok, map()} | {:error, :unknown_signal | :invalid_value}
   def set_value(%{signals: signals} = slave, signal_name, value) do
-    case Signals.fetch(signals, signal_name) do
+    case Map.fetch(signals, signal_name) do
       {:ok, definition} ->
         set_signal_value(slave, signal_name, definition, value)
 
@@ -243,7 +242,7 @@ defmodule EtherCAT.Simulator.Slave.Runtime.ProcessImage do
   end
 
   defp apply_input_value(current_slave, signal_name, value) do
-    case Signals.fetch(current_slave.signals, signal_name) do
+    case Map.fetch(current_slave.signals, signal_name) do
       {:ok, %{direction: :input} = definition} ->
         case Value.encode_binary(definition, value) do
           {:ok, binary} ->

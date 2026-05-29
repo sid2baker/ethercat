@@ -159,7 +159,10 @@ defmodule EtherCAT.Slave.Runtime.Bootstrap do
     do: {:ok, data}
 
   defp configure_mailbox_sync_managers(data) do
-    %{recv_offset: ro, recv_size: rs, send_offset: so, send_size: ss} = data.mailbox_config
+    ro = data.mailbox_config.recv_offset
+    rs = data.mailbox_config.recv_size
+    so = data.mailbox_config.send_offset
+    ss = data.mailbox_config.send_size
 
     Logger.debug(
       "[Slave #{data.name}] init: setting up mailbox SMs",

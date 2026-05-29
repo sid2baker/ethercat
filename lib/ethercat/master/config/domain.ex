@@ -2,7 +2,14 @@ defmodule EtherCAT.Master.Config.Domain do
   @moduledoc false
 
   alias EtherCAT.Domain.Config, as: DomainConfig
-  alias EtherCAT.Master.Config.DomainPlan
+
+  @type plan :: %{
+          required(:id) => atom(),
+          required(:cycle_time_us) => pos_integer(),
+          required(:miss_threshold) => pos_integer(),
+          required(:recovery_threshold) => pos_integer(),
+          required(:logical_base) => non_neg_integer()
+        }
 
   @auto_logical_base_stride 2048
   @domain_option_keys [:id, :cycle_time_us, :miss_threshold, :recovery_threshold]
@@ -34,12 +41,12 @@ defmodule EtherCAT.Master.Config.Domain do
 
   def normalize_configs(_domain_config), do: {:error, {:invalid_domain_config, :invalid_list}}
 
-  @spec allocate_logical_bases([DomainConfig.t()]) :: {:ok, [DomainPlan.t()]}
+  @spec allocate_logical_bases([DomainConfig.t()]) :: {:ok, [plan()]}
   def allocate_logical_bases(domain_configs) when is_list(domain_configs) do
     {:ok,
      Enum.with_index(domain_configs)
      |> Enum.map(fn {%DomainConfig{} = cfg, idx} ->
-       %DomainPlan{
+       %{
          id: cfg.id,
          cycle_time_us: cfg.cycle_time_us,
          miss_threshold: cfg.miss_threshold,
@@ -49,11 +56,11 @@ defmodule EtherCAT.Master.Config.Domain do
      end)}
   end
 
-  @spec ids([DomainPlan.t()]) :: [atom()]
+  @spec ids([plan()]) :: [atom()]
   def ids(domain_config), do: Enum.map(domain_config, & &1.id)
 
-  @spec start_opts(DomainPlan.t()) :: keyword()
-  def start_opts(%DomainPlan{logical_base: logical_base} = config) do
+  @spec start_opts(plan()) :: keyword()
+  def start_opts(%{logical_base: logical_base} = config) do
     [
       id: config.id,
       cycle_time_us: config.cycle_time_us,
