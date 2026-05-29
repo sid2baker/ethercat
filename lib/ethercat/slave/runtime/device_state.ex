@@ -343,7 +343,10 @@ defmodule EtherCAT.Slave.Runtime.DeviceState do
       _registry_pid ->
         EtherCAT.SubscriptionRegistry
         |> Registry.lookup(key)
-        |> Enum.map(&elem(&1, 0))
+        |> Enum.map(fn
+          {_registered_pid, {:subscriber, pid}} when is_pid(pid) -> pid
+          {registered_pid, _value} -> registered_pid
+        end)
     end
   end
 

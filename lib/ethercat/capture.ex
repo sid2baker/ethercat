@@ -38,6 +38,7 @@ defmodule EtherCAT.Capture do
   alias EtherCAT.Bus
   alias EtherCAT.Simulator.Slave.Object
   alias EtherCAT.Driver.Default, as: DefaultDriver
+  alias EtherCAT.SignalName
   alias EtherCAT.Slave.ESC.SII
 
   @capture_format 1
@@ -180,14 +181,15 @@ defmodule EtherCAT.Capture do
 
     with {:ok, module} <- fetch_module_option(opts),
          {:ok, simulator_module} <- fetch_simulator_module_option(opts, module),
-         {:ok, signal_name_overrides} <- fetch_signal_name_overrides(opts) do
-      {:ok,
-       render_driver_module(
-         module,
-         simulator_module,
-         normalized_capture,
-         signal_name_overrides
-       )}
+         {:ok, signal_name_overrides} <- fetch_signal_name_overrides(opts),
+         {:ok, source} <-
+           render_driver_module(
+             module,
+             simulator_module,
+             normalized_capture,
+             signal_name_overrides
+           ) do
+      {:ok, source}
     end
   end
 
@@ -221,7 +223,7 @@ defmodule EtherCAT.Capture do
       capture_path = capture_path(normalized_capture, path_option(opts, :capture_path))
       module_path = module_path(module, opts)
 
-      {:ok, render_simulator_module(module, module_path, capture_path)}
+      render_simulator_module(module, module_path, capture_path)
     end
   end
 
@@ -459,7 +461,7 @@ defmodule EtherCAT.Capture do
     Enum.reduce_while(overrides, {:ok, %{}}, fn
       {{direction, pdo_index}, name}, {:ok, acc} ->
         with {:ok, normalized_direction} <- normalize_signal_override_direction(direction),
-             true <- is_integer(pdo_index) and pdo_index >= 0,
+             true <- SignalName.pdo_index?(pdo_index),
              {:ok, normalized_name} <- normalize_signal_override_name(name) do
           {:cont, {:ok, Map.put(acc, {normalized_direction, pdo_index}, normalized_name)}}
         else
@@ -542,7 +544,11 @@ defmodule EtherCAT.Capture do
   end
 
   defp normalize_pdo_configs(pdo_configs) do
+    SignalName.validate_generated_signal_count!(length(pdo_configs), "capture PDO layout")
+
     Enum.map(pdo_configs, fn pdo ->
+      SignalName.validate_pdo_index!(pdo.index, "captured PDO index")
+
       %{
         index: pdo.index,
         direction: pdo.direction,
@@ -590,11 +596,32 @@ defmodule EtherCAT.Capture do
     |> Kernel.>(1)
   end
 
-  defp normalize_capture!(%{format: @capture_format} = capture), do: capture
+  defp normalize_capture!(%{format: @capture_format} = capture) do
+    pdo_configs = get_in(capture, [:sii, :pdo_configs]) || []
+    validate_capture_pdo_configs!(pdo_configs)
+
+    capture
+  end
 
   defp normalize_capture!(other) do
     raise ArgumentError,
           "expected capture map with format #{@capture_format}, got: #{inspect(other)}"
+  end
+
+  defp validate_capture_pdo_configs!(pdo_configs) when is_list(pdo_configs) do
+    SignalName.validate_generated_signal_count!(length(pdo_configs), "capture PDO layout")
+
+    Enum.each(pdo_configs, fn
+      %{index: index} ->
+        SignalName.validate_pdo_index!(index, "captured PDO index")
+
+      other ->
+        raise ArgumentError, "invalid captured PDO config: #{inspect(other)}"
+    end)
+  end
+
+  defp validate_capture_pdo_configs!(other) do
+    raise ArgumentError, "expected capture PDO configs to be a list, got: #{inspect(other)}"
   end
 
   defp normalize_pdo_layout(pdo_configs) do
@@ -710,7 +737,7 @@ defmodule EtherCAT.Capture do
 
   defp pdo_label(index), do: "PDO " <> hex(index, 4)
 
-  defp generated_signal_name(index), do: :"pdo_0x#{String.downcase(Integer.to_string(index, 16))}"
+  defp generated_signal_name(index), do: SignalName.pdo_atom(index)
 
   defp zero_mailbox_config do
     %{recv_offset: 0, recv_size: 0, send_offset: 0, send_size: 0}
@@ -1158,6 +1185,8 @@ defmodule EtherCAT.Capture do
   defp build_driver_signal_entries([], _template, _signal_name_overrides), do: []
 
   defp build_driver_signal_entries(pdo_configs, template, signal_name_overrides) do
+    validate_capture_pdo_configs!(pdo_configs)
+
     input_pdos = Enum.filter(pdo_configs, &(&1.direction == :input))
     output_pdos = Enum.filter(pdo_configs, &(&1.direction == :output))
     mixed? = input_pdos != [] and output_pdos != []
@@ -1201,7 +1230,7 @@ defmodule EtherCAT.Capture do
         Map.get(signal_name_overrides, {pdo.direction, pdo.index}) ||
           template_signal_name(template, pdo) ||
           case naming_mode do
-            {:numbered, prefix} -> String.to_atom("#{prefix}#{index}")
+            {:numbered, prefix} -> "#{prefix}#{index}"
             :pdo -> generated_driver_signal_name(direction, pdo.index, mixed?)
           end
       }
@@ -1373,10 +1402,10 @@ defmodule EtherCAT.Capture do
   defp direction_prefix(:output), do: "out"
 
   defp generated_driver_signal_name(direction, index, true),
-    do: :"#{direction}_pdo_0x#{String.downcase(Integer.to_string(index, 16))}"
+    do: SignalName.direction_pdo_name(direction, index)
 
   defp generated_driver_signal_name(_direction, index, false),
-    do: generated_signal_name(index)
+    do: SignalName.pdo_name(index)
 
   defp render_identity_literal(identity) do
     fields =
@@ -1623,11 +1652,13 @@ defmodule EtherCAT.Capture do
   end
 
   defp format_source(source) do
-    source
-    |> Code.format_string!()
-    |> IO.iodata_to_binary()
+    {:ok,
+     source
+     |> Code.format_string!()
+     |> IO.iodata_to_binary()}
   rescue
-    _ -> source
+    error in [SyntaxError, TokenMissingError] ->
+      {:error, {:format_failed, Exception.message(error)}}
   end
 
   defp render_module_name(module) when is_atom(module), do: inspect(module)

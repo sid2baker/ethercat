@@ -2,9 +2,11 @@ defmodule EtherCAT.Simulator.Slave.Profile.DigitalIO do
   @moduledoc false
 
   use EtherCAT.Simulator.Slave.Behaviour
+  alias EtherCAT.SignalName
 
   @default_output_pdo 0x1600
   @default_input_pdo 0x1A00
+  @max_channel_count SignalName.max_digital_channels()
 
   def spec(opts) do
     mode = Keyword.get(opts, :mode, :image)
@@ -87,7 +89,7 @@ defmodule EtherCAT.Simulator.Slave.Profile.DigitalIO do
 
   defp channel_layout(direction, channel_count, opts)
        when direction in [:input, :output, :io] and is_integer(channel_count) and
-              channel_count > 0 do
+              channel_count > 0 and channel_count <= @max_channel_count do
     default_channel_names = default_names(channel_count)
     input_names = Keyword.get(opts, :input_names, default_channel_names)
     output_names = Keyword.get(opts, :output_names, default_channel_names)
@@ -118,6 +120,16 @@ defmodule EtherCAT.Simulator.Slave.Profile.DigitalIO do
       direction == :io and Keyword.get(opts, :mirror_output_to_input?, true)
 
     {pdo_entries, signals, output_size, input_size, mirror_output_to_input?}
+  end
+
+  defp channel_layout(_direction, channel_count, _opts) when is_integer(channel_count) do
+    raise ArgumentError,
+          "digital_io :channels must be in 1..#{@max_channel_count}, got: #{inspect(channel_count)}"
+  end
+
+  defp channel_layout(direction, _channel_count, _opts) do
+    raise ArgumentError,
+          "digital_io :direction must be :input, :output, or :io, got: #{inspect(direction)}"
   end
 
   defp build_channel_pdos(direction, base, names) do
@@ -152,7 +164,7 @@ defmodule EtherCAT.Simulator.Slave.Profile.DigitalIO do
   end
 
   defp default_names(channel_count) do
-    Enum.map(1..channel_count, &String.to_atom("ch#{&1}"))
+    Enum.map(1..channel_count, &SignalName.channel_atom/1)
   end
 
   defp default_label(:input, channel), do: "Input #{channel}"

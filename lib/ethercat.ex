@@ -238,12 +238,70 @@ defmodule EtherCAT do
         {:error, :not_started}
 
       _registry_pid ->
-        case Registry.register(EtherCAT.SubscriptionRegistry, key, true) do
-          {:ok, _owner} -> :ok
-          {:error, {:already_registered, _owner}} -> :ok
-        end
+        do_register_subscription(pid, key)
     end
   end
+
+  defp do_register_subscription(pid, key) when pid == self() do
+    register_current_process_subscription(pid, key)
+  end
+
+  defp do_register_subscription(pid, key) do
+    if public_subscription_registered?(key, pid) do
+      :ok
+    else
+      parent = self()
+      proxy = spawn(fn -> subscription_proxy(parent, key, pid) end)
+
+      receive do
+        {__MODULE__, :subscription_proxy_registered, ^proxy, reply} -> reply
+      after
+        1_000 -> {:error, :subscription_registration_timeout}
+      end
+    end
+  end
+
+  defp register_current_process_subscription(pid, key) do
+    case Registry.register(EtherCAT.SubscriptionRegistry, key, {:subscriber, pid}) do
+      {:ok, _owner} -> :ok
+      {:error, {:already_registered, _owner}} -> :ok
+    end
+  end
+
+  defp public_subscription_registered?(key, pid) do
+    EtherCAT.SubscriptionRegistry
+    |> Registry.lookup(key)
+    |> Enum.any?(fn {_registered_pid, value} -> subscriber_value_pid(value) == pid end)
+  end
+
+  defp subscription_proxy(parent, key, subscriber) do
+    reply =
+      case Registry.register(EtherCAT.SubscriptionRegistry, key, {:subscriber, subscriber}) do
+        {:ok, _owner} -> :ok
+        {:error, {:already_registered, _owner}} -> :ok
+      end
+
+    send(parent, {__MODULE__, :subscription_proxy_registered, self(), reply})
+    ref = Process.monitor(subscriber)
+    subscription_proxy_loop(subscriber, ref)
+  end
+
+  defp subscription_proxy_loop(subscriber, ref) do
+    receive do
+      {:DOWN, ^ref, :process, ^subscriber, _reason} ->
+        :ok
+
+      %Event{} = event ->
+        send(subscriber, event)
+        subscription_proxy_loop(subscriber, ref)
+
+      _other ->
+        subscription_proxy_loop(subscriber, ref)
+    end
+  end
+
+  defp subscriber_value_pid({:subscriber, pid}) when is_pid(pid), do: pid
+  defp subscriber_value_pid(_value), do: nil
 
   defp snapshot_slaves(slave_summaries) do
     Enum.reduce_while(slave_summaries, {:ok, %{}}, fn %{name: name}, {:ok, acc} ->

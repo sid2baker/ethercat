@@ -30,4 +30,23 @@ defmodule EtherCAT.SubscribeTest do
     assert :ok = DeviceState.dispatch_public_event(event)
     assert_receive ^event
   end
+
+  test "subscribe(:all, pid) delivers public events to the requested process" do
+    parent = self()
+
+    subscriber =
+      spawn(fn ->
+        receive do
+          %Event{} = event -> send(parent, {:subscriber_received, event})
+        end
+      end)
+
+    assert :ok = EtherCAT.subscribe(:all, subscriber)
+
+    event = Event.signal_changed(:future_slave, :ready?, true, 11, 123)
+
+    assert :ok = DeviceState.dispatch_public_event(event)
+    assert_receive {:subscriber_received, ^event}
+    refute_receive ^event
+  end
 end

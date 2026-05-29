@@ -2,6 +2,7 @@ defmodule EtherCAT.Driver.Default do
   @moduledoc false
 
   @behaviour EtherCAT.Driver
+  alias EtherCAT.SignalName
 
   def signal_model(config), do: signal_model(config, [])
 
@@ -9,7 +10,7 @@ defmodule EtherCAT.Driver.Default do
   def signal_model(_config, sii_pdo_configs) do
     sii_pdo_configs
     |> Enum.map(fn %{index: index} ->
-      name = String.to_atom("pdo_0x" <> String.downcase(Integer.to_string(index, 16)))
+      name = SignalName.pdo_atom(index)
       {name, index}
     end)
   end

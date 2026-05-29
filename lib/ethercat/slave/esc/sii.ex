@@ -208,8 +208,9 @@ defmodule EtherCAT.Slave.ESC.SII do
         {:ok, []}
 
       {:ok, <<0x0029::16-little, size::16-little>>} ->
-        with {:ok, data} <- read(bus, station, addr + 2, size) do
-          {:ok, parse_sm_entries(data, 0, [])}
+        with {:ok, data} <- read(bus, station, addr + 2, size),
+             {:ok, entries} <- parse_sm_entries(data, 0, []) do
+          {:ok, entries}
         end
 
       {:ok, <<_type::16-little, size::16-little>>} ->
@@ -222,7 +223,7 @@ defmodule EtherCAT.Slave.ESC.SII do
 
   # Each SM entry in category 0x0029: 8 bytes = phys_start (2B LE), length (2B LE),
   # ctrl (1B), status (1B reserved), activate (1B), pdi_ctrl (1B reserved).
-  defp parse_sm_entries(<<>>, _idx, acc), do: Enum.reverse(acc)
+  defp parse_sm_entries(<<>>, _idx, acc), do: {:ok, Enum.reverse(acc)}
 
   defp parse_sm_entries(
          <<phys::16-little, len::16-little, ctrl::8, _status::8, _activate::8, _pdi::8,
@@ -232,6 +233,8 @@ defmodule EtherCAT.Slave.ESC.SII do
        ) do
     parse_sm_entries(rest, idx + 1, [{idx, phys, len, ctrl} | acc])
   end
+
+  defp parse_sm_entries(_malformed_tail, _idx, _acc), do: {:error, :malformed_sm_category}
 
   # -- PDO category reading (0x0032 TxPDO=input, 0x0033 RxPDO=output) --------
 
@@ -244,8 +247,8 @@ defmodule EtherCAT.Slave.ESC.SII do
       {:ok, <<cat::16-little, size::16-little>>} when cat in [0x0032, 0x0033] ->
         dir = if cat == 0x0032, do: :input, else: :output
 
-        with {:ok, data} <- read(bus, station, addr + 2, size) do
-          pdos = parse_pdo_category(data, dir, [])
+        with {:ok, data} <- read(bus, station, addr + 2, size),
+             {:ok, pdos} <- parse_pdo_category(data, dir, []) do
           find_pdo_categories(bus, station, addr + 2 + size, acc ++ pdos)
         end
 
@@ -260,7 +263,7 @@ defmodule EtherCAT.Slave.ESC.SII do
   # Parse one PDO category block.
   # PDO header: pdo_index(2) entry_count(1) sm_index(1) dc_sync(1) name_idx(1) flags(2)
   # Entry:      obj_index(2) subindex(1) bit_length(1) flags(2) name_idx(1) data_type_idx(1)
-  defp parse_pdo_category(<<>>, _dir, acc), do: Enum.reverse(acc)
+  defp parse_pdo_category(<<>>, _dir, acc), do: {:ok, Enum.reverse(acc)}
 
   defp parse_pdo_category(
          <<pdo_idx::16-little, n::8, sm_idx::8, _::8, _::8, _::16, rest::binary>>,
@@ -277,8 +280,12 @@ defmodule EtherCAT.Slave.ESC.SII do
     tail = binary_part(rest, entry_bytes, rest_size - entry_bytes)
     bits = sum_entry_bits(entry_data, 0)
     pdo = %{index: pdo_idx, direction: dir, sm_index: sm_idx, bit_size: bits, bit_offset: 0}
-    parse_pdo_category(tail, dir, [pdo | acc])
+    next_tail = if complete < n, do: <<>>, else: tail
+    parse_pdo_category(next_tail, dir, [pdo | acc])
   end
+
+  defp parse_pdo_category(_malformed_tail, _dir, _acc),
+    do: {:error, :malformed_pdo_category}
 
   defp sum_entry_bits(<<>>, acc), do: acc
 
