@@ -1,6 +1,6 @@
 defmodule EtherCAT.Endpoint do
   @moduledoc """
-  Public description of one driver-backed endpoint on a configured slave.
+  Public protocol description of one decoded signal on a configured slave.
   """
 
   @type direction :: :input | :output

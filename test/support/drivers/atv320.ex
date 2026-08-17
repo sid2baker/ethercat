@@ -20,28 +20,6 @@ defmodule EtherCAT.Driver.ATV320 do
   @default_output_extra_names [:output_word_3, :output_word_4, :output_word_5, :output_word_6]
   @default_input_extra_names [:input_word_3, :input_word_4, :input_word_5, :input_word_6]
 
-  @controlword_commands %{
-    shutdown: {0x0006, [:ready_to_switch_on]},
-    switch_on: {0x0007, [:switched_on]},
-    enable_operation: {0x000F, [:operation_enabled]},
-    disable_operation: {0x0007, [:switched_on]},
-    disable_voltage: {0x0000, [:switch_on_disabled]},
-    quick_stop: {0x0002, [:quick_stop_active, :switch_on_disabled]},
-    fault_reset: {0x0080, [:switch_on_disabled]}
-  }
-
-  @commands [
-    :set_controlword,
-    :set_target_velocity,
-    :shutdown,
-    :switch_on,
-    :enable_operation,
-    :disable_operation,
-    :disable_voltage,
-    :quick_stop,
-    :fault_reset
-  ]
-
   @doc false
   @spec output_signal_names(map()) :: [atom()]
   def output_signal_names(config) when is_map(config) do
@@ -81,77 +59,11 @@ defmodule EtherCAT.Driver.ATV320 do
   def decode_signal(_signal_name, _config, raw), do: decode_u16(raw)
 
   @impl true
-  def init(_config), do: {:ok, %{pending_command: nil}}
-
-  @impl true
   def describe(config) when is_map(config) do
     %{
       device_type: :variable_speed_drive,
-      endpoints: build_endpoints(config),
-      commands: @commands
+      endpoints: build_endpoints(config)
     }
-  end
-
-  @impl true
-  def project_state(decoded_inputs, prev_state, driver_state, _config)
-      when is_map(decoded_inputs) and (is_map(prev_state) or is_nil(prev_state)) and
-             is_map(driver_state) do
-    next_state =
-      prev_state
-      |> Kernel.||(%{})
-      |> Map.merge(decoded_inputs)
-      |> merge_statusword_projection(Map.get(decoded_inputs, @statusword_signal))
-
-    {next_driver_state, notices} = resolve_pending_command(driver_state, next_state)
-
-    faults =
-      if Map.get(next_state, :fault?, false),
-        do: [{:drive_fault, next_state.cia402_state}],
-        else: []
-
-    {:ok, next_state, next_driver_state, notices, faults}
-  end
-
-  @impl true
-  def command(command, _state, driver_state, _config)
-      when is_map(command) and is_map(driver_state) do
-    command_name = Map.get(command, :name)
-    command_args = Map.get(command, :args, %{})
-    command_ref = Map.get(command, :ref)
-    handle_command(command_name, command_args, command_ref, command, driver_state)
-  end
-
-  defp handle_command(:set_controlword, %{value: value}, ref, _command, driver_state)
-       when is_integer(value) and value >= 0 and value <= 0xFFFF do
-    stage_controlword(ref, value, pending_for_controlword(ref, value), driver_state)
-  end
-
-  defp handle_command(:set_controlword, _args, _ref, _command, _driver_state),
-    do: {:error, :invalid_controlword}
-
-  defp handle_command(:set_target_velocity, %{value: value}, ref, _command, driver_state)
-       when is_integer(value) and value >= -32_768 and value <= 32_767 do
-    next_driver_state = Map.put(driver_state, :pending_command, nil)
-
-    {:ok, [{:write, @target_velocity_signal, value}], next_driver_state,
-     [{:command_completed, ref}]}
-  end
-
-  defp handle_command(:set_target_velocity, _args, _ref, _command, _driver_state),
-    do: {:error, :invalid_target_velocity}
-
-  defp handle_command(name, _args, ref, command, driver_state) when is_atom(name) do
-    case Map.fetch(@controlword_commands, name) do
-      {:ok, {controlword, expected_states}} ->
-        stage_controlword(ref, controlword, pending_command(ref, expected_states), driver_state)
-
-      :error ->
-        EtherCAT.Driver.unsupported_command(command)
-    end
-  end
-
-  defp handle_command(_name, _args, _ref, command, _driver_state) do
-    EtherCAT.Driver.unsupported_command(command)
   end
 
   defp configured_extra_names(config, key) do
@@ -282,80 +194,6 @@ defmodule EtherCAT.Driver.ATV320 do
     end
   end
 
-  defp merge_statusword_projection(state, statusword) when is_integer(statusword) do
-    Map.merge(state, statusword_projection(statusword))
-  end
-
-  defp merge_statusword_projection(state, _other), do: state
-
-  defp statusword_projection(statusword) do
-    cia402_state =
-      case :erlang.band(statusword, 0x006F) do
-        0x0040 -> :switch_on_disabled
-        0x0021 -> :ready_to_switch_on
-        0x0023 -> :switched_on
-        0x0027 -> :operation_enabled
-        0x0007 -> :quick_stop_active
-        0x002F -> :fault_reaction_active
-        masked when masked in [0x0008, 0x0028] -> :fault
-        _other -> :unknown
-      end
-
-    %{
-      cia402_state: cia402_state,
-      ready_to_switch_on?: bit_set?(statusword, 0),
-      switched_on?: bit_set?(statusword, 1),
-      operation_enabled?: bit_set?(statusword, 2),
-      fault?: bit_set?(statusword, 3),
-      voltage_enabled?: bit_set?(statusword, 4),
-      quick_stop_active?: not bit_set?(statusword, 5),
-      switch_on_disabled?: bit_set?(statusword, 6),
-      warning?: bit_set?(statusword, 7),
-      remote?: bit_set?(statusword, 9),
-      target_reached?: bit_set?(statusword, 10),
-      internal_limit_active?: bit_set?(statusword, 11),
-      stop_key_active?: bit_set?(statusword, 14),
-      reverse?: bit_set?(statusword, 15)
-    }
-  end
-
-  defp resolve_pending_command(%{pending_command: nil} = driver_state, _next_state),
-    do: {driver_state, []}
-
-  defp resolve_pending_command(%{pending_command: pending} = driver_state, next_state) do
-    cond do
-      Map.get(next_state, :cia402_state) in pending.expected_states ->
-        {Map.put(driver_state, :pending_command, nil), [{:command_completed, pending.ref}]}
-
-      Map.get(next_state, :fault?, false) ->
-        {Map.put(driver_state, :pending_command, nil),
-         [{:command_failed, pending.ref, {:drive_fault, Map.get(next_state, @statusword_signal)}}]}
-
-      true ->
-        {driver_state, []}
-    end
-  end
-
-  defp stage_controlword(ref, controlword, pending_command, driver_state) do
-    notices = if is_nil(pending_command), do: [{:command_completed, ref}], else: []
-    next_driver_state = Map.put(driver_state, :pending_command, pending_command)
-
-    {:ok, [{:write, @controlword_signal, controlword}], next_driver_state, notices}
-  end
-
-  defp pending_for_controlword(ref, controlword) do
-    @controlword_commands
-    |> Map.values()
-    |> Enum.find_value(fn
-      {^controlword, expected_states} -> pending_command(ref, expected_states)
-      _other -> nil
-    end)
-  end
-
-  defp pending_command(ref, expected_states) do
-    %{ref: ref, expected_states: expected_states}
-  end
-
   defp encode_u16(value) when is_integer(value) and value >= 0 and value <= 0xFFFF,
     do: <<value::16-little>>
 
@@ -373,10 +211,6 @@ defmodule EtherCAT.Driver.ATV320 do
 
   defp decode_i16(<<value::16-signed-little>>), do: value
   defp decode_i16(_raw), do: 0
-
-  defp bit_set?(value, bit) when is_integer(value) and is_integer(bit) and bit >= 0 do
-    :erlang.band(value, :erlang.bsl(1, bit)) != 0
-  end
 
   defp valid_extra_names?(names) when is_list(names) do
     reserved = [

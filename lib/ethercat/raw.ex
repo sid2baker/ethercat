@@ -2,10 +2,10 @@ defmodule EtherCAT.Raw do
   @moduledoc """
   Advanced raw-process-data access.
 
-  `EtherCAT.Raw` bypasses the top-level driver-backed API and works directly
-  with the registered PDO/latch model owned by the slave runtime. Most
-  applications should use `EtherCAT.snapshot/0`, `EtherCAT.snapshot/1`,
-  `EtherCAT.subscribe/2`, and `EtherCAT.command/3` instead.
+  `EtherCAT.Raw` works directly with the registered PDO/latch model owned by
+  the slave runtime. Most applications should use `EtherCAT.samples/1`,
+  `EtherCAT.sample/2`, `EtherCAT.subscribe/2`, `EtherCAT.read/2`, and
+  `EtherCAT.write/3` instead.
   """
 
   alias EtherCAT.Slave

@@ -1,35 +1,27 @@
 defmodule EtherCAT.Driver do
   @moduledoc """
-  Public core extension API for slave drivers.
+  Public protocol/device driver boundary for EtherCAT slaves.
 
-  A core driver owns four things:
+  A driver describes protocol-facing concerns only:
 
-  - logical PDO layout
-  - raw value encoding and decoding
-  - native endpoint description plus projected state
-  - specialist command planning
+  - device identity
+  - logical PDO signal layout
+  - signal encoding and decoding
+  - static signal metadata
 
-  The runtime derives normal `:signal_changed` events by diffing the retained
-  projected state image. Drivers should return projected state, faults, and any
-  notices emitted through `EtherCAT.subscribe/2`.
+  Semantic state projection, machine commands, and machine events do not belong
+  in this behaviour. Those concerns should be implemented above EtherCAT by a
+  semantic integration such as an `Entity.Provider` adapter.
 
-  Specialist concerns live on separate behaviours:
+  Specialist protocol concerns live on separate behaviours:
 
   - `EtherCAT.Driver.Provisioning` for mailbox startup/setup steps
   - `EtherCAT.Driver.Latch` for DC latch callbacks
   - `EtherCAT.Simulator.Adapter` for simulator-side companion definitions
 
   Concrete device drivers are normally application-owned. This library ships
-  the driver contract and the generic default driver, while sample
-  device-specific drivers live in test support only.
-
-  `describe/1` should return the driver's canonical endpoint surface.
-
-  Drivers may also implement optional `identity/0` metadata for simulator
-  hydration and generated capture scaffolds.
-
-  Normal applications should not call this module at runtime. Use it to define
-  drivers that plug into the EtherCAT runtime directly.
+  the contract and a generic default driver, while sample device-specific
+  drivers live in test support only.
   """
 
   alias EtherCAT.Slave.ProcessData.Signal
@@ -41,21 +33,10 @@ defmodule EtherCAT.Driver do
           required(:product_code) => non_neg_integer(),
           optional(:revision) => non_neg_integer() | :any
         }
-  @type decoded_inputs :: %{optional(atom()) => term()}
-  @type projected_state :: %{optional(atom()) => term()}
-  @type notice :: term()
-  @type command_request :: %{
-          required(:ref) => reference(),
-          required(:name) => atom(),
-          required(:args) => map()
-        }
-  @type output_intent :: {:write, signal_name(), term()}
 
   @type description :: %{
           optional(:device_type) => atom(),
-          optional(:endpoints) => [EtherCAT.Endpoint.t() | map()],
-          optional(:commands) => [atom()],
-          optional(:capabilities) => [atom()]
+          optional(:endpoints) => [EtherCAT.Endpoint.t() | map()]
         }
 
   @callback signal_model(config(), sii_pdo_configs :: [map()]) ::
@@ -64,19 +45,10 @@ defmodule EtherCAT.Driver do
   @callback identity() :: identity() | nil
   @callback encode_signal(signal_name(), config(), term()) :: binary()
   @callback decode_signal(signal_name(), config(), binary()) :: term()
-  @callback init(config()) :: {:ok, term()} | {:error, term()}
-
-  @callback project_state(decoded_inputs(), projected_state() | nil, term(), config()) ::
-              {:ok, projected_state(), term(), [notice()], [term()]} | {:error, term()}
-
-  @callback command(command_request(), projected_state(), term(), config()) ::
-              {:ok, [output_intent()], term(), [notice()]} | {:error, term()}
-
   @callback describe(config()) :: description()
 
   @optional_callbacks [
     identity: 0,
-    init: 1,
     describe: 1
   ]
 
@@ -90,10 +62,6 @@ defmodule EtherCAT.Driver do
       nil
     end
   end
-
-  @spec unsupported_command(command_request()) :: {:error, {:unsupported_command, atom()}}
-  def unsupported_command(%{name: name}) when is_atom(name),
-    do: {:error, {:unsupported_command, name}}
 
   defp normalize_identity(nil), do: nil
 

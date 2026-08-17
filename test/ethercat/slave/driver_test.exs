@@ -22,14 +22,6 @@ defmodule EtherCAT.DriverTest do
 
     @impl true
     def decode_signal(_signal, _config, <<value::8>>), do: value
-
-    @impl true
-    def project_state(decoded_inputs, _prev_state, driver_state, _config) do
-      {:ok, decoded_inputs, driver_state, [], []}
-    end
-
-    @impl true
-    def command(command, _state, _driver_state, _config), do: Driver.unsupported_command(command)
   end
 
   defmodule NoSimulationDriver do
@@ -43,14 +35,6 @@ defmodule EtherCAT.DriverTest do
 
     @impl true
     def decode_signal(_signal, _config, <<value::8>>), do: value
-
-    @impl true
-    def project_state(decoded_inputs, _prev_state, driver_state, _config) do
-      {:ok, decoded_inputs, driver_state, [], []}
-    end
-
-    @impl true
-    def command(command, _state, _driver_state, _config), do: Driver.unsupported_command(command)
   end
 
   defmodule RevisionIdentityDriver do
@@ -69,14 +53,6 @@ defmodule EtherCAT.DriverTest do
 
     @impl true
     def decode_signal(_signal, _config, <<value::8>>), do: value
-
-    @impl true
-    def project_state(decoded_inputs, _prev_state, driver_state, _config) do
-      {:ok, decoded_inputs, driver_state, [], []}
-    end
-
-    @impl true
-    def command(command, _state, _driver_state, _config), do: Driver.unsupported_command(command)
   end
 
   defmodule IdentityDriver.Simulator do

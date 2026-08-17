@@ -176,6 +176,8 @@ defmodule EtherCAT.CaptureTest do
     assert hd(signal_model) == {:ch1, 0x1A00}
     assert module.encode_signal(:ch1, %{}, :ignored) == <<>>
     assert module.decode_signal(:ch1, %{}, <<1>>) == 1
+    refute function_exported?(module, :project_state, 4)
+    refute function_exported?(module, :command, 4)
 
     opts = simulator_module.definition_options(%{})
     assert Keyword.fetch!(opts, :profile) == :digital_io

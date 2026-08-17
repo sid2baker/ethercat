@@ -38,15 +38,6 @@ defmodule EtherCAT.IntegrationSupport.Drivers.ConfiguredProcessMailboxDevice do
   def decode_signal(_signal, _config, <<value::8>>), do: value
   def decode_signal(_signal, _config, raw), do: raw
 
-  @impl true
-  def project_state(decoded_inputs, _prev_state, driver_state, _config) do
-    {:ok, decoded_inputs, driver_state, [], []}
-  end
-
-  @impl true
-  def command(command, _state, _driver_state, _config),
-    do: EtherCAT.Driver.unsupported_command(command)
-
   def startup_blob do
     0..191
     |> Enum.map(fn value -> rem(value * 13 + 7, 256) end)

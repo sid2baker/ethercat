@@ -40,7 +40,6 @@ defmodule EtherCAT.Runtime do
 
     children = [
       {registry, keys: :unique, name: EtherCAT.Registry},
-      {registry, keys: :duplicate, name: EtherCAT.SubscriptionRegistry},
       {dynamic_supervisor, name: EtherCAT.SlaveSupervisor, strategy: :one_for_one},
       {dynamic_supervisor, name: EtherCAT.SessionSupervisor, strategy: :one_for_one},
       EtherCAT.Master

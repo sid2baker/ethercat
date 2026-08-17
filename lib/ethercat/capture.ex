@@ -882,8 +882,6 @@ defmodule EtherCAT.Capture do
       render_driver_mailbox_block(scaffold.mailbox_steps),
       "",
       render_driver_codec_block(scaffold),
-      "",
-      render_driver_runtime_block(),
       "end",
       "",
       "defmodule #{render_module_name(simulator_module)} do",
@@ -944,20 +942,6 @@ defmodule EtherCAT.Capture do
       end
 
       def mailbox_steps(_config, _context), do: []
-    """
-    |> String.trim_trailing()
-  end
-
-  defp render_driver_runtime_block do
-    """
-      @impl true
-      def project_state(decoded_inputs, _prev_state, driver_state, _config) do
-        {:ok, decoded_inputs, driver_state, [], []}
-      end
-
-      @impl true
-      def command(command, _state, _driver_state, _config),
-        do: EtherCAT.Driver.unsupported_command(command)
     """
     |> String.trim_trailing()
   end

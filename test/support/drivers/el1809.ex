@@ -46,40 +46,11 @@ defmodule EtherCAT.Driver.EL1809 do
   def decode_signal(_signal, _config, _raw), do: false
 
   @impl true
-  def init(_config) do
-    {:ok, initial_state()}
-  end
-
-  @impl true
   def describe(_config) do
     %{
       device_type: :digital_input,
-      endpoints: Enum.map(@channels, &%Endpoint{signal: &1, direction: :input, type: :boolean}),
-      commands: []
+      endpoints: Enum.map(@channels, &%Endpoint{signal: &1, direction: :input, type: :boolean})
     }
-  end
-
-  @impl true
-  def project_state(decoded_inputs, prev_state, driver_state, _config) do
-    next_state =
-      prev_state
-      |> Kernel.||(
-        case driver_state do
-          driver_state when is_map(driver_state) -> Map.take(driver_state, @channels)
-          _ -> initial_state()
-        end
-      )
-      |> Map.merge(Map.take(decoded_inputs, @channels))
-
-    {:ok, next_state, driver_state, [], []}
-  end
-
-  @impl true
-  def command(command, _state, _driver_state, _config),
-    do: EtherCAT.Driver.unsupported_command(command)
-
-  defp initial_state do
-    Map.new(@channels, &{&1, false})
   end
 end
 

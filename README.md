@@ -104,7 +104,7 @@ If you start without explicit slave configs, EtherCAT still scans the ring, name
 station, and brings every slave to `:preop`. That is the right entry point for
 exploration, diagnostics, and dynamic configuration.
 
-### Run driver-backed slave I/O
+### Run protocol-level slave I/O
 
 ```elixir
 defmodule MyApp.EL1809 do
@@ -117,8 +117,8 @@ defmodule MyApp.EL1809 do
   def encode_signal(_signal, _config, _value), do: <<>>
 
   @impl true
-  def decode_signal(_signal, _config, <<_::7, bit::1>>), do: bit
-  def decode_signal(_signal, _config, _), do: 0
+  def decode_signal(_signal, _config, <<_::7, bit::1>>), do: bit == 1
+  def decode_signal(_signal, _config, _), do: false
 
   @impl true
   def describe(_config) do
@@ -130,23 +130,9 @@ defmodule MyApp.EL1809 do
           direction: :input,
           type: :boolean
         }
-      ],
-      commands: []
+      ]
     }
   end
-
-  @impl true
-  def init(_config), do: {:ok, %{}}
-
-  @impl true
-  def project_state(decoded_inputs, _prev_state, driver_state, _config) do
-    next_state = %{ch1: Map.get(decoded_inputs, :ch1, 0) == 1}
-    {:ok, next_state, driver_state, [], []}
-  end
-
-  @impl true
-  def command(command, _state, _driver_state, _config),
-    do: EtherCAT.Driver.unsupported_command(command)
 end
 
 EtherCAT.start(
@@ -171,8 +157,8 @@ EtherCAT.start(
 
 :ok = EtherCAT.await_operational()
 
-{:ok, input_snapshot} = EtherCAT.snapshot(:inputs)
-input_snapshot.state.ch1
+{:ok, input_sample} = EtherCAT.sample(:inputs, :io)
+input_sample.inputs.ch1
 #=> false
 
 {:ok, input_description} = EtherCAT.describe(:inputs)
@@ -183,38 +169,37 @@ input_description.endpoints
 Map.keys(inventory)
 #=> [:coupler, :inputs, :outputs]
 
-EtherCAT.subscribe(:inputs)
-#=> receive %EtherCAT.Event{
-#=>   kind: :signal_changed,
-#=>   signal: {:inputs, :ch1},
-#=>   slave: :inputs,
-#=>   value: true,
-#=>   cycle: 42,
-#=>   updated_at_us: timestamp_us
-#=> }
+{:ok, initial_samples} = EtherCAT.subscribe(:inputs)
+#=> %{:io => %EtherCAT.Sample{...}}
 
-{:ok, ref} =
-  EtherCAT.command(:outputs, :set_output, %{signal: :ch1, value: true})
-#=> later receive %EtherCAT.Event{kind: :event, data: {:command_completed, ^ref}, ...}
+receive do
+  %EtherCAT.Sample{
+    slave: :inputs,
+    domain: :io,
+    cycle: 42,
+    observed_at: timestamp_us,
+    inputs: %{ch1: true}
+  } = sample ->
+    sample
+end
+
+:ok = EtherCAT.write(:outputs, :ch1, true)
+{:ok, {true, updated_at_us}} = EtherCAT.read(:inputs, :ch1)
 ```
 
-Drivers still own the raw PDO mapping, but the public API is now slave-first:
-`slaves/0`, `snapshot/0`, `snapshot/1`, `describe/1`, `inventory/0`,
-`subscribe/2`, and `command/3`. Drivers expose canonical endpoints, and the
-public runtime surface uses those canonical signal names directly.
-`describe/1` and `inventory/0` are configuration-backed interface views;
-`snapshot/0` and `snapshot/1` remain the live value image. If you need
-direct process-data access for diagnostics or low-level tooling, use
-`EtherCAT.Raw.read_input/2`,
-`EtherCAT.Raw.write_output/3`, and `EtherCAT.Raw.subscribe/3`.
+Drivers own device identity, PDO signal layout, static signal descriptions,
+and value codecs. They do not project machine state or implement machine
+commands. `EtherCAT.Sample` reports one coherent decoded observation from one
+domain cycle; samples from different domains do not imply cross-domain
+consistency.
 
-The runtime owns the retained driver-backed slave state, including staged
-outputs, and derives normal `%EtherCAT.Event{kind: :signal_changed}` deltas by
-diffing that canonical public state image. Drivers project slave state and may
-emit command lifecycle updates through the same top-level event stream.
+`describe/1` and `inventory/0` are configuration-backed protocol views.
+`samples/1`, `sample/2`, and `subscribe/2` expose retained and subsequent
+process observations. `read/2` and `write/3` are explicit low-level signal
+operations. `EtherCAT.Raw` remains available for specialist PDO/latch tooling.
 
-`EtherCAT.subscribe(:all)` follows the runtime-wide slave event stream,
-including slaves that appear after the subscription is created.
+Semantic commands, machine state, and machine events belong in a separate
+integration layer above EtherCAT, such as an `Entity.Provider` adapter.
 
 For PREOP-first workflows, configure discovered slaves dynamically:
 
@@ -269,7 +254,7 @@ dictionary automatically.
 - The master owns startup, activation-blocked startup, and runtime recovery decisions.
 - The bus is the single serialization point for all frames.
 - Domains own logical PDO images and cyclic LRW exchange.
-- Drivers own PDO decode/encode plus projected-state updates, faults, and specialist commands.
+- Drivers own device identity, PDO signal layout, signal metadata, and value codecs.
 - Slaves own AL transitions and bind drivers into the runtime.
 - DC owns distributed-clock initialization, lock monitoring, and runtime maintenance.
 

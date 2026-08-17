@@ -60,12 +60,12 @@ defmodule EtherCAT.Slave.Runtime.Signals do
   @spec drop_subscriber(%EtherCAT.Slave{}, pid()) :: %EtherCAT.Slave{}
   def drop_subscriber(data, pid) do
     subscriptions = prune_subscription_pid(data.subscriptions, pid)
-    event_subscriptions = MapSet.delete(data.event_subscriptions || MapSet.new(), pid)
+    sample_subscriptions = MapSet.delete(data.sample_subscriptions || MapSet.new(), pid)
 
     %{
       data
       | subscriptions: subscriptions,
-        event_subscriptions: event_subscriptions,
+        sample_subscriptions: sample_subscriptions,
         subscriber_refs: Map.delete(data.subscriber_refs, pid)
     }
   end

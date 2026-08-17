@@ -82,28 +82,7 @@ defmodule EtherCAT.IntegrationSupport.Drivers.EL3202 do
   def decode_signal(_signal, _config, _raw), do: nil
 
   @impl true
-  def describe(_config), do: %{device_type: :temperature_input, capabilities: [:read_input]}
-
-  @impl true
-  def init(_config), do: {:ok, %{}}
-
-  @impl true
-  def project_state(decoded_inputs, _prev_state, driver_state, _config) do
-    faults =
-      Enum.reduce(decoded_inputs, [], fn {channel, reading}, acc ->
-        if is_map(reading) and (reading.error or reading.invalid) do
-          [{:sensor_fault, channel} | acc]
-        else
-          acc
-        end
-      end)
-
-    {:ok, decoded_inputs, driver_state, [], Enum.reverse(faults)}
-  end
-
-  @impl true
-  def command(command, _state, _driver_state, _config),
-    do: EtherCAT.Driver.unsupported_command(command)
+  def describe(_config), do: %{device_type: :temperature_input}
 end
 
 defmodule EtherCAT.IntegrationSupport.Drivers.EL3202.Simulator do

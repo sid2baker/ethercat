@@ -2,7 +2,7 @@ defmodule EtherCAT.Diagnostics do
   @moduledoc """
   Specialist inspection and diagnostic API.
 
-  Normal machine-facing runtime usage should stay on `EtherCAT`. This module is
+  Normal protocol-level runtime usage should stay on `EtherCAT`. This module is
   for topology inspection, DC status, slave/domain details, and other
   lower-level runtime visibility.
   """
@@ -23,14 +23,6 @@ defmodule EtherCAT.Diagnostics do
 
   @spec last_failure() :: EtherCAT.master_query_result(map() | nil)
   def last_failure, do: ok_query(Master.last_failure())
-
-  @spec capabilities(atom()) ::
-          [atom()] | {:error, :not_found | :timeout | {:server_exit, term()}}
-  def capabilities(slave_name) do
-    with {:ok, description} <- EtherCAT.describe(slave_name) do
-      description.commands
-    end
-  end
 
   @spec slaves() :: EtherCAT.master_query_result([map()])
   def slaves, do: ok_query(Master.slaves())

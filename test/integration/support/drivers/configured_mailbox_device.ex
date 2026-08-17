@@ -25,15 +25,6 @@ defmodule EtherCAT.IntegrationSupport.Drivers.ConfiguredMailboxDevice do
 
   @impl true
   def decode_signal(_signal, _config, raw), do: raw
-
-  @impl true
-  def project_state(decoded_inputs, _prev_state, driver_state, _config) do
-    {:ok, decoded_inputs, driver_state, [], []}
-  end
-
-  @impl true
-  def command(command, _state, _driver_state, _config),
-    do: EtherCAT.Driver.unsupported_command(command)
 end
 
 defmodule EtherCAT.IntegrationSupport.Drivers.ConfiguredMailboxDevice.Simulator do

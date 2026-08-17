@@ -7,7 +7,7 @@ defmodule EtherCAT.Slave.Runtime.Configuration do
   alias EtherCAT.Slave.Runtime.DCSignals
   alias EtherCAT.Slave.Mailbox
   alias EtherCAT.Slave.ProcessData
-  alias EtherCAT.Slave.Runtime.DeviceState
+  alias EtherCAT.Slave.Runtime.Samples
 
   @spec maybe_reconfigure_preop(%Slave{}, keyword()) ::
           {:ok, %Slave{}} | {:error, term(), %Slave{}}
@@ -86,7 +86,7 @@ defmodule EtherCAT.Slave.Runtime.Configuration do
           sync_config: Keyword.get(opts, :sync, data.sync_config),
           health_poll_ms: Keyword.get(opts, :health_poll_ms, data.health_poll_ms)
       }
-      |> DeviceState.initialize()
+      |> Samples.initialize()
 
     configured = configure_preop_process_data(updated_data)
 

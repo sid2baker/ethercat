@@ -12,8 +12,8 @@ defmodule EtherCAT.Slave.FSM do
   alias EtherCAT.Slave.Runtime.Configuration
   alias EtherCAT.Slave.Runtime.DCSignals
   alias EtherCAT.Slave.Runtime.Health
-  alias EtherCAT.Slave.Runtime.DeviceState
   alias EtherCAT.Slave.Runtime.Outputs
+  alias EtherCAT.Slave.Runtime.Samples
   alias EtherCAT.Slave.Runtime.Signals
   alias EtherCAT.Slave.Runtime.Transition
 
@@ -113,7 +113,7 @@ defmodule EtherCAT.Slave.FSM do
   # SM-grouped key: {domain_id, {:sm, idx}} — unpack per-signal bits and dispatch.
   def handle_event(
         :info,
-        {:domain_inputs, domain_id, cycle_index, changes, updated_at_us},
+        {:domain_inputs, domain_id, cycle_index, changes, sm_inputs, observed_at},
         _state,
         data
       ) do
@@ -122,7 +122,15 @@ defmodule EtherCAT.Slave.FSM do
         Signals.changed_input_names(data, domain_id, sm_key, old_sm_bytes, new_sm_bytes)
       end)
 
-    {:keep_state, DeviceState.refresh(data, cycle_index, updated_at_us, changed_signal_names)}
+    {:keep_state,
+     Samples.refresh(
+       data,
+       domain_id,
+       cycle_index,
+       sm_inputs,
+       observed_at,
+       changed_signal_names
+     )}
   end
 
   def handle_event(:info, {:DOWN, ref, :process, pid, _reason}, _state, data) do
@@ -200,13 +208,8 @@ defmodule EtherCAT.Slave.FSM do
     {:keep_state_and_data, [{:reply, from, {:ok, info_snapshot(state, data)}}]}
   end
 
-  defp handle_call(from, :snapshot, state, data) do
-    {:keep_state_and_data, [{:reply, from, {:ok, DeviceState.snapshot(state, data)}}]}
-  end
-
-  defp handle_call(from, :capabilities, _state, data) do
-    {:keep_state_and_data,
-     [{:reply, from, EtherCAT.Driver.Runtime.capabilities(data.driver, data.config || %{})}]}
+  defp handle_call(from, :samples, _state, data) do
+    {:keep_state_and_data, [{:reply, from, {:ok, Samples.all(data)}}]}
   end
 
   defp handle_call(from, {:request, target}, state, _data) when state == target do
@@ -281,8 +284,9 @@ defmodule EtherCAT.Slave.FSM do
     end
   end
 
-  defp handle_call(from, {:subscribe_events, pid}, _state, data) do
-    {:keep_state, DeviceState.event_subscribe(data, pid), [{:reply, from, :ok}]}
+  defp handle_call(from, {:subscribe_samples, pid}, _state, data) do
+    {new_data, samples} = Samples.subscribe(data, pid)
+    {:keep_state, new_data, [{:reply, from, {:ok, samples}}]}
   end
 
   defp handle_call(from, {:write_output, _signal_name, _value}, :down, _data) do
@@ -290,18 +294,9 @@ defmodule EtherCAT.Slave.FSM do
   end
 
   defp handle_call(from, {:write_output, signal_name, value}, _state, data) do
-    previous_value = Map.get(DeviceState.signal_image(data), signal_name, :unset)
-
     case Outputs.write_signal(data, signal_name, value) do
       {:ok, new_data} ->
-        updated_at_us = System.monotonic_time(:microsecond)
-        next_data = DeviceState.record_output_value(new_data, signal_name, value, updated_at_us)
-
-        if previous_value != value do
-          dispatch_output_event(next_data, signal_name, value, updated_at_us)
-        end
-
-        {:keep_state, next_data, [{:reply, from, :ok}]}
+        {:keep_state, new_data, [{:reply, from, :ok}]}
 
       {:error, reason} ->
         {:keep_state_and_data, [{:reply, from, {:error, reason}}]}
@@ -310,21 +305,6 @@ defmodule EtherCAT.Slave.FSM do
 
   defp handle_call(from, {:read_input, signal_name}, _state, data) do
     {:keep_state_and_data, [{:reply, from, Signals.read_input(data, signal_name)}]}
-  end
-
-  defp handle_call(from, {:command, _command_name, _args}, :down, _data) do
-    {:keep_state_and_data, [{:reply, from, {:error, :slave_down}}]}
-  end
-
-  defp handle_call(from, {:command, command_name, args}, _state, data)
-       when is_atom(command_name) and is_map(args) do
-    case DeviceState.command(data, command_name, args) do
-      {:ok, ref, new_data} ->
-        {:keep_state, new_data, [{:reply, from, {:ok, ref}}]}
-
-      {:error, reason, new_data} ->
-        {:keep_state, new_data, [{:reply, from, {:error, reason}}]}
-    end
   end
 
   defp handle_call(from, {:download_sdo, index, subindex, sdo_data}, state, data)
@@ -387,15 +367,16 @@ defmodule EtherCAT.Slave.FSM do
       output_domain_ids_by_sm: %{},
       output_sm_images: %{},
       subscriptions: %{},
-      event_subscriptions: MapSet.new(),
+      samples: %{},
+      sample_subscriptions: MapSet.new(),
       subscriber_refs: %{}
     }
-    |> DeviceState.initialize()
+    |> Samples.initialize()
   end
 
   defp info_snapshot(state, data) do
     attachments = Signals.attachment_summaries(data.signal_registrations)
-    description = DeviceState.snapshot(state, data)
+    description = EtherCAT.Driver.Runtime.describe(data.driver, data.config || %{})
 
     %{
       name: data.name,
@@ -413,12 +394,7 @@ defmodule EtherCAT.Slave.FSM do
       configuration_error: data.configuration_error,
       device_type: description.device_type,
       endpoints: description.endpoints,
-      commands: description.commands,
-      capabilities: description.commands,
-      device_cycle: data.device_cycle,
-      device_state: description.state,
-      device_faults: data.device_faults,
-      driver_error: data.driver_error
+      samples: Samples.all(data)
     }
   end
 
@@ -476,19 +452,6 @@ defmodule EtherCAT.Slave.FSM do
       Enum.any?(domains, &(&1.state == :not_ready)) -> :not_ready
       true -> :fresh
     end
-  end
-
-  defp dispatch_output_event(data, signal_name, value, updated_at_us) do
-    event =
-      EtherCAT.Event.signal_changed(
-        data.name,
-        signal_name,
-        value,
-        data.device_cycle,
-        updated_at_us
-      )
-
-    DeviceState.dispatch_event(data, event)
   end
 
   # -- Poll scheduling -------------------------------------------------------

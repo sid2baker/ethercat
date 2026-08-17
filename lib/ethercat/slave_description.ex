@@ -2,17 +2,16 @@ defmodule EtherCAT.SlaveDescription do
   @moduledoc """
   Public description for one configured slave.
 
-  This struct is intentionally configuration-backed. It carries the
-  interface plus light runtime summary fields such as station, pid, target
-  state, and tracked fault. Current endpoint values stay on
-  `EtherCAT.SlaveSnapshot`.
+  This struct is intentionally configuration-backed. It carries static signal
+  metadata plus light runtime summary fields such as station, pid, target
+  state, and tracked fault. Current process observations are represented by
+  `EtherCAT.Sample`.
   """
 
   alias EtherCAT.Driver
   alias EtherCAT.Endpoint
   alias EtherCAT.Slave.ProcessData.Signal
   alias EtherCAT.Master.Status
-  alias EtherCAT.SlaveSnapshot
 
   @enforce_keys [:name, :driver, :endpoints]
   defstruct [
@@ -23,8 +22,7 @@ defmodule EtherCAT.SlaveDescription do
     :pid,
     :target_state,
     :fault,
-    endpoints: [],
-    commands: []
+    endpoints: []
   ]
 
   @type t :: %__MODULE__{
@@ -35,14 +33,12 @@ defmodule EtherCAT.SlaveDescription do
           pid: pid() | nil,
           target_state: :preop | :op | nil,
           fault: term() | nil,
-          endpoints: [Endpoint.t()],
-          commands: [atom()]
+          endpoints: [Endpoint.t()]
         }
 
   @type native_description :: %{
           required(:device_type) => atom() | nil,
-          required(:endpoints) => [Endpoint.t()],
-          required(:commands) => [atom()]
+          required(:endpoints) => [Endpoint.t()]
         }
 
   @spec native_description(module(), Driver.config()) :: native_description()
@@ -59,11 +55,7 @@ defmodule EtherCAT.SlaveDescription do
       endpoints:
         raw_description
         |> Map.get(:endpoints, infer_endpoints(driver, config))
-        |> normalize_endpoints(),
-      commands:
-        raw_description
-        |> Map.get(:commands, Map.get(raw_description, :capabilities, []))
-        |> normalize_commands()
+        |> normalize_endpoints()
     }
   end
 
@@ -80,8 +72,7 @@ defmodule EtherCAT.SlaveDescription do
       pid: Keyword.get(opts, :pid),
       target_state: Keyword.get(opts, :target_state),
       fault: Keyword.get(opts, :fault),
-      endpoints: native.endpoints,
-      commands: native.commands
+      endpoints: native.endpoints
     }
   end
 
@@ -102,21 +93,6 @@ defmodule EtherCAT.SlaveDescription do
       target_state: target_state,
       fault: fault
     )
-  end
-
-  @spec from_snapshot(SlaveSnapshot.t()) :: t()
-  def from_snapshot(%SlaveSnapshot{} = snapshot) do
-    %__MODULE__{
-      name: snapshot.name,
-      driver: snapshot.driver,
-      device_type: snapshot.device_type,
-      station: nil,
-      pid: nil,
-      target_state: nil,
-      fault: nil,
-      endpoints: snapshot.endpoints,
-      commands: snapshot.commands
-    }
   end
 
   defp normalize_endpoints(endpoints) when is_list(endpoints) do
@@ -170,18 +146,6 @@ defmodule EtherCAT.SlaveDescription do
   defp validate_endpoint!(endpoint) do
     raise ArgumentError, "invalid endpoint description: #{inspect(endpoint)}"
   end
-
-  defp normalize_commands(commands) when is_list(commands) do
-    commands
-    |> Enum.map(fn
-      command when is_atom(command) -> command
-      other -> raise ArgumentError, "invalid driver command description: #{inspect(other)}"
-    end)
-    |> Enum.uniq()
-    |> Enum.sort()
-  end
-
-  defp normalize_commands(_commands), do: []
 
   defp infer_endpoints(driver, config) do
     driver

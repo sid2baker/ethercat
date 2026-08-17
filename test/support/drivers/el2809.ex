@@ -45,52 +45,11 @@ defmodule EtherCAT.Driver.EL2809 do
   def decode_signal(_signal, _config, _raw), do: nil
 
   @impl true
-  def init(_config) do
-    {:ok, initial_state()}
-  end
-
-  @impl true
   def describe(_config) do
     %{
       device_type: :digital_output,
-      endpoints: Enum.map(@channels, &%Endpoint{signal: &1, direction: :output, type: :boolean}),
-      commands: []
+      endpoints: Enum.map(@channels, &%Endpoint{signal: &1, direction: :output, type: :boolean})
     }
-  end
-
-  @impl true
-  def project_state(_decoded_inputs, prev_state, driver_state, _config)
-      when is_map(driver_state) do
-    {:ok, prev_state || Map.take(driver_state, @channels), driver_state, [], []}
-  end
-
-  @impl true
-  def command(
-        %{ref: ref, name: :set_output, args: %{signal: signal_name, value: value}},
-        _state,
-        driver_state,
-        _config
-      )
-      when signal_name in @channels and is_boolean(value) do
-    next_driver_state = Map.put(driver_state, signal_name, value)
-
-    {:ok, [{:write, signal_name, value}], next_driver_state, [{:command_completed, ref}]}
-  end
-
-  def command(
-        %{name: :set_output, args: %{signal: signal_name}},
-        _state,
-        _driver_state,
-        _config
-      )
-      when signal_name in @channels,
-      do: {:error, :invalid_output_value}
-
-  def command(command, _state, _driver_state, _config),
-    do: EtherCAT.Driver.unsupported_command(command)
-
-  defp initial_state do
-    Map.new(@channels, &{&1, false})
   end
 
   defp encode_bool(value) when value in [true, 1], do: 1

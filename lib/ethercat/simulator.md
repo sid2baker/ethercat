@@ -233,7 +233,7 @@ Implemented and validated surface:
 - cross-slave signal wiring
 - real-device hydration through simulator companions on real drivers
 
-The preferred public device story is driver-backed simulation:
+The preferred public device story is protocol-driver-backed simulation:
 
 ```elixir
 coupler = EtherCAT.Simulator.Slave.from_driver(MyApp.EK1100, name: :coupler)
@@ -242,8 +242,8 @@ outputs = EtherCAT.Simulator.Slave.from_driver(MyApp.EL2809, name: :outputs)
 ```
 
 Profile modules still exist, but they are implementation detail. The public
-story is: simulate real devices through real drivers and keep identity, PDO
-naming, and simulator hydration aligned.
+story is: simulate real devices through protocol drivers and keep identity,
+PDO naming, codecs, and simulator hydration aligned.
 
 ## Fault Model
 

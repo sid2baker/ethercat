@@ -21,13 +21,4 @@ defmodule EtherCAT.Driver.Default do
 
   @impl true
   def decode_signal(_signal_name, _config, raw), do: raw
-
-  @impl true
-  def project_state(decoded_inputs, _prev_state, driver_state, _config) do
-    {:ok, decoded_inputs, driver_state, [], []}
-  end
-
-  @impl true
-  def command(command, _projected_state, _driver_state, _config),
-    do: EtherCAT.Driver.unsupported_command(command)
 end

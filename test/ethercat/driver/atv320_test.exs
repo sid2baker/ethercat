@@ -41,55 +41,9 @@ defmodule EtherCAT.Driver.ATV320Test do
     assert model.input_word_6 == Signal.slice(0x1A01, 48, 16)
   end
 
-  test "shutdown command waits for the expected CiA402 state and then completes" do
-    {:ok, driver_state} = ATV320.init(%{})
-    ref = make_ref()
-
-    assert {:ok, [{:write, :controlword, 0x0006}], driver_state, []} =
-             ATV320.command(%{ref: ref, name: :shutdown, args: %{}}, %{}, driver_state, %{})
-
-    assert {:ok, next_state, %{pending_command: nil}, [{:command_completed, ^ref}], []} =
-             ATV320.project_state(
-               %{statusword: 0x0021, actual_velocity: 0},
-               %{},
-               driver_state,
-               %{}
-             )
-
-    assert next_state.cia402_state == :ready_to_switch_on
-    assert next_state.ready_to_switch_on?
-    refute next_state.fault?
-  end
-
-  test "set_target_velocity completes immediately and preserves signed 16-bit encoding" do
-    {:ok, driver_state} = ATV320.init(%{})
-    ref = make_ref()
-
-    assert {:ok, [{:write, :target_velocity, -1200}], %{pending_command: nil},
-            [{:command_completed, ^ref}]} =
-             ATV320.command(
-               %{ref: ref, name: :set_target_velocity, args: %{value: -1200}},
-               %{},
-               driver_state,
-               %{}
-             )
-
+  test "signed scanner values preserve protocol encoding" do
     assert <<80, 251>> == ATV320.encode_signal(:target_velocity, %{}, -1200)
     assert -1200 == ATV320.decode_signal(:actual_velocity, %{}, <<80, 251>>)
-  end
-
-  test "project_state derives visible statusword flags and drive fault faults" do
-    {:ok, next_state, %{pending_command: nil}, [], [{:drive_fault, :fault}]} =
-      ATV320.project_state(
-        %{statusword: 0x0008, actual_velocity: 0},
-        %{},
-        %{pending_command: nil},
-        %{}
-      )
-
-    assert next_state.cia402_state == :fault
-    assert next_state.fault?
-    assert next_state.quick_stop_active?
   end
 
   test "simulator companion hydrates a six-word mailbox-backed scanner device" do

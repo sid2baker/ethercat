@@ -9,7 +9,7 @@ defmodule EtherCAT.Slave do
   One slave process is started per configured name and registered under
   `{:slave, name}`.
 
-  Normal machine-facing runtime usage should go through `EtherCAT`.
+  Normal protocol-level runtime usage should go through `EtherCAT`.
 
   This module remains the runtime/process boundary beneath that public API.
 
@@ -61,14 +61,8 @@ defmodule EtherCAT.Slave do
           name: atom() | nil,
           driver: module() | nil,
           config: map(),
-          driver_state: term(),
-          device_state: map() | nil,
-          output_state: map() | nil,
-          device_faults: [term()] | nil,
-          device_cycle: integer() | nil,
-          device_updated_at_us: integer() | nil,
-          driver_error: term() | nil,
-          event_subscriptions: MapSet.t(pid()),
+          samples: %{optional(atom()) => EtherCAT.Sample.t()},
+          sample_subscriptions: MapSet.t(pid()),
           error_code: non_neg_integer() | nil,
           configuration_error: term() | nil,
           identity: map() | nil,
@@ -101,14 +95,6 @@ defmodule EtherCAT.Slave do
     :name,
     :driver,
     :config,
-    :driver_state,
-    :device_state,
-    :output_state,
-    :device_faults,
-    :device_cycle,
-    :device_updated_at_us,
-    :driver_error,
-    :event_subscriptions,
     :error_code,
     :configuration_error,
     :identity,
@@ -129,6 +115,8 @@ defmodule EtherCAT.Slave do
     :output_domain_ids_by_sm,
     :output_sm_images,
     :subscriptions,
+    samples: %{},
+    sample_subscriptions: MapSet.new(),
     subscriber_refs: %{},
     startup_retry_phase: nil,
     startup_retry_count: 0
@@ -152,10 +140,11 @@ defmodule EtherCAT.Slave do
   def start_link(opts), do: FSM.start_link(opts)
 
   @doc false
-  @spec subscribe_events(atom(), pid()) ::
-          :ok | {:error, :not_found | :timeout | {:server_exit, term()}}
-  def subscribe_events(slave_name, pid \\ self()) do
-    safe_call(slave_name, {:subscribe_events, pid})
+  @spec subscribe_samples(atom(), pid()) ::
+          {:ok, %{optional(atom()) => EtherCAT.Sample.t()}}
+          | {:error, :not_found | :timeout | {:server_exit, term()}}
+  def subscribe_samples(slave_name, pid \\ self()) do
+    safe_call(slave_name, {:subscribe_samples, pid})
   end
 
   @doc """
@@ -227,21 +216,10 @@ defmodule EtherCAT.Slave do
   def error(slave_name), do: safe_call(slave_name, :error)
 
   @doc false
-  @spec snapshot(atom()) ::
-          {:ok, EtherCAT.SlaveSnapshot.t()}
+  @spec samples(atom()) ::
+          {:ok, %{optional(atom()) => EtherCAT.Sample.t()}}
           | {:error, :not_found | :timeout | {:server_exit, term()}}
-  def snapshot(slave_name), do: safe_call(slave_name, :snapshot)
-
-  @doc false
-  @spec capabilities(atom()) ::
-          [atom()] | {:error, :not_found | :timeout | {:server_exit, term()}}
-  def capabilities(slave_name), do: safe_call(slave_name, :capabilities)
-
-  @doc false
-  @spec command(atom(), atom(), map()) :: {:ok, reference()} | {:error, term()}
-  def command(slave_name, command_name, args) when is_atom(command_name) and is_map(args) do
-    safe_call(slave_name, {:command, command_name, args})
-  end
+  def samples(slave_name), do: safe_call(slave_name, :samples)
 
   @doc """
   Return a detailed runtime snapshot for the slave.

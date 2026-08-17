@@ -1,0 +1,20 @@
+defmodule EtherCAT.Sample do
+  @moduledoc """
+  Coherent decoded process-data observation for one slave within one domain cycle.
+
+  A sample contains protocol truth only. It does not project machine state,
+  advertise semantic commands, or infer completion of application intent.
+  Samples from different domains do not share a consistency boundary.
+  """
+
+  @enforce_keys [:slave, :domain, :cycle, :observed_at, :inputs]
+  defstruct [:slave, :domain, :cycle, :observed_at, :inputs]
+
+  @type t :: %__MODULE__{
+          slave: atom(),
+          domain: atom(),
+          cycle: non_neg_integer(),
+          observed_at: integer(),
+          inputs: %{optional(atom()) => term()}
+        }
+end

@@ -20,7 +20,7 @@ distributed clock layer.
 Host application supervisor
 └── EtherCAT.Runtime
     │
-    ├── EtherCAT                    (driver-backed runtime API)
+    ├── EtherCAT                    (protocol sample/read/write runtime API)
     ├── EtherCAT.Backend            (normalized backend description)
     ├── EtherCAT.Scan               (one-shot observational topology scan)
     ├── EtherCAT.Provisioning       (advanced PREOP/configuration/SDO API)
@@ -132,28 +132,29 @@ Domain :cycling
     Bus.transaction LRW
       → raw socket send → receive → response binary
     dispatch_inputs → compare each slice against ETS → on change:
-      ETS update + send {:domain_inputs, domain_id, cycle_index, changes, updated_at_us} to slave pid
-      Slave computes the changed input names from the changed SM slices
-      → samples and decodes the current input image once
-      → driver.project_state/4
-      → store device_state + driver_state
-      → notify raw signal subscribers and public slave subscribers from that same decoded input sample
+      ETS update + send the coherent per-slave domain response image to the slave pid
+      Slave computes changed signal names from changed SM slices
+      → decodes the complete input image for that slave and domain
+      → retains and publishes %EtherCAT.Sample{}
+      → reuses the same decoded values for raw signal subscribers
 ```
 
-### Command/write path (application → bus)
+A sample is coherent only within its domain cycle. A slave split across domains
+produces independent samples; the runtime does not imply cross-domain
+consistency.
+
+### Protocol write path (application → bus)
 
 ```
 Application
-  EtherCAT.command(slave, :set_output, %{signal: signal, value: value})
-    → driver.command/4 returns raw {:write, signal, value} intents
-    → runtime stages those intents through Domain.write/3
-    → runtime updates retained slave state and emits `%EtherCAT.Event{}`
-  next Domain LRW tick picks up the new value and writes it to the slave
+  EtherCAT.write(slave, signal, value)
+    → driver.encode_signal/3
+    → runtime stages the encoded value through Domain.write/3
+  next Domain LRW tick picks up the value and writes it to the slave
 ```
 
-`EtherCAT.Raw.*` remains available for direct PDO reads, writes, and signal
-subscriptions when lower-level diagnostics are required, but it is no longer
-the primary application-facing surface.
+`EtherCAT.Raw.*` remains available for direct PDO/latch access used by specialist
+diagnostics and tooling.
 
 ---
 
@@ -293,11 +294,15 @@ calls `{:next_state, ...}`.
 
 ### Real driver boundary vs simulator boundary
 
-`EtherCAT.Driver` owns the runtime-facing core driver concerns:
+`EtherCAT.Driver` owns protocol/device concerns only:
 
-- logical signal naming (`signal_model/2`)
+- device identity
+- logical signal naming and PDO layout (`signal_model/2`)
+- static signal metadata
 - signal encode/decode
-- projected-state updates and specialist command planning
+
+Machine-state projection, semantic command planning, and machine events belong
+above EtherCAT in a separate semantic integration layer.
 
 Specialist driver behaviours hang off the core:
 

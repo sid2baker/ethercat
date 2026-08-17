@@ -11,11 +11,14 @@ defmodule EtherCAT.Simulator.Slave.Definition do
   alias EtherCAT.Driver
   alias EtherCAT.Driver.Runtime, as: DriverRuntime
   alias EtherCAT.Simulator.Adapter
-  alias EtherCAT.Simulator.Slave.Object
-  alias EtherCAT.Slave.Mailbox
 
   @typedoc "Mailbox SM layout declared by the simulated device."
-  @type mailbox_config :: Mailbox.config()
+  @type mailbox_config :: %{
+          recv_offset: non_neg_integer(),
+          recv_size: non_neg_integer(),
+          send_offset: non_neg_integer(),
+          send_size: non_neg_integer()
+        }
 
   @type pdo_entry :: %{
           index: non_neg_integer(),
@@ -56,7 +59,7 @@ defmodule EtherCAT.Simulator.Slave.Definition do
           pdo_entries: [pdo_entry()],
           signals: %{optional(atom()) => signal_spec()},
           mailbox_config: mailbox_config(),
-          objects: %{optional({non_neg_integer(), non_neg_integer()}) => Object.t()},
+          objects: map(),
           dc_capable?: boolean()
         }
 

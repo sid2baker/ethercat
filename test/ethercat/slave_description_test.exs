@@ -8,7 +8,6 @@ defmodule EtherCAT.SlaveDescriptionTest do
     description = SlaveDescription.native_description(EtherCAT.Driver.EL1809, %{})
 
     assert description.device_type == :digital_input
-    assert description.commands == []
     assert length(description.endpoints) == 16
 
     assert %Endpoint{
@@ -60,7 +59,6 @@ defmodule EtherCAT.SlaveDescriptionTest do
     assert description.station == 0x1002
     assert description.pid == self()
     assert description.target_state == :op
-    assert description.commands == []
 
     assert Enum.at(description.endpoints, 0) ==
              %Endpoint{signal: :ch1, direction: :output, type: :boolean}

@@ -1,62 +1,41 @@
 defmodule EtherCAT do
   @moduledoc """
-  Driver-backed runtime API for EtherCAT.
+  Public runtime API for the EtherCAT protocol boundary.
 
-  Normal applications should interact with EtherCAT through:
+  Normal applications interact with EtherCAT through lifecycle operations,
+  coherent process-data samples, static slave descriptions, and explicit
+  protocol writes:
 
-  - `start/1`
-  - `stop/0`
-  - `state/0`
-  - `await_running/1`
-  - `await_operational/1`
-  - `slaves/0`
-  - `snapshot/0`
-  - `snapshot/1`
-  - `describe/1`
-  - `inventory/0`
-  - `subscribe/2`
-  - `command/3`
+  - `start/1`, `stop/0`, `state/0`
+  - `slaves/0`, `describe/1`, `inventory/0`
+  - `samples/1`, `sample/2`, `subscribe/2`
+  - `read/2`, `write/3`
+
+  A `%EtherCAT.Sample{}` is a coherent decoded observation from one domain
+  cycle. It is protocol truth, not projected machine state. Different domains
+  do not share a consistency boundary.
+
+  Semantic commands, machine state, and machine events belong above this
+  library in an integration such as an `Entity.Provider`.
 
   Specialist APIs live under:
 
   - `EtherCAT.Provisioning` for PREOP configuration, activation, and SDO traffic
   - `EtherCAT.Diagnostics` for DC, slave, domain, and topology inspection
-  - `EtherCAT.Raw` for direct PDO reads, writes, and raw signal subscriptions
-  - `EtherCAT.Driver` for driver authors
+  - `EtherCAT.Raw` for direct PDO and latch access
+  - `EtherCAT.Driver` for protocol/device driver authors
   - `EtherCAT.Simulator` for testing and simulator workflows
 
-  Host applications must supervise `EtherCAT.Runtime` before calling the
-  public API in this module. `EtherCAT.start/1` and `stop/0` control the
-  singleton EtherCAT session inside that host-owned runtime; they do not boot
-  the supervision tree themselves.
-
-  `snapshot/0` is a best-effort aggregate view. It assembles the latest retained
-  slave snapshots across slave runtimes at query time. The root `:cycle` is
-  the latest observed domain cycle count across active domains when the
-  snapshot is built; it is not a global atomic transaction boundary across all
-  slaves.
-
-  Drivers describe canonical endpoints. Public snapshots, descriptions, and
-  `:signal_changed` events use those canonical signal names directly.
-
-  `describe/1` and `inventory/0` are built from the master's retained
-  configured slave summaries plus light runtime fields such as station, pid,
-  and tracked fault. Current endpoint values remain on `snapshot/0` and
-  `snapshot/1`.
+  Host applications must supervise `EtherCAT.Runtime` before calling this API.
+  `start/1` and `stop/0` control the singleton session inside that host-owned
+  runtime; they do not boot the supervision tree themselves.
   """
 
-  alias EtherCAT.Domain
-  alias EtherCAT.Event
   alias EtherCAT.Master
-  alias EtherCAT.SlaveDescription
-  alias EtherCAT.SlaveSnapshot
-  alias EtherCAT.Snapshot
+  alias EtherCAT.Sample
   alias EtherCAT.Slave
+  alias EtherCAT.SlaveDescription
 
-  @typedoc """
-  Public master session states returned by `state/0` once the local query
-  succeeds.
-  """
   @type session_state ::
           :idle
           | :discovering
@@ -67,79 +46,43 @@ defmodule EtherCAT do
           | :activation_blocked
           | :recovering
 
-  @typedoc """
-  Local wrapper errors returned when a synchronous master query cannot complete.
-  """
   @type master_query_error :: {:error, :not_started | :timeout | {:server_exit, term()}}
-
-  @typedoc """
-  Successful query value wrapped with `:ok`, or a local master query error.
-  """
   @type master_query_result(value) :: {:ok, value} | master_query_error()
-
-  @typedoc "Configured runtime slave name."
   @type slave_name :: atom()
-
-  @typedoc "Public slave description for one configured slave."
+  @type domain_id :: atom()
   @type description :: SlaveDescription.t()
-
-  @typedoc "Descriptions for all configured slaves keyed by slave name."
   @type inventory :: %{optional(slave_name()) => description()}
-
-  @typedoc "Driver-backed aggregate snapshot for the current session."
-  @type snapshot :: Snapshot.t()
-
-  @typedoc "Driver-backed snapshot for one named slave."
-  @type slave_snapshot :: SlaveSnapshot.t()
-
-  @typedoc "Public slave event emitted by `subscribe/2`."
-  @type event :: Event.t()
+  @type sample_map :: %{optional(domain_id()) => Sample.t()}
 
   @doc """
-  Start the master: open the interface, discover slaves, and begin
-  self-driving configuration.
-
-  Requires `EtherCAT.Runtime` to already be running under the host
-  application's supervision tree.
+  Start the master: open the backend, discover slaves, and begin configuration.
   """
   @spec start(keyword()) :: :ok | {:error, term()}
   def start(opts \\ []), do: Master.start(opts)
 
-  @doc """
-  Stop the master: tear the session down completely.
-
-  Returns `{:error, :already_stopped}` if not running.
-  """
+  @doc "Stop the active master session."
   @spec stop() :: :ok | {:error, :already_stopped | :timeout | {:server_exit, term()}}
   def stop do
     case Master.stop() do
       :ok -> :ok
       :already_stopped -> {:error, :already_stopped}
-      {:error, _} = err -> err
+      {:error, _} = error -> error
     end
   end
 
-  @doc """
-  Block until the master reaches a usable session state, then return `:ok`.
-  """
-  @spec await_running(timeout_ms :: pos_integer()) :: :ok | {:error, term()}
+  @doc "Block until the master reaches a usable session state."
+  @spec await_running(pos_integer()) :: :ok | {:error, term()}
   def await_running(timeout_ms \\ 10_000), do: Master.await_running(timeout_ms)
 
-  @doc """
-  Block until the master reaches operational cyclic runtime, then return `:ok`.
-  """
-  @spec await_operational(timeout_ms :: pos_integer()) :: :ok | {:error, term()}
+  @doc "Block until the master reaches operational cyclic runtime."
+  @spec await_operational(pos_integer()) :: :ok | {:error, term()}
   def await_operational(timeout_ms \\ 10_000), do: Master.await_operational(timeout_ms)
 
-  @doc """
-  Return the current public session state.
-  """
+  @doc "Return the current public session state."
   @spec state() :: master_query_result(session_state())
   def state, do: ok_query(Master.state())
 
-  @doc """
-  Return the configured slave names for the current session.
-  """
+  @doc "Return the configured slave names for the current session."
   @spec slaves() :: master_query_result([slave_name()])
   def slaves do
     with {:ok, slave_summaries} <- ok_query(Master.slaves()) do
@@ -147,32 +90,25 @@ defmodule EtherCAT do
     end
   end
 
-  @doc """
-  Return the latest driver-backed aggregate snapshot for all configured slaves.
+  @doc "Return the latest retained domain samples for one slave."
+  @spec samples(slave_name()) ::
+          {:ok, sample_map()} | {:error, :not_found | :timeout | {:server_exit, term()}}
+  def samples(slave_name) when is_atom(slave_name), do: Slave.samples(slave_name)
 
-  Keys:
-    - `:cycle` - latest observed cycle counter across active domains, or `nil`
-    - `:slaves` - current slave snapshots keyed by slave name
-    - `:updated_at_us` - latest slave update timestamp contributing to the image
-  """
-  @spec snapshot() :: master_query_result(snapshot())
-  def snapshot do
-    with {:ok, slave_summaries} <- ok_query(Master.slaves()),
-         {:ok, slaves} <- snapshot_slaves(slave_summaries) do
-      {:ok, Snapshot.from_slaves(snapshot_cycle(), slaves)}
+  @doc "Return the latest retained sample for one slave and domain."
+  @spec sample(slave_name(), domain_id()) ::
+          {:ok, Sample.t()}
+          | {:error, :not_ready | :not_found | :timeout | {:server_exit, term()}}
+  def sample(slave_name, domain_id) when is_atom(slave_name) and is_atom(domain_id) do
+    with {:ok, samples} <- Slave.samples(slave_name) do
+      case Map.fetch(samples, domain_id) do
+        {:ok, sample} -> {:ok, sample}
+        :error -> {:error, :not_ready}
+      end
     end
   end
 
-  @doc """
-  Return the latest driver-backed snapshot for one named slave.
-  """
-  @spec snapshot(slave_name()) ::
-          {:ok, slave_snapshot()} | {:error, :not_found | :timeout | {:server_exit, term()}}
-  def snapshot(slave_name) when is_atom(slave_name), do: Slave.snapshot(slave_name)
-
-  @doc """
-  Return the public description for one named slave.
-  """
+  @doc "Return the static protocol description for one configured slave."
   @spec describe(slave_name()) ::
           {:ok, description()} | {:error, :not_found | :timeout | {:server_exit, term()}}
   def describe(slave_name) when is_atom(slave_name) do
@@ -182,9 +118,7 @@ defmodule EtherCAT do
     end
   end
 
-  @doc """
-  Return the public descriptions for all configured slaves.
-  """
+  @doc "Return static protocol descriptions for all configured slaves."
   @spec inventory() :: master_query_result(inventory())
   def inventory do
     with {:ok, status} <- configured_status() do
@@ -196,124 +130,34 @@ defmodule EtherCAT do
   end
 
   @doc """
-  Subscribe to public driver-backed slave events.
+  Subscribe a process to coherent samples from one slave.
 
-  `subscribe(:all, pid)` follows the runtime-wide slave event stream,
-  including future slaves that appear after the subscription is created.
-
-  `subscribe(slave_name, pid)` subscribes only to one named slave's events.
-
-  Returns `{:error, :not_started}` if the host-supervised runtime is not
-  running.
-
-  Event messages are emitted as `%EtherCAT.Event{}` structs.
+  Registration and the returned current sample map share the slave process's
+  serialization boundary. Subsequent observations are delivered directly as
+  `%EtherCAT.Sample{}` messages. Subscriber processes are monitored and cleaned
+  up automatically.
   """
-  @spec subscribe(atom() | :all, pid()) :: :ok | {:error, term()}
-  def subscribe(slave_name \\ :all, pid \\ self())
-
-  def subscribe(:all, pid) when is_pid(pid), do: register_subscription(pid, :all)
-
-  def subscribe(slave_name, pid) when is_atom(slave_name) and is_pid(pid),
-    do: register_subscription(pid, {:slave, slave_name})
-
-  @doc """
-  Execute one driver-backed command against a named slave.
-
-  For generic output writes, prefer
-  `EtherCAT.command(slave, :set_output, %{signal: signal_name, value: value})`.
-  The signal name must be the driver's canonical signal name.
-  """
-  @spec command(slave_name(), atom(), map()) :: {:ok, reference()} | {:error, term()}
-  def command(slave_name, command_name, args)
-      when is_atom(slave_name) and is_atom(command_name) and is_map(args) do
-    Slave.command(slave_name, command_name, args)
+  @spec subscribe(slave_name(), pid()) ::
+          {:ok, sample_map()} | {:error, :not_found | :timeout | {:server_exit, term()}}
+  def subscribe(slave_name, pid \\ self()) when is_atom(slave_name) and is_pid(pid) do
+    Slave.subscribe_samples(slave_name, pid)
   end
 
-  defp ok_query({:error, _} = err), do: err
+  @doc "Read one decoded input signal from the current process image."
+  @spec read(slave_name(), atom()) :: {:ok, {term(), integer()}} | {:error, term()}
+  def read(slave_name, signal_name) when is_atom(slave_name) and is_atom(signal_name) do
+    Slave.read_input(slave_name, signal_name)
+  end
+
+  @doc "Stage one decoded output signal for the next domain cycle."
+  @spec write(slave_name(), atom(), term()) :: :ok | {:error, term()}
+  def write(slave_name, signal_name, value)
+      when is_atom(slave_name) and is_atom(signal_name) do
+    Slave.write_output(slave_name, signal_name, value)
+  end
+
+  defp ok_query({:error, _} = error), do: error
   defp ok_query(value), do: {:ok, value}
-
-  defp register_subscription(pid, key) when is_pid(pid) do
-    case Process.whereis(EtherCAT.SubscriptionRegistry) do
-      nil ->
-        {:error, :not_started}
-
-      _registry_pid ->
-        do_register_subscription(pid, key)
-    end
-  end
-
-  defp do_register_subscription(pid, key) when pid == self() do
-    register_current_process_subscription(pid, key)
-  end
-
-  defp do_register_subscription(pid, key) do
-    if public_subscription_registered?(key, pid) do
-      :ok
-    else
-      parent = self()
-      proxy = spawn(fn -> subscription_proxy(parent, key, pid) end)
-
-      receive do
-        {__MODULE__, :subscription_proxy_registered, ^proxy, reply} -> reply
-      after
-        1_000 -> {:error, :subscription_registration_timeout}
-      end
-    end
-  end
-
-  defp register_current_process_subscription(pid, key) do
-    case Registry.register(EtherCAT.SubscriptionRegistry, key, {:subscriber, pid}) do
-      {:ok, _owner} -> :ok
-      {:error, {:already_registered, _owner}} -> :ok
-    end
-  end
-
-  defp public_subscription_registered?(key, pid) do
-    EtherCAT.SubscriptionRegistry
-    |> Registry.lookup(key)
-    |> Enum.any?(fn {_registered_pid, value} -> subscriber_value_pid(value) == pid end)
-  end
-
-  defp subscription_proxy(parent, key, subscriber) do
-    reply =
-      case Registry.register(EtherCAT.SubscriptionRegistry, key, {:subscriber, subscriber}) do
-        {:ok, _owner} -> :ok
-        {:error, {:already_registered, _owner}} -> :ok
-      end
-
-    send(parent, {__MODULE__, :subscription_proxy_registered, self(), reply})
-    ref = Process.monitor(subscriber)
-    subscription_proxy_loop(subscriber, ref)
-  end
-
-  defp subscription_proxy_loop(subscriber, ref) do
-    receive do
-      {:DOWN, ^ref, :process, ^subscriber, _reason} ->
-        :ok
-
-      %Event{} = event ->
-        send(subscriber, event)
-        subscription_proxy_loop(subscriber, ref)
-
-      _other ->
-        subscription_proxy_loop(subscriber, ref)
-    end
-  end
-
-  defp subscriber_value_pid({:subscriber, pid}) when is_pid(pid), do: pid
-  defp subscriber_value_pid(_value), do: nil
-
-  defp snapshot_slaves(slave_summaries) do
-    Enum.reduce_while(slave_summaries, {:ok, %{}}, fn %{name: name}, {:ok, acc} ->
-      case Slave.snapshot(name) do
-        {:ok, %EtherCAT.SlaveSnapshot{} = snapshot} ->
-          {:cont, {:ok, Map.put(acc, name, snapshot)}}
-
-        {:error, reason} ->
-          {:halt, {:error, {:snapshot_failed, name, reason}}}
-      end
-    end)
-  end
 
   defp configured_status do
     case Master.status() do
@@ -323,8 +167,8 @@ defmodule EtherCAT do
       %EtherCAT.Master.Status{} = status ->
         {:ok, status}
 
-      {:error, _} = err ->
-        err
+      {:error, _} = error ->
+        error
     end
   end
 
@@ -332,29 +176,6 @@ defmodule EtherCAT do
     case Enum.find(configured_slaves, &(&1.name == slave_name)) do
       nil -> {:error, :not_found}
       slave -> {:ok, slave}
-    end
-  end
-
-  defp snapshot_cycle do
-    case Master.domains() do
-      domains when is_list(domains) ->
-        domains
-        |> Enum.reduce([], fn {domain_id, _cycle_time_us, _pid}, acc ->
-          case Domain.info(domain_id) do
-            {:ok, %{cycle_count: cycle_count}} when is_integer(cycle_count) ->
-              [cycle_count | acc]
-
-            _ ->
-              acc
-          end
-        end)
-        |> case do
-          [] -> nil
-          cycle_counts -> Enum.max(cycle_counts)
-        end
-
-      _ ->
-        nil
     end
   end
 end

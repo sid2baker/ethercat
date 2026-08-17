@@ -117,26 +117,44 @@ defmodule EtherCAT.Domain.Cycle do
   end
 
   defp dispatch_inputs(response, input_slices, table, domain_id, cycle_index, updated_at_us) do
-    # Group changes by slave_name to prevent fan-out message flooding
     changes_by_slave =
       Enum.reduce(input_slices, %{}, fn {offset, size, {slave_name, _} = key}, acc ->
-        new_val = binary_part(response, offset, size)
-        old_val = Image.stored_value(table, key, nil)
+        new_value = binary_part(response, offset, size)
+        old_value = Image.stored_value(table, key, nil)
 
-        if new_val != old_val do
-          Image.update_input(table, key, new_val, updated_at_us)
-          change = {key, old_val, new_val}
-          Map.update(acc, slave_name, [change], &[change | &1])
-        else
+        if new_value == old_value do
           acc
+        else
+          Image.update_input(table, key, new_value, updated_at_us)
+
+          Map.update(
+            acc,
+            slave_name,
+            [{key, old_value, new_value}],
+            &[{key, old_value, new_value} | &1]
+          )
         end
       end)
+
+    inputs_by_slave = coherent_changed_inputs(response, input_slices, changes_by_slave)
 
     Enum.each(changes_by_slave, fn {slave_name, changes} ->
       maybe_dispatch_input(
         slave_name,
-        {:domain_inputs, domain_id, cycle_index, changes, updated_at_us}
+        {:domain_inputs, domain_id, cycle_index, changes, Map.fetch!(inputs_by_slave, slave_name),
+         updated_at_us}
       )
+    end)
+  end
+
+  defp coherent_changed_inputs(response, input_slices, changes_by_slave) do
+    Enum.reduce(input_slices, %{}, fn {offset, size, {slave_name, _} = key}, acc ->
+      if Map.has_key?(changes_by_slave, slave_name) do
+        new_value = binary_part(response, offset, size)
+        Map.update(acc, slave_name, %{key => new_value}, &Map.put(&1, key, new_value))
+      else
+        acc
+      end
     end)
   end
 

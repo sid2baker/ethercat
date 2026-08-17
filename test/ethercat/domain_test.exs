@@ -317,7 +317,7 @@ defmodule EtherCAT.DomainTest do
 
     assert_receive {:relay, ^first_relay,
                     {:domain_inputs, :main, first_cycle_index, [{^key, :unset, <<0>>}],
-                     first_updated_at_us}}
+                     %{^key => <<0>>}, first_updated_at_us}}
 
     assert first_cycle_index == 1
     assert is_integer(first_updated_at_us)
@@ -333,7 +333,7 @@ defmodule EtherCAT.DomainTest do
 
     assert_receive {:relay, ^second_relay,
                     {:domain_inputs, :main, second_cycle_index, [{^key, <<0>>, <<1>>}],
-                     second_updated_at_us}}
+                     %{^key => <<1>>}, second_updated_at_us}}
 
     assert second_cycle_index == 2
     assert is_integer(second_updated_at_us)
