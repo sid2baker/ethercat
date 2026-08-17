@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- EtherCAT's public runtime boundary is now protocol-focused: coherent
+  per-domain `%EtherCAT.Sample{}` observations and explicit `read/2`/`write/3`
+  operations replace projected slave snapshots, semantic events, and
+  driver-backed commands; `EtherCAT.Driver` now owns only identity, PDO signal
+  layout/metadata, and value codecs (`da97385`).
 - Concrete sample drivers (`EK1100`, `EL1809`, `EL2809`, and the manual-based
   `ATV320`) now live in test support instead of `lib/`, so the published
   library ships only the generic driver contracts/helpers plus
@@ -90,7 +95,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `EtherCAT.Driver`, simulator companions
   use `EtherCAT.Simulator.Adapter`, and the extra simulator-side driver helper
   split was removed (`7830f13`).
-- `EtherCAT.snapshot/0` now returns a best-effort aggregate of
+- The former aggregate snapshot API returned a best-effort collection of
   `%EtherCAT.SlaveSnapshot{}` structs instead of a flattened signal map, and
   `%EtherCAT.Event{}` is documented as the top-level driver/slave event
   envelope (`f15d37b`).
