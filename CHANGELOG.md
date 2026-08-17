@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Protocol subscriptions now atomically return current slave/domain status and
+  retained samples, then deliver `%EtherCAT.Sample{}` values alongside
+  `%EtherCAT.Notification{}` messages for slave runtime-state and attached-domain
+  lifecycle/health changes (`eda0e72`).
 - EtherCAT's public runtime boundary is now protocol-focused: coherent
   per-domain `%EtherCAT.Sample{}` observations and explicit `read/2`/`write/3`
   operations replace projected slave snapshots, semantic events, and
