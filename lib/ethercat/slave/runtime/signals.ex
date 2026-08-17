@@ -153,15 +153,15 @@ defmodule EtherCAT.Slave.Runtime.Signals do
       binary_part(sm_bytes, div(bit_offset, 8), div(bit_size, 8))
     else
       total_bits = byte_size(sm_bytes) * 8
-      <<sm_value::unsigned-little-size(total_bits)>> = sm_bytes
+      <<sm_value::unsigned-little-size(^total_bits)>> = sm_bytes
       high_bits = total_bits - bit_offset - bit_size
 
-      <<_::size(high_bits), raw::size(bit_size), _::size(bit_offset)>> =
+      <<_::size(^high_bits), raw::size(^bit_size), _::size(^bit_offset)>> =
         <<sm_value::size(total_bits)>>
 
       encoded_bits = ceil_div(bit_size, 8) * 8
 
-      <<encoded_value::size(encoded_bits)>> =
+      <<encoded_value::size(^encoded_bits)>> =
         <<0::size(encoded_bits - bit_size), raw::size(bit_size)>>
 
       <<encoded_value::unsigned-little-size(encoded_bits)>>

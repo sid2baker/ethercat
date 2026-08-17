@@ -216,12 +216,12 @@ defmodule EtherCAT.Simulator.Slave.Value do
   defp decode_typed_binary(:f64, <<value::float-64-little>>), do: value
 
   defp decode_typed_binary({:uint, bits}, binary) do
-    <<value::unsigned-little-size(bits)>> = binary
+    <<value::unsigned-little-size(^bits)>> = binary
     value
   end
 
   defp decode_typed_binary({:int, bits}, binary) do
-    <<value::signed-little-size(bits)>> = binary
+    <<value::signed-little-size(^bits)>> = binary
     value
   end
 

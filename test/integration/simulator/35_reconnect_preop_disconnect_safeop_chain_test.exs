@@ -17,7 +17,7 @@ defmodule EtherCAT.Integration.Simulator.ReconnectPreopDisconnectSafeopChainTest
     # The follow-up SAFEOP retreat lands on :inputs, so enable health polling there too.
     SimulatorRing.boot_operational!(
       ring: :segmented,
-      slave_config_opts: [input_health_poll_ms: 20]
+      slave_config_opts: [input_health_poll_ms: 100]
     )
 
     :ok

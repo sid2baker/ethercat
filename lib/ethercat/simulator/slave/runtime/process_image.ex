@@ -202,7 +202,7 @@ defmodule EtherCAT.Simulator.Slave.Runtime.ProcessImage do
   end
 
   defp extract_value(image, %{bit_offset: bit_offset, bit_size: bit_size} = definition) do
-    <<_prefix::bitstring-size(bit_offset), value::unsigned-integer-size(bit_size),
+    <<_prefix::bitstring-size(^bit_offset), value::unsigned-integer-size(^bit_size),
       _suffix::bitstring>> = image
 
     Value.decode_integer(definition, value)
@@ -216,8 +216,8 @@ defmodule EtherCAT.Simulator.Slave.Runtime.ProcessImage do
   defp replace_value(image, %{bit_offset: bit_offset, bit_size: bit_size} = definition, binary) do
     {:ok, value} = Value.encode_integer(definition, Value.decode_binary(definition, binary))
 
-    <<prefix::bitstring-size(bit_offset), _current::bitstring-size(bit_size), suffix::bitstring>> =
-      image
+    <<prefix::bitstring-size(^bit_offset), _current::bitstring-size(^bit_size),
+      suffix::bitstring>> = image
 
     <<prefix::bitstring, value::unsigned-integer-size(bit_size), suffix::bitstring>>
   end

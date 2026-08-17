@@ -40,8 +40,6 @@ defmodule EtherCAT.Domain do
 
   @behaviour :gen_statem
 
-  require Logger
-
   alias EtherCAT.Domain.Cycle
   alias EtherCAT.Domain.Freshness
   alias EtherCAT.Domain.Image

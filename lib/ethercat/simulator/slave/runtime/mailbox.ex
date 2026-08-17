@@ -172,7 +172,7 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Mailbox do
        )
        when command in [0x2F, 0x2B, 0x27, 0x23] do
     size = expedited_download_size(command)
-    <<data::binary-size(size), _::binary>> = payload
+    <<data::binary-size(^size), _::binary>> = payload
     handle_write_entry(slave, index, subindex, data)
   end
 

@@ -132,24 +132,10 @@ defmodule EtherCAT.Bus.Link.Redundant do
   # -- Public API --
 
   @doc false
-  def child_spec(opts) do
-    Supervisor.child_spec(
-      %{
-        id: __MODULE__,
-        start: {__MODULE__, :start_link, [opts]}
-      },
-      restart: :temporary,
-      shutdown: 5000
-    )
-  end
+  def child_spec(opts), do: Link.child_spec(__MODULE__, opts)
 
   @spec start_link(keyword()) :: :gen_statem.start_ret()
-  def start_link(opts) do
-    case opts[:name] do
-      nil -> :gen_statem.start_link(__MODULE__, opts, [])
-      name -> Link.start_named(__MODULE__, name, opts)
-    end
-  end
+  def start_link(opts), do: Link.start_link(__MODULE__, opts)
 
   # -- gen_statem callbacks --
 
@@ -305,24 +291,13 @@ defmodule EtherCAT.Bus.Link.Redundant do
   defp dispatch_next(data, errors) do
     data = Link.expire_stale_realtime(data, data.link_name)
 
-    case Link.next_dispatch(data) do
-      {:realtime, submission, data} ->
-        do_send_realtime(submission, data, errors)
-
-      {:reliable, batch, data} ->
-        do_send_reliable(batch, data, errors)
-
-      :empty ->
-        idle_after_settle(data)
-    end
-  end
-
-  defp do_send_realtime(%Submission{} = submission, data, errors) do
-    Link.dispatch_realtime(submission, data, errors, &send_frame/5, &dispatch_next/2)
-  end
-
-  defp do_send_reliable(batch, data, errors) do
-    Link.dispatch_reliable(batch, data, errors, &send_frame/5, &dispatch_next/2)
+    Link.dispatch_next(
+      Link.next_dispatch(data),
+      errors,
+      &send_frame/5,
+      &dispatch_next/2,
+      fn -> idle_after_settle(data) end
+    )
   end
 
   defp send_frame(datagrams, awaiting, data, next_idx, tx_class) do

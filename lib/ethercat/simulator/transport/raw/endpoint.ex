@@ -295,7 +295,7 @@ defmodule EtherCAT.Simulator.Transport.Raw.Endpoint do
         {:error, :truncated_payload}
 
       true ->
-        <<ecat_payload::binary-size(payload_size), padding::binary>> = payload
+        <<ecat_payload::binary-size(^payload_size), padding::binary>> = payload
         {:ok, ecat_payload, padding}
     end
   end

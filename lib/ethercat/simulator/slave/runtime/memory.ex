@@ -11,13 +11,31 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Memory do
     prefix <> value <> suffix
   end
 
+  @spec read_u8(binary(), non_neg_integer()) :: non_neg_integer()
+  def read_u8(memory, offset) do
+    <<value::8>> = binary_part(memory, offset, 1)
+    value
+  end
+
+  @spec read_u16(binary(), non_neg_integer()) :: non_neg_integer()
+  def read_u16(memory, offset) do
+    <<value::16-little>> = binary_part(memory, offset, 2)
+    value
+  end
+
+  @spec read_u32(binary(), non_neg_integer()) :: non_neg_integer()
+  def read_u32(memory, offset) do
+    <<value::32-little>> = binary_part(memory, offset, 4)
+    value
+  end
+
   @spec read_lsb_bit(binary(), non_neg_integer()) :: 0 | 1
   def read_lsb_bit(binary, bit_offset) do
     byte_offset = div(bit_offset, 8)
     bit_in_byte = rem(bit_offset, 8)
     <<byte::8>> = binary_part(binary, byte_offset, 1)
 
-    <<_prefix::bitstring-size(7 - bit_in_byte), bit::1, _suffix::bitstring-size(bit_in_byte)>> =
+    <<_prefix::bitstring-size(7 - ^bit_in_byte), bit::1, _suffix::bitstring-size(^bit_in_byte)>> =
       <<byte::8>>
 
     bit
@@ -29,8 +47,8 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Memory do
     bit_in_byte = rem(bit_offset, 8)
     <<byte::8>> = binary_part(binary, byte_offset, 1)
 
-    <<prefix::bitstring-size(7 - bit_in_byte), _current::1, suffix::bitstring-size(bit_in_byte)>> =
-      <<byte::8>>
+    <<prefix::bitstring-size(7 - ^bit_in_byte), _current::1,
+      suffix::bitstring-size(^bit_in_byte)>> = <<byte::8>>
 
     <<updated_byte::8>> = <<prefix::bitstring, bit::1, suffix::bitstring>>
     replace(binary, byte_offset, <<updated_byte::8>>)

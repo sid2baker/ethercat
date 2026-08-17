@@ -1615,8 +1615,6 @@ defmodule EtherCAT.Capture do
   defp render_literal(value) when is_binary(value), do: inspect(value)
   defp render_literal(value) when is_integer(value), do: inspect(value)
   defp render_literal(value) when is_float(value), do: inspect(value)
-  defp render_literal(value) when is_boolean(value), do: inspect(value)
-  defp render_literal(nil), do: "nil"
 
   defp render_struct_body(map) do
     IO.iodata_to_binary([

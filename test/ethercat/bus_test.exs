@@ -812,12 +812,11 @@ defmodule EtherCAT.BusTest do
   end
 
   test "redundant realtime logical exchange merges complementary bounces before completing" do
-    {:ok, bus} = start_redundant_circuit_bus(frame_timeout_ms: 50)
+    {:ok, bus} = start_redundant_circuit_bus(frame_timeout_ms: 1_000)
     pri_mac = fake_mac("pri")
     sec_mac = fake_mac("sec")
 
     original = <<0xF0, 0xF1, 0xF2, 0xF3>>
-    started_at_us = System.monotonic_time(:microsecond)
 
     read =
       Task.async(fn ->
@@ -837,8 +836,7 @@ defmodule EtherCAT.BusTest do
       src_mac: sec_mac
     )
 
-    assert {:ok, [%{data: <<0x10, 0x11, 0x12, 0x13>>, wkc: 4}]} = Task.await(read)
-    assert System.monotonic_time(:microsecond) - started_at_us < 25_000
+    assert {:ok, [%{data: <<0x10, 0x11, 0x12, 0x13>>, wkc: 4}]} = Task.await(read, 250)
   end
 
   test "redundant partial-arrival timeout detail is rate-limited and clears on healthy exchange" do

@@ -67,16 +67,16 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Logical do
     base = Registers.fmmu(index)
 
     if base + @fmmu_entry_size <= byte_size(memory) do
-      activate = read_u8(memory, offset(Registers.fmmu_activate(index)))
-      length = read_u16(memory, offset(Registers.fmmu_length(index)))
+      activate = Memory.read_u8(memory, offset(Registers.fmmu_activate(index)))
+      length = Memory.read_u16(memory, offset(Registers.fmmu_length(index)))
 
       acc =
         if activate == 0x01 and length > 0 do
-          logical_start = read_u32(memory, offset(Registers.fmmu_log_start(index)))
-          logical_start_bit = read_u8(memory, offset(Registers.fmmu_log_start_bit(index)))
-          logical_stop_bit = read_u8(memory, offset(Registers.fmmu_log_stop_bit(index)))
-          phys_start = read_u16(memory, offset(Registers.fmmu_phys_start(index)))
-          phys_start_bit = read_u8(memory, offset(Registers.fmmu_phys_start_bit(index)))
+          logical_start = Memory.read_u32(memory, offset(Registers.fmmu_log_start(index)))
+          logical_start_bit = Memory.read_u8(memory, offset(Registers.fmmu_log_start_bit(index)))
+          logical_stop_bit = Memory.read_u8(memory, offset(Registers.fmmu_log_stop_bit(index)))
+          phys_start = Memory.read_u16(memory, offset(Registers.fmmu_phys_start(index)))
+          phys_start_bit = Memory.read_u8(memory, offset(Registers.fmmu_phys_start_bit(index)))
           logical_bit_length = fmmu_bit_length(length, logical_start_bit, logical_stop_bit)
 
           [
@@ -91,7 +91,7 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Logical do
               phys_start: phys_start,
               phys_start_bit: phys_start_bit,
               physical_bit_start: phys_start * 8 + phys_start_bit,
-              type: read_u8(memory, offset(Registers.fmmu_type(index)))
+              type: Memory.read_u8(memory, offset(Registers.fmmu_type(index)))
             }
             | acc
           ]
@@ -187,20 +187,5 @@ defmodule EtherCAT.Simulator.Slave.Runtime.Logical do
 
   defp extract_bits(binary, bit_offset, bit_size) do
     Enum.map(bit_offset..(bit_offset + bit_size - 1), &Memory.read_lsb_bit(binary, &1))
-  end
-
-  defp read_u8(memory, offset) do
-    <<value::8>> = binary_part(memory, offset, 1)
-    value
-  end
-
-  defp read_u16(memory, offset) do
-    <<value::16-little>> = binary_part(memory, offset, 2)
-    value
-  end
-
-  defp read_u32(memory, offset) do
-    <<value::32-little>> = binary_part(memory, offset, 4)
-    value
   end
 end

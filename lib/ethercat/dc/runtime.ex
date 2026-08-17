@@ -188,12 +188,11 @@ defmodule EtherCAT.DC.Runtime do
 
     if diagnostics? and data.monitored_stations != [] do
       now_ms = System.system_time(:millisecond)
-      next_state = if data.monitored_stations == [], do: :unavailable, else: :locking
 
       new_data = %{
         data
         | fail_count: failures,
-          lock_state: next_state,
+          lock_state: :locking,
           last_sync_check_at_ms: now_ms
       }
 

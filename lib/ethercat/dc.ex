@@ -36,8 +36,6 @@ defmodule EtherCAT.DC do
 
   @behaviour :gen_statem
 
-  require Logger
-
   alias EtherCAT.Bus
   alias EtherCAT.DC.Init
   alias EtherCAT.DC.Runtime

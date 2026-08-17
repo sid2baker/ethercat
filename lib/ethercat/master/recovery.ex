@@ -335,12 +335,8 @@ defmodule EtherCAT.Master.Recovery do
       {{:slave, name}, {:preop, {:preop_configuration_failed, _reason}}}, acc ->
         retry_recovering_slave_preop_configuration(acc, name, runtime_slave_target(acc, name))
 
-      {{:slave, name}, {:preop, reason}}, acc ->
-        if retryable_runtime_slave_fault?(reason) do
-          retry_recovering_slave_request(acc, name, runtime_slave_target(acc, name))
-        else
-          acc
-        end
+      {{:slave, name}, {:preop, _reason}}, acc ->
+        retry_recovering_slave_request(acc, name, runtime_slave_target(acc, name))
 
       _other, acc ->
         acc
@@ -365,12 +361,8 @@ defmodule EtherCAT.Master.Recovery do
               {:preop, {:preop_configuration_failed, _reason}} ->
                 retry_slave_preop_configuration(acc, name, runtime_slave_target(data, name))
 
-              {:preop, retry_reason} ->
-                if retryable_runtime_slave_fault?(retry_reason) do
-                  retry_slave_request(acc, name, runtime_slave_target(data, name))
-                else
-                  acc
-                end
+              {:preop, _retry_reason} ->
+                retry_slave_request(acc, name, runtime_slave_target(data, name))
 
               _other ->
                 acc
@@ -386,7 +378,7 @@ defmodule EtherCAT.Master.Recovery do
     Enum.any?(slave_faults, fn
       {_name, {:retreated, _target_state}} -> true
       {_name, {:preop, {:preop_configuration_failed, _reason}}} -> true
-      {_name, {:preop, reason}} -> retryable_runtime_slave_fault?(reason)
+      {_name, {:preop, _reason}} -> true
       _other -> false
     end)
   end
@@ -472,15 +464,6 @@ defmodule EtherCAT.Master.Recovery do
         put_slave_fault_entry(slave_faults, name, {:preop, {:preop_configuration_failed, reason}})
     end
   end
-
-  defp retryable_runtime_slave_fault?(
-         {:preop_configuration_failed, {:domain_reregister_required, _, _}}
-       ),
-       do: false
-
-  defp retryable_runtime_slave_fault?({:preop_configuration_failed, _reason}), do: false
-
-  defp retryable_runtime_slave_fault?(_reason), do: true
 
   defp restart_stopped_domain(data, domain_id, reason) do
     case Domain.start_cycling(domain_id) do

@@ -145,19 +145,19 @@ defmodule EtherCAT.Slave.Runtime.Outputs do
         binary_part(sm_bytes, byte_off + byte_sz, total - byte_off - byte_sz)
     else
       total_bits = byte_size(sm_bytes) * 8
-      <<sm_value::unsigned-little-size(total_bits)>> = sm_bytes
+      <<sm_value::unsigned-little-size(^total_bits)>> = sm_bytes
 
       encoded_bits = byte_size(encoded) * 8
-      <<encoded_value::unsigned-little-size(encoded_bits)>> = encoded
+      <<encoded_value::unsigned-little-size(^encoded_bits)>> = encoded
 
       field_value =
         if encoded_bits >= bit_size do
-          <<_::size(encoded_bits - bit_size), field::size(bit_size)>> =
+          <<_::size(^encoded_bits - ^bit_size), field::size(^bit_size)>> =
             <<encoded_value::size(encoded_bits)>>
 
           field
         else
-          <<field::size(bit_size)>> =
+          <<field::size(^bit_size)>> =
             <<0::size(bit_size - encoded_bits), encoded_value::size(encoded_bits)>>
 
           field
@@ -165,10 +165,10 @@ defmodule EtherCAT.Slave.Runtime.Outputs do
 
       high_bits = total_bits - bit_offset - bit_size
 
-      <<high::size(high_bits), _::size(bit_size), low::size(bit_offset)>> =
+      <<high::size(^high_bits), _::size(^bit_size), low::size(^bit_offset)>> =
         <<sm_value::size(total_bits)>>
 
-      <<patched_value::size(total_bits)>> =
+      <<patched_value::size(^total_bits)>> =
         <<high::size(high_bits), field_value::size(bit_size), low::size(bit_offset)>>
 
       <<patched_value::unsigned-little-size(total_bits)>>

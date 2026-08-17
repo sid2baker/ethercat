@@ -107,20 +107,17 @@ defmodule EtherCAT.Simulator.Runtime.FaultEngine do
   defp resume_fault_script(state, script_id, steps, callbacks) do
     {exchange_steps, rest_steps} = Enum.split_while(steps, &fault_script_exchange_step?/1)
 
-    cond do
-      exchange_steps != [] ->
+    case exchange_steps do
+      [] ->
+        advance_non_exchange_script_step(state, script_id, steps, callbacks)
+
+      [_step | _rest] ->
         with {:ok, faults} <- Faults.enqueue_script_steps(state.faults, script_id, exchange_steps) do
           state = %{state | faults: faults}
           {:ok, maybe_store_script_resume(state, script_id, length(exchange_steps), rest_steps)}
         else
           :error -> {:error, :invalid_fault}
         end
-
-      steps == [] ->
-        {:ok, state}
-
-      true ->
-        advance_non_exchange_script_step(state, script_id, steps, callbacks)
     end
   end
 

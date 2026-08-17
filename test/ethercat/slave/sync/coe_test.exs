@@ -35,11 +35,11 @@ defmodule EtherCAT.Slave.Sync.CoETest do
     end
 
     assert_raise ArgumentError, fn ->
-      CoE.output_steps(:bad_mode, 1_000_000)
+      apply(CoE, :output_steps, [:bad_mode, 1_000_000])
     end
 
     assert_raise ArgumentError, fn ->
-      CoE.input_steps({:sm_event, :sm1}, 1_000_000)
+      apply(CoE, :input_steps, [{:sm_event, :sm1}, 1_000_000])
     end
   end
 end

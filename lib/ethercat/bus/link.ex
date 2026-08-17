@@ -33,6 +33,30 @@ defmodule EtherCAT.Bus.Link do
     defstruct [:from, :tx, :stale_after_us, :enqueued_at_us]
   end
 
+  # -- Process lifecycle --
+
+  @doc false
+  @spec child_spec(module(), keyword()) :: Supervisor.child_spec()
+  def child_spec(module, opts) when is_atom(module) and is_list(opts) do
+    Supervisor.child_spec(
+      %{
+        id: module,
+        start: {module, :start_link, [opts]}
+      },
+      restart: :temporary,
+      shutdown: 5000
+    )
+  end
+
+  @doc false
+  @spec start_link(module(), keyword()) :: :gen_statem.start_ret()
+  def start_link(module, opts) when is_atom(module) and is_list(opts) do
+    case opts[:name] do
+      nil -> :gen_statem.start_link(module, opts, [])
+      name -> start_named(module, name, opts)
+    end
+  end
+
   # -- Queue management --
 
   @doc """
@@ -172,7 +196,7 @@ defmodule EtherCAT.Bus.Link do
         {from, Enum.map(stamped, & &1.idx)}
       end)
 
-    all_datagrams = Enum.flat_map(stamped_batch, & &1)
+    all_datagrams = Enum.concat(stamped_batch)
     {all_datagrams, awaiting, next_idx}
   end
 
@@ -221,6 +245,39 @@ defmodule EtherCAT.Bus.Link do
   @spec reply_submissions([Submission.t()], term()) :: :ok
   def reply_submissions(submissions, reply) do
     Enum.each(submissions, fn %Submission{from: from} -> :gen_statem.reply(from, reply) end)
+  end
+
+  @doc false
+  @spec dispatch_next(
+          {:realtime, Submission.t(), map()} | {:reliable, [Submission.t()], map()} | :empty,
+          non_neg_integer(),
+          (list(), list(), map(), non_neg_integer(), :realtime | :reliable -> tuple()),
+          (map(), non_neg_integer() -> tuple()),
+          (-> tuple())
+        ) :: tuple()
+  def dispatch_next(
+        {:realtime, submission, data},
+        errors,
+        send_frame,
+        dispatch_next,
+        _on_empty
+      ) do
+    dispatch_realtime(submission, data, errors, send_frame, dispatch_next)
+  end
+
+  def dispatch_next(
+        {:reliable, batch, data},
+        errors,
+        send_frame,
+        dispatch_next,
+        _on_empty
+      ) do
+    dispatch_reliable(batch, data, errors, send_frame, dispatch_next)
+  end
+
+  def dispatch_next(:empty, _errors, _send_frame, _dispatch_next, on_empty)
+      when is_function(on_empty, 0) do
+    on_empty.()
   end
 
   @doc false

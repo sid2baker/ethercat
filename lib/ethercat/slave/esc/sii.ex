@@ -334,7 +334,7 @@ defmodule EtherCAT.Slave.ESC.SII do
   defp read_chunks(bus, station, addr, remaining, chunk_words, acc) do
     with {:ok, chunk_data} <- read_one(bus, station, addr, chunk_words) do
       take = min(remaining, chunk_words)
-      <<used::binary-size(take * 2), _::binary>> = chunk_data
+      <<used::binary-size(^take * 2), _::binary>> = chunk_data
 
       read_chunks(
         bus,

@@ -99,7 +99,6 @@ defmodule EtherCAT.Slave.FSM do
     case initialize_to_preop(data) do
       {:ok, :init, new_data, actions} -> {:keep_state, new_data, actions}
       {:ok, :preop, new_data, []} -> {:next_state, :preop, new_data}
-      {:ok, next_state, new_data, actions} -> {:next_state, next_state, new_data, actions}
     end
   end
 

@@ -57,7 +57,6 @@ defmodule EtherCAT.Simulator.Slave.Runtime.AL do
   def valid_transition?(:op, :safeop), do: true
   def valid_transition?(:op, :preop), do: true
   def valid_transition?(:bootstrap, :preop), do: true
-  def valid_transition?(:bootstrap, :init), do: true
   def valid_transition?(_from, _to), do: false
 
   defp apply_transition(slave, target_state) do
@@ -167,10 +166,10 @@ defmodule EtherCAT.Simulator.Slave.Runtime.AL do
   end
 
   defp validate_sync_manager(memory, index, start, size, control) do
-    if read_u16(memory, offset(Registers.sm_start(index))) == start and
-         read_u16(memory, offset(Registers.sm_length(index))) == size and
-         read_u8(memory, offset(Registers.sm_control(index))) == control and
-         read_u8(memory, offset(Registers.sm_activate(index))) == 0x01 do
+    if Memory.read_u16(memory, offset(Registers.sm_start(index))) == start and
+         Memory.read_u16(memory, offset(Registers.sm_length(index))) == size and
+         Memory.read_u8(memory, offset(Registers.sm_control(index))) == control and
+         Memory.read_u8(memory, offset(Registers.sm_activate(index))) == 0x01 do
       :ok
     else
       :error
@@ -198,14 +197,4 @@ defmodule EtherCAT.Simulator.Slave.Runtime.AL do
   end
 
   defp offset({offset, _length}), do: offset
-
-  defp read_u8(memory, offset) do
-    <<value::8>> = binary_part(memory, offset, 1)
-    value
-  end
-
-  defp read_u16(memory, offset) do
-    <<value::16-little>> = binary_part(memory, offset, 2)
-    value
-  end
 end

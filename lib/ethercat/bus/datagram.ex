@@ -104,7 +104,7 @@ defmodule EtherCAT.Bus.Datagram do
     <<m::1, c::1, _r::3, len::11>> = <<len_field::big-unsigned-16>>
 
     case rest do
-      <<data::binary-size(len), wkc::little-unsigned-16, tail::binary>> ->
+      <<data::binary-size(^len), wkc::little-unsigned-16, tail::binary>> ->
         dg = %__MODULE__{
           cmd: cmd,
           idx: idx,
