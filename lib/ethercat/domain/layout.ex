@@ -79,6 +79,11 @@ defmodule EtherCAT.Domain.Layout do
     MapSet.size(layout.output_slave_names) * 2 + MapSet.size(layout.input_slave_names)
   end
 
+  @spec slave_names(t()) :: MapSet.t(atom())
+  def slave_names(%__MODULE__{} = layout) do
+    MapSet.union(layout.output_slave_names, layout.input_slave_names)
+  end
+
   @spec prepare(t()) ::
           {:ok, CyclePlan.t()}
           | {:error, :nothing_registered | {:image_too_large, integer(), integer()}}

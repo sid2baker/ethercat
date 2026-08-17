@@ -12,6 +12,7 @@ defmodule EtherCAT.Slave.FSM do
   alias EtherCAT.Slave.Runtime.Configuration
   alias EtherCAT.Slave.Runtime.DCSignals
   alias EtherCAT.Slave.Runtime.Health
+  alias EtherCAT.Slave.Runtime.Notifications
   alias EtherCAT.Slave.Runtime.Outputs
   alias EtherCAT.Slave.Runtime.Samples
   alias EtherCAT.Slave.Runtime.Signals
@@ -75,21 +76,30 @@ defmodule EtherCAT.Slave.FSM do
   # -- State enter -----------------------------------------------------------
 
   @impl true
-  def handle_event(:enter, _old, :init, _data), do: :keep_state_and_data
+  def handle_event(:enter, old, :init, data) do
+    Notifications.state_changed(data, old, :init)
+    :keep_state_and_data
+  end
 
-  def handle_event(:enter, _old, :preop, data) do
+  def handle_event(:enter, old, :preop, data) do
+    Notifications.state_changed(data, old, :preop)
     {:keep_state_and_data, health_poll_actions(data)}
   end
 
-  def handle_event(:enter, _old, :safeop, data) do
+  def handle_event(:enter, old, :safeop, data) do
+    Notifications.state_changed(data, old, :safeop)
     {:keep_state_and_data, health_poll_actions(data)}
   end
 
-  def handle_event(:enter, _old, :op, data) do
+  def handle_event(:enter, old, :op, data) do
+    Notifications.state_changed(data, old, :op)
     {:keep_state_and_data, latch_poll_actions(data) ++ health_poll_actions(data)}
   end
 
-  def handle_event(:enter, _old, :bootstrap, _data), do: :keep_state_and_data
+  def handle_event(:enter, old, :bootstrap, data) do
+    Notifications.state_changed(data, old, :bootstrap)
+    :keep_state_and_data
+  end
 
   # -- Spec init → preop sequence -------------------------------------------
 
@@ -133,6 +143,10 @@ defmodule EtherCAT.Slave.FSM do
      )}
   end
 
+  def handle_event(:info, {:domain_status, status}, _state, data) do
+    {:keep_state, Notifications.domain_status(data, status)}
+  end
+
   def handle_event(:info, {:DOWN, ref, :process, pid, _reason}, _state, data) do
     case Map.get(data.subscriber_refs, pid) do
       ^ref ->
@@ -165,7 +179,8 @@ defmodule EtherCAT.Slave.FSM do
 
   # -- :down state (slave physically disconnected, polling for reconnect) -----
 
-  def handle_event(:enter, _old, :down, data) do
+  def handle_event(:enter, old, :down, data) do
+    Notifications.state_changed(data, old, :down)
     name = data.name
     station = data.station
     health_poll_ms = data.health_poll_ms
@@ -212,6 +227,11 @@ defmodule EtherCAT.Slave.FSM do
     {:keep_state_and_data, [{:reply, from, {:ok, Samples.all(data)}}]}
   end
 
+  defp handle_call(from, :status, state, data) do
+    status = EtherCAT.Slave.Status.from_runtime(state, data)
+    {:keep_state_and_data, [{:reply, from, {:ok, status}}]}
+  end
+
   defp handle_call(from, {:request, target}, state, _data) when state == target do
     {:keep_state_and_data, [{:reply, from, :ok}]}
   end
@@ -234,7 +254,7 @@ defmodule EtherCAT.Slave.FSM do
       steps ->
         case walk_path(data, steps) do
           {:ok, new_data} ->
-            {:next_state, target, new_data, [{:reply, from, :ok}]}
+            {:next_state, target, %{new_data | state_reason: nil}, [{:reply, from, :ok}]}
 
           {:error, reason, new_data} ->
             {:keep_state, new_data, [{:reply, from, {:error, reason}}]}
@@ -284,9 +304,10 @@ defmodule EtherCAT.Slave.FSM do
     end
   end
 
-  defp handle_call(from, {:subscribe_samples, pid}, _state, data) do
-    {new_data, samples} = Samples.subscribe(data, pid)
-    {:keep_state, new_data, [{:reply, from, {:ok, samples}}]}
+  defp handle_call(from, {:subscribe_protocol, pid}, state, data) do
+    new_data = Notifications.subscribe(data, pid)
+    status = EtherCAT.Slave.Status.from_runtime(state, new_data)
+    {:keep_state, new_data, [{:reply, from, {:ok, status, Samples.all(new_data)}}]}
   end
 
   defp handle_call(from, {:write_output, _signal_name, _value}, :down, _data) do
@@ -368,7 +389,9 @@ defmodule EtherCAT.Slave.FSM do
       output_sm_images: %{},
       subscriptions: %{},
       samples: %{},
-      sample_subscriptions: MapSet.new(),
+      protocol_subscriptions: MapSet.new(),
+      domain_statuses: %{},
+      state_reason: nil,
       subscriber_refs: %{}
     }
     |> Samples.initialize()
@@ -392,6 +415,7 @@ defmodule EtherCAT.Slave.FSM do
       pdo_health: pdo_health_snapshot(data.signal_registrations),
       signals: signal_summaries(data.signal_registrations),
       configuration_error: data.configuration_error,
+      protocol_status: EtherCAT.Slave.Status.from_runtime(state, data),
       device_type: description.device_type,
       endpoints: description.endpoints,
       samples: Samples.all(data)

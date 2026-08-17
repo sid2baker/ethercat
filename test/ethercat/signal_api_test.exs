@@ -2,7 +2,11 @@ defmodule EtherCAT.SampleApiTest do
   use ExUnit.Case, async: false
 
   alias EtherCAT.Domain.Image
+  alias EtherCAT.Domain.Status, as: DomainStatus
+  alias EtherCAT.Notification
   alias EtherCAT.Sample
+  alias EtherCAT.Slave.Status, as: SlaveStatus
+  alias EtherCAT.Slave.Runtime.Notifications
   alias EtherCAT.Slave.Runtime.Outputs
   alias EtherCAT.Slave.Runtime.Samples
 
@@ -70,7 +74,8 @@ defmodule EtherCAT.SampleApiTest do
         output_domain_ids_by_sm: %{{:sm, 2} => [domain_id]},
         output_sm_images: %{{:sm, 2} => <<0>>},
         samples: %{},
-        sample_subscriptions: MapSet.new(),
+        protocol_subscriptions: MapSet.new(),
+        domain_statuses: %{},
         subscriptions: %{},
         subscriber_refs: %{}
       }
@@ -88,7 +93,7 @@ defmodule EtherCAT.SampleApiTest do
     input_key: input_key,
     data: data
   } do
-    {data, %{}} = Samples.subscribe(data, self())
+    data = Notifications.subscribe(data, self())
     observed_at = System.monotonic_time(:microsecond)
 
     data =
@@ -117,6 +122,49 @@ defmodule EtherCAT.SampleApiTest do
       Samples.refresh(data, domain_id, 8, %{input_key => <<1>>}, observed_at, [:ch1])
 
     assert_receive {:ethercat, :signal, :test_slave, :ch1, true}
+  end
+
+  test "protocol subscription reports current status and later runtime notifications", %{
+    domain_id: domain_id,
+    data: data
+  } do
+    data = Notifications.subscribe(data, self())
+    status = SlaveStatus.from_runtime(:safeop, data)
+
+    assert %DomainStatus{lifecycle: :open, cycle_health: :not_ready} =
+             status.domains[domain_id]
+
+    assert :ok = Notifications.state_changed(data, :safeop, :op)
+
+    assert_receive %Notification{
+      slave: :test_slave,
+      kind: :slave_state_changed,
+      details: %{previous_state: :safeop, current: %SlaveStatus{state: :op}}
+    }
+  end
+
+  test "domain status changes are retained and published without duplicates", %{
+    domain_id: domain_id,
+    data: data
+  } do
+    data = Notifications.subscribe(data, self())
+    observed_at = System.monotonic_time(:microsecond)
+
+    degraded =
+      DomainStatus.protocol_status(domain_id, :cycling, :degraded, :timeout, observed_at)
+
+    data = Notifications.domain_status(data, degraded)
+
+    assert_receive %Notification{
+      slave: :test_slave,
+      kind: :domain_status_changed,
+      observed_at: ^observed_at,
+      details: %{current: ^degraded}
+    }
+
+    duplicate = %{degraded | observed_at: observed_at + 1}
+    _data = Notifications.domain_status(data, duplicate)
+    refute_receive %Notification{kind: :domain_status_changed}
   end
 
   test "protocol output writes stage directly into the domain image", %{

@@ -49,7 +49,15 @@ defmodule EtherCAT.Slave.Runtime.Health do
           case transition_to.(data, :safeop) do
             {:ok, new_data} ->
               send(EtherCAT.Master, {:slave_retreated, data.name, :safeop})
-              {:next_state, :safeop, new_data}
+
+              state_reason =
+                if error_ind do
+                  {:al_error, error_code}
+                else
+                  {:unexpected_al_state, Utils.al_state_atom(al_state)}
+                end
+
+              {:next_state, :safeop, %{new_data | state_reason: state_reason}}
 
             {:error, reason, _new_data} ->
               report_down(
@@ -169,7 +177,7 @@ defmodule EtherCAT.Slave.Runtime.Health do
     )
 
     send(EtherCAT.Master, {:slave_down, name, reason_kind})
-    {:next_state, :down, data}
+    {:next_state, :down, %{data | state_reason: reason}}
   end
 
   defp report_retreated_state(
@@ -203,11 +211,18 @@ defmodule EtherCAT.Slave.Runtime.Health do
       error_code: error_code
     )
 
+    state_reason =
+      if error_ind do
+        {:al_error, error_code}
+      else
+        {:unexpected_al_state, actual_state}
+      end
+
     new_data =
       if error_ind do
-        %{data | error_code: error_code}
+        %{data | error_code: error_code, state_reason: state_reason}
       else
-        data
+        %{data | state_reason: state_reason}
       end
 
     send(EtherCAT.Master, {:slave_retreated, data.name, actual_state})
@@ -315,7 +330,7 @@ defmodule EtherCAT.Slave.Runtime.Health do
   end
 
   defp rebuild_to_preop(data, initialize_to_preop) do
-    case initialize_to_preop.(data) do
+    case initialize_to_preop.(%{data | state_reason: nil}) do
       {:ok, next_state, new_data, actions} ->
         {:next_state, next_state, new_data, actions}
     end

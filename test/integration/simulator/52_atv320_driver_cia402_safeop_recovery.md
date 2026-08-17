@@ -36,8 +36,8 @@ separate semantic adapter will consume.
 2. generic input and output scanner words still map through the runtime
 3. explicit controlword writes reach the expected statuswords and target
    velocity is reflected into actual velocity
-4. a later `SAFEOP` retreat on the drive stays slave-local and does not force
-   master recovery
+4. a later `SAFEOP` retreat on the drive stays slave-local, emits protocol
+   state notifications, and does not force master recovery
 5. after the retry returns the drive to AL `OP`, protocol writes and coherent
    samples continue
 

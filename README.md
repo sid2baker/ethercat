@@ -169,7 +169,10 @@ input_description.endpoints
 Map.keys(inventory)
 #=> [:coupler, :inputs, :outputs]
 
-{:ok, initial_samples} = EtherCAT.subscribe(:inputs)
+{:ok, status, initial_samples} = EtherCAT.subscribe(:inputs)
+status.state
+#=> :op
+initial_samples
 #=> %{:io => %EtherCAT.Sample{...}}
 
 receive do
@@ -181,6 +184,9 @@ receive do
     inputs: %{ch1: true}
   } = sample ->
     sample
+
+  %EtherCAT.Notification{kind: :domain_status_changed} = notification ->
+    notification
 end
 
 :ok = EtherCAT.write(:outputs, :ch1, true)
@@ -194,9 +200,11 @@ domain cycle; samples from different domains do not imply cross-domain
 consistency.
 
 `describe/1` and `inventory/0` are configuration-backed protocol views.
+`status/1` reports current slave and attached-domain protocol status.
 `samples/1`, `sample/2`, and `subscribe/2` expose retained and subsequent
-process observations. `read/2` and `write/3` are explicit low-level signal
-operations. `EtherCAT.Raw` remains available for specialist PDO/latch tooling.
+process observations. Subscriptions deliver both coherent samples and
+protocol-level state notifications. `read/2` and `write/3` are explicit
+low-level signal operations. `EtherCAT.Raw` remains available for specialist PDO/latch tooling.
 
 Semantic commands, machine state, and machine events belong in a separate
 integration layer above EtherCAT, such as an `Entity.Provider` adapter.

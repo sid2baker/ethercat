@@ -62,7 +62,9 @@ defmodule EtherCAT.Slave do
           driver: module() | nil,
           config: map(),
           samples: %{optional(atom()) => EtherCAT.Sample.t()},
-          sample_subscriptions: MapSet.t(pid()),
+          protocol_subscriptions: MapSet.t(pid()),
+          domain_statuses: %{optional(atom()) => EtherCAT.Domain.Status.t()},
+          state_reason: term() | nil,
           error_code: non_neg_integer() | nil,
           configuration_error: term() | nil,
           identity: map() | nil,
@@ -95,6 +97,7 @@ defmodule EtherCAT.Slave do
     :name,
     :driver,
     :config,
+    :state_reason,
     :error_code,
     :configuration_error,
     :identity,
@@ -116,7 +119,8 @@ defmodule EtherCAT.Slave do
     :output_sm_images,
     :subscriptions,
     samples: %{},
-    sample_subscriptions: MapSet.new(),
+    protocol_subscriptions: MapSet.new(),
+    domain_statuses: %{},
     subscriber_refs: %{},
     startup_retry_phase: nil,
     startup_retry_count: 0
@@ -140,11 +144,11 @@ defmodule EtherCAT.Slave do
   def start_link(opts), do: FSM.start_link(opts)
 
   @doc false
-  @spec subscribe_samples(atom(), pid()) ::
-          {:ok, %{optional(atom()) => EtherCAT.Sample.t()}}
+  @spec subscribe_protocol(atom(), pid()) ::
+          {:ok, EtherCAT.Slave.Status.t(), %{optional(atom()) => EtherCAT.Sample.t()}}
           | {:error, :not_found | :timeout | {:server_exit, term()}}
-  def subscribe_samples(slave_name, pid \\ self()) do
-    safe_call(slave_name, {:subscribe_samples, pid})
+  def subscribe_protocol(slave_name, pid \\ self()) do
+    safe_call(slave_name, {:subscribe_protocol, pid})
   end
 
   @doc """
@@ -220,6 +224,12 @@ defmodule EtherCAT.Slave do
           {:ok, %{optional(atom()) => EtherCAT.Sample.t()}}
           | {:error, :not_found | :timeout | {:server_exit, term()}}
   def samples(slave_name), do: safe_call(slave_name, :samples)
+
+  @doc false
+  @spec status(atom()) ::
+          {:ok, EtherCAT.Slave.Status.t()}
+          | {:error, :not_found | :timeout | {:server_exit, term()}}
+  def status(slave_name), do: safe_call(slave_name, :status)
 
   @doc """
   Return a detailed runtime snapshot for the slave.

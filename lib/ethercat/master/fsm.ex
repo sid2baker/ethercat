@@ -7,6 +7,7 @@ defmodule EtherCAT.Master.FSM do
 
   alias EtherCAT.{Bus, DC, Domain, Slave, Telemetry, Utils}
   alias EtherCAT.Bus.Transaction
+  alias EtherCAT.Domain.Notifications, as: DomainNotifications
   alias EtherCAT.Master
   alias EtherCAT.Master.Activation
   alias EtherCAT.Master.Config
@@ -678,6 +679,14 @@ defmodule EtherCAT.Master.FSM do
     )
 
     Telemetry.domain_crashed(id, reason)
+
+    DomainNotifications.dispatch_to_slaves(
+      data.slaves,
+      id,
+      :stopped,
+      :degraded,
+      {:crashed, reason}
+    )
 
     data_with_refs = %{data | domain_refs: refs}
 

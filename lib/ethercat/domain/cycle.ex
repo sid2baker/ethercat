@@ -9,6 +9,7 @@ defmodule EtherCAT.Domain.Cycle do
   alias EtherCAT.Domain.Freshness
   alias EtherCAT.Domain.Image
   alias EtherCAT.Domain.Layout
+  alias EtherCAT.Domain.Notifications
   alias EtherCAT.Telemetry
   alias EtherCAT.Utils
 
@@ -64,8 +65,8 @@ defmodule EtherCAT.Domain.Cycle do
   end
 
   defp handle_valid_cycle(data, response, t0, cycle_index, next_at, next_timeout) do
-    maybe_notify_cycle_recovered(data)
     completed_at_us = System.monotonic_time(:microsecond)
+    maybe_notify_valid_cycle(data, completed_at_us)
     Image.put_domain_status(data.table, completed_at_us, effective_stale_after_us(data))
 
     dispatch_inputs(
@@ -177,6 +178,8 @@ defmodule EtherCAT.Domain.Cycle do
          %{
            data
            | cycle_plan: cycle_plan,
+             cycle_health: :not_ready,
+             stop_reason: nil,
              next_cycle_at: now + data.period_us
          }}
 
@@ -203,7 +206,7 @@ defmodule EtherCAT.Domain.Cycle do
       log_domain_stop(data.id, reason, data.miss_threshold)
       Telemetry.domain_stopped(data.id, reason)
       send(EtherCAT.Master, {:domain_stopped, data.id, reason})
-      {:next_state, :stopped, new_data}
+      {:next_state, :stopped, %{new_data | stop_reason: reason}}
     else
       {:keep_state, new_data, next_timeout}
     end
@@ -225,7 +228,13 @@ defmodule EtherCAT.Domain.Cycle do
       invalid_at_us
     )
 
-    maybe_notify_cycle_degraded(data, reason, next_invalid_streak_count, next_degraded?)
+    maybe_notify_cycle_degraded(
+      data,
+      reason,
+      invalid_at_us,
+      next_invalid_streak_count,
+      next_degraded?
+    )
 
     data
     |> Map.put(:miss_count, next_miss_count)
@@ -320,22 +329,34 @@ defmodule EtherCAT.Domain.Cycle do
   defp normalize_transport_miss_reason(reason), do: reason
 
   defp maybe_notify_cycle_degraded(
-         %{degraded?: false, id: id},
+         %{degraded?: false, id: id} = data,
          reason,
+         observed_at,
          invalid_streak_count,
          true
        ) do
     send(EtherCAT.Master, {:domain_cycle_degraded, id, reason, invalid_streak_count})
+    Notifications.dispatch(data, :cycling, :degraded, reason, observed_at)
   end
 
-  defp maybe_notify_cycle_degraded(_data, _reason, _invalid_streak_count, _next_degraded?),
-    do: :ok
+  defp maybe_notify_cycle_degraded(
+         _data,
+         _reason,
+         _observed_at,
+         _invalid_streak_count,
+         _next_degraded?
+       ),
+       do: :ok
 
-  defp maybe_notify_cycle_recovered(%{degraded?: true, id: id}) do
-    send(EtherCAT.Master, {:domain_cycle_recovered, id})
+  defp maybe_notify_valid_cycle(data, observed_at) do
+    if data.degraded? do
+      send(EtherCAT.Master, {:domain_cycle_recovered, data.id})
+    end
+
+    if data.cycle_health != :healthy or data.degraded? do
+      Notifications.dispatch(data, :cycling, :healthy, nil, observed_at)
+    end
   end
-
-  defp maybe_notify_cycle_recovered(_data), do: :ok
 
   defp next_invalid_streak_count(%{invalid_streak_count: streak_count}, _category)
        when is_integer(streak_count) and streak_count >= 0 do

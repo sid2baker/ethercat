@@ -1015,7 +1015,9 @@ defmodule EtherCAT.SlaveTest do
       health_poll_ms: 250
     }
 
-    assert {:next_state, :down, ^data} =
+    expected = %{data | state_reason: :no_response}
+
+    assert {:next_state, :down, ^expected} =
              EtherCAT.Slave.FSM.handle_event(
                {:timeout, :health_poll},
                nil,
@@ -1037,7 +1039,9 @@ defmodule EtherCAT.SlaveTest do
       health_poll_ms: 250
     }
 
-    assert {:next_state, :down, ^data} =
+    expected = %{data | state_reason: :no_response}
+
+    assert {:next_state, :down, ^expected} =
              EtherCAT.Slave.FSM.handle_event(
                {:timeout, :health_poll},
                nil,
@@ -1059,7 +1063,9 @@ defmodule EtherCAT.SlaveTest do
       health_poll_ms: 250
     }
 
-    assert {:next_state, :preop, ^data} =
+    expected = %{data | state_reason: {:unexpected_al_state, :preop}}
+
+    assert {:next_state, :preop, ^expected} =
              EtherCAT.Slave.FSM.handle_event(
                {:timeout, :health_poll},
                nil,

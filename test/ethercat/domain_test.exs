@@ -5,6 +5,8 @@ defmodule EtherCAT.DomainTest do
   alias EtherCAT.Domain, as: DomainAPI
   alias EtherCAT.Domain.Image
   alias EtherCAT.Domain.Layout
+  alias EtherCAT.Domain.Notifications
+  alias EtherCAT.Domain.Status
   alias EtherCAT.TestSupport.FakeBus
 
   @domain_cycle_invalid_event [:ethercat, :domain, :cycle, :invalid]
@@ -281,6 +283,58 @@ defmodule EtherCAT.DomainTest do
     assert_receive {:telemetry_event, @domain_cycle_transport_miss_event,
                     %{consecutive_miss_count: 1, total_invalid_count: 1},
                     %{domain: :main, reason: :timeout}}
+  end
+
+  test "domain lifecycle status is dispatched to every attached slave" do
+    relay_name = :"domain_status_#{System.unique_integer([:positive, :monotonic])}"
+    key = {relay_name, {:sm, 0}}
+    {_, layout} = Layout.register(Layout.new(), key, 1, :output)
+
+    data = %Domain{
+      id: :status_domain,
+      period_us: 1_000,
+      next_cycle_at: System.monotonic_time(:microsecond) + 1_000,
+      layout: layout,
+      stop_reason: nil
+    }
+
+    {:ok, relay} = Relay.start_link(name: relay_name, test_pid: self())
+
+    assert {:keep_state_and_data, _actions} =
+             Domain.handle_event(:enter, :open, :cycling, data)
+
+    assert_receive {:relay, ^relay,
+                    {:domain_status,
+                     %Status{
+                       id: :status_domain,
+                       lifecycle: :cycling,
+                       cycle_health: :not_ready,
+                       reason: nil
+                     }}}
+
+    stopped_data = %{data | stop_reason: :timeout}
+    assert :keep_state_and_data = Domain.handle_event(:enter, :cycling, :stopped, stopped_data)
+
+    assert_receive {:relay, ^relay,
+                    {:domain_status,
+                     %Status{
+                       id: :status_domain,
+                       lifecycle: :stopped,
+                       cycle_health: :degraded,
+                       reason: :timeout
+                     }}}
+
+    assert :ok =
+             Notifications.dispatch_to_slaves(
+               [{relay_name, 0x1000}],
+               :status_domain,
+               :stopped,
+               :degraded,
+               {:crashed, :test}
+             )
+
+    assert_receive {:relay, ^relay,
+                    {:domain_status, %Status{reason: {:crashed, :test}, lifecycle: :stopped}}}
   end
 
   test "input dispatch resolves the current slave pid from the registry on each change" do

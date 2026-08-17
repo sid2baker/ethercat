@@ -71,7 +71,10 @@ defmodule EtherCATTest do
     assert Code.ensure_loaded?(EtherCAT.Diagnostics)
     assert Code.ensure_loaded?(EtherCAT.Provisioning)
     assert Code.ensure_loaded?(EtherCAT.Endpoint)
+    assert Code.ensure_loaded?(EtherCAT.Notification)
     assert Code.ensure_loaded?(EtherCAT.Sample)
+    assert Code.ensure_loaded?(EtherCAT.Domain.Status)
+    assert Code.ensure_loaded?(EtherCAT.Slave.Status)
     assert Code.ensure_loaded?(EtherCAT.SlaveDescription)
     refute Code.ensure_loaded?(Module.concat(EtherCAT, Device))
 
@@ -89,6 +92,7 @@ defmodule EtherCATTest do
     refute function_exported?(EtherCAT, :devices, 0)
 
     assert function_exported?(EtherCAT, :slaves, 0)
+    assert function_exported?(EtherCAT, :status, 1)
     assert function_exported?(EtherCAT, :samples, 1)
     assert function_exported?(EtherCAT, :sample, 2)
     assert function_exported?(EtherCAT, :describe, 1)

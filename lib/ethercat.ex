@@ -7,7 +7,7 @@ defmodule EtherCAT do
   protocol writes:
 
   - `start/1`, `stop/0`, `state/0`
-  - `slaves/0`, `describe/1`, `inventory/0`
+  - `slaves/0`, `describe/1`, `inventory/0`, `status/1`
   - `samples/1`, `sample/2`, `subscribe/2`
   - `read/2`, `write/3`
 
@@ -53,6 +53,7 @@ defmodule EtherCAT do
   @type description :: SlaveDescription.t()
   @type inventory :: %{optional(slave_name()) => description()}
   @type sample_map :: %{optional(domain_id()) => Sample.t()}
+  @type slave_status :: EtherCAT.Slave.Status.t()
 
   @doc """
   Start the master: open the backend, discover slaves, and begin configuration.
@@ -89,6 +90,11 @@ defmodule EtherCAT do
       {:ok, Enum.map(slave_summaries, & &1.name)}
     end
   end
+
+  @doc "Return current protocol/runtime status for one configured slave."
+  @spec status(slave_name()) ::
+          {:ok, slave_status()} | {:error, :not_found | :timeout | {:server_exit, term()}}
+  def status(slave_name) when is_atom(slave_name), do: Slave.status(slave_name)
 
   @doc "Return the latest retained domain samples for one slave."
   @spec samples(slave_name()) ::
@@ -130,17 +136,21 @@ defmodule EtherCAT do
   end
 
   @doc """
-  Subscribe a process to coherent samples from one slave.
+  Subscribe a process to protocol observations from one slave.
 
-  Registration and the returned current sample map share the slave process's
-  serialization boundary. Subsequent observations are delivered directly as
-  `%EtherCAT.Sample{}` messages. Subscriber processes are monitored and cleaned
-  up automatically.
+  Registration and the returned status/sample values share the slave process's
+  serialization boundary, so no later observation can be missed. Subsequent
+  observations are delivered directly as `%EtherCAT.Sample{}` and
+  `%EtherCAT.Notification{}` messages. Notifications report slave runtime-state
+  and attached-domain status changes without inferring machine semantics.
+
+  Subscriber processes are monitored and cleaned up automatically.
   """
   @spec subscribe(slave_name(), pid()) ::
-          {:ok, sample_map()} | {:error, :not_found | :timeout | {:server_exit, term()}}
+          {:ok, slave_status(), sample_map()}
+          | {:error, :not_found | :timeout | {:server_exit, term()}}
   def subscribe(slave_name, pid \\ self()) when is_atom(slave_name) and is_pid(pid) do
-    Slave.subscribe_samples(slave_name, pid)
+    Slave.subscribe_protocol(slave_name, pid)
   end
 
   @doc "Read one decoded input signal from the current process image."

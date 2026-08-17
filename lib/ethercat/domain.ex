@@ -30,6 +30,7 @@ defmodule EtherCAT.Domain do
 
   Within `:cycling`, cycle health is tracked separately as runtime data:
 
+  - `:not_ready` - cycling has started but no valid LRW cycle has completed yet
   - `:healthy` - the latest LRW cycle was valid
   - `{:invalid, reason}` - the latest LRW cycle had a transport miss or unusable reply
 
@@ -44,6 +45,7 @@ defmodule EtherCAT.Domain do
   alias EtherCAT.Domain.Freshness
   alias EtherCAT.Domain.Image
   alias EtherCAT.Domain.Layout
+  alias EtherCAT.Domain.Notifications
   alias EtherCAT.Domain.State
   alias EtherCAT.Domain.Status
   alias EtherCAT.Utils
@@ -75,6 +77,7 @@ defmodule EtherCAT.Domain do
     :last_invalid_cycle_at_us,
     :last_invalid_reason,
     :stale_after_us,
+    :stop_reason,
     :frame_timeout_ms,
     layout: Layout.new(),
     cycle_plan: nil,
@@ -212,10 +215,29 @@ defmodule EtherCAT.Domain do
   @impl true
   def handle_event(:enter, _old, :open, _data), do: :keep_state_and_data
 
-  def handle_event(:enter, _old, :cycling, data),
-    do: {:keep_state_and_data, Cycle.enter_actions(data)}
+  def handle_event(:enter, _old, :cycling, data) do
+    Notifications.dispatch(
+      data,
+      :cycling,
+      :not_ready,
+      nil,
+      System.monotonic_time(:microsecond)
+    )
 
-  def handle_event(:enter, _old, :stopped, _data), do: :keep_state_and_data
+    {:keep_state_and_data, Cycle.enter_actions(data)}
+  end
+
+  def handle_event(:enter, _old, :stopped, data) do
+    Notifications.dispatch(
+      data,
+      :stopped,
+      stopped_cycle_health(data),
+      data.stop_reason,
+      System.monotonic_time(:microsecond)
+    )
+
+    :keep_state_and_data
+  end
 
   def handle_event({:call, from}, {:register_pdo, key, size, direction}, :open, data) do
     {offset, layout} = Layout.register(data.layout, key, size, direction)
@@ -245,7 +267,7 @@ defmodule EtherCAT.Domain do
   end
 
   def handle_event({:call, from}, :stop_cycling, :cycling, data) do
-    {:next_state, :stopped, data, [{:reply, from, :ok}]}
+    {:next_state, :stopped, %{data | stop_reason: :manual}, [{:reply, from, :ok}]}
   end
 
   def handle_event(:state_timeout, :tick, :cycling, data), do: Cycle.handle_tick(data)
@@ -280,4 +302,7 @@ defmodule EtherCAT.Domain do
 
   defp reset_miss_count?(:stopped), do: true
   defp reset_miss_count?(:open), do: false
+
+  defp stopped_cycle_health(%{stop_reason: reason}) when reason in [nil, :manual], do: :not_ready
+  defp stopped_cycle_health(_data), do: :degraded
 end

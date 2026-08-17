@@ -1,10 +1,42 @@
 defmodule EtherCAT.Domain.Status do
-  @moduledoc false
+  @moduledoc """
+  Current protocol lifecycle and cycle health for one process-data domain.
+
+  Domain status is retained by each attached slave runtime and included in the
+  atomic result of `EtherCAT.subscribe/2`.
+  """
 
   alias EtherCAT.Domain
   alias EtherCAT.Domain.Freshness
   alias EtherCAT.Domain.Layout
 
+  @type lifecycle :: :open | :cycling | :stopped
+  @type cycle_health :: :not_ready | :healthy | :degraded
+
+  @enforce_keys [:id, :lifecycle, :cycle_health, :observed_at]
+  defstruct [:id, :lifecycle, :cycle_health, :reason, :observed_at]
+
+  @type t :: %__MODULE__{
+          id: atom(),
+          lifecycle: lifecycle(),
+          cycle_health: cycle_health(),
+          reason: term() | nil,
+          observed_at: integer()
+        }
+
+  @doc false
+  @spec protocol_status(atom(), lifecycle(), cycle_health(), term() | nil, integer()) :: t()
+  def protocol_status(id, lifecycle, cycle_health, reason, observed_at) do
+    %__MODULE__{
+      id: id,
+      lifecycle: lifecycle,
+      cycle_health: cycle_health,
+      reason: reason,
+      observed_at: observed_at
+    }
+  end
+
+  @doc false
   @spec stats_snapshot(atom(), %Domain{}) :: map()
   def stats_snapshot(state, data) do
     %{
@@ -25,6 +57,7 @@ defmodule EtherCAT.Domain.Status do
     }
   end
 
+  @doc false
   @spec info_snapshot(atom(), %Domain{}) :: map()
   def info_snapshot(state, data) do
     %{

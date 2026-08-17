@@ -3,14 +3,13 @@ defmodule EtherCAT.Slave.Runtime.Samples do
 
   alias EtherCAT.Sample
   alias EtherCAT.Slave
+  alias EtherCAT.Slave.Runtime.Notifications
   alias EtherCAT.Slave.Runtime.Signals
 
   @type sample_map :: %{optional(atom()) => Sample.t()}
 
   @spec initialize(Slave.t()) :: Slave.t()
-  def initialize(%Slave{} = data) do
-    %{data | samples: %{}, sample_subscriptions: data.sample_subscriptions || MapSet.new()}
-  end
+  def initialize(%Slave{} = data), do: %{data | samples: %{}}
 
   @spec refresh(Slave.t(), atom(), non_neg_integer(), map(), integer(), [atom()]) :: Slave.t()
   def refresh(
@@ -34,26 +33,8 @@ defmodule EtherCAT.Slave.Runtime.Samples do
     }
 
     Signals.dispatch_sampled_inputs(data, changed_signal_names, inputs)
-    dispatch(data.sample_subscriptions, sample)
+    Notifications.dispatch(data, sample)
     %{data | samples: Map.put(data.samples, domain_id, sample)}
-  end
-
-  @spec subscribe(Slave.t(), pid()) :: {Slave.t(), sample_map()}
-  def subscribe(%Slave{} = data, pid) when is_pid(pid) do
-    refs =
-      if Map.has_key?(data.subscriber_refs, pid) do
-        data.subscriber_refs
-      else
-        Map.put(data.subscriber_refs, pid, Process.monitor(pid))
-      end
-
-    updated = %{
-      data
-      | subscriber_refs: refs,
-        sample_subscriptions: MapSet.put(data.sample_subscriptions, pid)
-    }
-
-    {updated, updated.samples}
   end
 
   @spec all(Slave.t()) :: sample_map()
@@ -69,9 +50,5 @@ defmodule EtherCAT.Slave.Runtime.Samples do
       raw = Signals.extract_sm_bits(sm_bytes, registration.bit_offset, registration.bit_size)
       {signal_name, data.driver.decode_signal(signal_name, data.config, raw)}
     end)
-  end
-
-  defp dispatch(subscribers, sample) do
-    Enum.each(subscribers, &send(&1, sample))
   end
 end

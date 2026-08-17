@@ -20,7 +20,7 @@ distributed clock layer.
 Host application supervisor
 └── EtherCAT.Runtime
     │
-    ├── EtherCAT                    (protocol sample/read/write runtime API)
+    ├── EtherCAT                    (protocol status/sample/notification/read/write API)
     ├── EtherCAT.Backend            (normalized backend description)
     ├── EtherCAT.Scan               (one-shot observational topology scan)
     ├── EtherCAT.Provisioning       (advanced PREOP/configuration/SDO API)
@@ -142,6 +142,19 @@ Domain :cycling
 A sample is coherent only within its domain cycle. A slave split across domains
 produces independent samples; the runtime does not imply cross-domain
 consistency.
+
+### Protocol status and notifications
+
+`EtherCAT.subscribe/2` installs the subscriber and reads the current
+`EtherCAT.Slave.Status` plus retained samples at one slave-process serialization
+boundary. The same process subsequently sends samples and
+`EtherCAT.Notification` values, preserving their local ordering.
+
+Slave AL/runtime transitions produce `:slave_state_changed` notifications.
+Domains fan lifecycle and cycle-health transitions to each attached slave;
+slave runtimes retain those `EtherCAT.Domain.Status` values and publish
+`:domain_status_changed` notifications. These are protocol/runtime facts for a
+higher-level adapter to interpret, not machine availability or semantic events.
 
 ### Protocol write path (application → bus)
 

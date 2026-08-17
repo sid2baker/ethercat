@@ -6,7 +6,9 @@ defmodule EtherCAT.Integration.Simulator.ATV320ProtocolSafeopRecoveryTest do
   alias EtherCAT.Integration.Expect
   alias EtherCAT.Integration.Scenario
   alias EtherCAT.IntegrationSupport.SimulatorRing
+  alias EtherCAT.Notification
   alias EtherCAT.Sample
+  alias EtherCAT.Slave.Status, as: SlaveStatus
   alias EtherCAT.Simulator
   alias EtherCAT.Simulator.Fault
   alias EtherCAT.Simulator.Slave
@@ -20,7 +22,10 @@ defmodule EtherCAT.Integration.Simulator.ATV320ProtocolSafeopRecoveryTest do
     ensure_telemetry_started!()
     on_exit(fn -> SimulatorRing.stop_all!() end)
     boot_operational!()
-    assert {:ok, _initial_samples} = EtherCAT.subscribe(:drive, self())
+
+    assert {:ok, %EtherCAT.Slave.Status{state: :op}, _initial_samples} =
+             EtherCAT.subscribe(:drive, self())
+
     :ok
   end
 
@@ -32,6 +37,23 @@ defmodule EtherCAT.Integration.Simulator.ATV320ProtocolSafeopRecoveryTest do
       assert description.device_type == :variable_speed_drive
       assert Enum.any?(description.endpoints, &(&1.signal == :controlword))
       assert Enum.any?(description.endpoints, &(&1.signal == :statusword))
+
+      Expect.eventually(
+        fn ->
+          assert {:ok,
+                  %SlaveStatus{
+                    state: :op,
+                    domains: %{
+                      main: %EtherCAT.Domain.Status{
+                        lifecycle: :cycling,
+                        cycle_health: :healthy
+                      }
+                    }
+                  }} = EtherCAT.status(:drive)
+        end,
+        attempts: @setup_attempts,
+        label: "drive protocol status is operational and cycling"
+      )
 
       Expect.eventually(
         fn -> assert_drive_sample!(0x0040, actual_velocity: 0) end,
@@ -82,6 +104,12 @@ defmodule EtherCAT.Integration.Simulator.ATV320ProtocolSafeopRecoveryTest do
         label: "SAFEOP retreat stays slave-local"
       )
 
+      assert_receive %Notification{
+        slave: :drive,
+        kind: :slave_state_changed,
+        details: %{previous_state: :op, current: %SlaveStatus{state: :safeop}}
+      }
+
       Expect.eventually(
         fn ->
           Expect.slave_fault(:drive, nil)
@@ -92,6 +120,12 @@ defmodule EtherCAT.Integration.Simulator.ATV320ProtocolSafeopRecoveryTest do
         attempts: @recovery_attempts,
         label: "SAFEOP retreat heals back to AL OP"
       )
+
+      assert_receive %Notification{
+        slave: :drive,
+        kind: :slave_state_changed,
+        details: %{previous_state: :safeop, current: %SlaveStatus{state: :op}}
+      }
     end)
     |> Scenario.act("protocol writes and samples still work after recovery", fn _ctx ->
       write_controlword!(0x0000, 0x0040)
