@@ -76,9 +76,10 @@ defmodule EtherCAT.HardwareScripts.RedundantReplugWatch do
     :ok = attach_telemetry(handler_id, sink)
 
     try do
-      with :ok <- ensure_operational_master(opts),
-           :ok <- log_startup_summary(sink, opts),
-           :ok <- exercise_loop(sink, opts) do
+      with {:ok, session} <- EtherCAT.Session.current(),
+           :ok <- ensure_operational_master(session, opts),
+           :ok <- log_startup_summary(session, sink, opts),
+           :ok <- exercise_loop(session, sink, opts) do
         {:ok, :finished}
       end
     after
@@ -148,8 +149,8 @@ defmodule EtherCAT.HardwareScripts.RedundantReplugWatch do
     }
   end
 
-  defp ensure_operational_master(opts) do
-    with {:ok, :operational} <- EtherCAT.state(),
+  defp ensure_operational_master(session, opts) do
+    with {:ok, :operational} <- EtherCAT.state(session),
          {:ok, bus_info} <- EtherCAT.Bus.info(EtherCAT.Bus) do
       expected_link = "#{opts.primary_interface}|#{opts.backup_interface}"
 
@@ -178,21 +179,28 @@ defmodule EtherCAT.HardwareScripts.RedundantReplugWatch do
     end
   end
 
-  defp exercise_loop(sink, opts) do
+  defp exercise_loop(session, sink, opts) do
     Stream.iterate(1, &rem(&1 + 1, 256))
     |> Stream.with_index(1)
     |> Enum.reduce_while(:ok, fn {pattern, step}, :ok ->
       started_us = System.monotonic_time(:microsecond)
 
-      case write_pattern(pattern) do
+      case write_pattern(session, pattern) do
         :ok ->
-          case wait_for_match(pattern, opts.match_timeout_ms, opts.poll_ms) do
+          case wait_for_match(session, pattern, opts.match_timeout_ms, opts.poll_ms) do
             {:ok, observed, matched_at_us, values} ->
               latency_us = matched_at_us - started_us
-              log_step_ok(sink, step, pattern, observed, values, latency_us)
+              log_step_ok(session, sink, step, pattern, observed, values, latency_us)
 
             {:error, last_observation} ->
-              log_step_timeout(sink, step, pattern, last_observation, opts.match_timeout_ms)
+              log_step_timeout(
+                session,
+                sink,
+                step,
+                pattern,
+                last_observation,
+                opts.match_timeout_ms
+              )
           end
 
         {:error, reason} ->
@@ -215,26 +223,26 @@ defmodule EtherCAT.HardwareScripts.RedundantReplugWatch do
     :ok
   end
 
-  defp write_pattern(byte) when is_integer(byte) and byte >= 0 and byte <= 255 do
+  defp write_pattern(session, byte) when is_integer(byte) and byte >= 0 and byte <= 255 do
     bits = channel_values(byte)
 
     1..8
     |> Enum.zip(bits)
     |> Enum.reduce_while(:ok, fn {index, value}, :ok ->
-      case EtherCAT.Raw.write_output(:outputs, channel_name(index), value) do
+      case EtherCAT.Raw.write_output(session, :outputs, channel_name(index), value) do
         :ok -> {:cont, :ok}
         {:error, reason} -> {:halt, {:error, {channel_name(index), reason}}}
       end
     end)
   end
 
-  defp wait_for_match(expected, timeout_ms, poll_ms) do
+  defp wait_for_match(session, expected, timeout_ms, poll_ms) do
     deadline_ms = System.monotonic_time(:millisecond) + timeout_ms
-    do_wait_for_match(expected, deadline_ms, poll_ms, nil)
+    do_wait_for_match(session, expected, deadline_ms, poll_ms, nil)
   end
 
-  defp do_wait_for_match(expected, deadline_ms, poll_ms, last_observation) do
-    observation = read_pattern()
+  defp do_wait_for_match(session, expected, deadline_ms, poll_ms, last_observation) do
+    observation = read_pattern(session)
 
     case observation do
       {:ok, ^expected, matched_at_us, values} ->
@@ -245,15 +253,15 @@ defmodule EtherCAT.HardwareScripts.RedundantReplugWatch do
           {:error, observation || last_observation}
         else
           Process.sleep(poll_ms)
-          do_wait_for_match(expected, deadline_ms, poll_ms, observation)
+          do_wait_for_match(session, expected, deadline_ms, poll_ms, observation)
         end
     end
   end
 
-  defp read_pattern do
+  defp read_pattern(session) do
     1..8
     |> Enum.reduce_while({:ok, []}, fn index, {:ok, values} ->
-      case EtherCAT.Raw.read_input(:inputs, channel_name(index)) do
+      case EtherCAT.Raw.read_input(session, :inputs, channel_name(index)) do
         {:ok, {value, updated_at_us}} when value in [0, 1] and is_integer(updated_at_us) ->
           {:cont, {:ok, [{index, value, updated_at_us} | values]}}
 
@@ -284,9 +292,9 @@ defmodule EtherCAT.HardwareScripts.RedundantReplugWatch do
     end
   end
 
-  defp log_startup_summary(sink, opts) do
+  defp log_startup_summary(session, sink, opts) do
     {:ok, bus_info} = EtherCAT.Bus.info(EtherCAT.Bus)
-    {:ok, domain_info} = EtherCAT.Diagnostics.domain_info(:main)
+    {:ok, domain_info} = EtherCAT.Diagnostics.domain_info(session, :main)
 
     log(
       sink,
@@ -299,8 +307,8 @@ defmodule EtherCAT.HardwareScripts.RedundantReplugWatch do
     :ok
   end
 
-  defp log_step_ok(sink, step, expected, observed, values, latency_us) do
-    snapshot = snapshot()
+  defp log_step_ok(session, sink, step, expected, observed, values, latency_us) do
+    snapshot = snapshot(session)
 
     log(
       sink,
@@ -310,8 +318,8 @@ defmodule EtherCAT.HardwareScripts.RedundantReplugWatch do
     )
   end
 
-  defp log_step_timeout(sink, step, expected, observation, timeout_ms) do
-    snapshot = snapshot()
+  defp log_step_timeout(session, sink, step, expected, observation, timeout_ms) do
+    snapshot = snapshot(session)
 
     detail =
       case observation do
@@ -334,9 +342,9 @@ defmodule EtherCAT.HardwareScripts.RedundantReplugWatch do
     )
   end
 
-  defp snapshot do
-    master_state = EtherCAT.state()
-    domain = EtherCAT.Diagnostics.domain_info(:main)
+  defp snapshot(session) do
+    master_state = EtherCAT.state(session)
+    domain = EtherCAT.Diagnostics.domain_info(session, :main)
     bus = EtherCAT.Bus.info(EtherCAT.Bus)
 
     %{

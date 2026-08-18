@@ -44,7 +44,7 @@ defmodule EtherCAT.Integration.Simulator.MailboxProtocolFaultSDOTest do
   test "init-phase mailbox counter mismatches surface as exact CoE errors" do
     value = "hello-sim\0\0\0"
 
-    assert {:ok, :preop_ready} = EtherCAT.state()
+    assert {:ok, :preop_ready} = EtherCAT.state(SimulatorRing.session!())
 
     assert :ok =
              Simulator.inject_fault(
@@ -58,20 +58,22 @@ defmodule EtherCAT.Integration.Simulator.MailboxProtocolFaultSDOTest do
              )
 
     assert {:error, {:unexpected_mailbox_counter, 1, 2}} =
-             EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2001, 0x01)
+             EtherCAT.Provisioning.upload_sdo(SimulatorRing.session!(), :mailbox, 0x2001, 0x01)
 
-    assert {:ok, :preop_ready} = EtherCAT.state()
+    assert {:ok, :preop_ready} = EtherCAT.state(SimulatorRing.session!())
 
     assert :ok = Simulator.clear_faults()
 
-    assert {:ok, ^value} = EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2001, 0x01)
-    assert {:ok, :preop_ready} = EtherCAT.state()
+    assert {:ok, ^value} =
+             EtherCAT.Provisioning.upload_sdo(SimulatorRing.session!(), :mailbox, 0x2001, 0x01)
+
+    assert {:ok, :preop_ready} = EtherCAT.state(SimulatorRing.session!())
   end
 
   test "segmented mailbox toggle mismatches surface as exact CoE errors" do
     blob = multi_segment_blob()
 
-    assert {:ok, :preop_ready} = EtherCAT.state()
+    assert {:ok, :preop_ready} = EtherCAT.state(SimulatorRing.session!())
 
     assert :ok =
              Simulator.inject_fault(
@@ -85,14 +87,16 @@ defmodule EtherCAT.Integration.Simulator.MailboxProtocolFaultSDOTest do
              )
 
     assert {:error, {:toggle_mismatch, 0, 1}} =
-             EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2003, 0x01)
+             EtherCAT.Provisioning.upload_sdo(SimulatorRing.session!(), :mailbox, 0x2003, 0x01)
 
-    assert {:ok, :preop_ready} = EtherCAT.state()
+    assert {:ok, :preop_ready} = EtherCAT.state(SimulatorRing.session!())
 
     assert :ok = Simulator.clear_faults()
 
-    assert {:ok, ^blob} = EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2003, 0x01)
-    assert {:ok, :preop_ready} = EtherCAT.state()
+    assert {:ok, ^blob} =
+             EtherCAT.Provisioning.upload_sdo(SimulatorRing.session!(), :mailbox, 0x2003, 0x01)
+
+    assert {:ok, :preop_ready} = EtherCAT.state(SimulatorRing.session!())
   end
 
   defp multi_segment_blob do

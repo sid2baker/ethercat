@@ -24,9 +24,9 @@ defmodule EtherCAT.Runtime do
   ```
 
   Only one EtherCAT runtime may be active per BEAM node. The master and its
-  supporting registries keep their singleton process names. Each started
-  session still receives a generation-bound `EtherCAT.Runtime.Handle`, so
-  long-lived callers cannot accidentally cross a stop/start boundary.
+  supporting registries keep their singleton process names. Each start returns
+  an opaque `EtherCAT.Session` required by all public operations, so long-lived
+  callers cannot accidentally cross a stop/start boundary.
   """
 
   use Supervisor

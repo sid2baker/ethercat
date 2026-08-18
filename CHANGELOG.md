@@ -8,16 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
-- `EtherCAT.start/1` now returns a generation-bound
-  `%EtherCAT.Runtime.Handle{}`; handle-bound lifecycle, query, subscription, and
-  process-data operations reject stale sessions instead of resolving through a
-  replacement singleton session (`5fd6eaa`).
+- `EtherCAT.start/1` now returns an opaque `%EtherCAT.Session{}` required by
+  lifecycle, protocol, provisioning, diagnostics, raw process-data, and capture
+  operations. Singleton convenience variants and `%EtherCAT.Runtime.Handle{}`
+  were removed, and stopped generations now consistently return
+  `{:error, :stale_session}` (`PENDING`; supersedes `5fd6eaa`).
 - Protocol subscriptions now atomically return current slave/domain status and
   retained samples, then deliver `%EtherCAT.Sample{}` values alongside
   `%EtherCAT.Notification{}` messages for slave runtime-state and attached-domain
   lifecycle/health changes (`eda0e72`).
 - EtherCAT's public runtime boundary is now protocol-focused: coherent
-  per-domain `%EtherCAT.Sample{}` observations and explicit `read/2`/`write/3`
+  per-domain `%EtherCAT.Sample{}` observations and explicit `read/3`/`write/4`
   operations replace projected slave snapshots, semantic events, and
   driver-backed commands; `EtherCAT.Driver` now owns only identity, PDO signal
   layout/metadata, and value codecs (`da97385`).
@@ -28,7 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   device drivers (`d5497a7`).
 - EtherCAT no longer autostarts as an OTP application; host applications now
   supervise `EtherCAT.Runtime` directly, while `EtherCAT.start/1` and
-  `EtherCAT.stop/0` control the singleton session inside that host-owned
+  `EtherCAT.stop/1` control the singleton session inside that host-owned
   runtime (`6bb51d3`).
 
 ### Fixed
@@ -78,7 +79,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   data through the runtime; the public slave-description builder was also
   renamed to match those configured canonical semantics (`a79e14c`,
   `9a4395e`, `cd49dd2`).
-- `EtherCAT.describe/1` and `EtherCAT.inventory/0` now come from the master's
+- The former EtherCAT.describe/1 and EtherCAT.inventory/0 APIs came from the master's
   retained configured slave summaries instead of live snapshots, so interface
   description is separated from current endpoint values while `snapshot/0` and
   `snapshot/1` remain the live state image (`ec6336a`).
@@ -89,7 +90,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of leaving callers to reconstruct runtime roles from fragmented
   queries (`2d77d36`).
 - The public runtime surface now names the managed instance consistently as a
-  slave: `EtherCAT.slaves/0`, `snapshot.slaves`, `%EtherCAT.SlaveSnapshot{}`,
+  slave: EtherCAT.slaves/0, `snapshot.slaves`, `%EtherCAT.SlaveSnapshot{}`,
   and `%EtherCAT.Event{slave: ...}` replace the old mixed device/slave naming
   (`f15d37b`).
 - `EtherCAT` is now the only normal public runtime entry point: `slaves/0`,
@@ -295,7 +296,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Richer runtime diagnostics for slaves, domains, and DC status
 
 ### Changed
-- Public lifecycle is now exposed through `EtherCAT.state/0`
+- Public lifecycle was exposed through EtherCAT.state/0
 - `EtherCAT.Domain.Config` no longer accepts `logical_base`; the master allocates it
 - Master, Slave, Domain, and DC runtime boundaries were decomposed into smaller internal modules
 - Slave internals are grouped under clearer runtime, process-data, mailbox, and ESC namespaces

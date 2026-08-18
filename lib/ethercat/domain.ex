@@ -51,6 +51,7 @@ defmodule EtherCAT.Domain do
   alias EtherCAT.Utils
 
   @type domain_id :: atom()
+  @type server :: domain_id() | pid()
   @type pdo_key :: {slave_name :: atom(), pdo_name :: atom()}
   @type freshness_info :: %{
           required(:state) => :not_ready | :fresh | :stale,
@@ -183,16 +184,16 @@ defmodule EtherCAT.Domain do
   @doc """
   Return a compact runtime statistics snapshot for the domain.
   """
-  @spec stats(domain_id()) ::
+  @spec stats(server()) ::
           {:ok, map()} | {:error, :not_found | :timeout | {:server_exit, term()}}
-  def stats(domain_id), do: safe_call(domain_id, :stats)
+  def stats(server), do: safe_call(server, :stats)
 
   @doc """
   Return a detailed runtime snapshot for the domain.
   """
-  @spec info(domain_id()) ::
+  @spec info(server()) ::
           {:ok, map()} | {:error, :not_found | :timeout | {:server_exit, term()}}
-  def info(domain_id), do: safe_call(domain_id, :info)
+  def info(server), do: safe_call(server, :info)
 
   @doc """
   Update the live cycle period for the running domain.
@@ -290,15 +291,9 @@ defmodule EtherCAT.Domain do
 
   def handle_event(_type, _event, _state, _data), do: :keep_state_and_data
 
-  defp safe_call(domain_id, msg) do
-    try do
-      :gen_statem.call(via(domain_id), msg)
-    catch
-      :exit, reason -> Utils.classify_call_exit(reason, :not_found)
-    end
+  defp safe_call(server, message) do
+    Utils.registered_statem_call(server, EtherCAT.Registry, :domain, message, :not_found)
   end
-
-  defp via(domain_id), do: {:via, Registry, {EtherCAT.Registry, {:domain, domain_id}}}
 
   defp reset_miss_count?(:stopped), do: true
   defp reset_miss_count?(:open), do: false

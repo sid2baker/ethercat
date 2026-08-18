@@ -63,24 +63,33 @@ defmodule EtherCAT.Integration.Simulator.StartupMailboxResponseTimeoutTest do
              EtherCAT.await_running(first_session, 3_000)
 
     assert {:ok, :activation_blocked} = EtherCAT.state(first_session)
+    assert {:ok, current_session} = EtherCAT.Session.current()
+    assert {:ok, :activation_blocked} = EtherCAT.state(current_session)
 
     assert {:ok, %{al_state: :preop, configuration_error: @failure}} =
-             EtherCAT.Diagnostics.slave_info(:mailbox)
+             EtherCAT.Diagnostics.slave_info(SimulatorRing.session!(), :mailbox)
 
     assert :ok = Simulator.clear_faults()
     assert :ok = EtherCAT.stop(first_session)
-    assert {:error, :stale_handle} = EtherCAT.state(first_session)
+    assert {:error, :stale_session} = EtherCAT.state(first_session)
+    assert {:error, :stale_session} = EtherCAT.Diagnostics.slaves(first_session)
+    assert {:error, :stale_session} = EtherCAT.Provisioning.activate(first_session)
+    assert {:error, :stale_session} = EtherCAT.Raw.read_input(first_session, :mailbox, :unused)
 
     second_session =
       SimulatorRing.start_master!(simulator,
         start_opts: [domains: [], slaves: slaves, frame_timeout_ms: 20]
       )
 
-    assert {:error, :stale_handle} = EtherCAT.state(first_session)
+    assert {:error, :stale_session} = EtherCAT.state(first_session)
     assert :ok = EtherCAT.await_operational(second_session, 2_500)
     assert {:ok, :operational} = EtherCAT.state(second_session)
-    assert {:ok, %{configuration_error: nil}} = EtherCAT.Diagnostics.slave_info(:mailbox)
-    assert {:ok, ^expected} = EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2003, 0x01)
+
+    assert {:ok, %{configuration_error: nil}} =
+             EtherCAT.Diagnostics.slave_info(SimulatorRing.session!(), :mailbox)
+
+    assert {:ok, ^expected} =
+             EtherCAT.Provisioning.upload_sdo(SimulatorRing.session!(), :mailbox, 0x2003, 0x01)
   end
 
   defp startup_blob do

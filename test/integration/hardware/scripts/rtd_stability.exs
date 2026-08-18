@@ -112,7 +112,11 @@ EL3202 RTD long-duration stability analysis
 # Start
 # ---------------------------------------------------------------------------
 
-EtherCAT.stop()
+case EtherCAT.Session.current() do
+  {:ok, session} -> EtherCAT.stop(session)
+  {:error, :not_started} -> :ok
+end
+
 Process.sleep(300)
 
 {:ok, ethercat} =
@@ -125,8 +129,8 @@ Process.sleep(300)
 IO.puts("Waiting for bus to reach OP...")
 :ok = EtherCAT.await_running(ethercat, 15_000)
 
-EtherCAT.Raw.subscribe(:rtd, :channel1, self())
-EtherCAT.Raw.subscribe(:rtd, :channel2, self())
+EtherCAT.Raw.subscribe(ethercat, :rtd, :channel1, self())
+EtherCAT.Raw.subscribe(ethercat, :rtd, :channel2, self())
 
 # ---------------------------------------------------------------------------
 # Collection loop
@@ -312,4 +316,4 @@ for ch <- [:channel1, :channel2] do
   end
 end
 
-EtherCAT.stop()
+EtherCAT.stop(ethercat)

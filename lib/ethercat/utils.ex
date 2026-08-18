@@ -11,6 +11,32 @@ defmodule EtherCAT.Utils do
 
   def classify_call_exit(reason, _missing_reason), do: {:error, {:server_exit, reason}}
 
+  @spec statem_call(:gen_statem.server_ref(), term(), term(), timeout()) :: term()
+  def statem_call(server, message, missing_reason, timeout \\ 5_000) do
+    try do
+      :gen_statem.call(server, message, timeout)
+    catch
+      :exit, reason -> classify_call_exit(reason, missing_reason)
+    end
+  end
+
+  @spec registered_statem_call(
+          atom() | pid(),
+          Registry.registry(),
+          atom(),
+          term(),
+          term()
+        ) :: term()
+  def registered_statem_call(server, registry, key, message, missing_reason)
+      when is_atom(server) and is_atom(key) do
+    statem_call({:via, Registry, {registry, {key, server}}}, message, missing_reason)
+  end
+
+  def registered_statem_call(server, _registry, _key, message, missing_reason)
+      when is_pid(server) do
+    statem_call(server, message, missing_reason)
+  end
+
   @spec ensure_expected_wkcs([%{wkc: integer()}], non_neg_integer(), term()) ::
           :ok | {:error, term()}
   def ensure_expected_wkcs(replies, expected_wkc, error_tag)

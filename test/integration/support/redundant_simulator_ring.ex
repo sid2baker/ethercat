@@ -117,13 +117,13 @@ defmodule EtherCAT.IntegrationSupport.RedundantSimulatorRing do
     }
   end
 
-  @spec start_master!(endpoint(), keyword()) :: EtherCAT.Runtime.Handle.t()
+  @spec start_master!(endpoint(), keyword()) :: EtherCAT.Session.t()
   def start_master!(endpoint, opts \\ []) do
     assert_ok!(start_master(endpoint, opts))
   end
 
   @spec start_master(endpoint(), keyword()) ::
-          {:ok, EtherCAT.Runtime.Handle.t()} | {:error, term()}
+          {:ok, EtherCAT.Session.t()} | {:error, term()}
   def start_master(endpoint, opts \\ []) do
     ring = Keyword.get(opts, :ring, :default)
 
@@ -169,7 +169,7 @@ defmodule EtherCAT.IntegrationSupport.RedundantSimulatorRing do
   end
 
   defp assert_ok!(:ok), do: :ok
-  defp assert_ok!({:ok, %EtherCAT.Runtime.Handle{} = handle}), do: handle
+  defp assert_ok!({:ok, session}), do: session
 
   defp assert_ok!(other) do
     stop_all!()
@@ -196,9 +196,9 @@ defmodule EtherCAT.IntegrationSupport.RedundantSimulatorRing do
     simulator = start_simulator!(opts)
 
     case start_master(simulator, opts) do
-      {:ok, handle} ->
+      {:ok, session} ->
         case EtherCAT.await_operational(
-               handle,
+               session,
                Keyword.get(opts, :await_operational_ms, 2_000)
              ) do
           :ok ->

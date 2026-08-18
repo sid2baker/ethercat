@@ -48,7 +48,11 @@ interface = opts[:interface] || raise "pass --interface"
 channels = parse_channel.(opts[:channel])
 samples = Keyword.get(opts, :samples, 60)
 
-EtherCAT.stop()
+case EtherCAT.Session.current() do
+  {:ok, session} -> EtherCAT.stop(session)
+  {:error, :not_started} -> :ok
+end
+
 Process.sleep(300)
 
 {:ok, ethercat} =
@@ -69,7 +73,7 @@ IO.puts("Running.")
 IO.puts("Subscribed channels: #{Enum.map_join(channels, ", ", &Atom.to_string/1)}\n")
 
 Enum.each(channels, fn channel ->
-  EtherCAT.Raw.subscribe(:rtd, channel, self())
+  EtherCAT.Raw.subscribe(ethercat, :rtd, channel, self())
 end)
 
 Enum.each(1..samples, fn _ ->
@@ -82,5 +86,5 @@ Enum.each(1..samples, fn _ ->
   end
 end)
 
-EtherCAT.stop()
+EtherCAT.stop(ethercat)
 IO.puts("\nDone.")

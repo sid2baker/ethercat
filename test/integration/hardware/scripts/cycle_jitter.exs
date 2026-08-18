@@ -158,7 +158,11 @@ EtherCAT domain cycle jitter (self-clocking loopback)
 # Start
 # ---------------------------------------------------------------------------
 
-EtherCAT.stop()
+case EtherCAT.Session.current() do
+  {:ok, session} -> EtherCAT.stop(session)
+  {:error, :not_started} -> :ok
+end
+
 Process.sleep(300)
 
 {:ok, ethercat} =
@@ -171,12 +175,12 @@ Process.sleep(300)
 IO.puts("Waiting for bus to reach OP...")
 :ok = EtherCAT.await_running(ethercat, 15_000)
 
-EtherCAT.Raw.subscribe(:inputs, input_channel, self())
+EtherCAT.Raw.subscribe(ethercat, :inputs, input_channel, self())
 
 # Warm-up: discard first 50 cycles to let the bus stabilise.
 # Write 0 first and sleep to ensure hardware sees 0 before we start toggling.
 IO.puts("Warming up (50 cycles)...")
-EtherCAT.Raw.write_output(:outputs, output_channel, 0)
+EtherCAT.Raw.write_output(ethercat, :outputs, output_channel, 0)
 Process.sleep(period_ms * 4)
 
 # Flush any notifications that arrived during the sleep
@@ -192,7 +196,7 @@ end)
 
 Enum.each(1..50, fn i ->
   target = rem(i, 2)
-  EtherCAT.Raw.write_output(:outputs, output_channel, target)
+  EtherCAT.Raw.write_output(ethercat, :outputs, output_channel, target)
 
   receive do
     {:ethercat, :signal, :inputs, ^input_channel, ^target} -> :ok
@@ -312,4 +316,4 @@ verdict =
 miss_note = if miss_delta > 0, do: "  ⚠ #{miss_delta} frame miss(es) during test\n", else: ""
 IO.puts("\n#{miss_note}  Verdict: #{verdict}\n")
 
-EtherCAT.stop()
+EtherCAT.stop(ethercat)

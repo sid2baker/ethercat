@@ -71,33 +71,33 @@ children = [
 EtherCAT is a library subsystem, not a standalone OTP application. The host
 application owns starting, stopping, and restarting `EtherCAT.Runtime`;
 `EtherCAT.start/1` opens the singleton EtherCAT session inside that runtime and
-returns a generation-bound `%EtherCAT.Runtime.Handle{}`.
+returns an opaque `%EtherCAT.Session{}` required by every runtime operation.
 
 ### Discover a ring
 
 ```elixir
 {:ok, scan} = EtherCAT.Scan.scan({:raw, %{interface: "eth0"}})
 
-{:ok, ethercat} = EtherCAT.start(backend: {:raw, %{interface: "eth0"}})
+{:ok, session} = EtherCAT.start(backend: {:raw, %{interface: "eth0"}})
 
-:ok = EtherCAT.await_running(ethercat)
+:ok = EtherCAT.await_running(session)
 
-EtherCAT.state(ethercat)
+EtherCAT.state(session)
 #=> {:ok, :preop_ready}
 
-EtherCAT.Master.status()
-#=> %EtherCAT.Master.Status{backend: %EtherCAT.Backend.Raw{interface: "eth0"}, ...}
+EtherCAT.Diagnostics.master_status(session)
+#=> {:ok, %EtherCAT.Master.Status{backend: %EtherCAT.Backend.Raw{interface: "eth0"}, ...}}
 
-EtherCAT.Diagnostics.slaves()
+EtherCAT.Diagnostics.slaves(session)
 #=> [
 #=>   %{name: :slave_0, station: 0x1000, server: {:via, Registry, ...}, pid: #PID<...>},
 #=>   ...
 #=> ]
 
-EtherCAT.stop(ethercat)
+EtherCAT.stop(session)
 ```
 
-`EtherCAT.stop(ethercat)` stops that exact session generation and leaves `EtherCAT.Runtime`
+`EtherCAT.stop(session)` stops that exact session generation and leaves `EtherCAT.Runtime`
 running under the host supervisor.
 
 If you start without explicit slave configs, EtherCAT still scans the ring, names each
@@ -135,7 +135,7 @@ defmodule MyApp.EL1809 do
   end
 end
 
-{:ok, ethercat} = EtherCAT.start(
+{:ok, session} = EtherCAT.start(
   backend: {:raw, %{interface: "eth0"}},
   domains: [%EtherCAT.Domain.Config{id: :io, cycle_time_us: 1_000}],
   slaves: [
@@ -155,21 +155,21 @@ end
   ]
 )
 
-:ok = EtherCAT.await_operational(ethercat)
+:ok = EtherCAT.await_operational(session)
 
-{:ok, input_sample} = EtherCAT.sample(ethercat, :inputs, :io)
+{:ok, input_sample} = EtherCAT.sample(session, :inputs, :io)
 input_sample.inputs.ch1
 #=> false
 
-{:ok, input_description} = EtherCAT.describe(ethercat, :inputs)
+{:ok, input_description} = EtherCAT.describe(session, :inputs)
 input_description.endpoints
 #=> [%EtherCAT.Endpoint{signal: :ch1, direction: :input, type: :boolean}]
 
-{:ok, inventory} = EtherCAT.inventory(ethercat)
+{:ok, inventory} = EtherCAT.inventory(session)
 Map.keys(inventory)
 #=> [:coupler, :inputs, :outputs]
 
-{:ok, status, initial_samples} = EtherCAT.subscribe(ethercat, :inputs)
+{:ok, status, initial_samples} = EtherCAT.subscribe(session, :inputs)
 status.state
 #=> :op
 initial_samples
@@ -189,8 +189,8 @@ receive do
     notification
 end
 
-:ok = EtherCAT.write(ethercat, :outputs, :ch1, true)
-{:ok, {true, updated_at_us}} = EtherCAT.read(ethercat, :inputs, :ch1)
+:ok = EtherCAT.write(session, :outputs, :ch1, true)
+{:ok, {true, updated_at_us}} = EtherCAT.read(session, :inputs, :ch1)
 ```
 
 Drivers own device identity, PDO signal layout, static signal descriptions,
@@ -199,14 +199,14 @@ commands. `EtherCAT.Sample` reports one coherent decoded observation from one
 domain cycle; samples from different domains do not imply cross-domain
 consistency.
 
-The handle-bound `describe/2` and `inventory/1` functions are
-configuration-backed protocol views. `status/2` reports current slave and
-attached-domain protocol status. `samples/2`, `sample/3`, and `subscribe/3`
-expose retained and subsequent process observations. Subscriptions deliver both
-coherent samples and protocol-level state notifications. `read/3` and
-`write/4` are explicit low-level signal operations. A stale handle fails with
-`{:error, :stale_handle}` instead of crossing into a replacement session.
-`EtherCAT.Raw` remains available for specialist PDO/latch tooling.
+`describe/2` and `inventory/1` are configuration-backed protocol views.
+`status/2` reports current slave and attached-domain protocol status.
+`samples/2`, `sample/3`, and `subscribe/3` expose retained and subsequent
+process observations. Subscriptions deliver both coherent samples and
+protocol-level state notifications. `read/3` and `write/4` are explicit
+low-level signal operations. Every call requires its session; a stopped or
+replaced session fails with `{:error, :stale_session}`.
+`EtherCAT.Raw` remains available for session-bound PDO/latch tooling.
 
 Semantic commands, machine state, and machine events belong in a separate
 integration layer above EtherCAT, such as an `Entity.Provider` adapter.
@@ -214,24 +214,25 @@ integration layer above EtherCAT, such as an `Entity.Provider` adapter.
 For PREOP-first workflows, configure discovered slaves dynamically:
 
 ```elixir
-{:ok, ethercat} =
+{:ok, session} =
   EtherCAT.start(
     backend: {:raw, %{interface: "eth0"}},
     domains: [%EtherCAT.Domain.Config{id: :main, cycle_time_us: 1_000}]
   )
 
-:ok = EtherCAT.await_running(ethercat)
+:ok = EtherCAT.await_running(session)
 
 :ok =
   EtherCAT.Provisioning.configure_slave(
+    session,
     :slave_1,
     driver: MyApp.EL1809,
     process_data: {:all, :main},
     target_state: :op
   )
 
-:ok = EtherCAT.Provisioning.activate()
-:ok = EtherCAT.await_operational(ethercat)
+:ok = EtherCAT.Provisioning.activate(session)
+:ok = EtherCAT.await_operational(session)
 ```
 
 ### Capture a real slave into a simulator scaffold
@@ -243,9 +244,10 @@ iex -S mix ethercat.capture --interface eth0
 Then, from IEx:
 
 ```elixir
-EtherCAT.Capture.list_slaves()
-EtherCAT.Capture.write_capture(:slave_1, sdos: [{0x1008, 0x00}])
-EtherCAT.Capture.gen_simulator(:slave_1, module: MyApp.EL1809.Simulator)
+{:ok, session} = EtherCAT.Session.current()
+EtherCAT.Capture.list_slaves(session)
+EtherCAT.Capture.write_capture(session, :slave_1, sdos: [{0x1008, 0x00}])
+EtherCAT.Capture.gen_simulator(session, :slave_1, module: MyApp.EL1809.Simulator)
 ```
 
 This capture flow writes a data-only capture artifact, then preserves static
@@ -257,7 +259,7 @@ dictionary automatically.
 
 - `EtherCAT.Backend` describes the transport/backend the master or simulator uses.
 - `EtherCAT.Scan.scan/1` returns an observational `%EtherCAT.Scan.Result{}` without starting the master, and refuses to probe a backend already owned by the running master.
-- `EtherCAT.Master.status/0` returns the current `%EtherCAT.Master.Status{}` runtime view.
+- `EtherCAT.Diagnostics.master_status/1` returns the session's `%EtherCAT.Master.Status{}` runtime view.
 - `EtherCAT.Simulator.status/0` returns the current `%EtherCAT.Simulator.Status{}` runtime view.
 
 ## Mental Model
@@ -271,17 +273,15 @@ dictionary automatically.
 
 If you understand those five roles, the rest of the API is predictable.
 
-The normal application-facing surface is `EtherCAT`. Provisioning, diagnostics,
-raw PDO access, and driver authoring live under `EtherCAT.Provisioning`,
-`EtherCAT.Diagnostics`, `EtherCAT.Raw`, and `EtherCAT.Driver`. The runtime
-still uses `Master`, `Slave`, `Domain`, and `DC` internally to model the
-session, but those are specialist entry points now.
+The normal application-facing surface is `EtherCAT`. Session-bound
+provisioning, diagnostics, and raw PDO access live under
+`EtherCAT.Provisioning`, `EtherCAT.Diagnostics`, and `EtherCAT.Raw`; driver
+extension contracts live under `EtherCAT.Driver`. `Master`, `Slave`, `Domain`,
+and `DC` are internal runtime processes behind those boundaries.
 
 ## Lifecycle
 
-Public startup and runtime health are exposed through `EtherCAT.state/0`:
-
-- `:idle` — no live session
+Public startup and runtime health are exposed through `EtherCAT.state/1`:
 - `:discovering` — bus scan and startup are still in progress
 - `:awaiting_preop` — configured slaves are still converging on PREOP
 - `:preop_ready` — the session is usable and held in PREOP
@@ -292,7 +292,7 @@ Public startup and runtime health are exposed through `EtherCAT.state/0`:
 
 `await_running/1` waits for a usable session and returns activation/configuration
 errors directly if startup cannot reach one. `await_operational/1` waits for
-cyclic OP. Inspect `EtherCAT.Diagnostics.slaves/0` for non-critical per-slave
+cyclic OP. Inspect `EtherCAT.Diagnostics.slaves/1` for non-critical per-slave
 fault state.
 
 For detailed state diagrams and sequencing, see the specialist moduledocs:
@@ -305,7 +305,7 @@ For detailed state diagrams and sequencing, see the specialist moduledocs:
 
 - A slave disconnect does not automatically mean full-session teardown.
 - Critical domain or DC faults move the master to `:recovering`.
-- Non-critical slave-local faults stay attached to the affected slave and are visible through `EtherCAT.Diagnostics.slaves/0`.
+- Non-critical slave-local faults stay attached to the affected slave and are visible through `EtherCAT.Diagnostics.slaves/1`.
 - Healthy domains can keep cycling if the fault is localized and the transport is still usable.
 - Total bus loss can stop domains after the configured miss threshold; recovery can restart them.
 - Slave reconnect is PREOP-first: the slave rebuilds its local state, then the master decides when to return it to OP.

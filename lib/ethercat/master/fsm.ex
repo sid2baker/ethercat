@@ -54,27 +54,27 @@ defmodule EtherCAT.Master.FSM do
 
   def handle_event(
         {:call, from},
-        {:session, session, event},
+        {:session, generation, event},
         state,
-        %Master{session: session} = data
+        %Master{generation: generation} = data
       )
-      when is_reference(session) do
+      when is_reference(generation) do
     handle_event({:call, from}, event, state, data)
   end
 
-  def handle_event({:call, from}, {:session, _session, _event}, _state, _data) do
-    {:keep_state_and_data, [{:reply, from, {:error, :stale_handle}}]}
+  def handle_event({:call, from}, {:session, _generation, _event}, _state, _data) do
+    {:keep_state_and_data, [{:reply, from, {:error, :stale_session}}]}
   end
 
   def handle_event({:call, from}, {:start, opts}, :idle, data) do
     with {:ok, start_config} <- Config.normalize_start_options(opts),
          {:ok, bus_pid} <- start_session_bus(start_config.bus_opts) do
       bus_ref = Process.monitor(bus_pid)
-      session = make_ref()
+      generation = make_ref()
 
       new_data = %{
         data
-        | session: session,
+        | generation: generation,
           bus_ref: bus_ref,
           backend: start_config.backend,
           dc_ref: nil,
@@ -100,7 +100,7 @@ defmodule EtherCAT.Master.FSM do
           await_operational_callers: []
       }
 
-      {:next_state, :discovering, new_data, [{:reply, from, {:ok, session, self()}}]}
+      {:next_state, :discovering, new_data, [{:reply, from, {:ok, generation, self()}}]}
     else
       {:error, _} = err ->
         {:keep_state_and_data, [{:reply, from, err}]}
@@ -109,6 +109,10 @@ defmodule EtherCAT.Master.FSM do
 
   def handle_event({:call, from}, {:start, _}, _state, _data) do
     {:keep_state_and_data, [{:reply, from, {:error, :already_started}}]}
+  end
+
+  def handle_event({:call, from}, :session_identity, :idle, _data) do
+    {:keep_state_and_data, [{:reply, from, {:error, :not_started}}]}
   end
 
   def handle_event({:call, from}, :last_failure, :idle, data) do
@@ -141,10 +145,6 @@ defmodule EtherCAT.Master.FSM do
 
   def handle_event({:call, from}, :dc_runtime, :idle, _data) do
     {:keep_state_and_data, [{:reply, from, {:error, :not_started}}]}
-  end
-
-  def handle_event({:call, from}, :stop, :idle, _data) do
-    {:keep_state_and_data, [{:reply, from, :already_stopped}]}
   end
 
   def handle_event({:call, from}, _event, :idle, _data) do
@@ -380,7 +380,7 @@ defmodule EtherCAT.Master.FSM do
     emit_state_change(old, :preop_ready, data)
 
     Logger.info(
-      "[Master] running — slaves ready in PREOP, waiting for explicit activate/0",
+      "[Master] running — slaves ready in PREOP, waiting for explicit Provisioning.activate/1",
       component: :master,
       event: :state_entered,
       public_state: :preop_ready,
@@ -394,7 +394,7 @@ defmodule EtherCAT.Master.FSM do
     emit_state_change(old, :deactivated, data)
 
     Logger.info(
-      "[Master] deactivated — runtime settled below OP, waiting for activate/0",
+      "[Master] deactivated — runtime settled below OP, waiting for Provisioning.activate/1",
       component: :master,
       event: :state_entered,
       public_state: :deactivated,
@@ -1557,6 +1557,10 @@ defmodule EtherCAT.Master.FSM do
 
   defp reply_await_callers(callers, reply) do
     Enum.each(callers, fn from -> :gen_statem.reply(from, reply) end)
+  end
+
+  defp handle_active_call(from, :session_identity, _state, data) do
+    {:keep_state_and_data, [{:reply, from, {:ok, data.generation}}]}
   end
 
   defp handle_active_call(from, :state, state, _data) do

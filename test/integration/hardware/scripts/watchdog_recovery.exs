@@ -144,7 +144,11 @@ EtherCAT watchdog trip & recovery test
 
 IO.puts("── 1. Starting EtherCAT ──────────────────────────────────────────")
 
-EtherCAT.stop()
+case EtherCAT.Session.current() do
+  {:ok, session} -> EtherCAT.stop(session)
+  {:error, :not_started} -> :ok
+end
+
 Process.sleep(300)
 
 rtd_slave = Hardware.rtd()
@@ -163,8 +167,8 @@ rtd_slave = Hardware.rtd()
 
 :ok = EtherCAT.await_running(ethercat, 15_000)
 
-{:ok, bus} = EtherCAT.Diagnostics.bus()
-{:ok, slaves} = EtherCAT.Diagnostics.slaves()
+{:ok, bus} = EtherCAT.Diagnostics.bus(ethercat)
+{:ok, slaves} = EtherCAT.Diagnostics.slaves(ethercat)
 
 # Find the EL2809 station address
 {:ok, outputs_station} =
@@ -241,12 +245,12 @@ end
 
 IO.puts("\n── 2. Assert all outputs HIGH ────────────────────────────────────")
 
-Enum.each(1..16, fn i -> EtherCAT.Raw.write_output(:outputs, :"ch#{i}", 1) end)
+Enum.each(1..16, fn i -> EtherCAT.Raw.write_output(ethercat, :outputs, :"ch#{i}", 1) end)
 Process.sleep(period_ms * 5)
 
 on_count =
   Enum.count(1..16, fn i ->
-    case EtherCAT.Raw.read_input(:inputs, :"ch#{i}") do
+    case EtherCAT.Raw.read_input(ethercat, :inputs, :"ch#{i}") do
       {:ok, {1, _updated_at_us}} -> true
       _ -> false
     end
@@ -314,7 +318,7 @@ EtherCAT.Domain.stop_cycling(:main)
 
 off_count =
   Enum.count(1..16, fn i ->
-    case EtherCAT.Raw.read_input(:inputs, :"ch#{i}") do
+    case EtherCAT.Raw.read_input(ethercat, :inputs, :"ch#{i}") do
       {:ok, {0, _updated_at_us}} -> true
       _ -> false
     end
@@ -361,12 +365,12 @@ end
 IO.puts("\n── 6. Verify loopback restored ───────────────────────────────────")
 
 # Re-assert outputs after recovery (domain cycling cleared them)
-Enum.each(1..16, fn i -> EtherCAT.Raw.write_output(:outputs, :"ch#{i}", 1) end)
+Enum.each(1..16, fn i -> EtherCAT.Raw.write_output(ethercat, :outputs, :"ch#{i}", 1) end)
 Process.sleep(period_ms * 5)
 
 restored_count =
   Enum.count(1..16, fn i ->
-    case EtherCAT.Raw.read_input(:inputs, :"ch#{i}") do
+    case EtherCAT.Raw.read_input(ethercat, :inputs, :"ch#{i}") do
       {:ok, {1, _updated_at_us}} -> true
       _ -> false
     end
@@ -397,6 +401,6 @@ IO.puts("""
 """)
 
 # Zero outputs and stop
-Enum.each(1..16, fn i -> EtherCAT.Raw.write_output(:outputs, :"ch#{i}", 0) end)
+Enum.each(1..16, fn i -> EtherCAT.Raw.write_output(ethercat, :outputs, :"ch#{i}", 0) end)
 Process.sleep(period_ms * 3)
-EtherCAT.stop()
+EtherCAT.stop(ethercat)

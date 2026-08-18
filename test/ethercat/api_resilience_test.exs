@@ -37,7 +37,11 @@ defmodule EtherCAT.APIResilienceTest do
   end
 
   setup do
-    _ = EtherCAT.stop()
+    case EtherCAT.Session.current() do
+      {:ok, session} -> EtherCAT.stop(session)
+      {:error, :not_started} -> :ok
+    end
+
     :ok
   end
 

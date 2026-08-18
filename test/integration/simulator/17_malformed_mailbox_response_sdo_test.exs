@@ -44,7 +44,7 @@ defmodule EtherCAT.Integration.Simulator.MalformedMailboxResponseSDOTest do
   test "wrong mailbox types surface as exact CoE errors" do
     value = "hello-sim\0\0\0"
 
-    assert {:ok, :preop_ready} = EtherCAT.state()
+    assert {:ok, :preop_ready} = EtherCAT.state(SimulatorRing.session!())
 
     assert :ok =
              Simulator.inject_fault(
@@ -58,20 +58,22 @@ defmodule EtherCAT.Integration.Simulator.MalformedMailboxResponseSDOTest do
              )
 
     assert {:error, {:unexpected_mailbox_type, 4}} =
-             EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2001, 0x01)
+             EtherCAT.Provisioning.upload_sdo(SimulatorRing.session!(), :mailbox, 0x2001, 0x01)
 
-    assert {:ok, :preop_ready} = EtherCAT.state()
+    assert {:ok, :preop_ready} = EtherCAT.state(SimulatorRing.session!())
 
     assert :ok = Simulator.clear_faults()
 
-    assert {:ok, ^value} = EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2001, 0x01)
-    assert {:ok, :preop_ready} = EtherCAT.state()
+    assert {:ok, ^value} =
+             EtherCAT.Provisioning.upload_sdo(SimulatorRing.session!(), :mailbox, 0x2001, 0x01)
+
+    assert {:ok, :preop_ready} = EtherCAT.state(SimulatorRing.session!())
   end
 
   test "wrong CoE services surface as exact parser errors" do
     value = "hello-sim\0\0\0"
 
-    assert {:ok, :preop_ready} = EtherCAT.state()
+    assert {:ok, :preop_ready} = EtherCAT.state(SimulatorRing.session!())
 
     assert :ok =
              Simulator.inject_fault(
@@ -85,13 +87,15 @@ defmodule EtherCAT.Integration.Simulator.MalformedMailboxResponseSDOTest do
              )
 
     assert {:error, {:unexpected_coe_service, 2}} =
-             EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2001, 0x01)
+             EtherCAT.Provisioning.upload_sdo(SimulatorRing.session!(), :mailbox, 0x2001, 0x01)
 
-    assert {:ok, :preop_ready} = EtherCAT.state()
+    assert {:ok, :preop_ready} = EtherCAT.state(SimulatorRing.session!())
 
     assert :ok = Simulator.clear_faults()
 
-    assert {:ok, ^value} = EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2001, 0x01)
-    assert {:ok, :preop_ready} = EtherCAT.state()
+    assert {:ok, ^value} =
+             EtherCAT.Provisioning.upload_sdo(SimulatorRing.session!(), :mailbox, 0x2001, 0x01)
+
+    assert {:ok, :preop_ready} = EtherCAT.state(SimulatorRing.session!())
   end
 end

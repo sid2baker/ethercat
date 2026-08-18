@@ -28,11 +28,11 @@ Observed with:
 - `Simulator.inject_fault(Fault.mailbox_protocol_fault(:mailbox, 0x2003, 0x01, :download_segment, :drop_response) |> Fault.after_milestone(Fault.mailbox_step(:mailbox, :download_segment, 1)))`
 
 - the master enters `:activation_blocked`
-- handle-bound `EtherCAT.await_running/2` reports
+- session-bound `EtherCAT.await_running/2` reports
   `{:activation_failed, %{mailbox: {:safeop, {:preop_configuration_failed, {:mailbox_config_failed, 0x2003, 0x01, :response_timeout}}}}}`
-- `EtherCAT.Diagnostics.slave_info(:mailbox)` reports the exact mailbox configuration error
+- `EtherCAT.Diagnostics.slave_info(session, :mailbox)` reports the exact mailbox configuration error
 - after clearing the injected fault and restarting the master, the old runtime
-  handle returns `{:error, :stale_handle}` and the new session reaches
+  session returns `{:error, :stale_session}` and the replacement session reaches
   `:operational`
 
 ## Test Shape
@@ -43,8 +43,8 @@ Observed with:
 3. start the master with the mailbox slave targeting `:op`
 4. assert startup stops in `:activation_blocked` with the exact timeout tuple
 5. assert the mailbox slave stays in PREOP and exposes the configuration error
-6. clear faults, stop through the first session handle, and assert it becomes stale
-7. restart the master and assert the same startup succeeds through a new handle
+6. clear faults, stop through the first session identity, and assert it becomes stale
+7. restart the master and assert the same startup succeeds through a new session
 
 ## Simulator API Notes
 

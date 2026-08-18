@@ -44,10 +44,11 @@ defmodule EtherCAT.Integration.Simulator.PreopReconfigureKeepsStartupPollSuppres
   end
 
   test "preop reconfigure does not arm health polling before activation" do
-    assert {:ok, :preop_ready} = EtherCAT.state()
+    assert {:ok, :preop_ready} = EtherCAT.state(SimulatorRing.session!())
 
     assert :ok =
              EtherCAT.Provisioning.configure_slave(
+               SimulatorRing.session!(),
                :outputs,
                target_state: :preop,
                health_poll_ms: 20

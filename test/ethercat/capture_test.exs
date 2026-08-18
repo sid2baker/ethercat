@@ -10,11 +10,11 @@ defmodule EtherCAT.CaptureTest do
   @simulator_ip {127, 0, 0, 2}
 
   setup do
-    _ = EtherCAT.stop()
+    _ = stop_current_session()
     _ = Simulator.stop()
 
     on_exit(fn ->
-      _ = EtherCAT.stop()
+      _ = stop_current_session()
       _ = Simulator.stop()
     end)
 
@@ -22,15 +22,15 @@ defmodule EtherCAT.CaptureTest do
   end
 
   test "captures a dynamically discovered mailbox slave and selected sdos" do
-    boot_dynamic_capture_ring!()
+    session = boot_dynamic_capture_ring!()
 
-    assert EtherCAT.state() == {:ok, :preop_ready}
+    assert EtherCAT.state(session) == {:ok, :preop_ready}
 
-    assert {:ok, slaves} = Capture.list_slaves()
+    assert {:ok, slaves} = Capture.list_slaves(session)
     assert Enum.any?(slaves, &(&1.name == :slave_3 and &1.coe))
 
     assert {:ok, capture} =
-             Capture.capture(:slave_3, sdos: [{0x2000, 0x01}, {0x2001, 0x01}])
+             Capture.capture(session, :slave_3, sdos: [{0x2000, 0x01}, {0x2001, 0x01}])
 
     assert capture.format == 1
     assert capture.slave.identity.product_code == 0x0000_1602
@@ -49,12 +49,13 @@ defmodule EtherCAT.CaptureTest do
   end
 
   test "writes a capture file and loads it back" do
-    boot_dynamic_capture_ring!()
+    session = boot_dynamic_capture_ring!()
     tmp_dir = tmp_dir!()
     path = Path.join(tmp_dir, "mailbox_capture.capture")
 
     assert {:ok, written_path} =
              Capture.write_capture(
+               session,
                :slave_3,
                path: path,
                sdos: [{0x2000, 0x02}],
@@ -69,7 +70,7 @@ defmodule EtherCAT.CaptureTest do
   end
 
   test "generates a simulator scaffold module from an io slave capture" do
-    boot_dynamic_capture_ring!()
+    session = boot_dynamic_capture_ring!()
     tmp_dir = tmp_dir!()
     capture_path = Path.join([tmp_dir, "captures", "captured_inputs.capture"])
     module_path = Path.join([tmp_dir, "scaffolds", "generated_inputs_simulator.ex"])
@@ -84,6 +85,7 @@ defmodule EtherCAT.CaptureTest do
 
     assert {:ok, %{capture_path: written_capture, module_path: written_module}} =
              Capture.gen_simulator(
+               session,
                :slave_1,
                module: module,
                capture_path: capture_path,
@@ -137,7 +139,7 @@ defmodule EtherCAT.CaptureTest do
   end
 
   test "generates a best-effort integration driver scaffold for a digital input slave" do
-    boot_dynamic_capture_ring!()
+    session = boot_dynamic_capture_ring!()
     tmp_dir = tmp_dir!()
     driver_path = Path.join(tmp_dir, "generated_inputs_driver.ex")
 
@@ -153,6 +155,7 @@ defmodule EtherCAT.CaptureTest do
 
     assert {:ok, %{driver_path: written_driver}} =
              Capture.gen_driver(
+               session,
                :slave_1,
                module: module,
                driver_path: driver_path,
@@ -187,7 +190,7 @@ defmodule EtherCAT.CaptureTest do
   end
 
   test "generates a capture-backed integration driver scaffold for a mailbox slave" do
-    boot_dynamic_capture_ring!()
+    session = boot_dynamic_capture_ring!()
     tmp_dir = tmp_dir!()
     driver_path = Path.join([tmp_dir, "drivers", "generated_mailbox_driver.ex"])
 
@@ -203,6 +206,7 @@ defmodule EtherCAT.CaptureTest do
 
     assert {:ok, %{driver_path: written_driver}} =
              Capture.gen_driver(
+               session,
                :slave_3,
                module: module,
                driver_path: driver_path,
@@ -236,7 +240,7 @@ defmodule EtherCAT.CaptureTest do
   end
 
   test "renders concise driver source with signal overrides" do
-    boot_dynamic_capture_ring!()
+    session = boot_dynamic_capture_ring!()
 
     module =
       Module.concat([
@@ -249,6 +253,7 @@ defmodule EtherCAT.CaptureTest do
 
     assert {:ok, source} =
              Capture.render_driver(
+               session,
                :slave_1,
                module: module,
                simulator_module: simulator_module,
@@ -275,7 +280,7 @@ defmodule EtherCAT.CaptureTest do
   end
 
   test "renders capture-backed simulator source without writing files" do
-    boot_dynamic_capture_ring!()
+    session = boot_dynamic_capture_ring!()
 
     module =
       Module.concat([
@@ -290,6 +295,7 @@ defmodule EtherCAT.CaptureTest do
 
     assert {:ok, source} =
              Capture.render_simulator(
+               session,
                :slave_1,
                module: module,
                capture_path: capture_path,
@@ -376,7 +382,7 @@ defmodule EtherCAT.CaptureTest do
     assert {:ok, %EtherCAT.Simulator.Status{backend: %EtherCAT.Backend.Udp{port: port}}} =
              Simulator.status()
 
-    assert {:ok, handle} =
+    assert {:ok, session} =
              EtherCAT.start(
                backend: {:udp, %{host: @simulator_ip, bind_ip: @master_ip, port: port}},
                dc: nil,
@@ -387,8 +393,15 @@ defmodule EtherCAT.CaptureTest do
                frame_timeout_ms: 20
              )
 
-    assert :ok = EtherCAT.await_running(handle, 2_000)
-    :ok
+    assert :ok = EtherCAT.await_running(session, 2_000)
+    session
+  end
+
+  defp stop_current_session do
+    case EtherCAT.Session.current() do
+      {:ok, session} -> EtherCAT.stop(session)
+      {:error, :not_started} -> :ok
+    end
   end
 
   defp tmp_dir! do

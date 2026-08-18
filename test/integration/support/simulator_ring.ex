@@ -67,7 +67,7 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
   @spec reset!() :: :ok
   def reset! do
     capture_cleanup_logs(fn ->
-      _ = EtherCAT.stop()
+      stop_session()
       _ = Simulator.stop()
       :ok
     end)
@@ -76,13 +76,17 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
   @spec stop_all!() :: :ok
   def stop_all! do
     capture_cleanup_logs(fn ->
-      case EtherCAT.stop() do
-        :ok -> :ok
-        {:error, :already_stopped} -> :ok
-      end
-
+      stop_session()
       :ok = Simulator.stop()
     end)
+  end
+
+  @spec session!() :: EtherCAT.Session.t()
+  def session! do
+    case EtherCAT.Session.current() do
+      {:ok, session} -> session
+      {:error, reason} -> raise "expected active EtherCAT session, got: #{inspect(reason)}"
+    end
   end
 
   @spec devices(ring()) :: [struct()]
@@ -211,13 +215,13 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
     simulator
   end
 
-  @spec start_master!(endpoint() | :inet.port_number(), keyword()) :: EtherCAT.Runtime.Handle.t()
+  @spec start_master!(endpoint() | :inet.port_number(), keyword()) :: EtherCAT.Session.t()
   def start_master!(endpoint, opts \\ []) do
     assert_ok!(start_master(endpoint, opts))
   end
 
   @spec start_master(endpoint() | :inet.port_number(), keyword()) ::
-          {:ok, EtherCAT.Runtime.Handle.t()} | {:error, term()}
+          {:ok, EtherCAT.Session.t()} | {:error, term()}
   def start_master(endpoint, opts \\ []) do
     ring = Keyword.get(opts, :ring, :default)
 
@@ -253,7 +257,7 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
 
   @spec fault_for(atom()) :: term()
   def fault_for(slave_name) do
-    {:ok, slaves} = EtherCAT.Diagnostics.slaves()
+    {:ok, slaves} = EtherCAT.Diagnostics.slaves(session!())
 
     slaves
     |> Enum.find_value(fn
@@ -263,7 +267,7 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
   end
 
   defp assert_ok!(:ok), do: :ok
-  defp assert_ok!({:ok, %EtherCAT.Runtime.Handle{} = handle}), do: handle
+  defp assert_ok!({:ok, session}), do: session
 
   defp assert_ok!(other) do
     stop_all!()
@@ -298,8 +302,8 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
     await_timeout_ms = Keyword.get(opts, :await_operational_ms, 2_000)
 
     case start_master(simulator, opts) do
-      {:ok, handle} ->
-        case EtherCAT.await_operational(handle, await_timeout_ms) do
+      {:ok, session} ->
+        case EtherCAT.await_operational(session, await_timeout_ms) do
           :ok ->
             simulator
 
@@ -325,8 +329,8 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
     await_timeout_ms = Keyword.get(opts, :await_running_ms, 2_000)
 
     case start_master(simulator, opts) do
-      {:ok, handle} ->
-        case EtherCAT.await_running(handle, await_timeout_ms) do
+      {:ok, session} ->
+        case EtherCAT.await_running(session, await_timeout_ms) do
           :ok ->
             simulator
 
@@ -390,6 +394,19 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
 
   defp raw_simulator_interface(opts) do
     Keyword.get(opts, :simulator_interface, raw_simulator_interface())
+  end
+
+  defp stop_session do
+    case EtherCAT.Session.current() do
+      {:ok, session} ->
+        case EtherCAT.stop(session) do
+          :ok -> :ok
+          {:error, :stale_session} -> :ok
+        end
+
+      {:error, :not_started} ->
+        :ok
+    end
   end
 
   defp capture_cleanup_logs(fun) do

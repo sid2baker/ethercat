@@ -53,11 +53,23 @@ defmodule EtherCAT.Integration.Simulator.PermanentSlaveDisconnectRecoveryStuckTe
       )
     end)
     |> Scenario.act("loopback I/O works after recovery", fn _ctx ->
-      assert :ok = EtherCAT.Raw.write_output(:outputs, :ch1, 1)
+      assert :ok =
+               EtherCAT.Raw.write_output(
+                 SimulatorRing.session!(),
+                 :outputs,
+                 :ch1,
+                 1
+               )
 
       Expect.eventually(
         fn ->
-          assert {:ok, {true, updated_at_us}} = EtherCAT.Raw.read_input(:inputs, :ch1)
+          assert {:ok, {true, updated_at_us}} =
+                   EtherCAT.Raw.read_input(
+                     SimulatorRing.session!(),
+                     :inputs,
+                     :ch1
+                   )
+
           assert is_integer(updated_at_us)
         end,
         label: "loopback I/O works after recovery"
@@ -77,7 +89,7 @@ defmodule EtherCAT.Integration.Simulator.PermanentSlaveDisconnectRecoveryStuckTe
     |> Scenario.act("health poll detects disconnect — slave leaves :op", fn _ctx ->
       Expect.eventually(
         fn ->
-          {:ok, info} = EtherCAT.Diagnostics.slave_info(:outputs)
+          {:ok, info} = EtherCAT.Diagnostics.slave_info(SimulatorRing.session!(), :outputs)
           assert info.al_state != :op, "slave should not report :op after full disconnect"
         end,
         attempts: 40,
@@ -105,14 +117,28 @@ defmodule EtherCAT.Integration.Simulator.PermanentSlaveDisconnectRecoveryStuckTe
       )
     end)
     |> Scenario.act("slave is healthy and loopback I/O works", fn _ctx ->
-      assert {:ok, %{al_state: :op}} = EtherCAT.Diagnostics.slave_info(:outputs)
+      assert {:ok, %{al_state: :op}} =
+               EtherCAT.Diagnostics.slave_info(SimulatorRing.session!(), :outputs)
+
       assert nil == SimulatorRing.fault_for(:outputs)
 
-      assert :ok = EtherCAT.Raw.write_output(:outputs, :ch1, 1)
+      assert :ok =
+               EtherCAT.Raw.write_output(
+                 SimulatorRing.session!(),
+                 :outputs,
+                 :ch1,
+                 1
+               )
 
       Expect.eventually(
         fn ->
-          assert {:ok, {true, updated_at_us}} = EtherCAT.Raw.read_input(:inputs, :ch1)
+          assert {:ok, {true, updated_at_us}} =
+                   EtherCAT.Raw.read_input(
+                     SimulatorRing.session!(),
+                     :inputs,
+                     :ch1
+                   )
+
           assert is_integer(updated_at_us)
         end,
         label: "loopback I/O works after recovery"
@@ -154,14 +180,28 @@ defmodule EtherCAT.Integration.Simulator.PermanentSlaveDisconnectRecoveryStuckTe
       )
     end)
     |> Scenario.act("slave is healthy and loopback I/O works", fn _ctx ->
-      assert {:ok, %{al_state: :op, station: 0x1002}} = EtherCAT.Diagnostics.slave_info(:outputs)
+      assert {:ok, %{al_state: :op, station: 0x1002}} =
+               EtherCAT.Diagnostics.slave_info(SimulatorRing.session!(), :outputs)
+
       assert nil == SimulatorRing.fault_for(:outputs)
 
-      assert :ok = EtherCAT.Raw.write_output(:outputs, :ch1, 1)
+      assert :ok =
+               EtherCAT.Raw.write_output(
+                 SimulatorRing.session!(),
+                 :outputs,
+                 :ch1,
+                 1
+               )
 
       Expect.eventually(
         fn ->
-          assert {:ok, {true, updated_at_us}} = EtherCAT.Raw.read_input(:inputs, :ch1)
+          assert {:ok, {true, updated_at_us}} =
+                   EtherCAT.Raw.read_input(
+                     SimulatorRing.session!(),
+                     :inputs,
+                     :ch1
+                   )
+
           assert is_integer(updated_at_us)
         end,
         label: "loopback I/O works after recovery"
@@ -202,14 +242,28 @@ defmodule EtherCAT.Integration.Simulator.PermanentSlaveDisconnectRecoveryStuckTe
       )
     end)
     |> Scenario.act("slave is healthy and loopback I/O works", fn _ctx ->
-      assert {:ok, %{al_state: :op, station: 0x1002}} = EtherCAT.Diagnostics.slave_info(:outputs)
+      assert {:ok, %{al_state: :op, station: 0x1002}} =
+               EtherCAT.Diagnostics.slave_info(SimulatorRing.session!(), :outputs)
+
       assert nil == SimulatorRing.fault_for(:outputs)
 
-      assert :ok = EtherCAT.Raw.write_output(:outputs, :ch1, 1)
+      assert :ok =
+               EtherCAT.Raw.write_output(
+                 SimulatorRing.session!(),
+                 :outputs,
+                 :ch1,
+                 1
+               )
 
       Expect.eventually(
         fn ->
-          assert {:ok, {true, updated_at_us}} = EtherCAT.Raw.read_input(:inputs, :ch1)
+          assert {:ok, {true, updated_at_us}} =
+                   EtherCAT.Raw.read_input(
+                     SimulatorRing.session!(),
+                     :inputs,
+                     :ch1
+                   )
+
           assert is_integer(updated_at_us)
         end,
         label: "loopback I/O works after recovery"
@@ -260,14 +314,28 @@ defmodule EtherCAT.Integration.Simulator.PermanentSlaveDisconnectRecoveryStuckTe
       )
     end)
     |> Scenario.act("slave is healthy and loopback I/O works", fn _ctx ->
-      assert {:ok, %{al_state: :op}} = EtherCAT.Diagnostics.slave_info(:outputs)
+      assert {:ok, %{al_state: :op}} =
+               EtherCAT.Diagnostics.slave_info(SimulatorRing.session!(), :outputs)
+
       assert nil == SimulatorRing.fault_for(:outputs)
 
-      assert :ok = EtherCAT.Raw.write_output(:outputs, :ch1, 1)
+      assert :ok =
+               EtherCAT.Raw.write_output(
+                 SimulatorRing.session!(),
+                 :outputs,
+                 :ch1,
+                 1
+               )
 
       Expect.eventually(
         fn ->
-          assert {:ok, {true, updated_at_us}} = EtherCAT.Raw.read_input(:inputs, :ch1)
+          assert {:ok, {true, updated_at_us}} =
+                   EtherCAT.Raw.read_input(
+                     SimulatorRing.session!(),
+                     :inputs,
+                     :ch1
+                   )
+
           assert is_integer(updated_at_us)
         end,
         label: "loopback I/O works after recovery"

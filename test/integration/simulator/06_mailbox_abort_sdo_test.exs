@@ -42,20 +42,24 @@ defmodule EtherCAT.Integration.Simulator.MailboxAbortSDOTest do
   end
 
   test "public sdo upload returns a mailbox abort without degrading the master" do
-    assert {:ok, :preop_ready} = EtherCAT.state()
-    assert {:ok, <<0x34, 0x12>>} = EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2000, 0x01)
+    assert {:ok, :preop_ready} = EtherCAT.state(SimulatorRing.session!())
+
+    assert {:ok, <<0x34, 0x12>>} =
+             EtherCAT.Provisioning.upload_sdo(SimulatorRing.session!(), :mailbox, 0x2000, 0x01)
 
     assert :ok =
              Simulator.inject_fault(Fault.mailbox_abort(:mailbox, 0x2000, 0x01, 0x0601_0002))
 
     assert {:error, {:sdo_abort, 0x2000, 0x01, 0x0601_0002}} =
-             EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2000, 0x01)
+             EtherCAT.Provisioning.upload_sdo(SimulatorRing.session!(), :mailbox, 0x2000, 0x01)
 
-    assert {:ok, :preop_ready} = EtherCAT.state()
+    assert {:ok, :preop_ready} = EtherCAT.state(SimulatorRing.session!())
 
     assert :ok = Simulator.clear_faults()
 
-    assert {:ok, <<0x34, 0x12>>} = EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2000, 0x01)
-    assert {:ok, :preop_ready} = EtherCAT.state()
+    assert {:ok, <<0x34, 0x12>>} =
+             EtherCAT.Provisioning.upload_sdo(SimulatorRing.session!(), :mailbox, 0x2000, 0x01)
+
+    assert {:ok, :preop_ready} = EtherCAT.state(SimulatorRing.session!())
   end
 end

@@ -44,7 +44,7 @@ defmodule EtherCAT.Integration.Simulator.StartupPreopHealthPollIsolationTest do
   end
 
   test "startup-held preop slaves do not background poll into recovery" do
-    assert {:ok, :preop_ready} = EtherCAT.state()
+    assert {:ok, :preop_ready} = EtherCAT.state(SimulatorRing.session!())
     assert :ok = Simulator.inject_fault(Fault.disconnect(:outputs))
 
     Expect.stays(

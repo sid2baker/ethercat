@@ -55,7 +55,7 @@ use the existing health-check path.
 - Actual behavior: `PREOP` entry schedules the same health-poll action used for
   runtime-held states, so a disconnected slave is marked `:down` after the
   default `250ms`.
-- Visible runtime impact: `EtherCAT.state/0` changes from `:preop_ready` to
+- Visible runtime impact: `EtherCAT.state/1` changes from `:preop_ready` to
   `:recovering` during configuration-only sessions, and the master reports a
   runtime slave fault even though no runtime activation was requested.
 - Suspected broken layer and why: slave runtime polling/health handling, because

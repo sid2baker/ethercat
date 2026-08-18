@@ -16,19 +16,22 @@ defmodule EtherCAT.Capture do
 
   ## Examples
 
-      {:ok, slaves} = EtherCAT.Capture.list_slaves()
+      {:ok, slaves} = EtherCAT.Capture.list_slaves(session)
 
       {:ok, capture} =
-        EtherCAT.Capture.capture(:slave_1, sdos: [{0x1008, 0x00}, {0x1009, 0x00}])
+        EtherCAT.Capture.capture(session, :slave_1,
+          sdos: [{0x1008, 0x00}, {0x1009, 0x00}]
+        )
 
       {:ok, capture_path} =
-        EtherCAT.Capture.write_capture(:slave_1, sdos: [{0x1008, 0x00}])
+        EtherCAT.Capture.write_capture(session, :slave_1, sdos: [{0x1008, 0x00}])
 
       {:ok, %{driver_path: driver_path}} =
-        EtherCAT.Capture.gen_driver(:slave_1, module: MyApp.EL1809)
+        EtherCAT.Capture.gen_driver(session, :slave_1, module: MyApp.EL1809)
 
       {:ok, %{module_path: module_path}} =
         EtherCAT.Capture.gen_simulator(
+          session,
           :slave_1,
           module: MyApp.EL1809.Simulator,
           sdos: [{0x1008, 0x00}]
@@ -36,6 +39,7 @@ defmodule EtherCAT.Capture do
   """
 
   alias EtherCAT.Bus
+  alias EtherCAT.Session
   alias EtherCAT.Simulator.Slave.Definition
   alias EtherCAT.Simulator.Slave.Object
   alias EtherCAT.Driver.Default, as: DefaultDriver
@@ -60,9 +64,10 @@ defmodule EtherCAT.Capture do
   @spec help() :: :ok
   def help do
     IO.puts("""
-    EtherCAT.Capture recommended command:
+    EtherCAT.Capture recommended commands:
 
-      EtherCAT.Capture.gen_driver(:slave_1, module: MyApp.EL1809)
+      {:ok, session} = EtherCAT.Session.current()
+      EtherCAT.Capture.gen_driver(session, :slave_1, module: MyApp.EL1809)
     """)
 
     :ok
@@ -71,10 +76,10 @@ defmodule EtherCAT.Capture do
   @doc """
   Return a compact snapshot of the currently discovered slaves.
   """
-  @spec list_slaves() :: {:ok, [map()]} | {:error, term()}
-  def list_slaves do
-    with {:ok, slaves} <- fetch_slaves() do
-      {:ok, Enum.map(slaves, &summarize_slave/1)}
+  @spec list_slaves(Session.t()) :: {:ok, [map()]} | {:error, term()}
+  def list_slaves(session) do
+    with {:ok, slaves} <- fetch_slaves(session) do
+      {:ok, Enum.map(slaves, &summarize_slave(session, &1))}
     end
   end
 
@@ -85,16 +90,17 @@ defmodule EtherCAT.Capture do
 
   - `:sdos` — list of `{index, subindex}` tuples to upload and include
   """
-  @spec capture(atom(), keyword()) :: {:ok, capture()} | {:error, term()}
-  def capture(slave_name, opts \\ []) when is_atom(slave_name) and is_list(opts) do
-    with {:ok, bus} <- fetch_bus(),
-         {:ok, info} <- EtherCAT.Diagnostics.slave_info(slave_name),
+  @spec capture(Session.t(), atom(), keyword()) :: {:ok, capture()} | {:error, term()}
+  def capture(session, slave_name, opts \\ [])
+      when is_atom(slave_name) and is_list(opts) do
+    with {:ok, bus} <- fetch_bus(session),
+         {:ok, info} <- EtherCAT.Diagnostics.slave_info(session, slave_name),
          {:ok, sdos} <- normalize_sdo_refs(opts),
          {:ok, sii_identity} <- SII.read_identity(bus, info.station),
          {:ok, mailbox_config} <- SII.read_mailbox_config(bus, info.station),
          {:ok, sm_configs} <- SII.read_sm_configs(bus, info.station),
          {:ok, pdo_configs} <- SII.read_pdo_configs(bus, info.station),
-         {:ok, sdo_snapshots} <- read_sdo_snapshots(slave_name, sdos) do
+         {:ok, sdo_snapshots} <- read_sdo_snapshots(session, slave_name, sdos) do
       bus_info =
         case Bus.info(bus) do
           {:ok, snapshot} -> snapshot
@@ -109,7 +115,7 @@ defmodule EtherCAT.Capture do
          format: @capture_format,
          captured_at: captured_at(),
          source: %{
-           master_state: fetch_master_state(),
+           master_state: fetch_master_state(session),
            bus: bus_info,
            slave_name: slave_name,
            station: info.station
@@ -145,9 +151,11 @@ defmodule EtherCAT.Capture do
   - `:force` — overwrite an existing file when `true`
   - `:sdos` — list of `{index, subindex}` tuples to upload and include
   """
-  @spec write_capture(atom(), keyword()) :: {:ok, String.t()} | {:error, term()}
-  def write_capture(slave_name, opts \\ []) when is_atom(slave_name) and is_list(opts) do
-    with {:ok, capture} <- capture(slave_name, opts),
+  @spec write_capture(Session.t(), atom(), keyword()) ::
+          {:ok, String.t()} | {:error, term()}
+  def write_capture(session, slave_name, opts \\ [])
+      when is_atom(slave_name) and is_list(opts) do
+    with {:ok, capture} <- capture(session, slave_name, opts),
          path <- capture_path(capture, opts),
          :ok <-
            write_generated_file(path, render_capture(capture), Keyword.get(opts, :force, false)) do
@@ -171,9 +179,11 @@ defmodule EtherCAT.Capture do
   - `:sdos` — list of `{index, subindex}` tuples to upload and include when
     `slave_name` is a live slave
   """
-  @spec render_driver(atom() | capture(), keyword()) :: {:ok, String.t()} | {:error, term()}
-  def render_driver(slave_name, opts) when is_atom(slave_name) and is_list(opts) do
-    with {:ok, capture} <- capture(slave_name, opts) do
+  @spec render_driver(Session.t(), atom(), keyword()) ::
+          {:ok, String.t()} | {:error, term()}
+  def render_driver(session, slave_name, opts)
+      when is_atom(slave_name) and is_list(opts) do
+    with {:ok, capture} <- capture(session, slave_name, opts) do
       render_driver(capture, opts)
     end
   end
@@ -211,9 +221,11 @@ defmodule EtherCAT.Capture do
   - `:sdos` — list of `{index, subindex}` tuples to upload and include when
     `slave_name` is a live slave
   """
-  @spec render_simulator(atom() | capture(), keyword()) :: {:ok, String.t()} | {:error, term()}
-  def render_simulator(slave_name, opts) when is_atom(slave_name) and is_list(opts) do
-    with {:ok, capture} <- capture(slave_name, opts) do
+  @spec render_simulator(Session.t(), atom(), keyword()) ::
+          {:ok, String.t()} | {:error, term()}
+  def render_simulator(session, slave_name, opts)
+      when is_atom(slave_name) and is_list(opts) do
+    with {:ok, capture} <- capture(session, slave_name, opts) do
       render_simulator(capture, opts)
     end
   end
@@ -240,14 +252,15 @@ defmodule EtherCAT.Capture do
   - `:force` — overwrite existing files when `true`
   - `:sdos` — list of `{index, subindex}` tuples to upload and include
 
-  Use `write_capture/2` separately if you also want to persist the captured
+  Use `write_capture/3` separately if you also want to persist the captured
   snapshot file alongside the generated driver.
   """
-  @spec gen_driver(atom() | capture(), keyword()) ::
+  @spec gen_driver(Session.t(), atom(), keyword()) ::
           {:ok, %{driver_path: String.t()}} | {:error, term()}
-  def gen_driver(slave_name, opts) when is_atom(slave_name) and is_list(opts) do
+  def gen_driver(session, slave_name, opts)
+      when is_atom(slave_name) and is_list(opts) do
     with {:ok, module} <- fetch_module_option(opts),
-         {:ok, capture} <- capture(slave_name, opts) do
+         {:ok, capture} <- capture(session, slave_name, opts) do
       gen_driver(capture, Keyword.put_new(opts, :module, module))
     end
   end
@@ -274,11 +287,12 @@ defmodule EtherCAT.Capture do
   - `:force` — overwrite existing files when `true`
   - `:sdos` — list of `{index, subindex}` tuples to upload and include
   """
-  @spec gen_simulator(atom(), keyword()) ::
+  @spec gen_simulator(Session.t(), atom(), keyword()) ::
           {:ok, %{capture_path: String.t(), module_path: String.t()}} | {:error, term()}
-  def gen_simulator(slave_name, opts) when is_atom(slave_name) and is_list(opts) do
+  def gen_simulator(session, slave_name, opts)
+      when is_atom(slave_name) and is_list(opts) do
     with {:ok, module} <- fetch_module_option(opts),
-         {:ok, capture} <- capture(slave_name, opts) do
+         {:ok, capture} <- capture(session, slave_name, opts) do
       capture_path = capture_path(capture, path_option(opts, :capture_path))
       module_path = module_path(module, opts)
       overwrite? = Keyword.get(opts, :force, false)
@@ -296,7 +310,7 @@ defmodule EtherCAT.Capture do
   end
 
   @doc """
-  Load a data-only capture file written by `write_capture/2`.
+  Load a data-only capture file written by `write_capture/3`.
   """
   @spec load_capture(Path.t()) :: {:ok, capture()} | {:error, term()}
   def load_capture(path) when is_binary(path) do
@@ -376,8 +390,8 @@ defmodule EtherCAT.Capture do
     ]
   end
 
-  defp summarize_slave(%{name: name, station: station, fault: fault}) do
-    case EtherCAT.Diagnostics.slave_info(name) do
+  defp summarize_slave(session, %{name: name, station: station, fault: fault}) do
+    case EtherCAT.Diagnostics.slave_info(session, name) do
       {:ok, info} ->
         %{
           name: name,
@@ -395,23 +409,23 @@ defmodule EtherCAT.Capture do
     end
   end
 
-  defp fetch_slaves do
-    case EtherCAT.Diagnostics.slaves() do
+  defp fetch_slaves(session) do
+    case EtherCAT.Diagnostics.slaves(session) do
       {:ok, slaves} -> {:ok, slaves}
       {:error, _} = err -> err
     end
   end
 
-  defp fetch_bus do
-    case EtherCAT.Diagnostics.bus() do
+  defp fetch_bus(session) do
+    case EtherCAT.Diagnostics.bus(session) do
       {:error, _} = err -> err
       {:ok, nil} -> {:error, :not_started}
       {:ok, bus} -> {:ok, bus}
     end
   end
 
-  defp fetch_master_state do
-    case EtherCAT.state() do
+  defp fetch_master_state(session) do
+    case EtherCAT.state(session) do
       {:ok, state} -> state
       {:error, reason} -> {:error, reason}
     end
@@ -514,12 +528,12 @@ defmodule EtherCAT.Capture do
 
   defp valid_sdo_ref?(_other), do: false
 
-  defp read_sdo_snapshots(_slave_name, []), do: {:ok, []}
+  defp read_sdo_snapshots(_session, _slave_name, []), do: {:ok, []}
 
-  defp read_sdo_snapshots(slave_name, sdos) do
+  defp read_sdo_snapshots(session, slave_name, sdos) do
     sdos
     |> Enum.reduce_while({:ok, []}, fn {index, subindex}, {:ok, acc} ->
-      case EtherCAT.Provisioning.upload_sdo(slave_name, index, subindex) do
+      case EtherCAT.Provisioning.upload_sdo(session, slave_name, index, subindex) do
         {:ok, data} ->
           {:cont, {:ok, [sdo_snapshot(index, subindex, data) | acc]}}
 

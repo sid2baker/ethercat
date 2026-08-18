@@ -46,7 +46,7 @@ defmodule EtherCAT.Integration.Simulator.MailboxStepMilestoneAbortTest do
   test "mailbox milestones can arm upload aborts after successful segment progress" do
     blob = multi_segment_blob()
 
-    assert {:ok, :preop_ready} = EtherCAT.state()
+    assert {:ok, :preop_ready} = EtherCAT.state(SimulatorRing.session!())
 
     assert :ok =
              Simulator.inject_fault(
@@ -66,23 +66,27 @@ defmodule EtherCAT.Integration.Simulator.MailboxStepMilestoneAbortTest do
             }} = Simulator.info()
 
     assert {:error, {:sdo_abort, 0x2003, 0x01, @abort_code}} =
-             EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2003, 0x01)
+             EtherCAT.Provisioning.upload_sdo(SimulatorRing.session!(), :mailbox, 0x2003, 0x01)
 
-    assert {:ok, :preop_ready} = EtherCAT.state()
+    assert {:ok, :preop_ready} = EtherCAT.state(SimulatorRing.session!())
     assert {:ok, %{scheduled_faults: [], pending_faults: []}} = Simulator.info()
 
     assert :ok = Simulator.clear_faults()
 
-    assert {:ok, ^blob} = EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2003, 0x01)
-    assert {:ok, :preop_ready} = EtherCAT.state()
+    assert {:ok, ^blob} =
+             EtherCAT.Provisioning.upload_sdo(SimulatorRing.session!(), :mailbox, 0x2003, 0x01)
+
+    assert {:ok, :preop_ready} = EtherCAT.state(SimulatorRing.session!())
   end
 
   test "mailbox milestones can arm download aborts after successful segment progress" do
     original = multi_segment_blob()
     updated = updated_multi_segment_blob()
 
-    assert {:ok, :preop_ready} = EtherCAT.state()
-    assert {:ok, ^original} = EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2003, 0x01)
+    assert {:ok, :preop_ready} = EtherCAT.state(SimulatorRing.session!())
+
+    assert {:ok, ^original} =
+             EtherCAT.Provisioning.upload_sdo(SimulatorRing.session!(), :mailbox, 0x2003, 0x01)
 
     assert :ok =
              Simulator.inject_fault(
@@ -102,17 +106,35 @@ defmodule EtherCAT.Integration.Simulator.MailboxStepMilestoneAbortTest do
             }} = Simulator.info()
 
     assert {:error, {:sdo_abort, 0x2003, 0x01, @abort_code}} =
-             EtherCAT.Provisioning.download_sdo(:mailbox, 0x2003, 0x01, updated)
+             EtherCAT.Provisioning.download_sdo(
+               SimulatorRing.session!(),
+               :mailbox,
+               0x2003,
+               0x01,
+               updated
+             )
 
-    assert {:ok, ^original} = EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2003, 0x01)
-    assert {:ok, :preop_ready} = EtherCAT.state()
+    assert {:ok, ^original} =
+             EtherCAT.Provisioning.upload_sdo(SimulatorRing.session!(), :mailbox, 0x2003, 0x01)
+
+    assert {:ok, :preop_ready} = EtherCAT.state(SimulatorRing.session!())
     assert {:ok, %{scheduled_faults: [], pending_faults: []}} = Simulator.info()
 
     assert :ok = Simulator.clear_faults()
 
-    assert :ok = EtherCAT.Provisioning.download_sdo(:mailbox, 0x2003, 0x01, updated)
-    assert {:ok, ^updated} = EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2003, 0x01)
-    assert {:ok, :preop_ready} = EtherCAT.state()
+    assert :ok =
+             EtherCAT.Provisioning.download_sdo(
+               SimulatorRing.session!(),
+               :mailbox,
+               0x2003,
+               0x01,
+               updated
+             )
+
+    assert {:ok, ^updated} =
+             EtherCAT.Provisioning.upload_sdo(SimulatorRing.session!(), :mailbox, 0x2003, 0x01)
+
+    assert {:ok, :preop_ready} = EtherCAT.state(SimulatorRing.session!())
   end
 
   defp multi_segment_blob do

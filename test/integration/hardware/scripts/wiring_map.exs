@@ -76,7 +76,11 @@ EtherCAT channel wiring map
 # Start
 # ---------------------------------------------------------------------------
 
-EtherCAT.stop()
+case EtherCAT.Session.current() do
+  {:ok, session} -> EtherCAT.stop(session)
+  {:error, :not_started} -> :ok
+end
+
 Process.sleep(300)
 
 rtd_slave = Hardware.rtd()
@@ -96,7 +100,7 @@ IO.puts("Waiting for bus to reach OP...")
 :ok = EtherCAT.await_running(ethercat, 15_000)
 
 # Zero all outputs to start clean
-Enum.each(1..16, fn i -> EtherCAT.Raw.write_output(:outputs, :"ch#{i}", 0) end)
+Enum.each(1..16, fn i -> EtherCAT.Raw.write_output(ethercat, :outputs, :"ch#{i}", 0) end)
 Process.sleep(settle_ms)
 
 # ---------------------------------------------------------------------------
@@ -107,7 +111,7 @@ read_all_inputs = fn ->
   Enum.into(1..16, %{}, fn i ->
     ch = :"ch#{i}"
 
-    case EtherCAT.Raw.read_input(:inputs, ch) do
+    case EtherCAT.Raw.read_input(ethercat, :inputs, ch) do
       {:ok, {val, _updated_at_us}} -> {ch, val}
       _ -> {ch, nil}
     end
@@ -139,7 +143,7 @@ IO.puts(String.duplicate("-", 60))
 results =
   Enum.map(channels, fn out_ch ->
     # Turn on this output; all others remain off
-    EtherCAT.Raw.write_output(:outputs, out_ch, 1)
+    EtherCAT.Raw.write_output(ethercat, :outputs, out_ch, 1)
     Process.sleep(settle_ms)
 
     after_map = read_all_inputs.()
@@ -153,7 +157,7 @@ results =
       |> Enum.sort()
 
     # Turn it back off and settle
-    EtherCAT.Raw.write_output(:outputs, out_ch, 0)
+    EtherCAT.Raw.write_output(ethercat, :outputs, out_ch, 0)
     Process.sleep(settle_ms)
 
     expected_in = :"ch#{String.trim_leading(Atom.to_string(out_ch), "ch")}"
@@ -206,5 +210,5 @@ end
 # Cleanup
 # ---------------------------------------------------------------------------
 
-Enum.each(1..16, fn i -> EtherCAT.Raw.write_output(:outputs, :"ch#{i}", 0) end)
-EtherCAT.stop()
+Enum.each(1..16, fn i -> EtherCAT.Raw.write_output(ethercat, :outputs, :"ch#{i}", 0) end)
+EtherCAT.stop(ethercat)

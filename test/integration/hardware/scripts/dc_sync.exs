@@ -103,7 +103,11 @@ EtherCAT distributed clocks synchronization test
 
 IO.puts("── 1. Start with DC enabled ──────────────────────────────────────")
 
-EtherCAT.stop()
+case EtherCAT.Session.current() do
+  {:ok, session} -> EtherCAT.stop(session)
+  {:error, :not_started} -> :ok
+end
+
 Process.sleep(300)
 
 rtd_slave = Hardware.rtd()
@@ -128,9 +132,9 @@ rtd_slave = Hardware.rtd()
 
 :ok = EtherCAT.await_running(ethercat, 15_000)
 
-{:ok, bus} = EtherCAT.Diagnostics.bus()
+{:ok, bus} = EtherCAT.Diagnostics.bus(ethercat)
 
-{:ok, initial_dc} = EtherCAT.Diagnostics.dc_status()
+{:ok, initial_dc} = EtherCAT.Diagnostics.dc_status(ethercat)
 
 IO.puts("""
   Master reached OP.
@@ -147,7 +151,7 @@ dc_active = initial_dc.active?
 
 IO.puts("── 2. Reference clock ────────────────────────────────────────────")
 
-case EtherCAT.Diagnostics.reference_clock() do
+case EtherCAT.Diagnostics.reference_clock(ethercat) do
   {:ok, ref} ->
     IO.puts(
       "  reference slave : #{inspect(ref.name)}  station=0x#{Integer.to_string(ref.station, 16)}"
@@ -180,7 +184,7 @@ convergence_data =
         if now >= deadline do
           {:halt, {:timeout, acc}}
         else
-          {:ok, status} = EtherCAT.Diagnostics.dc_status()
+          {:ok, status} = EtherCAT.Diagnostics.dc_status(ethercat)
 
           sample =
             if is_integer(status.max_sync_diff_ns) do
@@ -251,7 +255,7 @@ convergence_data =
 
 IO.puts("\n── 4. Per-slave DC registers (FPRD) ──────────────────────────────")
 
-{:ok, slave_list} = EtherCAT.Diagnostics.slaves()
+{:ok, slave_list} = EtherCAT.Diagnostics.slaves(ethercat)
 
 hex = fn n -> "0x#{String.pad_leading(Integer.to_string(n, 16), 4, "0")}" end
 ns_to_ms = fn ns -> Float.round(ns / 1_000_000.0, 3) end
@@ -338,7 +342,7 @@ drift_stats =
     samples =
       Enum.reduce_while(1..drift_samples, [], fn _, acc ->
         Process.sleep(period_ms * 2)
-        {:ok, status} = EtherCAT.Diagnostics.dc_status()
+        {:ok, status} = EtherCAT.Diagnostics.dc_status(ethercat)
 
         if is_integer(status.max_sync_diff_ns) do
           {:cont, [status.max_sync_diff_ns | acc]}
@@ -361,7 +365,7 @@ drift_stats =
         Enum.at(list, idx)
       end
 
-      {:ok, final_dc_status} = EtherCAT.Diagnostics.dc_status()
+      {:ok, final_dc_status} = EtherCAT.Diagnostics.dc_status(ethercat)
 
       IO.puts("""
         #{n} samples:
@@ -397,10 +401,10 @@ IO.puts(
   "\n── 6. Loopback jitter (DC#{if dc_active, do: " enabled", else: " disabled"}) ───────────────────────────────────"
 )
 
-EtherCAT.Raw.subscribe(:inputs, input_channel, self())
+EtherCAT.Raw.subscribe(ethercat, :inputs, input_channel, self())
 
 # Stabilise: write 0, sleep, flush
-EtherCAT.Raw.write_output(:outputs, output_channel, 0)
+EtherCAT.Raw.write_output(ethercat, :outputs, output_channel, 0)
 Process.sleep(period_ms * 5)
 
 # Flush stale notifications
@@ -416,7 +420,7 @@ end)
 
 IO.puts("  Priming loopback #{output_channel}=1...")
 
-EtherCAT.Raw.write_output(:outputs, output_channel, 1)
+EtherCAT.Raw.write_output(ethercat, :outputs, output_channel, 1)
 
 primed =
   receive do
@@ -436,7 +440,7 @@ jitter_result =
       Enum.map_reduce(0..(jitter_samples - 1), System.monotonic_time(:microsecond), fn i,
                                                                                        prev_t ->
         target = rem(i, 2)
-        EtherCAT.Raw.write_output(:outputs, output_channel, target)
+        EtherCAT.Raw.write_output(ethercat, :outputs, output_channel, target)
 
         receive do
           {:ethercat, :signal, :inputs, ^input_channel, ^target} -> :ok
@@ -504,7 +508,7 @@ jitter_result =
 # Summary
 # ---------------------------------------------------------------------------
 
-{:ok, final_dc_status} = EtherCAT.Diagnostics.dc_status()
+{:ok, final_dc_status} = EtherCAT.Diagnostics.dc_status(ethercat)
 
 IO.puts("""
 ── Summary ───────────────────────────────────────────────────────────
@@ -541,6 +545,6 @@ end
 IO.puts("──────────────────────────────────────────────────────────────────")
 
 # Cleanup
-EtherCAT.Raw.write_output(:outputs, output_channel, 0)
+EtherCAT.Raw.write_output(ethercat, :outputs, output_channel, 0)
 Process.sleep(period_ms * 3)
-EtherCAT.stop()
+EtherCAT.stop(ethercat)

@@ -62,7 +62,15 @@ defmodule EtherCAT.Integration.Simulator.CriticalPdoReconnectPreopSelfHealTest d
             Expect.domain(:main, cycle_health: :healthy)
             Expect.slave_fault(:combo, nil)
             Expect.slave(:combo, al_state: :op, configuration_error: nil)
-            assert {:ok, ^expected} = EtherCAT.Provisioning.upload_sdo(:combo, 0x2003, 0x01)
+
+            assert {:ok, ^expected} =
+                     EtherCAT.Provisioning.upload_sdo(
+                       SimulatorRing.session!(),
+                       :combo,
+                       0x2003,
+                       0x01
+                     )
+
             Expect.simulator_queue_empty()
           end,
           attempts: 360,
@@ -106,7 +114,7 @@ defmodule EtherCAT.Integration.Simulator.CriticalPdoReconnectPreopSelfHealTest d
       start_opts: [domains: [%DomainConfig{id: :main, cycle_time_us: 10_000}], slaves: slaves()]
     )
 
-    assert :ok = EtherCAT.await_operational(2_500)
+    assert :ok = EtherCAT.await_operational(SimulatorRing.session!(), 2_500)
   end
 
   defp devices do

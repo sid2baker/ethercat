@@ -27,7 +27,7 @@ defmodule EtherCAT.Integration.Expect do
 
   @spec master_state(atom() | [atom(), ...]) :: :ok
   def master_state(expected) do
-    assert {:ok, actual} = EtherCAT.state()
+    assert {:ok, actual} = EtherCAT.state(SimulatorRing.session!())
 
     assert match_expected?(actual, expected),
            "expected master state #{inspect(expected)}, got #{inspect(actual)}"
@@ -37,14 +37,18 @@ defmodule EtherCAT.Integration.Expect do
 
   @spec domain(atom(), keyword() | map()) :: :ok
   def domain(domain_id, expectations) do
-    assert {:ok, info} = EtherCAT.Diagnostics.domain_info(domain_id)
+    assert {:ok, info} =
+             EtherCAT.Diagnostics.domain_info(SimulatorRing.session!(), domain_id)
+
     assert_map_subset(info, expectations, "domain #{inspect(domain_id)}")
     :ok
   end
 
   @spec slave(atom(), keyword() | map()) :: :ok
   def slave(slave_name, expectations) do
-    assert {:ok, info} = EtherCAT.Diagnostics.slave_info(slave_name)
+    assert {:ok, info} =
+             EtherCAT.Diagnostics.slave_info(SimulatorRing.session!(), slave_name)
+
     assert_map_subset(info, expectations, "slave #{inspect(slave_name)}")
     :ok
   end

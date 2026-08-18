@@ -48,23 +48,27 @@ defmodule EtherCAT.Integration.Simulator.StartupMailboxAbortTest do
 
     assert {:error,
             {:activation_failed, %{mailbox: {:safeop, {:preop_configuration_failed, @failure}}}}} =
-             EtherCAT.await_running(2_500)
+             EtherCAT.await_running(SimulatorRing.session!(), 2_500)
 
-    assert {:ok, :activation_blocked} = EtherCAT.state()
+    assert {:ok, :activation_blocked} = EtherCAT.state(SimulatorRing.session!())
 
     assert {:ok, %{al_state: :preop, configuration_error: @failure}} =
-             EtherCAT.Diagnostics.slave_info(:mailbox)
+             EtherCAT.Diagnostics.slave_info(SimulatorRing.session!(), :mailbox)
 
     assert :ok = Simulator.clear_faults()
-    assert :ok = EtherCAT.stop()
+    assert :ok = EtherCAT.stop(SimulatorRing.session!())
 
     SimulatorRing.start_master!(simulator,
       start_opts: [domains: [], slaves: slaves, frame_timeout_ms: 20]
     )
 
-    assert :ok = EtherCAT.await_operational(2_500)
-    assert {:ok, :operational} = EtherCAT.state()
-    assert {:ok, %{configuration_error: nil}} = EtherCAT.Diagnostics.slave_info(:mailbox)
-    assert {:ok, <<1>>} = EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2000, 0x02)
+    assert :ok = EtherCAT.await_operational(SimulatorRing.session!(), 2_500)
+    assert {:ok, :operational} = EtherCAT.state(SimulatorRing.session!())
+
+    assert {:ok, %{configuration_error: nil}} =
+             EtherCAT.Diagnostics.slave_info(SimulatorRing.session!(), :mailbox)
+
+    assert {:ok, <<1>>} =
+             EtherCAT.Provisioning.upload_sdo(SimulatorRing.session!(), :mailbox, 0x2000, 0x02)
   end
 end

@@ -31,8 +31,8 @@ This matches the intended behavior.
 
 1. boot the simulated ring to `:operational`
 2. inject `{:next_exchanges, 10, :drop_responses}`
-3. assert `EtherCAT.state/0 == :recovering`
-4. assert `EtherCAT.Diagnostics.domain_info(:main).last_invalid_reason == :timeout`
+3. assert `EtherCAT.state/1 == :recovering`
+4. assert `EtherCAT.Diagnostics.domain_info(session, :main).last_invalid_reason == :timeout`
 5. assert the domain becomes healthy and the master returns to `:operational`
 
 ## Simulator API Notes

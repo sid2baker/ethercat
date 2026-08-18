@@ -6,8 +6,8 @@ slave is later configured for `OP` and activated.
 ## Real-World Analog
 
 A commissioning tool boots the full ring to `PREOP`, adjusts discovered slave
-configs through `EtherCAT.Provisioning.configure_slave/2`, then calls
-`EtherCAT.Provisioning.activate/0` to start runtime operation. Slaves that were
+configs through `EtherCAT.Provisioning.configure_slave/3`, then calls
+`EtherCAT.Provisioning.activate/1` to start runtime operation. Slaves that were
 initially held in startup `PREOP` should still regain their normal runtime
 watchdog behavior once they are activated to `OP`.
 
@@ -74,7 +74,7 @@ provisioning path:
 
 1. Boot a segmented ring with all slaves intentionally held in `PREOP`.
 2. Reconfigure the discovered slaves to `target_state: :op` through
-   `EtherCAT.Provisioning.configure_slave/2`.
+   `EtherCAT.Provisioning.configure_slave/3`.
 3. Activate the session and wait for `:operational`.
 4. Disconnect the mailbox-only slave long enough for runtime health polling.
 5. Assert the master stays `:operational`, the mailbox fault becomes visible,

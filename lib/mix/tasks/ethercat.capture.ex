@@ -27,21 +27,21 @@ defmodule Mix.Tasks.Ethercat.Capture do
     ensure_runtime_started!()
     ensure_session_available!()
 
-    handle =
+    session =
       case EtherCAT.start(build_start_opts(opts)) do
-        {:ok, handle} ->
-          handle
+        {:ok, session} ->
+          session
 
         {:error, reason} ->
           Mix.raise("failed to start EtherCAT capture session: #{inspect(reason)}")
       end
 
-    case EtherCAT.await_running(handle, Keyword.fetch!(opts, :await_ms)) do
+    case EtherCAT.await_running(session, Keyword.fetch!(opts, :await_ms)) do
       :ok ->
-        print_session_banner(opts)
+        print_session_banner(session, opts)
 
       {:error, reason} ->
-        _ = EtherCAT.stop(handle)
+        _ = EtherCAT.stop(session)
         Mix.raise("capture session did not reach a usable PREOP state: #{inspect(reason)}")
     end
   end
@@ -126,16 +126,14 @@ defmodule Mix.Tasks.Ethercat.Capture do
   end
 
   defp ensure_session_available! do
-    case EtherCAT.state() do
+    case EtherCAT.Session.current() do
       {:error, :not_started} ->
         :ok
 
-      {:ok, :idle} ->
-        :ok
-
-      state ->
+      {:ok, session} ->
         Mix.raise(
-          "EtherCAT session already running in state #{inspect(state)}; stop it before starting capture"
+          "EtherCAT session already running in state #{inspect(EtherCAT.state(session))}; " <>
+            "stop it before starting capture"
         )
     end
   end
@@ -174,13 +172,14 @@ defmodule Mix.Tasks.Ethercat.Capture do
     end
   end
 
-  defp print_session_banner(opts) do
+  defp print_session_banner(session, opts) do
     Mix.shell().info("")
     Mix.shell().info("EtherCAT capture session ready")
-    Mix.shell().info("State: #{inspect(EtherCAT.state())}")
+    Mix.shell().info("State: #{inspect(EtherCAT.state(session))}")
     Mix.shell().info("Backend: #{backend_label(opts)}")
+    Mix.shell().info("Acquire it with: {:ok, session} = EtherCAT.Session.current()")
 
-    case EtherCAT.Capture.list_slaves() do
+    case EtherCAT.Capture.list_slaves(session) do
       {:ok, slaves} ->
         Mix.shell().info("Discovered slaves:")
 

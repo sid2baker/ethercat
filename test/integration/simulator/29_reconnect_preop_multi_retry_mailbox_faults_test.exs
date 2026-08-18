@@ -74,12 +74,24 @@ defmodule EtherCAT.Integration.Simulator.ReconnectPreopMultiRetryMailboxFaultsTe
       end
     )
     |> Scenario.act("write output ch1 high", fn _ctx ->
-      assert :ok = EtherCAT.Raw.write_output(:outputs, :ch1, 1)
+      assert :ok =
+               EtherCAT.Raw.write_output(
+                 SimulatorRing.session!(),
+                 :outputs,
+                 :ch1,
+                 1
+               )
     end)
     |> Scenario.act("pdo flow still works while mailbox retries remain degraded", fn _ctx ->
       Expect.eventually(
         fn ->
-          assert {:ok, {true, updated_at_us}} = EtherCAT.Raw.read_input(:inputs, :ch1)
+          assert {:ok, {true, updated_at_us}} =
+                   EtherCAT.Raw.read_input(
+                     SimulatorRing.session!(),
+                     :inputs,
+                     :ch1
+                   )
+
           assert is_integer(updated_at_us)
           Expect.signal(:outputs, :ch1, value: true)
         end,
@@ -112,7 +124,14 @@ defmodule EtherCAT.Integration.Simulator.ReconnectPreopMultiRetryMailboxFaultsTe
             Expect.slave(:mailbox, al_state: :op, configuration_error: nil)
             Expect.domain(:main, cycle_health: :healthy)
 
-            assert {:ok, ^expected} = EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2003, 0x01)
+            assert {:ok, ^expected} =
+                     EtherCAT.Provisioning.upload_sdo(
+                       SimulatorRing.session!(),
+                       :mailbox,
+                       0x2003,
+                       0x01
+                     )
+
             Expect.simulator_queue_empty()
           end,
           attempts: 420,

@@ -1,13 +1,14 @@
 defmodule EtherCAT.Raw do
   @moduledoc """
-  Advanced raw-process-data access.
+  Session-bound raw process-data access.
 
   `EtherCAT.Raw` works directly with the registered PDO/latch model owned by
-  the slave runtime. Most applications should use `EtherCAT.samples/1`,
-  `EtherCAT.sample/2`, `EtherCAT.subscribe/2`, `EtherCAT.read/2`, and
-  `EtherCAT.write/3` instead.
+  the slave runtime. Most applications should use `EtherCAT.samples/2`,
+  `EtherCAT.sample/3`, `EtherCAT.subscribe/3`, `EtherCAT.read/3`, and
+  `EtherCAT.write/4` instead.
   """
 
+  alias EtherCAT.Session
   alias EtherCAT.Slave
 
   @doc """
@@ -16,26 +17,30 @@ defmodule EtherCAT.Raw do
   Signal updates arrive as `{:ethercat, :signal, slave_name, signal_name, value}`.
   Latch edges arrive as `{:ethercat, :latch, slave_name, latch_name, timestamp_ns}`.
   """
-  @spec subscribe(atom(), atom(), pid()) ::
-          :ok
-          | {:error, {:not_registered, atom()} | :not_found | :timeout | {:server_exit, term()}}
-  def subscribe(slave_name, signal_name, pid \\ self()) do
-    Slave.subscribe(slave_name, signal_name, pid)
+  @spec subscribe(Session.t(), atom(), atom(), pid()) :: :ok | {:error, term()}
+  def subscribe(session, slave_name, signal_name, pid \\ self())
+      when is_atom(slave_name) and is_atom(signal_name) and is_pid(pid) do
+    with {:ok, slave} <- Session.slave(session, slave_name) do
+      Slave.subscribe(slave, signal_name, pid)
+    end
   end
 
-  @doc """
-  Stage one decoded output signal value into the next domain cycle.
-  """
-  @spec write_output(atom(), atom(), term()) :: :ok | {:error, term()}
-  def write_output(slave_name, signal_name, value) do
-    Slave.write_output(slave_name, signal_name, value)
+  @doc "Stage one decoded output signal value into the next domain cycle."
+  @spec write_output(Session.t(), atom(), atom(), term()) :: :ok | {:error, term()}
+  def write_output(session, slave_name, signal_name, value)
+      when is_atom(slave_name) and is_atom(signal_name) do
+    with {:ok, slave} <- Session.slave(session, slave_name) do
+      Slave.write_output(slave, signal_name, value)
+    end
   end
 
-  @doc """
-  Read one decoded input signal directly from the process image.
-  """
-  @spec read_input(atom(), atom()) :: {:ok, {term(), integer()}} | {:error, term()}
-  def read_input(slave_name, signal_name) do
-    Slave.read_input(slave_name, signal_name)
+  @doc "Read one decoded input signal directly from the process image."
+  @spec read_input(Session.t(), atom(), atom()) ::
+          {:ok, {term(), integer()}} | {:error, term()}
+  def read_input(session, slave_name, signal_name)
+      when is_atom(slave_name) and is_atom(signal_name) do
+    with {:ok, slave} <- Session.slave(session, slave_name) do
+      Slave.read_input(slave, signal_name)
+    end
   end
 end

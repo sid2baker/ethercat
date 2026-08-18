@@ -50,7 +50,14 @@ defmodule EtherCAT.Integration.Simulator.OperationalHeldPreopSlaveReconnectTest 
             Expect.domain(:main, cycle_health: :healthy)
             Expect.slave_fault(:mailbox, nil)
             Expect.slave(:mailbox, al_state: :preop)
-            assert {:ok, ^expected} = EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2003, 0x01)
+
+            assert {:ok, ^expected} =
+                     EtherCAT.Provisioning.upload_sdo(
+                       SimulatorRing.session!(),
+                       :mailbox,
+                       0x2003,
+                       0x01
+                     )
           end,
           attempts: 120,
           label: "mixed-target ring reaches operational with mailbox held in preop"
@@ -79,7 +86,15 @@ defmodule EtherCAT.Integration.Simulator.OperationalHeldPreopSlaveReconnectTest 
           Expect.domain(:main, cycle_health: :healthy)
           Expect.slave_fault(:mailbox, nil)
           Expect.slave(:mailbox, al_state: :preop)
-          assert {:ok, ^expected} = EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2003, 0x01)
+
+          assert {:ok, ^expected} =
+                   EtherCAT.Provisioning.upload_sdo(
+                     SimulatorRing.session!(),
+                     :mailbox,
+                     0x2003,
+                     0x01
+                   )
+
           Expect.simulator_queue_empty()
         end,
         attempts: 360,

@@ -18,26 +18,33 @@ defmodule EtherCAT.Integration.Simulator.TargetedWKCMismatchTest do
     assert :ok = Simulator.inject_fault(Fault.logical_wkc_offset(:outputs, -1) |> Fault.next(12))
 
     assert_eventually(fn ->
-      assert {:ok, :recovering} = EtherCAT.state()
+      assert {:ok, :recovering} = EtherCAT.state(SimulatorRing.session!())
 
       assert {:ok,
               %{
                 cycle_health: {:invalid, {:wkc_mismatch, %{expected: 3, actual: 2}}},
                 last_invalid_reason: {:wkc_mismatch, %{expected: 3, actual: 2}}
-              }} = EtherCAT.Diagnostics.domain_info(:main)
+              }} = EtherCAT.Diagnostics.domain_info(SimulatorRing.session!(), :main)
 
-      assert {:ok, slaves} = EtherCAT.Diagnostics.slaves()
+      assert {:ok, slaves} = EtherCAT.Diagnostics.slaves(SimulatorRing.session!())
       assert Enum.all?(slaves, &is_nil(&1.fault))
-      assert {:ok, %{al_state: :op}} = EtherCAT.Diagnostics.slave_info(:outputs)
+
+      assert {:ok, %{al_state: :op}} =
+               EtherCAT.Diagnostics.slave_info(SimulatorRing.session!(), :outputs)
     end)
 
     assert_eventually(fn ->
       assert {:ok, %{next_fault: nil, pending_faults: []}} = Simulator.info()
-      assert {:ok, :operational} = EtherCAT.state()
-      assert {:ok, %{cycle_health: :healthy}} = EtherCAT.Diagnostics.domain_info(:main)
-      assert {:ok, slaves} = EtherCAT.Diagnostics.slaves()
+      assert {:ok, :operational} = EtherCAT.state(SimulatorRing.session!())
+
+      assert {:ok, %{cycle_health: :healthy}} =
+               EtherCAT.Diagnostics.domain_info(SimulatorRing.session!(), :main)
+
+      assert {:ok, slaves} = EtherCAT.Diagnostics.slaves(SimulatorRing.session!())
       assert Enum.all?(slaves, &is_nil(&1.fault))
-      assert {:ok, %{al_state: :op}} = EtherCAT.Diagnostics.slave_info(:outputs)
+
+      assert {:ok, %{al_state: :op}} =
+               EtherCAT.Diagnostics.slave_info(SimulatorRing.session!(), :outputs)
     end)
   end
 end

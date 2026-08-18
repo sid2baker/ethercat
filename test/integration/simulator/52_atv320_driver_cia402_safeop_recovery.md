@@ -9,7 +9,7 @@ and a later slave-local `SAFEOP` retreat on the drive.
 The ATV320 driver is intentionally manual-based rather than ESI-exact. This
 scenario keeps the protocol integration contract honest:
 
-- the generation-bound runtime handle routes descriptions, status, samples,
+- the opaque session identity routes descriptions, status, samples,
   subscriptions, reads, and writes through the intended session
 - the static driver description and coherent sample surface are present
 - generic scanner words outside the named CiA402 fields still round-trip

@@ -47,18 +47,37 @@ defmodule EtherCAT.Integration.Simulator.PreopProvisioningHeldPreopHealthPollTes
           Expect.master_state(:preop_ready)
           Expect.slave_fault(:mailbox, nil)
           Expect.slave(:mailbox, al_state: :preop)
-          assert {:ok, ^expected} = EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2003, 0x01)
+
+          assert {:ok, ^expected} =
+                   EtherCAT.Provisioning.upload_sdo(
+                     SimulatorRing.session!(),
+                     :mailbox,
+                     0x2003,
+                     0x01
+                   )
         end,
         attempts: 120,
         label: "preop-first session reaches preop_ready"
       )
     end)
     |> Scenario.act("configure only the PDO slaves for op and activate the ring", fn _ctx ->
-      assert :ok = EtherCAT.Provisioning.configure_slave(:coupler, target_state: :op)
-      assert :ok = EtherCAT.Provisioning.configure_slave(:inputs, target_state: :op)
-      assert :ok = EtherCAT.Provisioning.configure_slave(:outputs, target_state: :op)
-      assert :ok = EtherCAT.Provisioning.activate()
-      assert :ok = EtherCAT.await_operational(2_500)
+      assert :ok =
+               EtherCAT.Provisioning.configure_slave(SimulatorRing.session!(), :coupler,
+                 target_state: :op
+               )
+
+      assert :ok =
+               EtherCAT.Provisioning.configure_slave(SimulatorRing.session!(), :inputs,
+                 target_state: :op
+               )
+
+      assert :ok =
+               EtherCAT.Provisioning.configure_slave(SimulatorRing.session!(), :outputs,
+                 target_state: :op
+               )
+
+      assert :ok = EtherCAT.Provisioning.activate(SimulatorRing.session!())
+      assert :ok = EtherCAT.await_operational(SimulatorRing.session!(), 2_500)
     end)
     |> Scenario.act(
       "ring is operational while mailbox remains intentionally held in preop",
@@ -69,7 +88,14 @@ defmodule EtherCAT.Integration.Simulator.PreopProvisioningHeldPreopHealthPollTes
             Expect.domain(:main, cycle_health: :healthy)
             Expect.slave_fault(:mailbox, nil)
             Expect.slave(:mailbox, al_state: :preop)
-            assert {:ok, ^expected} = EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2003, 0x01)
+
+            assert {:ok, ^expected} =
+                     EtherCAT.Provisioning.upload_sdo(
+                       SimulatorRing.session!(),
+                       :mailbox,
+                       0x2003,
+                       0x01
+                     )
           end,
           attempts: 120,
           label: "mixed provisioning activation reaches operational with mailbox held in preop"
@@ -98,7 +124,15 @@ defmodule EtherCAT.Integration.Simulator.PreopProvisioningHeldPreopHealthPollTes
           Expect.domain(:main, cycle_health: :healthy)
           Expect.slave_fault(:mailbox, nil)
           Expect.slave(:mailbox, al_state: :preop)
-          assert {:ok, ^expected} = EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2003, 0x01)
+
+          assert {:ok, ^expected} =
+                   EtherCAT.Provisioning.upload_sdo(
+                     SimulatorRing.session!(),
+                     :mailbox,
+                     0x2003,
+                     0x01
+                   )
+
           Expect.simulator_queue_empty()
         end,
         attempts: 360,

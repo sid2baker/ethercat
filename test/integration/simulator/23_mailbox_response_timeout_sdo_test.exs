@@ -44,7 +44,7 @@ defmodule EtherCAT.Integration.Simulator.MailboxResponseTimeoutSDOTest do
   test "public segmented sdo upload returns response_timeout without degrading the master" do
     blob = multi_segment_blob()
 
-    assert {:ok, :preop_ready} = EtherCAT.state()
+    assert {:ok, :preop_ready} = EtherCAT.state(SimulatorRing.session!())
 
     assert :ok =
              Simulator.inject_fault(
@@ -71,23 +71,28 @@ defmodule EtherCAT.Integration.Simulator.MailboxResponseTimeoutSDOTest do
               ]
             }} = Simulator.info()
 
-    assert {:error, :response_timeout} = EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2003, 0x01)
+    assert {:error, :response_timeout} =
+             EtherCAT.Provisioning.upload_sdo(SimulatorRing.session!(), :mailbox, 0x2003, 0x01)
 
-    assert {:ok, :preop_ready} = EtherCAT.state()
+    assert {:ok, :preop_ready} = EtherCAT.state(SimulatorRing.session!())
     assert {:ok, %{scheduled_faults: [], pending_faults: []}} = Simulator.info()
 
     assert :ok = Simulator.clear_faults()
 
-    assert {:ok, ^blob} = EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2003, 0x01)
-    assert {:ok, :preop_ready} = EtherCAT.state()
+    assert {:ok, ^blob} =
+             EtherCAT.Provisioning.upload_sdo(SimulatorRing.session!(), :mailbox, 0x2003, 0x01)
+
+    assert {:ok, :preop_ready} = EtherCAT.state(SimulatorRing.session!())
   end
 
   test "public segmented sdo download returns response_timeout without mutating the object" do
     original = multi_segment_blob()
     updated = updated_multi_segment_blob()
 
-    assert {:ok, :preop_ready} = EtherCAT.state()
-    assert {:ok, ^original} = EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2003, 0x01)
+    assert {:ok, :preop_ready} = EtherCAT.state(SimulatorRing.session!())
+
+    assert {:ok, ^original} =
+             EtherCAT.Provisioning.upload_sdo(SimulatorRing.session!(), :mailbox, 0x2003, 0x01)
 
     assert :ok =
              Simulator.inject_fault(
@@ -115,17 +120,35 @@ defmodule EtherCAT.Integration.Simulator.MailboxResponseTimeoutSDOTest do
             }} = Simulator.info()
 
     assert {:error, :response_timeout} =
-             EtherCAT.Provisioning.download_sdo(:mailbox, 0x2003, 0x01, updated)
+             EtherCAT.Provisioning.download_sdo(
+               SimulatorRing.session!(),
+               :mailbox,
+               0x2003,
+               0x01,
+               updated
+             )
 
-    assert {:ok, ^original} = EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2003, 0x01)
-    assert {:ok, :preop_ready} = EtherCAT.state()
+    assert {:ok, ^original} =
+             EtherCAT.Provisioning.upload_sdo(SimulatorRing.session!(), :mailbox, 0x2003, 0x01)
+
+    assert {:ok, :preop_ready} = EtherCAT.state(SimulatorRing.session!())
     assert {:ok, %{scheduled_faults: [], pending_faults: []}} = Simulator.info()
 
     assert :ok = Simulator.clear_faults()
 
-    assert :ok = EtherCAT.Provisioning.download_sdo(:mailbox, 0x2003, 0x01, updated)
-    assert {:ok, ^updated} = EtherCAT.Provisioning.upload_sdo(:mailbox, 0x2003, 0x01)
-    assert {:ok, :preop_ready} = EtherCAT.state()
+    assert :ok =
+             EtherCAT.Provisioning.download_sdo(
+               SimulatorRing.session!(),
+               :mailbox,
+               0x2003,
+               0x01,
+               updated
+             )
+
+    assert {:ok, ^updated} =
+             EtherCAT.Provisioning.upload_sdo(SimulatorRing.session!(), :mailbox, 0x2003, 0x01)
+
+    assert {:ok, :preop_ready} = EtherCAT.state(SimulatorRing.session!())
   end
 
   defp multi_segment_blob do

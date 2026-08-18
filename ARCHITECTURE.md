@@ -21,7 +21,7 @@ Host application supervisor
 └── EtherCAT.Runtime
     │
     ├── EtherCAT                    (protocol status/sample/notification/read/write API)
-    ├── EtherCAT.Runtime.Handle     (master pid + session generation)
+    ├── EtherCAT.Session            (opaque master pid + session generation)
     ├── EtherCAT.Backend            (normalized backend description)
     ├── EtherCAT.Scan               (one-shot observational topology scan)
     ├── EtherCAT.Provisioning       (advanced PREOP/configuration/SDO API)
@@ -78,10 +78,11 @@ Low-level mechanics live in helper namespaces (`EtherCAT.Master.*`,
 they carry real protocol or lifecycle weight.
 
 `EtherCAT.Runtime` is the supported root boundary. Host applications own its
-lifecycle. `EtherCAT.start/1` opens the singleton session and returns an
-`EtherCAT.Runtime.Handle` containing the master pid and session generation.
-Handle-bound calls are validated inside the master serialization boundary, so a
-stopped handle cannot target a later replacement session.
+lifecycle. `EtherCAT.start/1` opens the singleton session and returns an opaque
+`EtherCAT.Session` containing the master pid and session generation. Every
+runtime, provisioning, diagnostic, raw process-data, and capture operation
+requires that session. Calls are validated inside the master serialization
+boundary, so a stopped session cannot target a later replacement session.
 
 `EtherCAT.Simulator` follows the same boundary rule on the test/runtime side:
 the public simulator process owns segment state, datagram execution,
@@ -92,7 +93,7 @@ The top-level runtime roles are now explicit:
 
 - `EtherCAT.Backend` describes how a runtime attaches to a transport boundary
 - `EtherCAT.Scan.scan/1` reports observed topology only
-- `EtherCAT.Master.status/0` reports controller/runtime state
+- `EtherCAT.Diagnostics.master_status/1` reports session controller/runtime state
 - `EtherCAT.Simulator.status/0` reports simulator/runtime state
 
 ---
@@ -163,7 +164,7 @@ higher-level adapter to interpret, not machine availability or semantic events.
 
 ```
 Application
-  EtherCAT.write(handle, slave, signal, value)
+  EtherCAT.write(session, slave, signal, value)
     → driver.encode_signal/3
     → runtime stages the encoded value through Domain.write/3
   next Domain LRW tick picks up the value and writes it to the slave
@@ -176,9 +177,8 @@ diagnostics and tooling.
 
 ## Public Lifecycle
 
-`EtherCAT.state/0` exposes the actual `EtherCAT.Master` state machine:
+`EtherCAT.state/1` exposes the actual `EtherCAT.Master` state machine for one session:
 
-- `:idle` - no session active
 - `:discovering` - scanning, assigning stations, and starting session runtime
 - `:awaiting_preop` - waiting for configured slaves to finish checked PREOP setup
 - `:preop_ready` - bus is usable in PREOP after startup traffic has been drained

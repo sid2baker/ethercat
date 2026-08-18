@@ -157,7 +157,7 @@ defmodule EtherCAT.Slave do
   Signal updates arrive as `{:ethercat, :signal, slave_name, signal_name, value}`.
   Latch edges arrive as `{:ethercat, :latch, slave_name, latch_name, timestamp_ns}`.
   """
-  @spec subscribe(atom(), atom(), pid()) ::
+  @spec subscribe(server(), atom(), pid()) ::
           :ok
           | {:error, {:not_registered, atom()} | :not_found | :timeout | {:server_exit, term()}}
   def subscribe(slave_name, signal_name, pid) do
@@ -234,7 +234,7 @@ defmodule EtherCAT.Slave do
   @doc """
   Return a detailed runtime snapshot for the slave.
   """
-  @spec info(atom()) :: {:ok, map()} | {:error, :not_found | :timeout | {:server_exit, term()}}
+  @spec info(server()) :: {:ok, map()} | {:error, :not_found | :timeout | {:server_exit, term()}}
   def info(slave_name), do: safe_call(slave_name, :info)
 
   @doc """
@@ -252,7 +252,7 @@ defmodule EtherCAT.Slave do
   @doc """
   Download one CoE SDO value to the slave mailbox.
   """
-  @spec download_sdo(atom(), non_neg_integer(), non_neg_integer(), binary()) ::
+  @spec download_sdo(server(), non_neg_integer(), non_neg_integer(), binary()) ::
           :ok | {:error, term()}
   def download_sdo(slave_name, index, subindex, data)
       when is_binary(data) and byte_size(data) > 0 do
@@ -262,22 +262,13 @@ defmodule EtherCAT.Slave do
   @doc """
   Upload one CoE SDO value from the slave mailbox.
   """
-  @spec upload_sdo(atom(), non_neg_integer(), non_neg_integer()) ::
+  @spec upload_sdo(server(), non_neg_integer(), non_neg_integer()) ::
           {:ok, binary()} | {:error, term()}
   def upload_sdo(slave_name, index, subindex) do
     safe_call(slave_name, {:upload_sdo, index, subindex})
   end
 
-  defp safe_call(server, msg) do
-    try do
-      :gen_statem.call(server_ref(server), msg)
-    catch
-      :exit, reason -> Utils.classify_call_exit(reason, :not_found)
-    end
+  defp safe_call(server, message) do
+    Utils.registered_statem_call(server, EtherCAT.Registry, :slave, message, :not_found)
   end
-
-  defp server_ref(pid) when is_pid(pid), do: pid
-  defp server_ref(slave_name) when is_atom(slave_name), do: via(slave_name)
-
-  defp via(slave_name), do: {:via, Registry, {EtherCAT.Registry, {:slave, slave_name}}}
 end

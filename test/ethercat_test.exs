@@ -2,7 +2,7 @@ defmodule EtherCATTest do
   use ExUnit.Case, async: false
 
   setup do
-    _ = EtherCAT.stop()
+    stop_current_session()
     :ok
   end
 
@@ -20,7 +20,7 @@ defmodule EtherCATTest do
                slaves: [%EtherCAT.Slave.Config{name: :coupler}, nil]
              )
 
-    assert EtherCAT.state() == {:ok, :idle}
+    assert {:error, :not_started} = EtherCAT.Session.current()
   end
 
   test "start rejects invalid process_data requests" do
@@ -35,7 +35,7 @@ defmodule EtherCATTest do
                ]
              )
 
-    assert EtherCAT.state() == {:ok, :idle}
+    assert {:error, :not_started} = EtherCAT.Session.current()
   end
 
   test "start rejects invalid slave target states" do
@@ -47,7 +47,7 @@ defmodule EtherCATTest do
                ]
              )
 
-    assert EtherCAT.state() == {:ok, :idle}
+    assert {:error, :not_started} = EtherCAT.Session.current()
   end
 
   test "slave config defaults to the built-in default driver" do
@@ -67,13 +67,14 @@ defmodule EtherCATTest do
   end
 
   test "top-level API is slave-centric and EtherCAT is the only normal runtime entry point" do
+    assert Code.ensure_loaded?(EtherCAT)
     assert Code.ensure_loaded?(EtherCAT.Raw)
     assert Code.ensure_loaded?(EtherCAT.Diagnostics)
     assert Code.ensure_loaded?(EtherCAT.Provisioning)
     assert Code.ensure_loaded?(EtherCAT.Endpoint)
     assert Code.ensure_loaded?(EtherCAT.Notification)
     assert Code.ensure_loaded?(EtherCAT.Sample)
-    assert Code.ensure_loaded?(EtherCAT.Runtime.Handle)
+    assert Code.ensure_loaded?(EtherCAT.Session)
     assert Code.ensure_loaded?(EtherCAT.Domain.Status)
     assert Code.ensure_loaded?(EtherCAT.Slave.Status)
     assert Code.ensure_loaded?(EtherCAT.SlaveDescription)
@@ -92,58 +93,60 @@ defmodule EtherCATTest do
     refute function_exported?(EtherCAT, :set_outputs, 1)
     refute function_exported?(EtherCAT, :devices, 0)
 
-    assert function_exported?(EtherCAT, :slaves, 0)
+    refute function_exported?(EtherCAT, :slaves, 0)
     assert function_exported?(EtherCAT, :slaves, 1)
-    assert function_exported?(EtherCAT, :status, 1)
+    refute function_exported?(EtherCAT, :status, 1)
     assert function_exported?(EtherCAT, :status, 2)
-    assert function_exported?(EtherCAT, :samples, 1)
+    refute function_exported?(EtherCAT, :samples, 1)
     assert function_exported?(EtherCAT, :samples, 2)
-    assert function_exported?(EtherCAT, :sample, 2)
+    refute function_exported?(EtherCAT, :sample, 2)
     assert function_exported?(EtherCAT, :sample, 3)
-    assert function_exported?(EtherCAT, :describe, 1)
-    assert function_exported?(EtherCAT, :inventory, 0)
+    refute function_exported?(EtherCAT, :describe, 1)
+    assert function_exported?(EtherCAT, :describe, 2)
+    refute function_exported?(EtherCAT, :inventory, 0)
+    assert function_exported?(EtherCAT, :inventory, 1)
     assert function_exported?(EtherCAT, :subscribe, 2)
     assert function_exported?(EtherCAT, :subscribe, 3)
-    assert function_exported?(EtherCAT, :read, 2)
+    refute function_exported?(EtherCAT, :read, 2)
     assert function_exported?(EtherCAT, :read, 3)
-    assert function_exported?(EtherCAT, :write, 3)
+    refute function_exported?(EtherCAT, :write, 3)
     assert function_exported?(EtherCAT, :write, 4)
     refute function_exported?(EtherCAT, :snapshot, 0)
     refute function_exported?(EtherCAT, :snapshot, 1)
     refute function_exported?(EtherCAT, :command, 3)
-    assert function_exported?(EtherCAT.Raw, :read_input, 2)
-    assert function_exported?(EtherCAT.Raw, :write_output, 3)
+    refute function_exported?(EtherCAT.Raw, :read_input, 2)
+    assert function_exported?(EtherCAT.Raw, :read_input, 3)
+    refute function_exported?(EtherCAT.Raw, :write_output, 3)
+    assert function_exported?(EtherCAT.Raw, :write_output, 4)
     assert function_exported?(EtherCAT.Raw, :subscribe, 3)
-    assert function_exported?(EtherCAT.Diagnostics, :slave_info, 1)
-    assert function_exported?(EtherCAT.Provisioning, :upload_sdo, 3)
+    assert function_exported?(EtherCAT.Raw, :subscribe, 4)
+    refute function_exported?(EtherCAT.Diagnostics, :slave_info, 1)
+    assert function_exported?(EtherCAT.Diagnostics, :slave_info, 2)
+    refute function_exported?(EtherCAT.Provisioning, :upload_sdo, 3)
+    assert function_exported?(EtherCAT.Provisioning, :upload_sdo, 4)
   end
 
-  test "session handles reject calls after their generation is no longer active" do
+  test "sessions reject calls after their generation is no longer active" do
     master = ensure_master_running()
-    stale = EtherCAT.Runtime.Handle.new(master, make_ref())
+    stale = EtherCAT.Session.new(master, make_ref())
 
-    assert {:error, :stale_handle} = EtherCAT.state(stale)
-    assert {:error, :stale_handle} = EtherCAT.slaves(stale)
-    assert {:error, :stale_handle} = EtherCAT.status(stale, :sensor)
-  end
-
-  test "dc_status reports either idle-disabled or not_started without an active session" do
-    status = EtherCAT.Diagnostics.dc_status()
-
-    assert match?({:error, :not_started}, status) or
-             match?({:ok, %EtherCAT.DC.Status{lock_state: :disabled}}, status)
+    assert {:error, :stale_session} = EtherCAT.state(stale)
+    assert {:error, :stale_session} = EtherCAT.slaves(stale)
+    assert {:error, :stale_session} = EtherCAT.status(stale, :sensor)
+    assert {:error, :stale_session} = EtherCAT.Diagnostics.dc_status(stale)
+    assert {:error, :stale_session} = EtherCAT.Provisioning.activate(stale)
+    assert {:error, :stale_session} = EtherCAT.Raw.read_input(stale, :sensor, :input)
   end
 
   test "master status reports stopped or idle without an active session" do
-    status = EtherCAT.Master.status()
+    status = EtherCAT.Master.current_status()
 
     assert match?(%EtherCAT.Master.Status{lifecycle: :stopped}, status) or
              match?(%EtherCAT.Master.Status{lifecycle: :idle}, status)
   end
 
-  test "describe and inventory report not_started without an active session" do
-    assert {:error, :not_started} = EtherCAT.describe(:sensor)
-    assert {:error, :not_started} = EtherCAT.inventory()
+  test "the current session is unavailable without an active generation" do
+    assert {:error, :not_started} = EtherCAT.Session.current()
   end
 
   test "await_running returns timeout instead of exiting when the master call itself times out" do
@@ -151,7 +154,8 @@ defmodule EtherCATTest do
     :sys.suspend(EtherCAT.Master)
     on_exit(fn -> :sys.resume(EtherCAT.Master) end)
 
-    assert {:error, :timeout} = EtherCAT.await_running(5)
+    session = EtherCAT.Session.new(Process.whereis(EtherCAT.Master), make_ref())
+    assert {:error, :timeout} = EtherCAT.await_running(session, 5)
   end
 
   test "await_operational returns timeout instead of exiting when the master call itself times out" do
@@ -159,7 +163,8 @@ defmodule EtherCATTest do
     :sys.suspend(EtherCAT.Master)
     on_exit(fn -> :sys.resume(EtherCAT.Master) end)
 
-    assert {:error, :timeout} = EtherCAT.await_operational(5)
+    session = EtherCAT.Session.new(Process.whereis(EtherCAT.Master), make_ref())
+    assert {:error, :timeout} = EtherCAT.await_operational(session, 5)
   end
 
   test "deactivate returns timeout instead of exiting when the master call itself times out" do
@@ -167,7 +172,8 @@ defmodule EtherCATTest do
     :sys.suspend(EtherCAT.Master)
     on_exit(fn -> :sys.resume(EtherCAT.Master) end)
 
-    assert {:error, :timeout} = EtherCAT.Provisioning.deactivate()
+    session = EtherCAT.Session.new(Process.whereis(EtherCAT.Master), make_ref())
+    assert {:error, :timeout} = EtherCAT.Provisioning.deactivate(session)
   end
 
   test "state returns timeout instead of exiting when the master call itself times out" do
@@ -175,7 +181,15 @@ defmodule EtherCATTest do
     :sys.suspend(EtherCAT.Master)
     on_exit(fn -> :sys.resume(EtherCAT.Master) end)
 
-    assert {:error, :timeout} = EtherCAT.state()
+    session = EtherCAT.Session.new(Process.whereis(EtherCAT.Master), make_ref())
+    assert {:error, :timeout} = EtherCAT.state(session)
+  end
+
+  defp stop_current_session do
+    case EtherCAT.Session.current() do
+      {:ok, session} -> EtherCAT.stop(session)
+      {:error, :not_started} -> :ok
+    end
   end
 
   defp raw_backend(interface), do: {:raw, %{interface: interface}}

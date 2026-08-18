@@ -35,7 +35,7 @@ defmodule EtherCAT.Scan do
   end
 
   defp ensure_backend_available(backend) do
-    case Master.status() do
+    case Master.current_status() do
       %MasterStatus{lifecycle: lifecycle} when lifecycle in [:stopped, :idle] ->
         :ok
 

@@ -29,7 +29,7 @@ defmodule EtherCAT.Integration.Simulator.EmbeddedMilestoneFaultScriptTest do
 
     assert_eventually(
       fn ->
-        assert {:ok, :recovering} = EtherCAT.state()
+        assert {:ok, :recovering} = EtherCAT.state(SimulatorRing.session!())
       end,
       80
     )
@@ -50,7 +50,7 @@ defmodule EtherCAT.Integration.Simulator.EmbeddedMilestoneFaultScriptTest do
 
         assert remaining > 0
         assert remaining < 12
-        assert {:ok, :operational} = EtherCAT.state()
+        assert {:ok, :operational} = EtherCAT.state(SimulatorRing.session!())
         assert nil == SimulatorRing.fault_for(:outputs)
       end,
       180
@@ -59,8 +59,10 @@ defmodule EtherCAT.Integration.Simulator.EmbeddedMilestoneFaultScriptTest do
     assert_eventually(
       fn ->
         assert {:retreated, :safeop} = SimulatorRing.fault_for(:outputs)
-        assert {:ok, :operational} = EtherCAT.state()
-        assert {:ok, %{al_state: :safeop}} = EtherCAT.Diagnostics.slave_info(:outputs)
+        assert {:ok, :operational} = EtherCAT.state(SimulatorRing.session!())
+
+        assert {:ok, %{al_state: :safeop}} =
+                 EtherCAT.Diagnostics.slave_info(SimulatorRing.session!(), :outputs)
       end,
       220
     )
@@ -69,17 +71,33 @@ defmodule EtherCAT.Integration.Simulator.EmbeddedMilestoneFaultScriptTest do
       fn ->
         assert {:ok, %{scheduled_faults: []}} = Simulator.info()
         assert nil == SimulatorRing.fault_for(:outputs)
-        assert {:ok, :operational} = EtherCAT.state()
-        assert {:ok, %{al_state: :op}} = EtherCAT.Diagnostics.slave_info(:outputs)
-        assert {:ok, %{cycle_health: :healthy}} = EtherCAT.Diagnostics.domain_info(:main)
+        assert {:ok, :operational} = EtherCAT.state(SimulatorRing.session!())
+
+        assert {:ok, %{al_state: :op}} =
+                 EtherCAT.Diagnostics.slave_info(SimulatorRing.session!(), :outputs)
+
+        assert {:ok, %{cycle_health: :healthy}} =
+                 EtherCAT.Diagnostics.domain_info(SimulatorRing.session!(), :main)
       end,
       220
     )
 
-    assert :ok = EtherCAT.Raw.write_output(:outputs, :ch1, 1)
+    assert :ok =
+             EtherCAT.Raw.write_output(
+               SimulatorRing.session!(),
+               :outputs,
+               :ch1,
+               1
+             )
 
     assert_eventually(fn ->
-      assert {:ok, {true, updated_at_us}} = EtherCAT.Raw.read_input(:inputs, :ch1)
+      assert {:ok, {true, updated_at_us}} =
+               EtherCAT.Raw.read_input(
+                 SimulatorRing.session!(),
+                 :inputs,
+                 :ch1
+               )
+
       assert is_integer(updated_at_us)
       assert {:ok, %{value: true}} = Simulator.signal_snapshot(:outputs, :ch1)
     end)

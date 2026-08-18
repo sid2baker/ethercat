@@ -30,7 +30,11 @@ EtherCAT.TestSupport.RuntimeHelper.ensure_started!()
 {opts, _, _} = OptionParser.parse(System.argv(), switches: [interface: :string])
 interface = opts[:interface] || raise "pass --interface"
 
-EtherCAT.stop()
+case EtherCAT.Session.current() do
+  {:ok, session} -> EtherCAT.stop(session)
+  {:error, :not_started} -> :ok
+end
+
 Process.sleep(300)
 
 # Minimal start: no domains, no PDOs — we just need the link and PREOP
@@ -50,8 +54,8 @@ Process.sleep(300)
 # Allow startup to complete to PREOP
 :ok = EtherCAT.await_running(ethercat, 10_000)
 
-{:ok, bus} = EtherCAT.Diagnostics.bus()
-{:ok, slaves} = EtherCAT.Diagnostics.slaves()
+{:ok, bus} = EtherCAT.Diagnostics.bus(ethercat)
+{:ok, slaves} = EtherCAT.Diagnostics.slaves(ethercat)
 
 %{station: station} =
   slaves
@@ -151,5 +155,5 @@ for i <- 1..20 do
   )
 end
 
-EtherCAT.stop()
+EtherCAT.stop(ethercat)
 IO.puts("\nDone.")

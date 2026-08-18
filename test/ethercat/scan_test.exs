@@ -9,14 +9,8 @@ defmodule EtherCAT.ScanTest do
   @simulator_ip {127, 0, 0, 2}
 
   setup do
-    _ = EtherCAT.stop()
-    _ = Simulator.stop()
-
-    on_exit(fn ->
-      _ = EtherCAT.stop()
-      _ = Simulator.stop()
-    end)
-
+    SimulatorRing.stop_all!()
+    on_exit(fn -> SimulatorRing.stop_all!() end)
     :ok
   end
 
@@ -68,7 +62,7 @@ defmodule EtherCAT.ScanTest do
     master_ip = endpoint.master_ip
     port = endpoint.port
 
-    assert %EtherCAT.Master.Status{lifecycle: :operational} = EtherCAT.Master.status()
+    assert %EtherCAT.Master.Status{lifecycle: :operational} = EtherCAT.Master.current_status()
 
     assert {:error,
             {:backend_in_use,
@@ -86,6 +80,6 @@ defmodule EtherCAT.ScanTest do
                 }}
              )
 
-    assert %EtherCAT.Master.Status{lifecycle: :operational} = EtherCAT.Master.status()
+    assert %EtherCAT.Master.Status{lifecycle: :operational} = EtherCAT.Master.current_status()
   end
 end

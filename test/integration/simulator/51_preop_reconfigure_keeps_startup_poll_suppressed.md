@@ -7,7 +7,7 @@ intentionally left in `PREOP`.
 ## Real-World Analog
 
 A commissioning tool boots the ring to `PREOP`, tweaks one slave's local
-configuration through `EtherCAT.Provisioning.configure_slave/2`, but does not
+configuration through `EtherCAT.Provisioning.configure_slave/3`, but does not
 activate anything yet. The session is still configuration-only, so a later
 disconnect should not turn into a runtime fault just because one PREOP
 reconfigure happened.

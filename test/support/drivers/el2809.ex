@@ -6,7 +6,24 @@ defmodule EtherCAT.Driver.EL2809 do
 
   @vendor_id 0x0000_0002
   @product_code 0x0AF9_3052
-  @channels Enum.map(1..16, &String.to_atom("ch#{&1}"))
+  @channels [
+    :ch1,
+    :ch2,
+    :ch3,
+    :ch4,
+    :ch5,
+    :ch6,
+    :ch7,
+    :ch8,
+    :ch9,
+    :ch10,
+    :ch11,
+    :ch12,
+    :ch13,
+    :ch14,
+    :ch15,
+    :ch16
+  ]
 
   def vendor_id, do: @vendor_id
   def product_code, do: @product_code
