@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- `EtherCAT.start/1` now returns a generation-bound
+  `%EtherCAT.Runtime.Handle{}`; handle-bound lifecycle, query, subscription, and
+  process-data operations reject stale sessions instead of resolving through a
+  replacement singleton session (`5fd6eaa`).
 - Protocol subscriptions now atomically return current slave/domain status and
   retained samples, then deliver `%EtherCAT.Sample{}` values alongside
   `%EtherCAT.Notification{}` messages for slave runtime-state and attached-domain
