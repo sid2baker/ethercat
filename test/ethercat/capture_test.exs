@@ -376,7 +376,7 @@ defmodule EtherCAT.CaptureTest do
     assert {:ok, %EtherCAT.Simulator.Status{backend: %EtherCAT.Backend.Udp{port: port}}} =
              Simulator.status()
 
-    assert :ok =
+    assert {:ok, handle} =
              EtherCAT.start(
                backend: {:udp, %{host: @simulator_ip, bind_ip: @master_ip, port: port}},
                dc: nil,
@@ -387,7 +387,7 @@ defmodule EtherCAT.CaptureTest do
                frame_timeout_ms: 20
              )
 
-    assert :ok = EtherCAT.await_running(2_000)
+    assert :ok = EtherCAT.await_running(handle, 2_000)
     :ok
   end
 

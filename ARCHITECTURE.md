@@ -21,6 +21,7 @@ Host application supervisor
 └── EtherCAT.Runtime
     │
     ├── EtherCAT                    (protocol status/sample/notification/read/write API)
+    ├── EtherCAT.Runtime.Handle     (master pid + session generation)
     ├── EtherCAT.Backend            (normalized backend description)
     ├── EtherCAT.Scan               (one-shot observational topology scan)
     ├── EtherCAT.Provisioning       (advanced PREOP/configuration/SDO API)
@@ -77,8 +78,10 @@ Low-level mechanics live in helper namespaces (`EtherCAT.Master.*`,
 they carry real protocol or lifecycle weight.
 
 `EtherCAT.Runtime` is the supported root boundary. Host applications own its
-lifecycle; `EtherCAT.start/1` and `stop/0` only control the singleton session
-running inside that supervisor.
+lifecycle. `EtherCAT.start/1` opens the singleton session and returns an
+`EtherCAT.Runtime.Handle` containing the master pid and session generation.
+Handle-bound calls are validated inside the master serialization boundary, so a
+stopped handle cannot target a later replacement session.
 
 `EtherCAT.Simulator` follows the same boundary rule on the test/runtime side:
 the public simulator process owns segment state, datagram execution,
@@ -160,7 +163,7 @@ higher-level adapter to interpret, not machine availability or semantic events.
 
 ```
 Application
-  EtherCAT.write(slave, signal, value)
+  EtherCAT.write(handle, slave, signal, value)
     → driver.encode_signal/3
     → runtime stages the encoded value through Domain.write/3
   next Domain LRW tick picks up the value and writes it to the slave

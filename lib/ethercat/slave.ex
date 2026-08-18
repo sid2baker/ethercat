@@ -144,7 +144,7 @@ defmodule EtherCAT.Slave do
   def start_link(opts), do: FSM.start_link(opts)
 
   @doc false
-  @spec subscribe_protocol(atom(), pid()) ::
+  @spec subscribe_protocol(server(), pid()) ::
           {:ok, EtherCAT.Slave.Status.t(), %{optional(atom()) => EtherCAT.Sample.t()}}
           | {:error, :not_found | :timeout | {:server_exit, term()}}
   def subscribe_protocol(slave_name, pid \\ self()) do
@@ -168,7 +168,7 @@ defmodule EtherCAT.Slave do
   Stage an output value into the slave's process image for the next domain
   cycle.
   """
-  @spec write_output(atom(), atom(), term()) :: :ok | {:error, term()}
+  @spec write_output(server(), atom(), term()) :: :ok | {:error, term()}
   def write_output(slave_name, signal_name, value) do
     safe_call(slave_name, {:write_output, signal_name, value})
   end
@@ -220,13 +220,13 @@ defmodule EtherCAT.Slave do
   def error(slave_name), do: safe_call(slave_name, :error)
 
   @doc false
-  @spec samples(atom()) ::
+  @spec samples(server()) ::
           {:ok, %{optional(atom()) => EtherCAT.Sample.t()}}
           | {:error, :not_found | :timeout | {:server_exit, term()}}
   def samples(slave_name), do: safe_call(slave_name, :samples)
 
   @doc false
-  @spec status(atom()) ::
+  @spec status(server()) ::
           {:ok, EtherCAT.Slave.Status.t()}
           | {:error, :not_found | :timeout | {:server_exit, term()}}
   def status(slave_name), do: safe_call(slave_name, :status)
@@ -244,7 +244,7 @@ defmodule EtherCAT.Slave do
   `{:error, {:stale, details}}` once the cached sample is older than the
   domain freshness window.
   """
-  @spec read_input(atom(), atom()) :: {:ok, {term(), integer()}} | {:error, term()}
+  @spec read_input(server(), atom()) :: {:ok, {term(), integer()}} | {:error, term()}
   def read_input(slave_name, signal_name) do
     safe_call(slave_name, {:read_input, signal_name})
   end
@@ -268,13 +268,16 @@ defmodule EtherCAT.Slave do
     safe_call(slave_name, {:upload_sdo, index, subindex})
   end
 
-  defp safe_call(slave_name, msg) do
+  defp safe_call(server, msg) do
     try do
-      :gen_statem.call(via(slave_name), msg)
+      :gen_statem.call(server_ref(server), msg)
     catch
       :exit, reason -> Utils.classify_call_exit(reason, :not_found)
     end
   end
+
+  defp server_ref(pid) when is_pid(pid), do: pid
+  defp server_ref(slave_name) when is_atom(slave_name), do: via(slave_name)
 
   defp via(slave_name), do: {:via, Registry, {EtherCAT.Registry, {:slave, slave_name}}}
 end

@@ -51,19 +51,20 @@ samples = Keyword.get(opts, :samples, 60)
 EtherCAT.stop()
 Process.sleep(300)
 
-EtherCAT.start(
-  backend: {:raw, %{interface: interface}},
-  domains: [Hardware.main_domain()],
-  slaves: [
-    Hardware.coupler(),
-    Hardware.inputs(process_data: :none),
-    Hardware.outputs(process_data: :none),
-    Hardware.rtd(process_data: [channel1: :main, channel2: :main])
-  ]
-)
+{:ok, ethercat} =
+  EtherCAT.start(
+    backend: {:raw, %{interface: interface}},
+    domains: [Hardware.main_domain()],
+    slaves: [
+      Hardware.coupler(),
+      Hardware.inputs(process_data: :none),
+      Hardware.outputs(process_data: :none),
+      Hardware.rtd(process_data: [channel1: :main, channel2: :main])
+    ]
+  )
 
 IO.puts("Waiting for OP...")
-:ok = EtherCAT.await_running(10_000)
+:ok = EtherCAT.await_running(ethercat, 10_000)
 IO.puts("Running.")
 IO.puts("Subscribed channels: #{Enum.map_join(channels, ", ", &Atom.to_string/1)}\n")
 

@@ -24,9 +24,9 @@ defmodule EtherCAT.Integration.Hardware.RedundantRingTest do
       test "boots the EK1100 -> EL1809 -> EL2809 ring to operational over #{profile.label}" do
         profile = unquote(Macro.escape(profile))
 
-        assert :ok = start_ring(profile)
-        assert :ok = EtherCAT.await_operational(5_000)
-        assert {:ok, :operational} = EtherCAT.state()
+        assert {:ok, handle} = start_ring(profile)
+        assert :ok = EtherCAT.await_operational(handle, 5_000)
+        assert {:ok, :operational} = EtherCAT.state(handle)
 
         assert {:ok, %{link: expected_link}} = EtherCAT.Bus.info(EtherCAT.Bus)
 
@@ -44,8 +44,8 @@ defmodule EtherCAT.Integration.Hardware.RedundantRingTest do
       test "reads EL1809 inputs and stages EL2809 outputs over #{profile.label}" do
         profile = unquote(Macro.escape(profile))
 
-        assert :ok = start_ring(profile)
-        assert :ok = EtherCAT.await_operational(5_000)
+        assert {:ok, handle} = start_ring(profile)
+        assert :ok = EtherCAT.await_operational(handle, 5_000)
 
         assert {:ok, %{link: expected_link}} = EtherCAT.Bus.info(EtherCAT.Bus)
 

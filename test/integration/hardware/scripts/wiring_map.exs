@@ -85,7 +85,7 @@ slaves =
   [Hardware.coupler(), Hardware.inputs(), Hardware.outputs()] ++
     if(include_rtd, do: [rtd_slave], else: [])
 
-:ok =
+{:ok, ethercat} =
   EtherCAT.start(
     backend: {:raw, %{interface: interface}},
     domains: [Hardware.main_domain(cycle_time_us: period_ms * 1_000, miss_threshold: 500)],
@@ -93,7 +93,7 @@ slaves =
   )
 
 IO.puts("Waiting for bus to reach OP...")
-:ok = EtherCAT.await_running(15_000)
+:ok = EtherCAT.await_running(ethercat, 15_000)
 
 # Zero all outputs to start clean
 Enum.each(1..16, fn i -> EtherCAT.Raw.write_output(:outputs, :"ch#{i}", 0) end)

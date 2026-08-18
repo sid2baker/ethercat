@@ -19,11 +19,14 @@ defmodule EtherCAT.Runtime do
 
   Supervisor.start_link(children, strategy: :one_for_one)
 
-  :ok = EtherCAT.start(backend: {:raw, %{interface: "eth0"}})
+  {:ok, ethercat} = EtherCAT.start(backend: {:raw, %{interface: "eth0"}})
+  :ok = EtherCAT.await_operational(ethercat)
   ```
 
   Only one EtherCAT runtime may be active per BEAM node. The master and its
-  supporting registries keep their singleton process names.
+  supporting registries keep their singleton process names. Each started
+  session still receives a generation-bound `EtherCAT.Runtime.Handle`, so
+  long-lived callers cannot accidentally cross a stop/start boundary.
   """
 
   use Supervisor

@@ -107,6 +107,7 @@ defmodule EtherCAT.Master do
   alias EtherCAT.DC
   alias EtherCAT.Master.FSM
   alias EtherCAT.Master.Status
+  alias EtherCAT.Runtime.Handle
   alias EtherCAT.Utils
 
   @call_timeout_ms 5_000
@@ -117,6 +118,7 @@ defmodule EtherCAT.Master do
   @type server :: :gen_statem.server_ref()
 
   @type t :: %__MODULE__{
+          session: reference() | nil,
           bus_ref: reference() | nil,
           dc_ref: reference() | nil,
           dc_ref_station: non_neg_integer() | nil,
@@ -147,6 +149,7 @@ defmodule EtherCAT.Master do
         }
 
   defstruct [
+    :session,
     :bus_ref,
     :dc_ref,
     :dc_ref_station,
@@ -198,7 +201,27 @@ defmodule EtherCAT.Master do
   This is the direct module-level entry point behind `EtherCAT.start/1`.
   """
   @spec start(keyword()) :: :ok | {:error, term()}
-  def start(opts \\ []), do: safe_call({:start, opts})
+  def start(opts \\ []) do
+    case start_session(opts) do
+      {:ok, _session, _master} -> :ok
+      {:error, _reason} = error -> error
+    end
+  end
+
+  @doc false
+  @spec start_session(keyword()) :: {:ok, reference(), pid()} | {:error, term()}
+  def start_session(opts \\ []), do: safe_call({:start, opts})
+
+  @doc false
+  @spec session_call(Handle.t(), term(), timeout()) :: term()
+  def session_call(%Handle{} = handle, message, timeout \\ @call_timeout_ms) do
+    safe_call(
+      Handle.master(handle),
+      {:session, Handle.session(handle), message},
+      timeout,
+      :stale_handle
+    )
+  end
 
   @doc """
   Stop the current master session and tear down its runtime.
@@ -353,18 +376,18 @@ defmodule EtherCAT.Master do
   end
 
   defp safe_call(msg) do
-    try do
-      :gen_statem.call(__MODULE__, msg, @call_timeout_ms)
-    catch
-      :exit, reason -> Utils.classify_call_exit(reason, :not_started)
-    end
+    safe_call(__MODULE__, msg, @call_timeout_ms, :not_started)
   end
 
   defp safe_call(msg, timeout) do
+    safe_call(__MODULE__, msg, timeout, :not_started)
+  end
+
+  defp safe_call(server, msg, timeout, missing_reason) do
     try do
-      :gen_statem.call(__MODULE__, msg, timeout)
+      :gen_statem.call(server, msg, timeout)
     catch
-      :exit, reason -> Utils.classify_call_exit(reason, :not_started)
+      :exit, reason -> Utils.classify_call_exit(reason, missing_reason)
     end
   end
 

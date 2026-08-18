@@ -115,7 +115,7 @@ EL3202 RTD long-duration stability analysis
 EtherCAT.stop()
 Process.sleep(300)
 
-:ok =
+{:ok, ethercat} =
   EtherCAT.start(
     backend: {:raw, %{interface: interface}},
     domains: [Hardware.main_domain(cycle_time_us: period_ms * 1_000, miss_threshold: 500)],
@@ -123,7 +123,7 @@ Process.sleep(300)
   )
 
 IO.puts("Waiting for bus to reach OP...")
-:ok = EtherCAT.await_running(15_000)
+:ok = EtherCAT.await_running(ethercat, 15_000)
 
 EtherCAT.Raw.subscribe(:rtd, :channel1, self())
 EtherCAT.Raw.subscribe(:rtd, :channel2, self())

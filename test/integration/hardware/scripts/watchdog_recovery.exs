@@ -149,7 +149,7 @@ Process.sleep(300)
 
 rtd_slave = Hardware.rtd()
 
-:ok =
+{:ok, ethercat} =
   EtherCAT.start(
     backend: {:raw, %{interface: interface}},
     domains: [Hardware.main_domain(cycle_time_us: period_ms * 1_000, miss_threshold: 500)],
@@ -161,7 +161,7 @@ rtd_slave = Hardware.rtd()
       ] ++ if(include_rtd, do: [rtd_slave], else: [])
   )
 
-:ok = EtherCAT.await_running(15_000)
+:ok = EtherCAT.await_running(ethercat, 15_000)
 
 {:ok, bus} = EtherCAT.Diagnostics.bus()
 {:ok, slaves} = EtherCAT.Diagnostics.slaves()

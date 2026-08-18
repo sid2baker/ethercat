@@ -27,20 +27,21 @@ defmodule Mix.Tasks.Ethercat.Capture do
     ensure_runtime_started!()
     ensure_session_available!()
 
-    case EtherCAT.start(build_start_opts(opts)) do
-      :ok ->
-        :ok
+    handle =
+      case EtherCAT.start(build_start_opts(opts)) do
+        {:ok, handle} ->
+          handle
 
-      {:error, reason} ->
-        Mix.raise("failed to start EtherCAT capture session: #{inspect(reason)}")
-    end
+        {:error, reason} ->
+          Mix.raise("failed to start EtherCAT capture session: #{inspect(reason)}")
+      end
 
-    case EtherCAT.await_running(Keyword.fetch!(opts, :await_ms)) do
+    case EtherCAT.await_running(handle, Keyword.fetch!(opts, :await_ms)) do
       :ok ->
         print_session_banner(opts)
 
       {:error, reason} ->
-        _ = EtherCAT.stop()
+        _ = EtherCAT.stop(handle)
         Mix.raise("capture session did not reach a usable PREOP state: #{inspect(reason)}")
     end
   end

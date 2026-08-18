@@ -52,14 +52,30 @@ defmodule EtherCAT.Master.FSM do
     :keep_state_and_data
   end
 
+  def handle_event(
+        {:call, from},
+        {:session, session, event},
+        state,
+        %Master{session: session} = data
+      )
+      when is_reference(session) do
+    handle_event({:call, from}, event, state, data)
+  end
+
+  def handle_event({:call, from}, {:session, _session, _event}, _state, _data) do
+    {:keep_state_and_data, [{:reply, from, {:error, :stale_handle}}]}
+  end
+
   def handle_event({:call, from}, {:start, opts}, :idle, data) do
     with {:ok, start_config} <- Config.normalize_start_options(opts),
          {:ok, bus_pid} <- start_session_bus(start_config.bus_opts) do
       bus_ref = Process.monitor(bus_pid)
+      session = make_ref()
 
       new_data = %{
         data
-        | bus_ref: bus_ref,
+        | session: session,
+          bus_ref: bus_ref,
           backend: start_config.backend,
           dc_ref: nil,
           base_station: start_config.base_station,
@@ -84,7 +100,7 @@ defmodule EtherCAT.Master.FSM do
           await_operational_callers: []
       }
 
-      {:next_state, :discovering, new_data, [{:reply, from, :ok}]}
+      {:next_state, :discovering, new_data, [{:reply, from, {:ok, session, self()}}]}
     else
       {:error, _} = err ->
         {:keep_state_and_data, [{:reply, from, err}]}

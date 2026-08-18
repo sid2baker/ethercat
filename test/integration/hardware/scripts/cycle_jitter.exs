@@ -161,7 +161,7 @@ EtherCAT domain cycle jitter (self-clocking loopback)
 EtherCAT.stop()
 Process.sleep(300)
 
-:ok =
+{:ok, ethercat} =
   EtherCAT.start(
     backend: {:raw, %{interface: interface}},
     domains: [Hardware.main_domain(cycle_time_us: period_us, miss_threshold: 500)],
@@ -169,7 +169,7 @@ Process.sleep(300)
   )
 
 IO.puts("Waiting for bus to reach OP...")
-:ok = EtherCAT.await_running(15_000)
+:ok = EtherCAT.await_running(ethercat, 15_000)
 
 EtherCAT.Raw.subscribe(:inputs, input_channel, self())
 

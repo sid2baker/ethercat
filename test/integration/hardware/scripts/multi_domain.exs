@@ -141,7 +141,7 @@ domain_configs =
 
 rtd_slave = Hardware.rtd(process_data: {:all, :rtd})
 
-:ok =
+{:ok, ethercat} =
   EtherCAT.start(
     backend: {:raw, %{interface: interface}},
     domains: domain_configs,
@@ -157,7 +157,7 @@ rtd_slave = Hardware.rtd(process_data: {:all, :rtd})
       ] ++ if(include_rtd, do: [rtd_slave], else: [])
   )
 
-:ok = EtherCAT.await_running(15_000)
+:ok = EtherCAT.await_running(ethercat, 15_000)
 IO.puts("  Bus reached OP.")
 
 Enum.each([:fast, :slow] ++ if(include_rtd, do: [:rtd], else: []), fn domain_id ->

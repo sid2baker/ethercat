@@ -21,19 +21,25 @@ defmodule EtherCAT.Integration.Simulator.ATV320ProtocolSafeopRecoveryTest do
   setup do
     ensure_telemetry_started!()
     on_exit(fn -> SimulatorRing.stop_all!() end)
-    boot_operational!()
+    ethercat = boot_operational!()
+
+    assert {:ok, :operational} = EtherCAT.state(ethercat)
+    assert {:ok, [:coupler, :drive]} = EtherCAT.slaves(ethercat)
+    assert {:ok, %{coupler: _, drive: _}} = EtherCAT.inventory(ethercat)
 
     assert {:ok, %EtherCAT.Slave.Status{state: :op}, _initial_samples} =
-             EtherCAT.subscribe(:drive, self())
+             EtherCAT.subscribe(ethercat, :drive, self())
 
-    :ok
+    {:ok, ethercat: ethercat}
   end
 
-  test "ATV320 protocol samples and scanner writes survive SAFEOP retreat" do
+  test "ATV320 protocol samples and scanner writes survive SAFEOP retreat", %{
+    ethercat: ethercat
+  } do
     Scenario.new()
     |> Scenario.trace()
     |> Scenario.act("baseline protocol description and scanner inputs are visible", fn _ctx ->
-      assert {:ok, description} = EtherCAT.describe(:drive)
+      assert {:ok, description} = EtherCAT.describe(ethercat, :drive)
       assert description.device_type == :variable_speed_drive
       assert Enum.any?(description.endpoints, &(&1.signal == :controlword))
       assert Enum.any?(description.endpoints, &(&1.signal == :statusword))
@@ -49,14 +55,18 @@ defmodule EtherCAT.Integration.Simulator.ATV320ProtocolSafeopRecoveryTest do
                         cycle_health: :healthy
                       }
                     }
-                  }} = EtherCAT.status(:drive)
+                  }} = EtherCAT.status(ethercat, :drive)
         end,
         attempts: @setup_attempts,
         label: "drive protocol status is operational and cycling"
       )
 
       Expect.eventually(
-        fn -> assert_drive_sample!(0x0040, actual_velocity: 0) end,
+        fn ->
+          assert_drive_sample!(ethercat, 0x0040, actual_velocity: 0)
+          assert {:ok, {0x0040, observed_at}} = EtherCAT.read(ethercat, :drive, :statusword)
+          assert is_integer(observed_at)
+        end,
         attempts: @setup_attempts,
         label: "baseline ATV320 statusword sample"
       )
@@ -65,13 +75,18 @@ defmodule EtherCAT.Integration.Simulator.ATV320ProtocolSafeopRecoveryTest do
       assert :ok = Simulator.set_value(:drive, :input_word_6, 0xABCD)
 
       Expect.eventually(
-        fn -> assert_drive_sample!(0x0040, input_word_3: 0x1234, input_word_6: 0xABCD) end,
+        fn ->
+          assert_drive_sample!(ethercat, 0x0040,
+            input_word_3: 0x1234,
+            input_word_6: 0xABCD
+          )
+        end,
         attempts: @setup_attempts,
         label: "generic input scanner words are sampled"
       )
     end)
     |> Scenario.act("generic scanner outputs stage through the protocol API", fn _ctx ->
-      assert :ok = EtherCAT.write(:drive, :output_word_3, 0x55AA)
+      assert :ok = EtherCAT.write(ethercat, :drive, :output_word_3, 0x55AA)
 
       Expect.eventually(
         fn -> Expect.signal(:drive, :output_word_3, value: 0x55AA) end,
@@ -80,10 +95,10 @@ defmodule EtherCAT.Integration.Simulator.ATV320ProtocolSafeopRecoveryTest do
       )
     end)
     |> Scenario.act("explicit controlword writes reach operation enabled", fn _ctx ->
-      write_controlword!(0x0006, 0x0021)
-      write_controlword!(0x0007, 0x0023)
-      write_controlword!(0x000F, 0x0027)
-      write_target_velocity!(1500)
+      write_controlword!(ethercat, 0x0006, 0x0021)
+      write_controlword!(ethercat, 0x0007, 0x0023)
+      write_controlword!(ethercat, 0x000F, 0x0027)
+      write_target_velocity!(ethercat, 1500)
     end)
     |> Scenario.act("SAFEOP retreat stays slave-local and heals back to AL OP", fn %{trace: trace} ->
       assert :ok = Simulator.inject_fault(Fault.retreat_to_safeop(:drive))
@@ -128,15 +143,15 @@ defmodule EtherCAT.Integration.Simulator.ATV320ProtocolSafeopRecoveryTest do
       }
     end)
     |> Scenario.act("protocol writes and samples still work after recovery", fn _ctx ->
-      write_controlword!(0x0000, 0x0040)
-      write_controlword!(0x0006, 0x0021)
-      write_controlword!(0x0007, 0x0023)
-      write_controlword!(0x000F, 0x0027)
-      write_target_velocity!(900)
+      write_controlword!(ethercat, 0x0000, 0x0040)
+      write_controlword!(ethercat, 0x0006, 0x0021)
+      write_controlword!(ethercat, 0x0007, 0x0023)
+      write_controlword!(ethercat, 0x000F, 0x0027)
+      write_target_velocity!(ethercat, 900)
 
       Expect.eventually(
         fn ->
-          assert_drive_sample!(0x0027, actual_velocity: 900)
+          assert_drive_sample!(ethercat, 0x0027, actual_velocity: 900)
           Expect.signal(:drive, :target_velocity, value: 900)
           Expect.signal(:drive, :output_word_3, value: 0x55AA)
           Expect.simulator_queue_empty()
@@ -166,11 +181,16 @@ defmodule EtherCAT.Integration.Simulator.ATV320ProtocolSafeopRecoveryTest do
     SimulatorRing.reset!()
     simulator = SimulatorRing.start_simulator!(devices: devices(), connections: [])
 
-    SimulatorRing.start_master!(simulator,
-      start_opts: [domains: [%DomainConfig{id: :main, cycle_time_us: 10_000}], slaves: slaves()]
-    )
+    ethercat =
+      SimulatorRing.start_master!(simulator,
+        start_opts: [
+          domains: [%DomainConfig{id: :main, cycle_time_us: 10_000}],
+          slaves: slaves()
+        ]
+      )
 
-    assert :ok = EtherCAT.await_operational(2_500)
+    assert :ok = EtherCAT.await_operational(ethercat, 2_500)
+    ethercat
   end
 
   defp devices do
@@ -193,13 +213,13 @@ defmodule EtherCAT.Integration.Simulator.ATV320ProtocolSafeopRecoveryTest do
     ]
   end
 
-  defp write_controlword!(controlword, expected_statusword) do
-    assert :ok = EtherCAT.write(:drive, :controlword, controlword)
+  defp write_controlword!(ethercat, controlword, expected_statusword) do
+    assert :ok = EtherCAT.write(ethercat, :drive, :controlword, controlword)
 
     Expect.eventually(
       fn ->
         Expect.signal(:drive, :controlword, value: controlword)
-        assert_drive_sample!(expected_statusword)
+        assert_drive_sample!(ethercat, expected_statusword)
       end,
       attempts: @setup_attempts,
       label:
@@ -207,24 +227,24 @@ defmodule EtherCAT.Integration.Simulator.ATV320ProtocolSafeopRecoveryTest do
     )
   end
 
-  defp write_target_velocity!(target_velocity) do
-    assert :ok = EtherCAT.write(:drive, :target_velocity, target_velocity)
+  defp write_target_velocity!(ethercat, target_velocity) do
+    assert :ok = EtherCAT.write(ethercat, :drive, :target_velocity, target_velocity)
 
     Expect.eventually(
       fn ->
         Expect.signal(:drive, :target_velocity, value: target_velocity)
         Expect.signal(:drive, :actual_velocity, value: target_velocity)
-        assert_drive_sample!(0x0027, actual_velocity: target_velocity)
+        assert_drive_sample!(ethercat, 0x0027, actual_velocity: target_velocity)
       end,
       attempts: @setup_attempts,
       label: "target velocity is reflected in protocol input"
     )
   end
 
-  defp assert_drive_sample!(expected_statusword, expectations \\ []) do
+  defp assert_drive_sample!(ethercat, expected_statusword, expectations \\ []) do
     assert {:ok,
             %Sample{slave: :drive, domain: :main, inputs: %{statusword: ^expected_statusword}} =
-              sample} = EtherCAT.sample(:drive, :main)
+              sample} = EtherCAT.sample(ethercat, :drive, :main)
 
     Enum.each(expectations, fn {signal, expected} ->
       assert Map.get(sample.inputs, signal) == expected

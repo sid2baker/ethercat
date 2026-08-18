@@ -211,12 +211,13 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
     simulator
   end
 
-  @spec start_master!(endpoint() | :inet.port_number(), keyword()) :: :ok
+  @spec start_master!(endpoint() | :inet.port_number(), keyword()) :: EtherCAT.Runtime.Handle.t()
   def start_master!(endpoint, opts \\ []) do
     assert_ok!(start_master(endpoint, opts))
   end
 
-  @spec start_master(endpoint() | :inet.port_number(), keyword()) :: :ok | {:error, term()}
+  @spec start_master(endpoint() | :inet.port_number(), keyword()) ::
+          {:ok, EtherCAT.Runtime.Handle.t()} | {:error, term()}
   def start_master(endpoint, opts \\ []) do
     ring = Keyword.get(opts, :ring, :default)
 
@@ -262,6 +263,7 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
   end
 
   defp assert_ok!(:ok), do: :ok
+  defp assert_ok!({:ok, %EtherCAT.Runtime.Handle{} = handle}), do: handle
 
   defp assert_ok!(other) do
     stop_all!()
@@ -296,8 +298,8 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
     await_timeout_ms = Keyword.get(opts, :await_operational_ms, 2_000)
 
     case start_master(simulator, opts) do
-      :ok ->
-        case EtherCAT.await_operational(await_timeout_ms) do
+      {:ok, handle} ->
+        case EtherCAT.await_operational(handle, await_timeout_ms) do
           :ok ->
             simulator
 
@@ -323,8 +325,8 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
     await_timeout_ms = Keyword.get(opts, :await_running_ms, 2_000)
 
     case start_master(simulator, opts) do
-      :ok ->
-        case EtherCAT.await_running(await_timeout_ms) do
+      {:ok, handle} ->
+        case EtherCAT.await_running(handle, await_timeout_ms) do
           :ok ->
             simulator
 

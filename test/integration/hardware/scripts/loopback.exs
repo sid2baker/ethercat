@@ -66,7 +66,7 @@ IO.puts("\n=== Domain frame when ch1=1 ===")
 EtherCAT.stop()
 Process.sleep(300)
 
-:ok =
+{:ok, ethercat} =
   EtherCAT.start(
     backend: {:raw, %{interface: interface}},
     domains: [Hardware.main_domain(cycle_time_us: 4_000)],
@@ -78,7 +78,7 @@ Process.sleep(300)
     ]
   )
 
-:ok = EtherCAT.await_operational(10_000)
+:ok = EtherCAT.await_operational(ethercat, 10_000)
 
 {:ok, bus} = EtherCAT.Diagnostics.bus()
 
@@ -110,5 +110,5 @@ sm0_after =
 
 IO.puts("EL2809 SM0+SM1 after  write_output: #{sm0_after}")
 
-EtherCAT.stop()
+EtherCAT.stop(ethercat)
 IO.puts("Done.")

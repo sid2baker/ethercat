@@ -34,20 +34,21 @@ EtherCAT.stop()
 Process.sleep(300)
 
 # Minimal start: no domains, no PDOs — we just need the link and PREOP
-EtherCAT.start(
-  backend: {:raw, %{interface: interface}},
-  dc: nil,
-  domains: [],
-  slaves: [
-    Hardware.coupler(target_state: :preop),
-    Hardware.inputs(process_data: :none, target_state: :preop),
-    Hardware.outputs(process_data: :none, target_state: :preop),
-    Hardware.rtd(process_data: :none, target_state: :preop)
-  ]
-)
+{:ok, ethercat} =
+  EtherCAT.start(
+    backend: {:raw, %{interface: interface}},
+    dc: nil,
+    domains: [],
+    slaves: [
+      Hardware.coupler(target_state: :preop),
+      Hardware.inputs(process_data: :none, target_state: :preop),
+      Hardware.outputs(process_data: :none, target_state: :preop),
+      Hardware.rtd(process_data: :none, target_state: :preop)
+    ]
+  )
 
 # Allow startup to complete to PREOP
-:ok = EtherCAT.await_running(10_000)
+:ok = EtherCAT.await_running(ethercat, 10_000)
 
 {:ok, bus} = EtherCAT.Diagnostics.bus()
 {:ok, slaves} = EtherCAT.Diagnostics.slaves()

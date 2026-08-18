@@ -283,7 +283,7 @@ start_bus = fn health_poll_ms_opt ->
   rtd_config =
     Hardware.rtd(process_data: if(split_sm, do: {:all, :rtd}, else: {:all, :main}))
 
-  :ok =
+  {:ok, ethercat} =
     EtherCAT.start(
       backend: {:raw, %{interface: interface}},
       domains: domains,
@@ -295,7 +295,7 @@ start_bus = fn health_poll_ms_opt ->
         ] ++ if(include_rtd, do: [rtd_config], else: [])
     )
 
-  :ok = EtherCAT.await_running(15_000)
+  :ok = EtherCAT.await_running(ethercat, 15_000)
 end
 
 results = %{}

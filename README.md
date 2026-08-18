@@ -70,20 +70,20 @@ children = [
 
 EtherCAT is a library subsystem, not a standalone OTP application. The host
 application owns starting, stopping, and restarting `EtherCAT.Runtime`;
-`EtherCAT.start/1` only opens or tears down the singleton EtherCAT session
-inside that runtime.
+`EtherCAT.start/1` opens the singleton EtherCAT session inside that runtime and
+returns a generation-bound `%EtherCAT.Runtime.Handle{}`.
 
 ### Discover a ring
 
 ```elixir
 {:ok, scan} = EtherCAT.Scan.scan({:raw, %{interface: "eth0"}})
 
-EtherCAT.start(backend: {:raw, %{interface: "eth0"}})
+{:ok, ethercat} = EtherCAT.start(backend: {:raw, %{interface: "eth0"}})
 
-:ok = EtherCAT.await_running()
+:ok = EtherCAT.await_running(ethercat)
 
-EtherCAT.state()
-#=> :preop_ready
+EtherCAT.state(ethercat)
+#=> {:ok, :preop_ready}
 
 EtherCAT.Master.status()
 #=> %EtherCAT.Master.Status{backend: %EtherCAT.Backend.Raw{interface: "eth0"}, ...}
@@ -94,10 +94,10 @@ EtherCAT.Diagnostics.slaves()
 #=>   ...
 #=> ]
 
-EtherCAT.stop()
+EtherCAT.stop(ethercat)
 ```
 
-`EtherCAT.stop()` stops the current session and leaves `EtherCAT.Runtime`
+`EtherCAT.stop(ethercat)` stops that exact session generation and leaves `EtherCAT.Runtime`
 running under the host supervisor.
 
 If you start without explicit slave configs, EtherCAT still scans the ring, names each
@@ -135,7 +135,7 @@ defmodule MyApp.EL1809 do
   end
 end
 
-EtherCAT.start(
+{:ok, ethercat} = EtherCAT.start(
   backend: {:raw, %{interface: "eth0"}},
   domains: [%EtherCAT.Domain.Config{id: :io, cycle_time_us: 1_000}],
   slaves: [
@@ -155,21 +155,21 @@ EtherCAT.start(
   ]
 )
 
-:ok = EtherCAT.await_operational()
+:ok = EtherCAT.await_operational(ethercat)
 
-{:ok, input_sample} = EtherCAT.sample(:inputs, :io)
+{:ok, input_sample} = EtherCAT.sample(ethercat, :inputs, :io)
 input_sample.inputs.ch1
 #=> false
 
-{:ok, input_description} = EtherCAT.describe(:inputs)
+{:ok, input_description} = EtherCAT.describe(ethercat, :inputs)
 input_description.endpoints
 #=> [%EtherCAT.Endpoint{signal: :ch1, direction: :input, type: :boolean}]
 
-{:ok, inventory} = EtherCAT.inventory()
+{:ok, inventory} = EtherCAT.inventory(ethercat)
 Map.keys(inventory)
 #=> [:coupler, :inputs, :outputs]
 
-{:ok, status, initial_samples} = EtherCAT.subscribe(:inputs)
+{:ok, status, initial_samples} = EtherCAT.subscribe(ethercat, :inputs)
 status.state
 #=> :op
 initial_samples
@@ -189,8 +189,8 @@ receive do
     notification
 end
 
-:ok = EtherCAT.write(:outputs, :ch1, true)
-{:ok, {true, updated_at_us}} = EtherCAT.read(:inputs, :ch1)
+:ok = EtherCAT.write(ethercat, :outputs, :ch1, true)
+{:ok, {true, updated_at_us}} = EtherCAT.read(ethercat, :inputs, :ch1)
 ```
 
 Drivers own device identity, PDO signal layout, static signal descriptions,
@@ -199,12 +199,14 @@ commands. `EtherCAT.Sample` reports one coherent decoded observation from one
 domain cycle; samples from different domains do not imply cross-domain
 consistency.
 
-`describe/1` and `inventory/0` are configuration-backed protocol views.
-`status/1` reports current slave and attached-domain protocol status.
-`samples/1`, `sample/2`, and `subscribe/2` expose retained and subsequent
-process observations. Subscriptions deliver both coherent samples and
-protocol-level state notifications. `read/2` and `write/3` are explicit
-low-level signal operations. `EtherCAT.Raw` remains available for specialist PDO/latch tooling.
+The handle-bound `describe/2` and `inventory/1` functions are
+configuration-backed protocol views. `status/2` reports current slave and
+attached-domain protocol status. `samples/2`, `sample/3`, and `subscribe/3`
+expose retained and subsequent process observations. Subscriptions deliver both
+coherent samples and protocol-level state notifications. `read/3` and
+`write/4` are explicit low-level signal operations. A stale handle fails with
+`{:error, :stale_handle}` instead of crossing into a replacement session.
+`EtherCAT.Raw` remains available for specialist PDO/latch tooling.
 
 Semantic commands, machine state, and machine events belong in a separate
 integration layer above EtherCAT, such as an `Entity.Provider` adapter.
@@ -212,12 +214,13 @@ integration layer above EtherCAT, such as an `Entity.Provider` adapter.
 For PREOP-first workflows, configure discovered slaves dynamically:
 
 ```elixir
-EtherCAT.start(
-  backend: {:raw, %{interface: "eth0"}},
-  domains: [%EtherCAT.Domain.Config{id: :main, cycle_time_us: 1_000}]
-)
+{:ok, ethercat} =
+  EtherCAT.start(
+    backend: {:raw, %{interface: "eth0"}},
+    domains: [%EtherCAT.Domain.Config{id: :main, cycle_time_us: 1_000}]
+  )
 
-:ok = EtherCAT.await_running()
+:ok = EtherCAT.await_running(ethercat)
 
 :ok =
   EtherCAT.Provisioning.configure_slave(
@@ -228,7 +231,7 @@ EtherCAT.start(
   )
 
 :ok = EtherCAT.Provisioning.activate()
-:ok = EtherCAT.await_operational()
+:ok = EtherCAT.await_operational(ethercat)
 ```
 
 ### Capture a real slave into a simulator scaffold

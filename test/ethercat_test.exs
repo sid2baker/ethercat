@@ -73,6 +73,7 @@ defmodule EtherCATTest do
     assert Code.ensure_loaded?(EtherCAT.Endpoint)
     assert Code.ensure_loaded?(EtherCAT.Notification)
     assert Code.ensure_loaded?(EtherCAT.Sample)
+    assert Code.ensure_loaded?(EtherCAT.Runtime.Handle)
     assert Code.ensure_loaded?(EtherCAT.Domain.Status)
     assert Code.ensure_loaded?(EtherCAT.Slave.Status)
     assert Code.ensure_loaded?(EtherCAT.SlaveDescription)
@@ -92,14 +93,21 @@ defmodule EtherCATTest do
     refute function_exported?(EtherCAT, :devices, 0)
 
     assert function_exported?(EtherCAT, :slaves, 0)
+    assert function_exported?(EtherCAT, :slaves, 1)
     assert function_exported?(EtherCAT, :status, 1)
+    assert function_exported?(EtherCAT, :status, 2)
     assert function_exported?(EtherCAT, :samples, 1)
+    assert function_exported?(EtherCAT, :samples, 2)
     assert function_exported?(EtherCAT, :sample, 2)
+    assert function_exported?(EtherCAT, :sample, 3)
     assert function_exported?(EtherCAT, :describe, 1)
     assert function_exported?(EtherCAT, :inventory, 0)
     assert function_exported?(EtherCAT, :subscribe, 2)
+    assert function_exported?(EtherCAT, :subscribe, 3)
     assert function_exported?(EtherCAT, :read, 2)
+    assert function_exported?(EtherCAT, :read, 3)
     assert function_exported?(EtherCAT, :write, 3)
+    assert function_exported?(EtherCAT, :write, 4)
     refute function_exported?(EtherCAT, :snapshot, 0)
     refute function_exported?(EtherCAT, :snapshot, 1)
     refute function_exported?(EtherCAT, :command, 3)
@@ -108,6 +116,15 @@ defmodule EtherCATTest do
     assert function_exported?(EtherCAT.Raw, :subscribe, 3)
     assert function_exported?(EtherCAT.Diagnostics, :slave_info, 1)
     assert function_exported?(EtherCAT.Provisioning, :upload_sdo, 3)
+  end
+
+  test "session handles reject calls after their generation is no longer active" do
+    master = ensure_master_running()
+    stale = EtherCAT.Runtime.Handle.new(master, make_ref())
+
+    assert {:error, :stale_handle} = EtherCAT.state(stale)
+    assert {:error, :stale_handle} = EtherCAT.slaves(stale)
+    assert {:error, :stale_handle} = EtherCAT.status(stale, :sensor)
   end
 
   test "dc_status reports either idle-disabled or not_started without an active session" do
