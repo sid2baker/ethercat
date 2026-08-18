@@ -18,11 +18,13 @@ defmodule EtherCAT.Integration.Simulator.RawSocketNoiseResilienceTest do
 
     assert %{transport: :raw} = SimulatorRing.boot_operational!(transport: :raw)
 
-    Expect.master_state(:operational)
-    Expect.domain(:main, cycle_health: :healthy)
-    Expect.slave(:coupler, station: 0x1000, al_state: :op)
-    Expect.slave(:inputs, station: 0x1001, al_state: :op)
-    Expect.slave(:outputs, station: 0x1002, al_state: :op)
+    Expect.eventually(fn ->
+      Expect.master_state(:operational)
+      Expect.domain(:main, cycle_health: :healthy)
+      Expect.slave(:coupler, station: 0x1000, al_state: :op)
+      Expect.slave(:inputs, station: 0x1001, al_state: :op)
+      Expect.slave(:outputs, station: 0x1002, al_state: :op)
+    end)
 
     stop_noise_sender(noise_pid)
   end

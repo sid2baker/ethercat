@@ -394,7 +394,6 @@ defmodule EtherCAT.Slave.FSM do
       state_reason: nil,
       subscriber_refs: %{}
     }
-    |> Samples.initialize()
   end
 
   defp info_snapshot(state, data) do
