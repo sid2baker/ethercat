@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lifecycle, protocol, provisioning, diagnostics, raw process-data, and capture
   operations. Singleton convenience variants and `%EtherCAT.Runtime.Handle{}`
   were removed, and stopped generations now consistently return
-  `{:error, :stale_session}` (`PENDING`; supersedes `5fd6eaa`).
+  `{:error, :stale_session}` (`b5ae7bd`; supersedes `5fd6eaa`).
 - Protocol subscriptions now atomically return current slave/domain status and
   retained samples, then deliver `%EtherCAT.Sample{}` values alongside
   `%EtherCAT.Notification{}` messages for slave runtime-state and attached-domain
