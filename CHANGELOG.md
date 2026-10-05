@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Simplify the public API: rename `await_running` to `await_ready`, remove duplicate
+  raw read/write operations, move signal subscriptions to `EtherCAT.Signals`, and
+  make descriptions strictly static. Protocol subscriptions gain unique references
+  and cancellation; DC waits stay bound to their original process and session (`3798e47`).
 - Runtime lookup and static descriptions now use targeted session-validated requests;
   link dispatch, domain initialization, and master lifecycle decisions live in their
   owning modules, with diagnostic formatting separated from live queries. CI no
