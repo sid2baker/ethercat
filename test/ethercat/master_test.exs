@@ -302,7 +302,7 @@ defmodule EtherCAT.MasterTest do
                {:call, from},
                :await_operational,
                :activation_blocked,
-               %EtherCAT.Master{activation_failures: failures}
+               %EtherCAT.Master{desired_runtime_target: :op, activation_failures: failures}
              )
   end
 
@@ -332,6 +332,7 @@ defmodule EtherCAT.MasterTest do
     faults = %{{:domain, :main} => {:cycle_degraded, %{reason: :timeout, consecutive: 3}}}
 
     data = %EtherCAT.Master{
+      desired_runtime_target: :op,
       activation_failures: %{sensor: {:op, :no_response}},
       runtime_faults: faults
     }
@@ -345,6 +346,7 @@ defmodule EtherCAT.MasterTest do
 
   test "activation_blocked retry stays blocked while activation failures remain" do
     data = %EtherCAT.Master{
+      desired_runtime_target: :op,
       activation_failures: %{sensor: {:op, :no_response}}
     }
 
@@ -361,6 +363,7 @@ defmodule EtherCAT.MasterTest do
     })
 
     data = %EtherCAT.Master{
+      desired_runtime_target: :op,
       activation_failures: %{sensor: {:down, :disconnected}},
       slave_configs: [%SlaveConfig{name: :sensor, process_data: {:all, :main}}],
       slaves: [{:sensor, 0x1001}]
@@ -477,7 +480,7 @@ defmodule EtherCAT.MasterTest do
                :info,
                {:domain_cycle_degraded, :main, reason, 3},
                :operational,
-               %EtherCAT.Master{}
+               %EtherCAT.Master{desired_runtime_target: :op}
              )
 
     assert recovering_data.runtime_faults == %{{:domain, :main} => fault}
@@ -512,7 +515,10 @@ defmodule EtherCAT.MasterTest do
     assert :ok = DomainAPI.stop_cycling(domain_id)
     assert {:ok, %{state: :stopped}} = DomainAPI.info(domain_id)
 
-    data = %EtherCAT.Master{runtime_faults: %{{:domain, domain_id} => {:stopped, :down}}}
+    data = %EtherCAT.Master{
+      desired_runtime_target: :op,
+      runtime_faults: %{{:domain, domain_id} => {:stopped, :down}}
+    }
 
     assert {:keep_state, %EtherCAT.Master{} = recovering_data, _actions} =
              EtherCAT.Master.FSM.handle_event({:timeout, :retry}, nil, :recovering, data)
@@ -523,6 +529,8 @@ defmodule EtherCAT.MasterTest do
 
   test "recovering returns to operational for unrecoverable slave preop configuration failures" do
     data = %EtherCAT.Master{
+      desired_runtime_target: :op,
+      slave_configs: [%SlaveConfig{name: :outputs}],
       slave_faults: %{
         outputs: {:preop, {:preop_configuration_failed, {:domain_reregister_required, 2, :main}}}
       }
@@ -543,6 +551,7 @@ defmodule EtherCAT.MasterTest do
     data =
       %EtherCAT.Master{
         desired_runtime_target: :op,
+        slave_configs: [%SlaveConfig{name: :sensor}],
         slave_faults: %{sensor: {:down, :disconnected}},
         runtime_faults: %{{:slave, :sensor} => {:down, :disconnected}},
         slaves: [{:sensor, 0x1001}]
@@ -570,6 +579,7 @@ defmodule EtherCAT.MasterTest do
       {:preop_configuration_failed, {:mailbox_config_failed, 0x2003, 0x01, :response_timeout}}
 
     data = %EtherCAT.Master{
+      desired_runtime_target: :op,
       runtime_faults: %{{:slave, :sensor} => {:down, :disconnected}},
       slave_faults: %{sensor: {:reconnecting, :authorized}},
       slave_configs: [%SlaveConfig{name: :sensor, process_data: {:all, :main}}],
@@ -713,7 +723,11 @@ defmodule EtherCAT.MasterTest do
       start: {FakeSlave, :start_link, [:sensor, :ok]}
     })
 
-    data = %EtherCAT.Master{slave_faults: %{sensor: {:retreated, :safeop}}}
+    data = %EtherCAT.Master{
+      desired_runtime_target: :op,
+      slave_configs: [%SlaveConfig{name: :sensor}],
+      slave_faults: %{sensor: {:retreated, :safeop}}
+    }
 
     assert {:keep_state, %EtherCAT.Master{} = updated, _actions} =
              EtherCAT.Master.FSM.handle_event(
@@ -733,6 +747,8 @@ defmodule EtherCAT.MasterTest do
     })
 
     data = %EtherCAT.Master{
+      desired_runtime_target: :op,
+      slave_configs: [%SlaveConfig{name: :sensor}],
       slave_faults: %{sensor: {:reconnecting, :authorized}},
       runtime_faults: %{{:slave, :sensor} => {:down, :disconnected}}
     }
@@ -776,7 +792,7 @@ defmodule EtherCAT.MasterTest do
   end
 
   test "dc runtime failure enters recovering and clears on recovery" do
-    data = %EtherCAT.Master{}
+    data = %EtherCAT.Master{desired_runtime_target: :op}
 
     assert {:next_state, :recovering, %EtherCAT.Master{} = recovering} =
              EtherCAT.Master.FSM.handle_event(
@@ -820,6 +836,7 @@ defmodule EtherCAT.MasterTest do
 
   test "dc lock loss can enter recovering independently of await_lock?" do
     data = %EtherCAT.Master{
+      desired_runtime_target: :op,
       dc_config: %DCConfig{cycle_ns: 1_000_000, await_lock?: false, lock_policy: :recovering}
     }
 

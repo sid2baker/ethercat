@@ -48,6 +48,7 @@ defmodule EtherCAT.MasterObservabilityTest do
     now_ms = System.monotonic_time(:millisecond)
 
     data = %Master{
+      desired_runtime_target: :op,
       scan_window: [{now_ms, 32_770}],
       scan_stable_ms: 0,
       scan_poll_ms: 1_000,

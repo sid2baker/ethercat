@@ -12,11 +12,11 @@ defmodule EtherCAT.Master.Session do
 
     stop_dc_runtime()
 
-    Enum.each(data.slaves || [], fn {name, _station} ->
+    Enum.each(data.slaves, fn {name, _station} ->
       terminate_slave(name)
     end)
 
-    Enum.each(Config.domain_ids(data.domain_configs || []), fn domain_id ->
+    Enum.each(Config.domain_ids(data.domain_configs), fn domain_id ->
       terminate_domain(domain_id)
     end)
   end

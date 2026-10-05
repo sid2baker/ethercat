@@ -130,8 +130,7 @@ defmodule EtherCAT do
   @doc "Return the static protocol description for one slave."
   @spec describe(Session.t(), slave_name()) :: {:ok, description()} | {:error, term()}
   def describe(session, slave_name) when is_atom(slave_name) do
-    with {:ok, status} <- configured_status(session),
-         {:ok, configured_slave} <- configured_slave(status, slave_name) do
+    with {:ok, configured_slave} <- Session.call(session, {:slave_configuration, slave_name}) do
       {:ok, SlaveDescription.from_configured_slave(configured_slave)}
     end
   end
@@ -139,8 +138,8 @@ defmodule EtherCAT do
   @doc "Return static protocol descriptions for the session."
   @spec inventory(Session.t()) :: session_query_result(inventory())
   def inventory(session) do
-    with {:ok, status} <- configured_status(session) do
-      {:ok, inventory_from_status(status)}
+    with {:ok, configs} <- Session.call(session, :slave_configurations) do
+      {:ok, Map.new(configs, &{&1.name, SlaveDescription.from_configured_slave(&1)})}
     end
   end
 
@@ -196,28 +195,6 @@ defmodule EtherCAT do
 
   defp ok_query({:error, _reason} = error), do: error
   defp ok_query(value), do: {:ok, value}
-
-  defp configured_status(session) do
-    session
-    |> Session.call(:status)
-    |> normalize_configured_status()
-  end
-
-  defp normalize_configured_status(%EtherCAT.Master.Status{} = status), do: {:ok, status}
-  defp normalize_configured_status({:error, _reason} = error), do: error
-
-  defp configured_slave(%EtherCAT.Master.Status{configured_slaves: configured_slaves}, slave_name) do
-    case Enum.find(configured_slaves, &(&1.name == slave_name)) do
-      nil -> {:error, :not_found}
-      slave -> {:ok, slave}
-    end
-  end
-
-  defp inventory_from_status(status) do
-    Map.new(status.configured_slaves, fn configured_slave ->
-      {configured_slave.name, SlaveDescription.from_configured_slave(configured_slave)}
-    end)
-  end
 
   defp wait_call_timeout(timeout_ms), do: timeout_ms + min(max(div(timeout_ms, 20), 10), 100)
 end

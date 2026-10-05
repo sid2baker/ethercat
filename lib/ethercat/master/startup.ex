@@ -6,7 +6,6 @@ defmodule EtherCAT.Master.Startup do
   alias EtherCAT.{Bus, DC, Domain, Slave, Telemetry, Utils}
   alias EtherCAT.Bus.Transaction
   alias EtherCAT.Master.Config
-  alias EtherCAT.Master.Status
   alias EtherCAT.Master.Startup.Reset, as: InitReset
   alias EtherCAT.Slave.ESC.Registers
 
@@ -131,9 +130,9 @@ defmodule EtherCAT.Master.Startup do
   defp configuration_runtime_target({:ok, %{activatable_slaves: []}}, _data), do: :preop
 
   defp configuration_runtime_target({:ok, configured}, _data),
-    do: Status.desired_runtime_target(configured)
+    do: configured.desired_runtime_target
 
-  defp configuration_runtime_target(_result, data), do: Status.desired_runtime_target(data)
+  defp configuration_runtime_target(_result, data), do: data.desired_runtime_target
 
   @doc false
   @spec recommended_frame_timeout_ms(%EtherCAT.Master{}, non_neg_integer()) :: pos_integer()
@@ -461,7 +460,7 @@ defmodule EtherCAT.Master.Startup do
   end
 
   defp start_domains(data) do
-    Enum.reduce_while(data.domain_configs || [], {:ok, %{}}, fn entry, {:ok, refs} ->
+    Enum.reduce_while(data.domain_configs, {:ok, %{}}, fn entry, {:ok, refs} ->
       domain_opts = Config.domain_start_opts(entry)
       id = entry.id
       frame_timeout_ms = recommended_frame_timeout_ms(data, data.slave_count)
@@ -485,7 +484,7 @@ defmodule EtherCAT.Master.Startup do
 
   defp start_slaves(data, bus_count, dc_cycle_ns) do
     with {:ok, effective_config} <-
-           Config.effective_slave_config(data.slave_configs || [], bus_count) do
+           Config.effective_slave_config(data.slave_configs, bus_count) do
       startup_runtime_target = startup_runtime_target(effective_config)
 
       Enum.with_index(effective_config)

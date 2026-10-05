@@ -48,6 +48,23 @@ Host application supervisor
     │       └── EtherCAT.Slave.ESC.Registers (ESC register address map — pure functions)
 ```
 
+`Master.FSM` owns lifecycle decisions and transition replies. `Master.Recovery`
+performs recovery operations and returns their results and updated master data;
+it does not select state-machine transitions. `Master.Diagnostics` collects live
+observations, and `Master.Status` projects explicitly supplied observations into
+the public status struct. An idle master has no desired runtime target; active
+sessions set one validated target (`:preop`, `:safeop`, or `:op`).
+
+Session process resolution validates the generation at the master, then looks up
+only the requested configured slave or domain. Descriptions and inventory read
+configuration directly, with lightweight identity and tracked-fault metadata;
+they do not construct diagnostic reports or query bus, DC, or domain processes.
+
+Each bus link owns dispatch and send-result handling. `Bus.Link` shares queue
+selection, batching, datagram index assignment, and reply primitives. `Domain`
+owns its initialization and defaults; `Domain.Image` and `Domain.Layout` retain
+storage and layout responsibilities.
+
 Optional sibling runtime (started separately, not under `EtherCAT.Runtime`):
 
 ```

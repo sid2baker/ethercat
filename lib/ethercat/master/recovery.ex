@@ -6,17 +6,13 @@ defmodule EtherCAT.Master.Recovery do
   alias EtherCAT.{Domain, Slave}
   alias EtherCAT.Master.Activation
   alias EtherCAT.Master.Config
-  alias EtherCAT.Master.Status
   alias EtherCAT.Telemetry
   alias EtherCAT.Utils
 
-  @spec retry_activation_blocked_state(%EtherCAT.Master{}) ::
-          {:ok, :deactivated | :operational | :preop_ready, %EtherCAT.Master{}}
-          | {:activation_blocked, %EtherCAT.Master{}}
-          | {:recovering, %EtherCAT.Master{}}
+  @spec retry_activation_blocked_state(%EtherCAT.Master{}) :: %EtherCAT.Master{}
   def retry_activation_blocked_state(%{activation_failures: failures} = data)
       when map_size(failures) == 0 do
-    maybe_resume_from_activation_blocked(data)
+    data
   end
 
   def retry_activation_blocked_state(%{activation_failures: failures} = data) do
@@ -32,59 +28,49 @@ defmodule EtherCAT.Master.Recovery do
           Map.put(acc, name, {:down, :disconnected})
 
         {name, _last_failure}, acc ->
-          case Slave.request(name, transition_request_target(data)) do
+          case Slave.request(name, data.desired_runtime_target) do
             :ok ->
               acc
 
             {:error, reason} ->
               Logger.warning(
-                "[Master] activation-blocked retry: #{inspect(name)} still not in :#{transition_request_target(data)}: #{inspect(reason)}",
+                "[Master] activation-blocked retry: #{inspect(name)} still not in :#{data.desired_runtime_target}: #{inspect(reason)}",
                 component: :master,
                 event: :activation_retry_failed,
                 slave: name,
-                target_state: transition_request_target(data),
+                target_state: data.desired_runtime_target,
                 reason_kind: Utils.reason_kind(reason)
               )
 
-              Map.put(acc, name, {transition_request_target(data), reason})
+              Map.put(acc, name, {data.desired_runtime_target, reason})
           end
       end)
 
-    maybe_resume_from_activation_blocked(%{data | activation_failures: retried_failures})
+    %{data | activation_failures: retried_failures}
   end
 
-  @spec retry_recovering_state(%EtherCAT.Master{}) ::
-          {:ok, :deactivated | :operational | :preop_ready, %EtherCAT.Master{}}
-          | {:recovering, %EtherCAT.Master{}}
+  @spec retry_recovering_state(%EtherCAT.Master{}) :: %EtherCAT.Master{}
   def retry_recovering_state(data) do
     data
     |> retry_slave_faults()
     |> retry_recovering_slaves()
     |> maybe_restart_stopped_domains()
     |> maybe_restart_dc_runtime()
-    |> maybe_resume_running()
   end
 
-  @spec handle_activation_ready_preop(%EtherCAT.Master{}, atom()) ::
-          {:ok, :deactivated | :operational | :preop_ready, %EtherCAT.Master{}}
-          | {:activation_blocked, %EtherCAT.Master{}}
-          | {:recovering, %EtherCAT.Master{}}
-          | :ignore
+  @spec handle_activation_ready_preop(%EtherCAT.Master{}, atom()) :: %EtherCAT.Master{} | :ignore
   def handle_activation_ready_preop(%{activation_failures: failures}, name)
       when not is_map_key(failures, name) do
     :ignore
   end
 
   def handle_activation_ready_preop(data, name) do
-    target = transition_request_target(data)
+    target = data.desired_runtime_target
 
     if target == :preop do
-      next_data =
-        data
-        |> Map.put(:activation_failures, Map.delete(data.activation_failures, name))
-        |> clear_slave_fault(name)
-
-      maybe_resume_from_activation_blocked(next_data)
+      data
+      |> Map.put(:activation_failures, Map.delete(data.activation_failures, name))
+      |> clear_slave_fault(name)
     else
       Logger.info(
         "[Master] slave #{name} reached :preop during transition retry — requesting :#{target}",
@@ -97,12 +83,9 @@ defmodule EtherCAT.Master.Recovery do
 
       case Slave.request(name, target) do
         :ok ->
-          next_data =
-            data
-            |> Map.put(:activation_failures, Map.delete(data.activation_failures, name))
-            |> clear_slave_fault(name)
-
-          maybe_resume_from_activation_blocked(next_data)
+          data
+          |> Map.put(:activation_failures, Map.delete(data.activation_failures, name))
+          |> clear_slave_fault(name)
 
         {:error, reason} ->
           Logger.warning(
@@ -115,20 +98,19 @@ defmodule EtherCAT.Master.Recovery do
             reason_kind: Utils.reason_kind(reason)
           )
 
-          {:activation_blocked, put_activation_failure(data, name, {target, reason})}
+          put_activation_failure(data, name, {target, reason})
       end
     end
   end
 
-  @spec handle_runtime_ready_preop(atom(), %EtherCAT.Master{}, atom()) ::
-          {:ok, :deactivated | :operational | :preop_ready, %EtherCAT.Master{}}
-          | {:keep, %EtherCAT.Master{}}
-  def handle_runtime_ready_preop(state, data, name) when state in [:operational, :recovering] do
+  @spec handle_runtime_ready_preop(%EtherCAT.Master{}, atom()) ::
+          {:ok, %EtherCAT.Master{}} | {:error, %EtherCAT.Master{}}
+  def handle_runtime_ready_preop(data, name) do
     target = runtime_slave_target(data, name)
 
     if target == :preop do
       recovered_data = clear_tracked_slave_fault(data, name)
-      maybe_resume_recovered_state(state, recovered_data)
+      {:ok, recovered_data}
     else
       Logger.info(
         "[Master] slave #{name} reconnected and in :preop — requesting :#{target}",
@@ -147,7 +129,7 @@ defmodule EtherCAT.Master.Recovery do
             |> maybe_restart_stopped_domains()
             |> maybe_restart_dc_runtime()
 
-          maybe_resume_recovered_state(state, recovered_data)
+          {:ok, recovered_data}
 
         {:error, reason} ->
           Logger.warning(
@@ -167,7 +149,7 @@ defmodule EtherCAT.Master.Recovery do
               put_slave_fault(data, name, {:preop, reason})
             end
 
-          {:keep, next_data}
+          {:error, next_data}
       end
     end
   end
@@ -178,7 +160,7 @@ defmodule EtherCAT.Master.Recovery do
     lock_policy
   end
 
-  def lock_policy(_data), do: :advisory
+  def lock_policy(%{dc_config: nil}), do: :advisory
 
   @spec put_runtime_fault(%EtherCAT.Master{}, term(), term()) :: %EtherCAT.Master{}
   def put_runtime_fault(data, key, reason) do
@@ -190,22 +172,9 @@ defmodule EtherCAT.Master.Recovery do
     %{data | runtime_faults: Map.delete(data.runtime_faults, key)}
   end
 
-  @spec transition_runtime_fault(
-          atom(),
-          %EtherCAT.Master{}
-        ) ::
-          {:next_state, :recovering, %EtherCAT.Master{}}
-          | {:keep_state, %EtherCAT.Master{}}
-  def transition_runtime_fault(state, data)
-      when state in [:preop_ready, :deactivated, :operational],
-      do: {:next_state, :recovering, data}
-
-  def transition_runtime_fault(:recovering, data), do: {:keep_state, data}
-  def transition_runtime_fault(_state, data), do: {:keep_state, data}
-
   @spec maybe_restart_stopped_domains(%EtherCAT.Master{}) :: %EtherCAT.Master{}
   def maybe_restart_stopped_domains(%{runtime_faults: runtime_faults} = data) do
-    if Status.desired_runtime_target(data) != :op do
+    if data.desired_runtime_target != :op do
       data
     else
       Enum.reduce(runtime_faults, data, fn
@@ -240,66 +209,9 @@ defmodule EtherCAT.Master.Recovery do
     %{data | slave_faults: Map.delete(slave_faults, name)}
   end
 
-  @spec maybe_resume_running(%EtherCAT.Master{}) ::
-          {:ok, :deactivated | :operational | :preop_ready, %EtherCAT.Master{}}
-          | {:recovering, %EtherCAT.Master{}}
-  def maybe_resume_running(data) do
-    if map_size(data.activation_failures) == 0 and map_size(data.runtime_faults) == 0 do
-      next_state = Status.desired_public_state(data)
-      runtime_target = Status.desired_runtime_target(data)
-
-      Logger.info(
-        "[Master] recovery succeeded; desired runtime target #{inspect(runtime_target)} is healthy again",
-        component: :master,
-        event: :recovery_succeeded,
-        runtime_target: runtime_target
-      )
-
-      {:ok, next_state, %{data | activation_failures: %{}, runtime_faults: %{}}}
-    else
-      {:recovering, data}
-    end
-  end
-
-  defp maybe_resume_recovered_state(:recovering, recovered_data) do
-    case maybe_resume_running(recovered_data) do
-      {:ok, next_state, healed_data} -> {:ok, next_state, healed_data}
-      {:recovering, still_recovering} -> {:keep, still_recovering}
-    end
-  end
-
-  defp maybe_resume_recovered_state(_state, recovered_data), do: {:keep, recovered_data}
-
-  @spec maybe_resume_from_activation_blocked(%EtherCAT.Master{}) ::
-          {:ok, :deactivated | :operational | :preop_ready, %EtherCAT.Master{}}
-          | {:activation_blocked, %EtherCAT.Master{}}
-          | {:recovering, %EtherCAT.Master{}}
-  def maybe_resume_from_activation_blocked(data) do
-    cond do
-      map_size(data.activation_failures) > 0 ->
-        {:activation_blocked, data}
-
-      map_size(data.runtime_faults) > 0 ->
-        {:recovering, data}
-
-      true ->
-        next_state = Status.desired_public_state(data)
-        runtime_target = Status.desired_runtime_target(data)
-
-        Logger.info(
-          "[Master] transition retries succeeded; desired runtime target #{inspect(runtime_target)} is healthy again",
-          component: :master,
-          event: :activation_retry_succeeded,
-          runtime_target: runtime_target
-        )
-
-        {:ok, next_state, %{data | activation_failures: %{}, runtime_faults: %{}}}
-    end
-  end
-
   @spec maybe_restart_dc_runtime(%EtherCAT.Master{}) :: %EtherCAT.Master{}
   def maybe_restart_dc_runtime(%{runtime_faults: runtime_faults} = data) do
-    if Status.desired_runtime_target(data) == :op and
+    if data.desired_runtime_target == :op and
          Map.has_key?(runtime_faults, {:dc, :runtime}) and not dc_running?() and
          is_integer(data.dc_ref_station) do
       case Activation.start_dc_runtime(data, notify_recovered_on_success?: true) do
@@ -527,13 +439,10 @@ defmodule EtherCAT.Master.Recovery do
   end
 
   defp runtime_slave_target(data, name) do
-    desired_target = Status.desired_runtime_target(data)
+    desired_target = data.desired_runtime_target
 
-    configured_target =
-      case Config.fetch_slave_config(data.slave_configs || [], name) do
-        {:ok, %{target_state: target_state}, _idx} -> target_state
-        {:error, _reason} -> desired_target
-      end
+    {:ok, %{target_state: configured_target}, _idx} =
+      Config.fetch_slave_config(data.slave_configs, name)
 
     lower_runtime_target(desired_target, configured_target)
   end
@@ -565,8 +474,6 @@ defmodule EtherCAT.Master.Recovery do
 
     Map.delete(slave_faults, name)
   end
-
-  defp transition_request_target(data), do: Status.desired_runtime_target(data)
 
   defp put_activation_failure(data, name, reason) do
     %{data | activation_failures: Map.put(data.activation_failures, name, reason)}

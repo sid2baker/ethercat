@@ -5,8 +5,8 @@ defmodule EtherCAT.Master.Activation do
 
   alias EtherCAT.{Bus, DC, Domain, Slave, Telemetry, Utils}
   alias EtherCAT.Master.Config
+  alias EtherCAT.Master.Diagnostics
   alias EtherCAT.Master.Session
-  alias EtherCAT.Master.Status
 
   @activation_quiet_ms 2
 
@@ -101,7 +101,7 @@ defmodule EtherCAT.Master.Activation do
       "[Master] activation incomplete; blocked for #{inspect(Map.keys(activation_failures))}",
       component: :master,
       event: :activation_blocked,
-      runtime_target: Status.desired_runtime_target(data),
+      runtime_target: data.desired_runtime_target,
       blocked_count: blocked_count
     )
   end
@@ -134,7 +134,7 @@ defmodule EtherCAT.Master.Activation do
   end
 
   defp start_domain_cycles(data) do
-    Enum.reduce_while(Config.domain_ids(data.domain_configs || []), :ok, fn id, :ok ->
+    Enum.reduce_while(Config.domain_ids(data.domain_configs), :ok, fn id, :ok ->
       case Domain.start_cycling(id) do
         :ok ->
           {:cont, :ok}
@@ -158,7 +158,7 @@ defmodule EtherCAT.Master.Activation do
           :ok
 
         {:error, :timeout} ->
-          {:error, {:dc_lock_timeout, Status.dc_status(data)}}
+          {:error, {:dc_lock_timeout, Diagnostics.dc_status(data)}}
 
         {:error, reason} ->
           {:error, {:dc_lock_failed, reason}}
@@ -255,7 +255,7 @@ defmodule EtherCAT.Master.Activation do
   end
 
   defp stop_started_domain_cycles(data) do
-    Enum.each(Config.domain_ids(data.domain_configs || []), fn domain_id ->
+    Enum.each(Config.domain_ids(data.domain_configs), fn domain_id ->
       case Domain.stop_cycling(domain_id) do
         :ok ->
           :ok
@@ -290,7 +290,7 @@ defmodule EtherCAT.Master.Activation do
 
   defp emit_activation_result(result, data, started_at_ms) do
     duration_ms = System.monotonic_time(:millisecond) - started_at_ms
-    runtime_target = Status.desired_runtime_target(data)
+    runtime_target = data.desired_runtime_target
 
     case result do
       {:ok, _next_state, _active_data} ->

@@ -30,6 +30,7 @@ defmodule EtherCAT.MasterRecoveryBusTest do
     assert {:ok, %{state: :stopped}} = DomainAPI.info(domain_id)
 
     data = %EtherCAT.Master{
+      desired_runtime_target: :op,
       runtime_faults: %{{:domain, domain_id} => {:stopped, :down}}
     }
 

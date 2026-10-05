@@ -62,30 +62,12 @@ defmodule EtherCAT.Session do
   @doc false
   @spec slave(t(), atom()) :: {:ok, pid()} | {:error, term()}
   def slave(%__MODULE__{} = session, slave_name) when is_atom(slave_name) do
-    case call(session, :slaves) do
-      {:error, _reason} = error ->
-        error
-
-      slaves ->
-        case Enum.find(slaves, &(&1.name == slave_name)) do
-          %{pid: pid} when is_pid(pid) -> {:ok, pid}
-          _missing -> {:error, :not_found}
-        end
-    end
+    call(session, {:resolve_slave, slave_name})
   end
 
   @doc false
   @spec domain(t(), atom()) :: {:ok, pid()} | {:error, term()}
   def domain(%__MODULE__{} = session, domain_id) when is_atom(domain_id) do
-    case call(session, :domains) do
-      {:error, _reason} = error ->
-        error
-
-      domains ->
-        case Enum.find(domains, fn {id, _cycle_time_us, _pid} -> id == domain_id end) do
-          {_id, _cycle_time_us, pid} when is_pid(pid) -> {:ok, pid}
-          _missing -> {:error, :not_found}
-        end
-    end
+    call(session, {:resolve_domain, domain_id})
   end
 end

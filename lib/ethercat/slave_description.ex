@@ -11,7 +11,6 @@ defmodule EtherCAT.SlaveDescription do
   alias EtherCAT.Driver
   alias EtherCAT.Endpoint
   alias EtherCAT.Slave.ProcessData.Signal
-  alias EtherCAT.Master.Status
 
   @enforce_keys [:name, :driver, :endpoints]
   defstruct [
@@ -76,7 +75,15 @@ defmodule EtherCAT.SlaveDescription do
     }
   end
 
-  @spec from_configured_slave(Status.configured_slave()) :: t()
+  @spec from_configured_slave(%{
+          name: atom(),
+          driver: module(),
+          config: map(),
+          station: non_neg_integer() | nil,
+          pid: pid() | nil,
+          target_state: :preop | :op,
+          fault: term()
+        }) :: t()
   def from_configured_slave(%{
         name: name,
         driver: driver,

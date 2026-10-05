@@ -291,13 +291,44 @@ defmodule EtherCAT.Bus.Link.Redundant do
   defp dispatch_next(data, errors) do
     data = Link.expire_stale_realtime(data, data.link_name)
 
-    Link.dispatch_next(
-      Link.next_dispatch(data),
-      errors,
-      &send_frame/5,
-      &dispatch_next/2,
-      fn -> idle_after_settle(data) end
-    )
+    case Link.next_dispatch(data) do
+      {:realtime, submission, data} ->
+        {datagrams, awaiting, next_idx} = Link.prepare_realtime(submission, data.idx)
+
+        case send_frame(datagrams, awaiting, data, next_idx, :realtime) do
+          {:ok, new_data, actions} ->
+            Telemetry.dispatch_sent(data.link_name, :realtime, 1, length(datagrams))
+            {:next_state, :awaiting, new_data, actions}
+
+          {:error, :frame_too_large, new_data} ->
+            Link.reply_submissions([submission], {:error, :frame_too_large})
+            dispatch_next(new_data, errors)
+
+          {:error, reason, new_data} ->
+            Link.reply_submissions([submission], {:error, reason})
+            dispatch_next(new_data, errors + 1)
+        end
+
+      {:reliable, batch, data} ->
+        {datagrams, awaiting, next_idx} = Link.prepare_reliable(batch, data.idx)
+
+        case send_frame(datagrams, awaiting, data, next_idx, :reliable) do
+          {:ok, new_data, actions} ->
+            Telemetry.dispatch_sent(data.link_name, :reliable, length(batch), length(datagrams))
+            {:next_state, :awaiting, new_data, actions}
+
+          {:error, :frame_too_large, new_data} ->
+            Link.reply_submissions(batch, {:error, :frame_too_large})
+            dispatch_next(new_data, errors)
+
+          {:error, reason, new_data} ->
+            Link.reply_submissions(batch, {:error, reason})
+            dispatch_next(new_data, errors + 1)
+        end
+
+      :empty ->
+        idle_after_settle(data)
+    end
   end
 
   defp send_frame(datagrams, awaiting, data, next_idx, tx_class) do

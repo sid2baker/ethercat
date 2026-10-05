@@ -3,10 +3,10 @@ defmodule EtherCAT.Bus.Link do
   Shared scheduling helpers for bus link gen_statem implementations.
 
   Both `Link.Single` and `Link.Redundant` store `:realtime` and `:reliable`
-  queues in their gen_statem data and call these pure functions for queue
+  queues in their gen_statem data and call these functions for queue
   management, batching, index stamping, and caller replies.
 
-  This module is **not** a behaviour or process — just shared helpers.
+  Each link implementation owns dispatch and send-result handling.
   """
 
   alias EtherCAT.Bus.{Datagram, Transaction}
@@ -171,14 +171,6 @@ defmodule EtherCAT.Bus.Link do
     {stamped, awaiting, next_idx}
   end
 
-  @doc false
-  @spec prepare_realtime_dispatch(Submission.t(), non_neg_integer()) ::
-          {[Datagram.t()], [{:gen_statem.from(), [byte()]}], non_neg_integer(), non_neg_integer()}
-  def prepare_realtime_dispatch(%Submission{} = submission, idx) do
-    {datagrams, awaiting, next_idx} = prepare_realtime(submission, idx)
-    {datagrams, awaiting, next_idx, length(datagrams)}
-  end
-
   @doc """
   Build the awaiting list and stamped datagrams for a reliable batch.
   """
@@ -199,16 +191,6 @@ defmodule EtherCAT.Bus.Link do
     all_datagrams = Enum.concat(stamped_batch)
     {all_datagrams, awaiting, next_idx}
   end
-
-  @doc false
-  @spec prepare_reliable_dispatch([Submission.t()], non_neg_integer()) ::
-          {[Datagram.t()], [{:gen_statem.from(), [byte()]}], non_neg_integer(), non_neg_integer()}
-  def prepare_reliable_dispatch(batch, idx) when is_list(batch) do
-    {datagrams, awaiting, next_idx} = prepare_reliable(batch, idx)
-    {datagrams, awaiting, next_idx, length(datagrams)}
-  end
-
-  # -- Reply helpers --
 
   @doc """
   Match response datagrams against the awaiting list and reply to all callers.
@@ -245,150 +227,6 @@ defmodule EtherCAT.Bus.Link do
   @spec reply_submissions([Submission.t()], term()) :: :ok
   def reply_submissions(submissions, reply) do
     Enum.each(submissions, fn %Submission{from: from} -> :gen_statem.reply(from, reply) end)
-  end
-
-  @doc false
-  @spec dispatch_next(
-          {:realtime, Submission.t(), map()} | {:reliable, [Submission.t()], map()} | :empty,
-          non_neg_integer(),
-          (list(), list(), map(), non_neg_integer(), :realtime | :reliable -> tuple()),
-          (map(), non_neg_integer() -> tuple()),
-          (-> tuple())
-        ) :: tuple()
-  def dispatch_next(
-        {:realtime, submission, data},
-        errors,
-        send_frame,
-        dispatch_next,
-        _on_empty
-      ) do
-    dispatch_realtime(submission, data, errors, send_frame, dispatch_next)
-  end
-
-  def dispatch_next(
-        {:reliable, batch, data},
-        errors,
-        send_frame,
-        dispatch_next,
-        _on_empty
-      ) do
-    dispatch_reliable(batch, data, errors, send_frame, dispatch_next)
-  end
-
-  def dispatch_next(:empty, _errors, _send_frame, _dispatch_next, on_empty)
-      when is_function(on_empty, 0) do
-    on_empty.()
-  end
-
-  @doc false
-  @spec dispatch_realtime(
-          Submission.t(),
-          map(),
-          non_neg_integer(),
-          (list(), list(), map(), non_neg_integer(), :realtime -> tuple()),
-          (map(), non_neg_integer() -> tuple())
-        ) :: tuple()
-  def dispatch_realtime(%Submission{} = submission, data, errors, send_frame, dispatch_next)
-      when is_function(send_frame, 5) and is_function(dispatch_next, 2) do
-    {datagrams, awaiting, next_idx, datagram_count} =
-      prepare_realtime_dispatch(submission, data.idx)
-
-    handle_realtime_dispatch_result(
-      send_frame.(datagrams, awaiting, data, next_idx, :realtime),
-      submission,
-      data.link_name,
-      datagram_count,
-      errors,
-      dispatch_next
-    )
-  end
-
-  @doc false
-  @spec dispatch_reliable(
-          [Submission.t()],
-          map(),
-          non_neg_integer(),
-          (list(), list(), map(), non_neg_integer(), :reliable -> tuple()),
-          (map(), non_neg_integer() -> tuple())
-        ) :: tuple()
-  def dispatch_reliable(batch, data, errors, send_frame, dispatch_next)
-      when is_list(batch) and is_function(send_frame, 5) and is_function(dispatch_next, 2) do
-    {datagrams, awaiting, next_idx, datagram_count} = prepare_reliable_dispatch(batch, data.idx)
-
-    handle_reliable_dispatch_result(
-      send_frame.(datagrams, awaiting, data, next_idx, :reliable),
-      batch,
-      data.link_name,
-      datagram_count,
-      errors,
-      dispatch_next
-    )
-  end
-
-  @doc false
-  @spec handle_realtime_dispatch_result(
-          tuple(),
-          Submission.t(),
-          String.t(),
-          non_neg_integer(),
-          non_neg_integer(),
-          (map(), non_neg_integer() -> tuple())
-        ) :: tuple()
-  def handle_realtime_dispatch_result(
-        result,
-        %Submission{} = submission,
-        link_name,
-        datagram_count,
-        errors,
-        dispatch_next
-      )
-      when is_function(dispatch_next, 2) do
-    case result do
-      {:ok, new_data, actions} ->
-        Telemetry.dispatch_sent(link_name, :realtime, 1, datagram_count)
-        {:next_state, :awaiting, new_data, actions}
-
-      {:error, :frame_too_large, new_data} ->
-        :gen_statem.reply(submission.from, {:error, :frame_too_large})
-        dispatch_next.(new_data, errors)
-
-      {:error, reason, new_data} ->
-        reply_submissions([submission], {:error, reason})
-        dispatch_next.(new_data, errors + 1)
-    end
-  end
-
-  @doc false
-  @spec handle_reliable_dispatch_result(
-          tuple(),
-          [Submission.t()],
-          String.t(),
-          non_neg_integer(),
-          non_neg_integer(),
-          (map(), non_neg_integer() -> tuple())
-        ) :: tuple()
-  def handle_reliable_dispatch_result(
-        result,
-        batch,
-        link_name,
-        datagram_count,
-        errors,
-        dispatch_next
-      )
-      when is_list(batch) and is_function(dispatch_next, 2) do
-    case result do
-      {:ok, new_data, actions} ->
-        Telemetry.dispatch_sent(link_name, :reliable, length(batch), datagram_count)
-        {:next_state, :awaiting, new_data, actions}
-
-      {:error, :frame_too_large, new_data} ->
-        reply_submissions(batch, {:error, :frame_too_large})
-        dispatch_next.(new_data, errors)
-
-      {:error, reason, new_data} ->
-        reply_submissions(batch, {:error, reason})
-        dispatch_next.(new_data, errors + 1)
-    end
   end
 
   @doc false

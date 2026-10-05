@@ -11,6 +11,7 @@ defmodule EtherCAT.Master.FSM do
   alias EtherCAT.Master
   alias EtherCAT.Master.Activation
   alias EtherCAT.Master.Config
+  alias EtherCAT.Master.Diagnostics
   alias EtherCAT.Master.Recovery
   alias EtherCAT.Master.Session
   alias EtherCAT.Master.Startup
@@ -124,7 +125,7 @@ defmodule EtherCAT.Master.FSM do
   end
 
   def handle_event({:call, from}, :status, :idle, data) do
-    {:keep_state_and_data, [{:reply, from, Status.from_runtime(:idle, data)}]}
+    {:keep_state_and_data, [{:reply, from, Diagnostics.status(:idle, data)}]}
   end
 
   def handle_event({:call, from}, :await_running, :idle, _data) do
@@ -136,11 +137,12 @@ defmodule EtherCAT.Master.FSM do
   end
 
   def handle_event({:call, from}, :dc_status, :idle, data) do
-    {:keep_state_and_data, [{:reply, from, Status.dc_status(data)}]}
+    {:keep_state_and_data, [{:reply, from, Diagnostics.dc_status(data)}]}
   end
 
   def handle_event({:call, from}, :reference_clock, :idle, data) do
-    {:keep_state_and_data, [{:reply, from, Status.reference_clock_reply(Status.dc_status(data))}]}
+    {:keep_state_and_data,
+     [{:reply, from, Status.reference_clock_reply(Diagnostics.dc_status(data))}]}
   end
 
   def handle_event({:call, from}, :dc_runtime, :idle, _data) do
@@ -202,7 +204,7 @@ defmodule EtherCAT.Master.FSM do
               "[Master] all slaves in :preop — activating",
               component: :master,
               event: :activation_starting,
-              runtime_target: Status.desired_runtime_target(configured)
+              runtime_target: configured.desired_runtime_target
             )
 
             case Activation.activate_network(configured) do
@@ -304,7 +306,7 @@ defmodule EtherCAT.Master.FSM do
         "[Master] all slaves in :preop — activating",
         component: :master,
         event: :activation_starting,
-        runtime_target: Status.desired_runtime_target(data)
+        runtime_target: data.desired_runtime_target
       )
 
       case Activation.activate_network(%{data | pending_preop: new_pending}) do
@@ -384,7 +386,7 @@ defmodule EtherCAT.Master.FSM do
       component: :master,
       event: :state_entered,
       public_state: :preop_ready,
-      runtime_target: Status.desired_runtime_target(data)
+      runtime_target: data.desired_runtime_target
     )
 
     {:keep_state, reply_running_waiters(data)}
@@ -398,7 +400,7 @@ defmodule EtherCAT.Master.FSM do
       component: :master,
       event: :state_entered,
       public_state: :deactivated,
-      runtime_target: Status.desired_runtime_target(data)
+      runtime_target: data.desired_runtime_target
     )
 
     {:keep_state, reply_running_waiters(data)}
@@ -412,7 +414,7 @@ defmodule EtherCAT.Master.FSM do
       component: :master,
       event: :state_entered,
       public_state: :operational,
-      runtime_target: Status.desired_runtime_target(data)
+      runtime_target: data.desired_runtime_target
     )
 
     reply_await_callers(data.await_callers, :ok)
@@ -525,13 +527,13 @@ defmodule EtherCAT.Master.FSM do
     emit_state_change(old, :activation_blocked, data)
 
     Logger.warning(
-      "[Master] activation blocked — #{Status.activation_blocked_summary(data)}",
+      "[Master] activation blocked — #{activation_blocked_summary(data)}",
       component: :master,
       event: :activation_blocked_state,
       blocked_count: map_size(data.activation_failures)
     )
 
-    reply = Status.activation_blocked_reply(data)
+    reply = activation_blocked_reply(data)
     reply_await_callers(data.await_callers, reply)
     reply_await_callers(data.await_operational_callers, reply)
 
@@ -540,7 +542,7 @@ defmodule EtherCAT.Master.FSM do
   end
 
   def handle_event({:timeout, :retry}, nil, :activation_blocked, data) do
-    case Recovery.retry_activation_blocked_state(data) do
+    case maybe_resume_from_activation_blocked(Recovery.retry_activation_blocked_state(data)) do
       {:ok, next_state, healed_data} ->
         {:next_state, next_state, healed_data}
 
@@ -559,11 +561,11 @@ defmodule EtherCAT.Master.FSM do
   end
 
   def handle_event({:call, from}, :await_running, :activation_blocked, data) do
-    {:keep_state_and_data, [{:reply, from, Status.activation_blocked_reply(data)}]}
+    {:keep_state_and_data, [{:reply, from, activation_blocked_reply(data)}]}
   end
 
   def handle_event({:call, from}, :await_operational, :activation_blocked, data) do
-    {:keep_state_and_data, [{:reply, from, Status.activation_blocked_reply(data)}]}
+    {:keep_state_and_data, [{:reply, from, activation_blocked_reply(data)}]}
   end
 
   def handle_event(
@@ -583,7 +585,7 @@ defmodule EtherCAT.Master.FSM do
     do: :keep_state_and_data
 
   def handle_event(:info, {:slave_ready, name, :preop}, :activation_blocked, data) do
-    case Recovery.handle_activation_ready_preop(data, name) do
+    case activation_ready_preop(data, name) do
       {:ok, next_state, healed_data} ->
         {:next_state, next_state, healed_data}
 
@@ -604,13 +606,13 @@ defmodule EtherCAT.Master.FSM do
     emit_state_change(old, :recovering, data)
 
     Logger.warning(
-      "[Master] recovering — #{Status.recovering_summary(data)}",
+      "[Master] recovering — #{recovering_summary(data)}",
       component: :master,
       event: :recovering_state,
       runtime_fault_count: map_size(data.runtime_faults)
     )
 
-    reply = Status.recovering_reply(data)
+    reply = recovering_reply(data)
     reply_await_callers(data.await_callers, reply)
     reply_await_callers(data.await_operational_callers, reply)
 
@@ -619,7 +621,7 @@ defmodule EtherCAT.Master.FSM do
   end
 
   def handle_event({:timeout, :retry}, nil, :recovering, data) do
-    case Recovery.retry_recovering_state(data) do
+    case maybe_resume_running(Recovery.retry_recovering_state(data)) do
       {:ok, next_state, healed_data} ->
         {:next_state, next_state, healed_data}
 
@@ -635,11 +637,11 @@ defmodule EtherCAT.Master.FSM do
   end
 
   def handle_event({:call, from}, :await_running, :recovering, data) do
-    {:keep_state_and_data, [{:reply, from, Status.recovering_reply(data)}]}
+    {:keep_state_and_data, [{:reply, from, recovering_reply(data)}]}
   end
 
   def handle_event({:call, from}, :await_operational, :recovering, data) do
-    {:keep_state_and_data, [{:reply, from, Status.recovering_reply(data)}]}
+    {:keep_state_and_data, [{:reply, from, recovering_reply(data)}]}
   end
 
   def handle_event({:call, from}, {:configure_slave, _slave_name, _spec}, :recovering, _data) do
@@ -709,7 +711,7 @@ defmodule EtherCAT.Master.FSM do
     recovering_data =
       Recovery.put_runtime_fault(data_with_refs, {:domain, id}, {:crashed, reason})
 
-    Recovery.transition_runtime_fault(state, recovering_data)
+    transition_runtime_fault(state, recovering_data)
   end
 
   # Slave process crashed unexpectedly
@@ -746,7 +748,7 @@ defmodule EtherCAT.Master.FSM do
       |> Map.put(:dc_ref, nil)
       |> Recovery.put_runtime_fault({:dc, :runtime}, {:crashed, reason})
 
-    Recovery.transition_runtime_fault(state, recovering_data)
+    transition_runtime_fault(state, recovering_data)
   end
 
   # Stale :DOWN from a previous session — ignore
@@ -765,7 +767,7 @@ defmodule EtherCAT.Master.FSM do
     )
 
     recovering_data = Recovery.put_runtime_fault(data, {:domain, id}, {:stopped, reason})
-    Recovery.transition_runtime_fault(state, recovering_data)
+    transition_runtime_fault(state, recovering_data)
   end
 
   def handle_event(:info, {:domain_cycle_degraded, id, reason, consecutive}, @operational, data) do
@@ -820,7 +822,7 @@ defmodule EtherCAT.Master.FSM do
       domain: id
     )
 
-    case Recovery.maybe_resume_running(Recovery.clear_runtime_fault(data, {:domain, id})) do
+    case maybe_resume_running(Recovery.clear_runtime_fault(data, {:domain, id})) do
       {:ok, next_state, healed_data} ->
         {:next_state, next_state, healed_data}
 
@@ -933,7 +935,7 @@ defmodule EtherCAT.Master.FSM do
   # Slave reconnected and reached :preop — attempt to bring it back to :op
   def handle_event(:info, {:slave_ready, name, :preop}, state, data)
       when state in [:operational, :recovering] do
-    case Recovery.handle_runtime_ready_preop(state, data, name) do
+    case runtime_ready_preop(state, data, name) do
       {:ok, next_state, healed_data} ->
         {:next_state, next_state, healed_data}
 
@@ -972,7 +974,7 @@ defmodule EtherCAT.Master.FSM do
       event: :dc_runtime_recovered
     )
 
-    case Recovery.maybe_resume_running(Recovery.clear_runtime_fault(data, {:dc, :runtime})) do
+    case maybe_resume_running(Recovery.clear_runtime_fault(data, {:dc, :runtime})) do
       {:ok, next_state, healed_data} ->
         {:next_state, next_state, healed_data}
 
@@ -1222,7 +1224,7 @@ defmodule EtherCAT.Master.FSM do
           max_sync_diff_ns: max_sync_diff_ns
         )
 
-        case Recovery.maybe_resume_running(Recovery.clear_runtime_fault(data, {:dc, :lock})) do
+        case maybe_resume_running(Recovery.clear_runtime_fault(data, {:dc, :lock})) do
           {:ok, next_state, healed_data} ->
             {:next_state, next_state, healed_data}
 
@@ -1288,7 +1290,7 @@ defmodule EtherCAT.Master.FSM do
   defp reply_running_waiters(%{await_callers: []} = data), do: data
 
   defp reply_running_waiters(data) do
-    reply = await_running_reply(Status.desired_public_state(data))
+    reply = await_running_reply(desired_public_state(data))
     reply_await_callers(data.await_callers, reply)
     %{data | await_callers: []}
   end
@@ -1309,7 +1311,7 @@ defmodule EtherCAT.Master.FSM do
     updated = Recovery.put_slave_fault(data, name, reason)
 
     if critical_slave_fault?(updated, name, reason) do
-      Recovery.transition_runtime_fault(
+      transition_runtime_fault(
         state,
         Recovery.put_runtime_fault(updated, {:slave, name}, reason)
       )
@@ -1327,13 +1329,13 @@ defmodule EtherCAT.Master.FSM do
   end
 
   defp critical_slave_fault?(data, _name, {:retreated, actual_state}) do
-    desired_target = Status.desired_runtime_target(data)
+    desired_target = data.desired_runtime_target
 
     desired_target in [:preop, :safeop] and lower_than_target?(actual_state, desired_target)
   end
 
   defp critical_slave_fault?(data, name, {:down, _reason}) do
-    desired_target = Status.desired_runtime_target(data)
+    desired_target = data.desired_runtime_target
 
     if desired_target in [:preop, :safeop] do
       true
@@ -1358,7 +1360,7 @@ defmodule EtherCAT.Master.FSM do
   defp slave_state_rank(:op), do: 4
 
   defp slave_participates_in_domains?(data, name) do
-    case Config.fetch_slave_config(data.slave_configs || [], name) do
+    case Config.fetch_slave_config(data.slave_configs, name) do
       {:ok, slave_config, _idx} ->
         Config.requested_domain_ids(slave_config) != []
 
@@ -1383,13 +1385,17 @@ defmodule EtherCAT.Master.FSM do
     }
   end
 
+  defp emit_state_change(old, :idle, %{desired_runtime_target: nil}) do
+    Telemetry.master_state_changed(old, :idle, nil, nil)
+  end
+
   defp emit_state_change(old_state, new_state, data)
        when is_atom(old_state) and is_atom(new_state) do
     Telemetry.master_state_changed(
       old_state,
       new_state,
-      Status.desired_public_state(data),
-      Status.desired_runtime_target(data)
+      desired_public_state(data),
+      data.desired_runtime_target
     )
   end
 
@@ -1416,7 +1422,7 @@ defmodule EtherCAT.Master.FSM do
   end
 
   defp ensure_known_domains(data, slave_config) do
-    case Config.unknown_domain_ids(data.domain_configs || [], slave_config) do
+    case Config.unknown_domain_ids(data.domain_configs, slave_config) do
       [] -> :ok
       domains -> {:error, {:unknown_domains, domains}}
     end
@@ -1446,7 +1452,7 @@ defmodule EtherCAT.Master.FSM do
   end
 
   defp runtime_health_poll_ms(data, %{target_state: :preop, health_poll_ms: health_poll_ms}) do
-    if Status.desired_runtime_target(data) == :preop do
+    if data.desired_runtime_target == :preop do
       nil
     else
       health_poll_ms
@@ -1500,14 +1506,14 @@ defmodule EtherCAT.Master.FSM do
     }
 
     if map_size(activation_failures) == 0 do
-      {:ok, Status.desired_public_state(updated_data), updated_data}
+      {:ok, desired_public_state(updated_data), updated_data}
     else
       {:activation_blocked, updated_data}
     end
   end
 
   defp stop_domain_cycles(data) do
-    Enum.each(Config.domain_ids(data.domain_configs || []), fn domain_id ->
+    Enum.each(Config.domain_ids(data.domain_configs), fn domain_id ->
       case Domain.stop_cycling(domain_id) do
         :ok ->
           :ok
@@ -1568,7 +1574,7 @@ defmodule EtherCAT.Master.FSM do
   end
 
   defp handle_active_call(from, :status, state, data) do
-    {:keep_state_and_data, [{:reply, from, Status.from_runtime(state, data)}]}
+    {:keep_state_and_data, [{:reply, from, Diagnostics.status(state, data)}]}
   end
 
   defp handle_active_call(from, :last_failure, _state, data) do
@@ -1576,11 +1582,12 @@ defmodule EtherCAT.Master.FSM do
   end
 
   defp handle_active_call(from, :dc_status, _state, data) do
-    {:keep_state_and_data, [{:reply, from, Status.dc_status(data)}]}
+    {:keep_state_and_data, [{:reply, from, Diagnostics.dc_status(data)}]}
   end
 
   defp handle_active_call(from, :reference_clock, _state, data) do
-    {:keep_state_and_data, [{:reply, from, Status.reference_clock_reply(Status.dc_status(data))}]}
+    {:keep_state_and_data,
+     [{:reply, from, Status.reference_clock_reply(Diagnostics.dc_status(data))}]}
   end
 
   defp handle_active_call(from, :dc_runtime, _state, %{dc_config: nil}) do
@@ -1595,16 +1602,49 @@ defmodule EtherCAT.Master.FSM do
     end
   end
 
+  defp handle_active_call(from, {:resolve_slave, name}, _state, data) when is_atom(name) do
+    reply =
+      if List.keymember?(data.slaves, name, 0),
+        do: resolve_registered(:slave, name),
+        else: {:error, :not_found}
+
+    {:keep_state_and_data, [{:reply, from, reply}]}
+  end
+
+  defp handle_active_call(from, {:resolve_domain, id}, _state, data) when is_atom(id) do
+    reply =
+      if Enum.any?(data.domain_configs, &(&1.id == id)),
+        do: resolve_registered(:domain, id),
+        else: {:error, :not_found}
+
+    {:keep_state_and_data, [{:reply, from, reply}]}
+  end
+
+  defp handle_active_call(from, {:slave_configuration, name}, _state, data) do
+    reply =
+      case Config.fetch_slave_config(data.slave_configs, name) do
+        {:ok, config, _index} -> {:ok, describe_configuration(data, config)}
+        {:error, _reason} -> {:error, :not_found}
+      end
+
+    {:keep_state_and_data, [{:reply, from, reply}]}
+  end
+
+  defp handle_active_call(from, :slave_configurations, _state, data) do
+    configs = Enum.map(data.slave_configs, &describe_configuration(data, &1))
+    {:keep_state_and_data, [{:reply, from, {:ok, configs}}]}
+  end
+
   defp handle_active_call(from, :slaves, _state, data) do
-    {:keep_state_and_data, [{:reply, from, Status.slaves(data)}]}
+    {:keep_state_and_data, [{:reply, from, Diagnostics.slaves(data)}]}
   end
 
   defp handle_active_call(from, :domains, _state, data) do
-    {:keep_state_and_data, [{:reply, from, Status.domains(data)}]}
+    {:keep_state_and_data, [{:reply, from, Diagnostics.domains(data)}]}
   end
 
   defp handle_active_call(from, :bus, _state, data) do
-    {:keep_state_and_data, [{:reply, from, Status.bus_public_ref(data)}]}
+    {:keep_state_and_data, [{:reply, from, Diagnostics.bus_public_ref(data)}]}
   end
 
   defp handle_active_call(
@@ -1631,7 +1671,7 @@ defmodule EtherCAT.Master.FSM do
   end
 
   defp update_domain_cycle_time(%{domain_configs: domain_configs}, domain_id, cycle_time_us) do
-    if Enum.any?(domain_configs || [], &(&1.id == domain_id)) do
+    if Enum.any?(domain_configs, &(&1.id == domain_id)) do
       Domain.update_cycle_time(domain_id, cycle_time_us)
     else
       {:error, :unknown_domain}
@@ -1640,5 +1680,169 @@ defmodule EtherCAT.Master.FSM do
 
   defp dc_running? do
     is_pid(Process.whereis(DC))
+  end
+
+  defp desired_public_state(%{desired_runtime_target: :op}), do: :operational
+  defp desired_public_state(%{desired_runtime_target: :safeop}), do: :deactivated
+  defp desired_public_state(%{desired_runtime_target: :preop}), do: :preop_ready
+
+  defp activation_blocked_reply(data) do
+    activation_failures = data.activation_failures
+    runtime_faults = data.runtime_faults
+    desired_target = data.desired_runtime_target
+
+    cond do
+      map_size(activation_failures) > 0 and map_size(runtime_faults) == 0 ->
+        activation_blocked_transition_reply(desired_target, activation_failures)
+
+      map_size(activation_failures) == 0 and map_size(runtime_faults) > 0 ->
+        {:error, {:runtime_degraded, runtime_faults}}
+
+      true ->
+        activation_blocked_combined_reply(desired_target, activation_failures, runtime_faults)
+    end
+  end
+
+  defp recovering_reply(%{runtime_faults: runtime_faults}) do
+    {:error, {:runtime_degraded, runtime_faults}}
+  end
+
+  defp activation_blocked_summary(data) do
+    activation_count = map_size(data.activation_failures)
+    runtime_count = map_size(data.runtime_faults)
+    slave_fault_count = map_size(data.slave_faults)
+
+    "target=#{data.desired_runtime_target} activation_failures=#{activation_count} runtime_faults=#{runtime_count} slave_faults=#{slave_fault_count}"
+  end
+
+  defp recovering_summary(data) do
+    "target=#{data.desired_runtime_target} runtime_faults=#{map_size(data.runtime_faults)} activation_failures=#{map_size(data.activation_failures)} slave_faults=#{map_size(data.slave_faults)}"
+  end
+
+  defp activation_blocked_transition_reply(:op, activation_failures) do
+    {:error, {:activation_failed, activation_failures}}
+  end
+
+  defp activation_blocked_transition_reply(target, activation_failures)
+       when target in [:preop, :safeop] do
+    {:error, {:deactivation_failed, target, activation_failures}}
+  end
+
+  defp activation_blocked_combined_reply(:op, activation_failures, runtime_faults) do
+    {:error,
+     {:activation_blocked,
+      %{activation_failures: activation_failures, runtime_faults: runtime_faults}}}
+  end
+
+  defp activation_blocked_combined_reply(target, activation_failures, runtime_faults)
+       when target in [:preop, :safeop] do
+    {:error,
+     {:target_blocked,
+      %{
+        target: target,
+        activation_failures: activation_failures,
+        runtime_faults: runtime_faults
+      }}}
+  end
+
+  defp transition_runtime_fault(state, data)
+       when state in [:preop_ready, :deactivated, :operational],
+       do: {:next_state, :recovering, data}
+
+  defp transition_runtime_fault(_state, data), do: {:keep_state, data}
+
+  defp maybe_resume_running(data) do
+    if map_size(data.activation_failures) == 0 and map_size(data.runtime_faults) == 0 do
+      next_state = desired_public_state(data)
+      runtime_target = data.desired_runtime_target
+
+      Logger.info(
+        "[Master] recovery succeeded; desired runtime target #{inspect(runtime_target)} is healthy again",
+        component: :master,
+        event: :recovery_succeeded,
+        runtime_target: runtime_target
+      )
+
+      {:ok, next_state, %{data | activation_failures: %{}, runtime_faults: %{}}}
+    else
+      {:recovering, data}
+    end
+  end
+
+  defp maybe_resume_recovered_state(:recovering, recovered_data) do
+    case maybe_resume_running(recovered_data) do
+      {:ok, next_state, healed_data} -> {:ok, next_state, healed_data}
+      {:recovering, still_recovering} -> {:keep, still_recovering}
+    end
+  end
+
+  defp maybe_resume_recovered_state(_state, recovered_data), do: {:keep, recovered_data}
+
+  defp maybe_resume_from_activation_blocked(data) do
+    cond do
+      map_size(data.activation_failures) > 0 ->
+        {:activation_blocked, data}
+
+      map_size(data.runtime_faults) > 0 ->
+        {:recovering, data}
+
+      true ->
+        next_state = desired_public_state(data)
+        runtime_target = data.desired_runtime_target
+
+        Logger.info(
+          "[Master] transition retries succeeded; desired runtime target #{inspect(runtime_target)} is healthy again",
+          component: :master,
+          event: :activation_retry_succeeded,
+          runtime_target: runtime_target
+        )
+
+        {:ok, next_state, %{data | activation_failures: %{}, runtime_faults: %{}}}
+    end
+  end
+
+  defp activation_ready_preop(data, name) do
+    case Recovery.handle_activation_ready_preop(data, name) do
+      :ignore -> :ignore
+      updated -> maybe_resume_from_activation_blocked(updated)
+    end
+  end
+
+  defp runtime_ready_preop(state, data, name) do
+    case Recovery.handle_runtime_ready_preop(data, name) do
+      {:ok, updated} -> maybe_resume_recovered_state(state, updated)
+      {:error, updated} -> {:keep, updated}
+    end
+  end
+
+  defp resolve_registered(kind, name) do
+    case Registry.lookup(EtherCAT.Registry, {kind, name}) do
+      [{pid, _value}] -> {:ok, pid}
+      [] -> {:error, :not_found}
+    end
+  end
+
+  defp describe_configuration(data, config) do
+    pid =
+      case resolve_registered(:slave, config.name) do
+        {:ok, pid} -> pid
+        {:error, :not_found} -> nil
+      end
+
+    station =
+      case List.keyfind(data.slaves, config.name, 0) do
+        {_name, station} -> station
+        nil -> nil
+      end
+
+    %{
+      name: config.name,
+      driver: config.driver,
+      config: config.config,
+      target_state: config.target_state,
+      station: station,
+      pid: pid,
+      fault: Map.get(data.slave_faults, config.name)
+    }
   end
 end

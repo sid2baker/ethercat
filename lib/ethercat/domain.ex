@@ -46,7 +46,6 @@ defmodule EtherCAT.Domain do
   alias EtherCAT.Domain.Image
   alias EtherCAT.Domain.Layout
   alias EtherCAT.Domain.Notifications
-  alias EtherCAT.Domain.State
   alias EtherCAT.Domain.Status
   alias EtherCAT.Utils
 
@@ -70,7 +69,6 @@ defmodule EtherCAT.Domain do
     :id,
     :bus,
     :period_us,
-    :logical_base,
     :next_cycle_at,
     :last_cycle_started_at_us,
     :last_cycle_completed_at_us,
@@ -80,6 +78,7 @@ defmodule EtherCAT.Domain do
     :stale_after_us,
     :stop_reason,
     :frame_timeout_ms,
+    logical_base: 0,
     layout: Layout.new(),
     cycle_plan: nil,
     cycle_health: :healthy,
@@ -210,7 +209,7 @@ defmodule EtherCAT.Domain do
   @impl true
   def init(opts) do
     Logger.metadata(component: :domain, domain: Keyword.fetch!(opts, :id))
-    {:ok, :open, State.new(opts)}
+    {:ok, :open, initialize(opts)}
   end
 
   @impl true
@@ -300,4 +299,36 @@ defmodule EtherCAT.Domain do
 
   defp stopped_cycle_health(%{stop_reason: reason}) when reason in [nil, :manual], do: :not_ready
   defp stopped_cycle_health(_data), do: :degraded
+
+  defp initialize(opts) do
+    id = Keyword.fetch!(opts, :id)
+
+    table =
+      :ets.new(id, [
+        :set,
+        :public,
+        :named_table,
+        {:write_concurrency, true},
+        {:read_concurrency, true}
+      ])
+
+    stale_after_us = Freshness.default_stale_after_us(Keyword.fetch!(opts, :cycle_time_us))
+    Image.put_domain_status(table, nil, stale_after_us)
+
+    Registry.register(EtherCAT.Registry, {:domain, id}, id)
+
+    defaults = %__MODULE__{}
+
+    %__MODULE__{
+      id: id,
+      bus: Keyword.fetch!(opts, :bus),
+      period_us: Keyword.fetch!(opts, :cycle_time_us),
+      logical_base: Keyword.get(opts, :logical_base, defaults.logical_base),
+      stale_after_us: stale_after_us,
+      frame_timeout_ms: Keyword.get(opts, :frame_timeout_ms),
+      miss_threshold: Keyword.get(opts, :miss_threshold, defaults.miss_threshold),
+      recovery_threshold: Keyword.get(opts, :recovery_threshold, defaults.recovery_threshold),
+      table: table
+    }
+  end
 end

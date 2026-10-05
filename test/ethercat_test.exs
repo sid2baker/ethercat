@@ -138,8 +138,90 @@ defmodule EtherCATTest do
     assert {:error, :stale_session} = EtherCAT.Raw.read_input(stale, :sensor, :input)
   end
 
+  test "session lookups and descriptions do not call diagnostic processes" do
+    master = ensure_master_running()
+    original = :sys.get_state(master)
+    generation = make_ref()
+    session = EtherCAT.Session.new(master, generation)
+    stale = EtherCAT.Session.new(master, make_ref())
+
+    slave = start_supervised!({Agent, fn -> nil end}, id: :lookup_slave)
+    domain = start_supervised!({Agent, fn -> nil end}, id: :lookup_domain)
+    bus = start_supervised!({Agent, fn -> nil end}, id: :lookup_bus)
+    dc = start_supervised!({Agent, fn -> nil end}, id: :lookup_dc)
+
+    Agent.get(slave, fn _ ->
+      Registry.register(EtherCAT.Registry, {:slave, :lookup_sensor}, nil)
+    end)
+
+    Agent.get(domain, fn _ ->
+      Registry.register(EtherCAT.Registry, {:domain, :lookup_main}, nil)
+    end)
+
+    Registry.register(EtherCAT.Registry, {:slave, :outside_session}, nil)
+    Registry.register(EtherCAT.Registry, {:domain, :outside_session}, nil)
+    Process.register(bus, EtherCAT.Bus)
+    Process.register(dc, EtherCAT.DC)
+
+    data = %EtherCAT.Master{
+      generation: generation,
+      desired_runtime_target: :preop,
+      slaves: [lookup_sensor: 0x1001],
+      slave_configs: [
+        %EtherCAT.Slave.Config{name: :lookup_sensor},
+        %EtherCAT.Slave.Config{name: :missing_sensor}
+      ],
+      domain_configs: [
+        %EtherCAT.Domain.Config{id: :lookup_main, cycle_time_us: 1_000},
+        %EtherCAT.Domain.Config{id: :missing_domain, cycle_time_us: 1_000}
+      ],
+      dc_config: %EtherCAT.DC.Config{cycle_ns: 1_000_000}
+    }
+
+    :sys.replace_state(master, fn _ -> {:preop_ready, data} end)
+    Enum.each([slave, domain, bus, dc], &:sys.suspend/1)
+
+    try do
+      task =
+        Task.async(fn ->
+          assert {:ok, ^slave} = EtherCAT.Session.slave(session, :lookup_sensor)
+          assert {:ok, ^domain} = EtherCAT.Session.domain(session, :lookup_main)
+
+          for name <- [:missing_sensor, :outside_session] do
+            assert {:error, :not_found} = EtherCAT.Session.slave(session, name)
+          end
+
+          for id <- [:missing_domain, :outside_session] do
+            assert {:error, :not_found} = EtherCAT.Session.domain(session, id)
+          end
+
+          assert {:ok, description} = EtherCAT.describe(session, :lookup_sensor)
+          assert description.name == :lookup_sensor
+          assert description.pid == slave
+          assert description.station == 0x1001
+          assert {:ok, %{pid: nil}} = EtherCAT.describe(session, :missing_sensor)
+          assert {:error, :not_found} = EtherCAT.describe(session, :outside_session)
+          assert {:ok, inventory} = EtherCAT.inventory(session)
+          assert inventory.lookup_sensor == description
+          assert Map.has_key?(inventory, :missing_sensor)
+
+          assert {:error, :stale_session} = EtherCAT.Session.slave(stale, :lookup_sensor)
+          assert {:error, :stale_session} = EtherCAT.Session.domain(stale, :lookup_main)
+          assert {:error, :stale_session} = EtherCAT.describe(stale, :lookup_sensor)
+          assert {:error, :stale_session} = EtherCAT.inventory(stale)
+        end)
+
+      Task.await(task, 1_000)
+    after
+      Enum.each([slave, domain, bus, dc], &:sys.resume/1)
+      :sys.replace_state(master, fn _ -> original end)
+    end
+  end
+
   test "master status reports stopped or idle without an active session" do
     status = EtherCAT.Master.current_status()
+
+    assert status.desired_target == nil
 
     assert match?(%EtherCAT.Master.Status{lifecycle: :stopped}, status) or
              match?(%EtherCAT.Master.Status{lifecycle: :idle}, status)

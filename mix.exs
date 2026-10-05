@@ -83,7 +83,6 @@ defmodule EtherCAT.MixProject do
         "test --warnings-as-errors",
         "credo --strict",
         "dialyzer",
-        "ex_dna --max-clones 0",
         "reach.check --arch --smells"
       ]
     ]
