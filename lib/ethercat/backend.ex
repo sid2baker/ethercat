@@ -56,6 +56,15 @@ defmodule EtherCAT.Backend do
 
   Internally those normalize to `%EtherCAT.Backend.*{}` structs so the runtime,
   status, and scan layers all speak the same transport shape.
+
+  Physical rings use raw Ethernet; redundant mode requires two raw interfaces.
+  UDP is intended for simulator/integration endpoints. The master uses `:host`
+  as the destination and `:bind_ip` as its optional local address. Its `:port`
+  is both the local bind port and destination port (default `34980`). For a
+  simulator on the same Linux host, use separate loopback addresses, for example
+  simulator `127.0.0.2` and master `bind_ip: {127, 0, 0, 1}`, to avoid a port clash.
+  In simulator startup, `:host` selects the endpoint's bind address; port `0`
+  requests an ephemeral port, available afterward from `EtherCAT.Simulator.status/0`.
   """
 
   alias __MODULE__.{Raw, Redundant, Udp}

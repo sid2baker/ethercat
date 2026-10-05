@@ -4,43 +4,23 @@
 [![Hexdocs](https://img.shields.io/badge/docs-hexdocs-purple)](https://hexdocs.pm/ethercat)
 [![License](https://img.shields.io/hexpm/l/ethercat)](https://github.com/sid2baker/ethercat/blob/main/LICENSE)
 
-> **Disclaimer:** This repo is not ready for production yet. I’m exploring
-> where soft-real-time devices fit in automation and would like to develop this
-> into a bachelor’s thesis. If you know a professor, or someone who could help
-> me pursue that, feel free to reach out! :)
+Pure-Elixir EtherCAT master for Linux and Nerves, built on OTP without NIFs or
+kernel modules. Intended for discrete I/O, diagnostics, and soft-real-time
+1–10 ms cyclic loops—not sub-millisecond hard-real-time control.
 
-![Kino EtherCAT smart cell setup](assets/readme/kino-smart-cell-setup.png)
+> **Experimental; not production-ready.** This project explores soft-real-time
+> automation. I would like to develop it into a bachelor's thesis; if you know
+> a professor who could help, please reach out.
 
-Pure-Elixir EtherCAT master built on OTP.
+Want an interactive UI? Start with
+[`kino_ethercat`](https://github.com/sid2baker/kino_ethercat).
+Without hardware, try the [UDP simulator walkthrough](https://github.com/sid2baker/ethercat/blob/main/lib/ethercat/simulator.md#run-a-local-udp-example)
+or run the simulator tests below.
 
-- No NIF.
-- No kernel module.
-- Nerves-first, runs on standard Linux too.
-- Minimal runtime dependency surface.
-- Best for discrete I/O, Beckhoff terminal stacks, diagnostics, and 1 ms to 10 ms cyclic loops.
-- Not the right fit for sub-millisecond hard real-time control.
+## 1. Install and supervise the runtime
 
-The entry idea is simple: the **master owns the session lifecycle**, **domains own cyclic LRW exchange**, **slaves own ESM and slave-local configuration**, and **DC owns clock discipline**. Critical domain/DC runtime faults move the public state to `:recovering`; slave-local faults are tracked separately so healthy cyclic parts can stay up.
-
-Runtime footprint is intentionally small: no NIFs, no kernel module, and only a
-minimal runtime dependency surface. The library talks to Linux directly through
-raw sockets, sysfs, and OTP, with `:telemetry` as the only runtime Hex
-dependency.
-
-## Installation
-
-Latest Hex release:
-
-```elixir
-def deps do
-  [{:ethercat, "~> 0.4.2"}]
-end
-```
-
-For release notes and post-`0.4.2` work, see the
-[changelog](https://github.com/sid2baker/ethercat/blob/main/CHANGELOG.md).
-
-If you want the current `main` branch instead of the latest Hex cut:
+**This guide targets `main` (`0.5.0-dev`), not the released `0.4.2` API.**
+Add the development dependency to your application's `mix.exs`:
 
 ```elixir
 def deps do
@@ -48,92 +28,75 @@ def deps do
 end
 ```
 
-Raw Ethernet socket access requires `CAP_NET_RAW` or root. Grant that
-capability to the BEAM executable that will run the master:
+For the published package, use `{:ethercat, "~> 0.4.2"}` and the
+[matching API documentation](https://hexdocs.pm/ethercat/0.4.2/).
+See the [changelog](https://github.com/sid2baker/ethercat/blob/main/CHANGELOG.md)
+for breaking changes on `main`.
+
+Run `mix deps.get`, then add `{EtherCAT.Runtime, []}` to your application's
+supervision tree. EtherCAT does not start the runtime automatically.
+For a standalone `iex -S mix` session, start it once with:
+
+```elixir
+{:ok, _supervisor} =
+  Supervisor.start_link([{EtherCAT.Runtime, []}], strategy: :one_for_one)
+```
+
+## 2. Discover your hardware
+
+Use a dedicated Ethernet interface connected to your EtherCAT ring. Raw socket
+access needs root or `CAP_NET_RAW`. To grant the capability to your current BEAM
+executable (this affects every application using that executable):
 
 ```bash
 BEAM=$(readlink -f "$(dirname "$(dirname "$(command -v erl)")")"/erts-*/bin/beam.smp)
 sudo setcap cap_net_raw+ep "$BEAM"
 ```
 
-Link monitoring is handled internally.
-
-## Quick Start
-
-### Supervise the runtime from your host app
+Restart IEx/the application after granting the capability. Replace `eth0` with
+your interface. Scan **before** opening a master session; scanning assigns
+station addresses and must not run against an active ring.
 
 ```elixir
-children = [
-  {EtherCAT.Runtime, []}
-]
+backend = {:raw, %{interface: "eth0"}}
+{:ok, scan} = EtherCAT.Scan.scan(backend)
+scan.discovered_slaves
 ```
 
-EtherCAT is a library subsystem, not a standalone OTP application. The host
-application owns starting, stopping, and restarting `EtherCAT.Runtime`;
-`EtherCAT.start/1` opens the singleton EtherCAT session inside that runtime and
-returns an opaque `%EtherCAT.Session{}` required by every runtime operation.
-
-### Discover a ring
+To inspect slaves without cyclic I/O, start in PREOP:
 
 ```elixir
-{:ok, scan} = EtherCAT.Scan.scan({:raw, %{interface: "eth0"}})
-
-{:ok, session} = EtherCAT.start(backend: {:raw, %{interface: "eth0"}})
-
+{:ok, session} = EtherCAT.start(backend: backend)
 :ok = EtherCAT.await_ready(session)
-
-EtherCAT.state(session)
-#=> {:ok, :preop_ready}
-
-EtherCAT.Diagnostics.master_status(session)
-#=> {:ok, %EtherCAT.Master.Status{backend: %EtherCAT.Backend.Raw{interface: "eth0"}, ...}}
-
 EtherCAT.Diagnostics.slaves(session)
-#=> {:ok, [
-#=>   %{name: :slave_0, station: 0x1000, server: {:via, Registry, ...}, pid: #PID<...>},
-#=>   ...
-#=> ]}
-
-EtherCAT.stop(session)
+:ok = EtherCAT.stop(session)
 ```
 
-`EtherCAT.stop(session)` stops that exact session generation and leaves `EtherCAT.Runtime`
-running under the host supervisor.
+## 3. Read a cyclic input
 
-If you start without explicit slave configs, EtherCAT still scans the ring, names each
-station, and brings every slave to `:preop`. That is the right entry point for
-exploration, diagnostics, and dynamic configuration.
-
-### Run protocol-level slave I/O
+Drivers are application-owned. This minimal driver reads channel 1 of an
+EL1809; static endpoint metadata is optional. For shared mappings and metadata,
+see the [driver authoring guide](https://github.com/sid2baker/ethercat/blob/main/lib/ethercat/driver.ex).
 
 ```elixir
 defmodule MyApp.EL1809 do
   @behaviour EtherCAT.Driver
 
   @impl true
-  def signal_model(_config, _pdos), do: [ch1: %EtherCAT.Driver.Signal{pdo_index: 0x1A00}]
+  def signal_model(_config, _pdos), do: [ch1: EtherCAT.Driver.Signal.whole_pdo(0x1A00)]
 
   @impl true
   def decode_signal(_signal, _config, <<0::7, bit::1>>), do: {:ok, bit == 1}
   def decode_signal(_signal, _config, _raw), do: {:error, :invalid_data}
-
-  @impl true
-  def describe(_config) do
-    %{
-      device_type: :digital_input,
-      endpoints: [
-        %EtherCAT.Endpoint{
-          signal: :ch1,
-          direction: :input,
-          type: :boolean
-        }
-      ]
-    }
-  end
 end
+```
 
+List slaves in physical ring order. This example assumes an EK1100 coupler
+followed by an EL1809; adapt it to the hardware you discovered before starting:
+
+```elixir
 {:ok, session} = EtherCAT.start(
-  backend: {:raw, %{interface: "eth0"}},
+  backend: backend,
   domains: [%EtherCAT.Domain.Config{id: :io, cycle_time_us: 1_000}],
   slaves: [
     %EtherCAT.Slave.Config{name: :coupler},
@@ -142,226 +105,62 @@ end
       driver: MyApp.EL1809,
       process_data: {:all, :io},
       target_state: :op
-    },
-    %EtherCAT.Slave.Config{
-      name: :outputs,
-      driver: MyApp.EL2809,
-      process_data: {:all, :io},
-      target_state: :op
     }
   ]
 )
 
 :ok = EtherCAT.await_operational(session)
+EtherCAT.sample(session, :inputs, :io)
+#=> {:ok, %EtherCAT.Sample{inputs: %{ch1: false}, errors: %{}, ...}}
+# May return {:error, :not_ready} before the first sample arrives.
 
-{:ok, input_sample} = EtherCAT.sample(session, :inputs, :io)
-input_sample.inputs.ch1
-#=> false
-
-{:ok, input_description} = EtherCAT.describe(session, :inputs)
-input_description.endpoints
-#=> [%EtherCAT.Endpoint{signal: :ch1, direction: :input, type: :boolean}]
-
-{:ok, inventory} = EtherCAT.inventory(session)
-Map.keys(inventory)
-#=> [:coupler, :inputs, :outputs]
-
-{:ok, ref, status, initial_samples} = EtherCAT.subscribe(session, :inputs)
-status.state
-#=> :op
-initial_samples
-#=> %{:io => %EtherCAT.Sample{...}}
-
-receive do
-  {:ethercat, ^ref, %EtherCAT.Sample{
-    slave: :inputs,
-    domain: :io,
-    cycle: 42,
-    observed_at: timestamp_us,
-    inputs: %{ch1: true}
-  } = sample} ->
-    sample
-
-  {:ethercat, ^ref, %EtherCAT.Notification{kind: :domain_status_changed} = notification} ->
-    notification
-end
-
-:ok = EtherCAT.unsubscribe(session, :inputs, ref)
-
-:ok = EtherCAT.write(session, :outputs, :ch1, true)
-{:ok, {true, updated_at_us}} = EtherCAT.read(session, :inputs, :ch1)
+:ok = EtherCAT.stop(session)
 ```
 
-Drivers own device identity, PDO signal layout, static signal descriptions,
-and value codecs. They do not project machine state or implement machine
-commands. `EtherCAT.Sample` reports one coherent decoded observation from one
-domain cycle; samples from different domains do not imply cross-domain
-consistency.
+Keep the returned session for every runtime call. Stopping it leaves the
+host-supervised runtime alive; reusing a stopped session returns
+`{:error, :stale_session}`. A sample covers one domain cycle, not a cross-domain
+snapshot. Check its `errors` as well as its `inputs`.
 
-`describe/2` and `inventory/1` are configuration-backed protocol views.
-`status/2` reports current slave and attached-domain protocol status.
-`samples/2`, `sample/3`, and `subscribe/3` expose retained and subsequent
-process observations. Subscriptions deliver both coherent samples and
-protocol-level state notifications. `read/3` and `write/4` are explicit
-low-level signal operations. Every call requires its session; a stopped or
-replaced session fails with `{:error, :stale_session}`.
-Driver codecs return `{:ok, value}` or `{:error, reason}`. Failed writes leave
-outputs unchanged. Samples contain successful values in `inputs` and failed
-signal names/reasons in `errors`; a failed value is never replaced with zero or
-retained from an earlier cycle. `read/3` returns `{:error, {:decode_failed,
-signal, reason}}` when decoding fails.
+## 4. Diagnose problems
 
-Drivers declare mappings with `EtherCAT.Driver.Signal` and receive discovered
-`EtherCAT.Driver.PDO` structs in `signal_model/2`. Input-only drivers need only
-`decode_signal/3`; output-only drivers need only `encode_signal/3`. Encoded data
-must have exactly `ceil(bit_size / 8)` bytes with unused high bits set to zero.
-See `EtherCAT.Driver` for the byte-order contract. Static `describe/1` metadata
-is independent of discovery; omitted endpoint metadata produces an empty list.
-
-Subscriptions use push delivery with no backpressure or dropped observations.
-Use `samples/2` to poll the latest retained values if your consumer cannot keep
-up with every cycle. Cancellation stops future delivery; already queued messages
-keep their reference so they can be ignored. Observation timestamps are host
-monotonic microseconds, not wall-clock or distributed-clock time.
-
-`EtherCAT.Signals` remains available for session-bound signal and latch subscriptions.
-
-Semantic commands, machine state, and machine events belong in a separate
-integration layer above EtherCAT, such as an `Entity.Provider` adapter.
-
-For PREOP-first workflows, configure discovered slaves dynamically:
+Inspect a **live** session before stopping it:
 
 ```elixir
-{:ok, session} =
-  EtherCAT.start(
-    backend: {:raw, %{interface: "eth0"}},
-    domains: [%EtherCAT.Domain.Config{id: :main, cycle_time_us: 1_000}]
-  )
-
-:ok = EtherCAT.await_ready(session)
-
-:ok =
-  EtherCAT.Provisioning.configure_slave(
-    session,
-    :slave_1,
-    driver: MyApp.EL1809,
-    process_data: {:all, :main},
-    target_state: :op
-  )
-
-:ok = EtherCAT.Provisioning.activate(session)
-:ok = EtherCAT.await_operational(session)
+EtherCAT.state(session)
+EtherCAT.Diagnostics.master_status(session)
+EtherCAT.status(session, :inputs)
 ```
 
-### Capture a real slave into a simulator scaffold
+| Symptom | Action |
+| --- | --- |
+| Raw socket permission failure | Check the interface and capability on the BEAM executable actually running your app. |
+| Session stays in PREOP | Use `target_state: :op` and attach signals to a domain; `await_ready/1` does not require cyclic I/O. |
+| Activation fails or state is `:recovering` | Inspect master and slave status for transport, WKC, AL-state, or configuration faults. |
+| Sample has decoding errors | Check the driver's mapping, bit widths, and codec; failed values are not replaced with zero or earlier values. |
+| Subscriber mailbox grows | Poll with `EtherCAT.samples/2` instead; subscriptions have no backpressure or dropping. |
+
+## Test without hardware
+
+From a repository checkout:
 
 ```bash
-iex -S mix ethercat.capture --interface eth0
+mix deps.get
+ETHERCAT_INTEGRATION_TRANSPORT=udp mix test test/integration/simulator --exclude raw_socket --exclude raw_socket_redundant --exclude raw_socket_redundant_toggle
+mix test test/ethercat/driver/catalogue_example_test.exs
 ```
 
-Then, from IEx:
+The simulator suite exercises the real master over virtual slave segments.
+The driver comparison demonstrates a shared signal catalogue without changing
+the public callbacks. The command above explicitly excludes raw transports. Hardware and raw-socket
+tests need separate setup.
 
-```elixir
-{:ok, session} = EtherCAT.Session.current()
-EtherCAT.Capture.list_slaves(session)
-EtherCAT.Capture.write_capture(session, :slave_1, sdos: [{0x1008, 0x00}])
-EtherCAT.Capture.gen_simulator(session, :slave_1, module: MyApp.EL1809.Simulator)
-```
+## Pick your next task
 
-This capture flow writes a data-only capture artifact, then preserves static
-structure: identity, mailbox layout, PDO shape, and any explicit SDO snapshots
-you request. It does not infer dynamic behavior or a complete object
-dictionary automatically.
-
-## Runtime Roles
-
-- `EtherCAT.Backend` describes the transport/backend the master or simulator uses.
-- `EtherCAT.Scan.scan/1` returns an observational `%EtherCAT.Scan.Result{}` without starting the master, and refuses to probe a backend already owned by the running master.
-- `EtherCAT.Diagnostics.master_status/1` returns the session's `%EtherCAT.Master.Status{}` runtime view.
-- `EtherCAT.Simulator.status/0` returns the current `%EtherCAT.Simulator.Status{}` runtime view.
-
-## Mental Model
-
-- The master owns startup, activation-blocked startup, and runtime recovery decisions.
-- The bus is the single serialization point for all frames.
-- Domains own logical PDO images and cyclic LRW exchange.
-- Drivers own device identity, PDO signal layout, signal metadata, and value codecs.
-- Slaves own AL transitions and bind drivers into the runtime.
-- DC owns distributed-clock initialization, lock monitoring, and runtime maintenance.
-
-If you understand those five roles, the rest of the API is predictable.
-
-The normal application-facing surface is `EtherCAT`. Session-bound
-provisioning, diagnostics, and signal and latch subscriptions live under
-`EtherCAT.Provisioning`, `EtherCAT.Diagnostics`, and `EtherCAT.Signals`; driver
-extension contracts live under `EtherCAT.Driver`. `Master`, `Slave`, `Domain`,
-and `DC` are internal runtime processes behind those boundaries.
-
-## Lifecycle
-
-Public startup and runtime health are exposed through `EtherCAT.state/1`:
-- `:discovering` — bus scan and startup are still in progress
-- `:awaiting_preop` — configured slaves are still converging on PREOP
-- `:preop_ready` — the session is usable and held in PREOP
-- `:deactivated` — the session is live but intentionally settled below OP
-- `:operational` — cyclic OP is running
-- `:activation_blocked` — requested transitions could not be completed
-- `:recovering` — a critical runtime fault is being healed
-
-`await_ready/1` waits for a usable session and returns activation/configuration
-errors directly if startup cannot reach one. `await_operational/1` waits for
-cyclic OP. Inspect `EtherCAT.Diagnostics.slaves/1` for non-critical per-slave
-fault state.
-
-For detailed state diagrams and sequencing, see the specialist moduledocs:
-- `EtherCAT.Master` — startup, activation, and recovery orchestration
-- `EtherCAT.Slave` — ESM transitions and AL control
-- `EtherCAT.Domain` — cyclic LRW exchange states
-- `EtherCAT.DC` — distributed-clock lock tracking
-
-## Failure Model
-
-- A slave disconnect does not automatically mean full-session teardown.
-- Critical domain or DC faults move the master to `:recovering`.
-- Non-critical slave-local faults stay attached to the affected slave and are visible through `EtherCAT.Diagnostics.slaves/1`.
-- Healthy domains can keep cycling if the fault is localized and the transport is still usable.
-- Total bus loss can stop domains after the configured miss threshold; recovery can restart them.
-- Slave reconnect is PREOP-first: the slave rebuilds its local state, then the master decides when to return it to OP.
-- Slaves held in `:preop` or `:safeop` still health-poll for disconnects and lower-state regressions.
-
-The maintained end-to-end hardware walkthrough is
-`MIX_ENV=test mix run test/integration/hardware/scripts/fault_tolerance.exs --interface <eth-iface>`.
-
-## Where To Start
-
-### Fastest path
-
-[`kino_ethercat`](https://github.com/sid2baker/kino_ethercat) gives you an
-interactive UI for ring discovery, I/O control, and diagnostics.
-
-### No hardware yet
-
-Use `EtherCAT.Simulator` to drive the real master against a simulated ring.
-That is the fastest way to exercise startup, mailbox, recovery, and fault
-handling without a physical EtherCAT stack on your desk.
-
-### Maintained hardware scripts
-
-The repo ships maintained hardware scripts under `test/integration/hardware/`.
-Run them with `MIX_ENV=test mix run test/integration/hardware/scripts/<script>.exs ...`
-because they reuse support modules compiled only in test env. See
-`test/integration/hardware/README.md` for the maintained script matrix and flags.
-
-Recommended first stops:
-
-- `test/integration/hardware/scripts/scan.exs`
-- `test/integration/hardware/scripts/diag.exs`
-- `test/integration/hardware/scripts/wiring_map.exs`
-- `test/integration/hardware/scripts/dc_sync.exs`
-- `test/integration/hardware/scripts/fault_tolerance.exs`
-- `test/integration/hardware/scripts/redundant_replug_watch.exs` for live redundant-link topology and reconnect watching
-
-### Deeper architecture
-
-- [`ARCHITECTURE.md`](https://github.com/sid2baker/ethercat/blob/main/ARCHITECTURE.md) for subsystem boundaries and data flow
-- [`hexdocs.pm/ethercat`](https://hexdocs.pm/ethercat) for the API reference
+- **Write a driver:** [callback contract and catalogue pattern](https://github.com/sid2baker/ethercat/blob/main/lib/ethercat/driver.ex).
+- **Configure a PREOP session or use SDOs:** `EtherCAT.Provisioning`.
+- **Write outputs or subscribe to observations:** `EtherCAT`; signal/latch subscriptions: `EtherCAT.Signals`.
+- **Build virtual devices or inject faults:** `EtherCAT.Simulator`.
+- **Capture hardware:** `iex -S mix ethercat.capture --interface eth0`; see `EtherCAT.Capture`.
+- **Run hardware checks:** `MIX_ENV=test mix run test/integration/hardware/scripts/scan.exs --interface eth0`; see the [hardware guide](https://github.com/sid2baker/ethercat/blob/main/test/integration/hardware/README.md) before running bench scripts.
+- **Understand internals:** [architecture](https://github.com/sid2baker/ethercat/blob/main/ARCHITECTURE.md). Build the API reference for your checkout with `mix docs`.

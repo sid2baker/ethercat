@@ -12,18 +12,105 @@ transport endpoints live in `EtherCAT.Simulator.Transport.Udp` and
 
 This is not a hardware EtherCAT slave controller or a kernel-bypass slave NIC.
 
-The simulator can now expose two host-side ingress styles through an explicit
-`backend:`:
+The simulator exposes UDP or raw Ethernet ingress through an explicit
+`backend:` (raw ingress can be single or redundant):
 
 - `backend: {:udp, %{host: ..., port: ...}}` through `EtherCAT.Simulator.Transport.Udp`
 - `backend: {:raw, %{interface: ...}}` through `EtherCAT.Simulator.Transport.Raw`
 - `backend: {:redundant, %{primary: {:raw, ...}, secondary: {:raw, ...}}}`
   for redundant raw ingress against one shared slave segment
 
-In both cases, the slave segment is still userspace Elixir code that decodes
+In all configurations, the slave segment is still userspace Elixir code that decodes
 EtherCAT datagrams, executes them against in-memory slaves, and encodes the
 reply. The raw mode is a host raw-socket endpoint, not a claim that the
 simulator is acting like a physical ESC.
+
+## Run a local UDP example
+
+This standalone IEx example needs no physical devices or raw-socket privileges.
+It defines a synthetic byte-wide loopback device, not a model of a vendor terminal.
+The simulator binds an ephemeral UDP port on `127.0.0.2`; the master binds the
+same port on `127.0.0.1`. Separate loopback addresses avoid a local port collision
+on Linux. The returned backend supplies the actual port.
+
+If your application already supervises `EtherCAT.Runtime`, omit the first two
+lines and the final `Supervisor.stop(runtime)` call. Only one runtime and one
+simulator may run per BEAM node.
+
+```elixir
+children = [{EtherCAT.Runtime, []}]
+{:ok, runtime} = Supervisor.start_link(children, strategy: :one_for_one)
+
+defmodule MyApp.SimulatedIO do
+  @behaviour EtherCAT.Driver
+  alias EtherCAT.Driver.Signal
+
+  @impl true
+  def signal_model(_config, _pdos) do
+    [out: Signal.whole_pdo(0x1600), in: Signal.whole_pdo(0x1A00)]
+  end
+
+  @impl true
+  def encode_signal(:out, _config, value) when is_integer(value) and value in 0..255,
+    do: {:ok, <<value>>}
+
+  def encode_signal(_name, _config, _value), do: {:error, :invalid_value}
+
+  @impl true
+  def decode_signal(:in, _config, <<value>>), do: {:ok, value}
+  def decode_signal(_name, _config, _bytes), do: {:error, :invalid_data}
+end
+
+defmodule MyApp.SimulatedIO.Simulator do
+  @behaviour EtherCAT.Simulator.Adapter
+
+  @impl true
+  def definition_options(_config), do: [profile: :digital_io]
+end
+
+{:ok, _simulator} = EtherCAT.Simulator.start(
+  backend: {:udp, %{host: {127, 0, 0, 2}, port: 0}},
+  devices: [EtherCAT.Simulator.Slave.from_driver(MyApp.SimulatedIO, name: :io)]
+)
+
+{:ok, %{backend: backend}} = EtherCAT.Simulator.status()
+backend = %{backend | bind_ip: {127, 0, 0, 1}}
+{:ok, session} = EtherCAT.start(
+  backend: backend,
+  dc: nil,
+  domains: [%EtherCAT.Domain.Config{id: :main, cycle_time_us: 10_000}],
+  slaves: [%EtherCAT.Slave.Config{
+    name: :io, driver: MyApp.SimulatedIO, process_data: {:all, :main}
+  }]
+)
+
+:ok = EtherCAT.await_operational(session)
+{:ok, ref, _status, _samples} = EtherCAT.subscribe(session, :io)
+:ok = EtherCAT.write(session, :io, :out, 42)
+
+result = receive do
+  {:ethercat, ^ref, %EtherCAT.Sample{inputs: %{in: 42}} = sample} -> {:ok, sample}
+after
+  2_000 -> {:error, :sample_timeout}
+end
+IO.inspect(result)
+
+:ok = EtherCAT.unsubscribe(session, :io, ref)
+:ok = EtherCAT.stop(session)
+:ok = EtherCAT.Simulator.stop()
+:ok = Supervisor.stop(runtime)
+```
+
+The `:digital_io` profile's default byte-image mode mirrors output to input.
+This checks the real master, bus, codecs, and UDP exchange path. It does not prove
+hardware timing, device compatibility, or real-world loopback wiring. In tests,
+register cleanup with `on_exit/1` so failed assertions also stop the session and
+simulator.
+
+For direct synthetic definitions, use `EtherCAT.Simulator.Slave.Definition.build/2`.
+For driver-backed devices, `from_driver/2` **requires** a simulator adapter:
+`MyDriver.Simulator` by convention, or an explicit `simulator:` module option.
+It cannot derive device behavior from `signal_model/2` alone.
 
 ## Purpose
 
@@ -90,40 +177,15 @@ It owns:
 It does not own device-profile logic inline. That lives in the simulator's
 private slave runtime and profile modules under `lib/ethercat/simulator/slave/`.
 
-Runtime implementation shape:
+Implementation entry points under `lib/ethercat/simulator/`:
 
-```text
-lib/ethercat/
-├── simulator.ex
-└── simulator/
-    ├── driver_adapter.ex
-    ├── fault.ex
-    ├── runtime/
-    │   ├── faults.ex
-    │   ├── milestones.ex
-    │   ├── router.ex
-    │   ├── snapshot.ex
-    │   ├── subscriptions.ex
-    │   └── wiring.ex
-    ├── transport.ex
-    ├── transport/
-    │   ├── raw.ex
-    │   ├── raw/
-    │   │   ├── endpoint.ex
-    │   │   └── fault.ex
-    │   ├── udp.ex
-    │   └── udp/
-    │       └── fault.ex
-    └── slave/
-        ├── behaviour.ex
-        ├── definition.ex
-        ├── driver.ex
-        ├── object.ex
-        ├── profile.ex
-        ├── signals.ex
-        ├── value.ex
-        └── reference/
-```
+| Path | Role |
+|------|------|
+| `adapter.ex`, `slave.ex`, `slave/definition.ex` | Public device authoring and driver hydration |
+| `runtime/` | Segment routing, topology, faults, milestones, snapshots, wiring |
+| `slave/runtime/`, `slave/profile/` | In-memory ESC/device behavior and profile defaults |
+| `transport/udp.ex`, `transport/raw.ex` | Host-side transport endpoints |
+| `fault.ex`, `transport/*/fault.ex` | Runtime and transport-specific fault builders |
 
 Unlike SOES, there is no embedded polling loop equivalent to `ecat_slv()`.
 Incoming EtherCAT datagrams drive the simulator state:
@@ -176,8 +238,6 @@ Main entry points:
 - `status/0` — stable machine-readable `%EtherCAT.Simulator.Status{}`; `backend: nil`
   means the simulator is running detached with no transport attached
 - `process_datagrams/1` — execute EtherCAT datagrams directly
-- `process_datagrams/2` — execute EtherCAT datagrams with simulator-local
-  options such as raw ingress side
 - `inject_fault/1` / `clear_faults/0` — deterministic runtime fault injection
 - `set_topology/1` — switch the simulator between linear and redundant
   topology modes, including a deterministic single break
@@ -187,7 +247,8 @@ Main entry points:
 - `connect/2`, `disconnect/2` — cross-slave signal wiring
 - `subscribe/3` / `unsubscribe/3` — widget-friendly signal observation
 
-Use `EtherCAT.Simulator.Slave` to build devices such as:
+Use `EtherCAT.Simulator.Slave.from_driver/2` with an adapter, or
+`EtherCAT.Simulator.Slave.Definition.build/2` with a profile, for devices such as:
 
 - digital I/O
 - couplers
@@ -197,7 +258,7 @@ Use `EtherCAT.Simulator.Slave` to build devices such as:
 - simulated devices hydrated from a real `EtherCAT.Driver` through
   `from_driver/2`
 
-`EtherCAT.Simulator.Slave.Definition` is the public opaque authored device type
+`EtherCAT.Simulator.Slave.Definition` is the public authored device struct
 used by those builders and optional driver hydration.
 
 ## Capabilities
@@ -233,17 +294,11 @@ Implemented and validated surface:
 - cross-slave signal wiring
 - real-device hydration through simulator companions on real drivers
 
-The preferred public device story is protocol-driver-backed simulation:
-
-```elixir
-coupler = EtherCAT.Simulator.Slave.from_driver(MyApp.EK1100, name: :coupler)
-inputs = EtherCAT.Simulator.Slave.from_driver(MyApp.EL1809, name: :inputs)
-outputs = EtherCAT.Simulator.Slave.from_driver(MyApp.EL2809, name: :outputs)
-```
-
-Profile modules still exist, but they are implementation detail. The public
-story is: simulate real devices through protocol drivers and keep identity,
-PDO naming, codecs, and simulator hydration aligned.
+For real-device fixtures, keep driver identity, PDO mappings, codecs, and the
+simulator adapter aligned. `EtherCAT.Capture` can generate structural scaffolds
+from a device, but captured layout is not a complete behavior model. Profile
+implementation modules are internal; author through the public definition or
+adapter API.
 
 ## Fault Model
 
@@ -290,12 +345,14 @@ Current slave-local fault injections include:
 - `{:mailbox_abort, slave_name, index, subindex, abort_code, stage}`
 - `{:mailbox_protocol_fault, slave_name, index, subindex, stage, fault_kind}`
 
-Direct slave-local injections stay active until `clear_faults/0`. The same
-mailbox protocol fault injected as a step inside `Fault.script/1` is consumed
-on first match so reconnect/retry scenarios can fail once and self-heal on a
-later master retry.
+Direct mailbox fault rules remain active until `clear_faults/0`. State-changing
+faults such as power-cycle or SAFEOP retreat mutate the device when applied;
+clearing faults does not undo that transition. A mailbox protocol fault inside
+`Fault.script/1` is consumed on first match, allowing a retry to self-heal.
 
-Example runtime and UDP-edge faults:
+Fault snippets below assume an already-running fixture with the named devices;
+they are independent examples, not a single recovery script. UDP/raw edge APIs
+require their corresponding transport endpoint.
 
 ```elixir
 alias EtherCAT.Simulator.Fault
@@ -324,8 +381,8 @@ EtherCAT.Simulator.Transport.Raw.inject_fault(
 
 ## Delay Semantics
 
-The simulator currently supports delayed fault scheduling, not general
-transport-latency simulation.
+The simulator supports delayed fault activation and selected raw-egress delays,
+not a general transport-latency simulation.
 
 What exists today:
 
@@ -350,11 +407,19 @@ still be less useful than deterministic fault windows.
 
 ## Testing Strategy
 
-Repository integration coverage keeps two maintained variants built around the
-same real drivers:
+Repository integration coverage shares driver fixtures across:
 
-- `test/integration/simulator/ring_test.exs`
+- `test/integration/simulator/00_healthy_ring_transport_matrix_test.exs`
 - `test/integration/hardware/ring_test.exs`
+
+Run the hardware-free scenarios from a checkout with:
+
+```bash
+ETHERCAT_INTEGRATION_TRANSPORT=udp mix test test/integration/simulator --exclude raw_socket --exclude raw_socket_redundant --exclude raw_socket_redundant_toggle
+```
+
+Raw variants require dedicated Linux veth interfaces and raw-socket privileges;
+link-toggle scenarios additionally need permission to change interface state.
 
 The simulator suite is the primary place for deterministic fault matrices:
 
@@ -386,8 +451,8 @@ outside the tracked repo.
 
 Relevant repo integration guides:
 
-- `test/integration/simulator/README.md`
-- `test/integration/hardware/README.md`
+- [Simulator scenarios](https://github.com/sid2baker/ethercat/blob/main/test/integration/simulator/README.md)
+- [Hardware bench guide](https://github.com/sid2baker/ethercat/blob/main/test/integration/hardware/README.md)
 
 Historical planning material may exist in local helper notes outside the tracked
 repo, but the maintained sources here are the current module docs, tests, and

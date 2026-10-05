@@ -7,8 +7,10 @@ defmodule EtherCAT.Simulator.Slave do
   values on a running simulator.
 
   `from_driver/2` can hydrate a simulated device from a real
-  `EtherCAT.Driver` plus an optional simulator-side companion module such
-  as `MyDriver.Simulator`.
+  `EtherCAT.Driver` and a simulator-side companion such as `MyDriver.Simulator`.
+  The companion is optional for real hardware drivers, but required for this
+  hydration path; signal mappings alone do not define simulated behavior.
+  See `EtherCAT.Simulator` for a complete UDP walkthrough.
   """
 
   alias EtherCAT.Simulator
@@ -19,6 +21,19 @@ defmodule EtherCAT.Simulator.Slave do
   @type device :: Definition.t()
   @type signal_ref :: {atom(), atom()}
 
+  @doc """
+  Build an authored simulator definition from a driver and its adapter.
+
+  Options:
+
+  - `:config` — driver configuration map, default `%{}`
+  - `:name` — override the simulated device name
+  - `:simulator` — explicit `EtherCAT.Simulator.Adapter` module; otherwise resolves
+    `MyDriver.Simulator` for `MyDriver`
+
+  Raises `ArgumentError` when no adapter is available or its options are invalid.
+  This builds a definition only; start it with `EtherCAT.Simulator.start/1`.
+  """
   @spec from_driver(driver(), keyword()) :: device()
   def from_driver(driver, opts \\ []) when is_atom(driver) do
     config = Keyword.get(opts, :config, %{})

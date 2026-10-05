@@ -3,7 +3,26 @@ defmodule EtherCAT.Driver.Provisioning do
   Optional provisioning extension API for driver-authored mailbox setup.
 
   Drivers that need CoE startup downloads or sync reconfiguration steps may
-  implement this behaviour alongside `EtherCAT.Driver`.
+  implement this behaviour alongside `EtherCAT.Driver`. The callback declares
+  an ordered list of writes; the runtime executes them through the slave mailbox.
+  It is not a hook for opening a second bus connection.
+
+  For example, a driver can declare a device-specific unsigned 16-bit setting
+  for PREOP and no additional sync-update writes:
+
+      @behaviour EtherCAT.Driver.Provisioning
+
+      @impl true
+      def mailbox_steps(%{setting: value}, %{phase: :preop})
+          when is_integer(value) and value in 0..65_535 do
+        [{:sdo_download, 0x2000, 0x01, <<value::little-unsigned-16>>}]
+      end
+
+      def mailbox_steps(_config, %{phase: :sync_update}), do: []
+
+  The object address and width above are illustrative, not a generic device
+  setting. Use the device's object dictionary. PREOP setup may run again during
+  reconnect, so consider the device's write/retry semantics when authoring steps.
   """
 
   alias EtherCAT.Driver
@@ -19,6 +38,13 @@ defmodule EtherCAT.Driver.Provisioning do
           required(:sync) => SyncConfig.t() | nil
         }
 
+  @doc """
+  Return ordered SDO downloads for PREOP setup or a synchronization update.
+
+  `context.phase` is `:preop` or `:sync_update`; `context.sync` is the requested
+  `EtherCAT.Slave.Sync.Config` or `nil`. Return `[]` when no writes are needed.
+  Drivers without this extension also default to no steps.
+  """
   @callback mailbox_steps(Driver.config(), mailbox_context()) :: [mailbox_step()]
 
   @spec mailbox_steps(module(), Driver.config(), mailbox_context()) :: [mailbox_step()]

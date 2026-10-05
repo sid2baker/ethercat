@@ -1,19 +1,23 @@
 defmodule EtherCAT.Bus.Transport.UdpSocket do
   @moduledoc """
-  UDP/IP transport for EtherCAT (spec §2.6).
+  UDP/IP transport for simulator and integration endpoints.
 
-  Encapsulates EtherCAT frames in UDP/IP packets per Table 8:
-  - UDP destination port: 0x88A4 (34980) — the only header field ESCs check
-  - UDP payload = EtherCAT payload (`Bus.Frame.encode/1` output)
-  - ESC accepts frames with any source/destination IP address
-  - ESC clears the UDP checksum on forwarded frames (cannot update on-the-fly)
+  Sends the EtherCAT payload (`Bus.Frame.encode/1` output) inside a UDP datagram,
+  using the conventional EtherCAT UDP port `0x88A4` (`34980`) by default. This is
+  not the raw Ethernet transport used for ordinary physical EtherCAT rings;
+  the destination must explicitly support this encapsulation.
 
-  Implements the `EtherCAT.Bus.Transport` behaviour.
+  Implements the `EtherCAT.Bus.Transport` behaviour. Application startup should
+  select it through `EtherCAT.Backend`, not by opening a transport directly.
 
   ## Options
 
     - `:host` — destination IP tuple (default: `{255, 255, 255, 255}` broadcast)
-    - `:port` — destination UDP port (default: `34980` = `0x88A4`)
+    - `:port` — local bind and destination UDP port (default: `34980` = `0x88A4`)
+    - `:bind_ip` — optional local IP tuple; otherwise binds all local addresses
+
+  A same-host simulator must bind a different local address when sharing the
+  port. See `EtherCAT.Simulator` for a Linux loopback example.
   """
 
   @behaviour EtherCAT.Bus.Transport
@@ -29,7 +33,7 @@ defmodule EtherCAT.Bus.Transport.UdpSocket do
         }
 
   @impl true
-  @doc "Open a UDP socket bound to port 0x88A4."
+  @doc "Open a UDP socket bound to the configured port and optional local IP."
   @spec open(keyword()) :: {:ok, t()} | {:error, term()}
   def open(opts) do
     host = opts[:host] || {255, 255, 255, 255}
@@ -86,7 +90,8 @@ defmodule EtherCAT.Bus.Transport.UdpSocket do
 
   Returns `{:ok, ecat_payload, rx_at, nil}` when the message belongs to this
   socket. `src_mac` is always `nil` for UDP (no Ethernet headers).
-  The UDP checksum is cleared by the ESC (spec §2.6) — no validation needed.
+  This function matches socket ownership only; EtherCAT payload validation is
+  performed by the link/frame layer.
   """
   @spec match(t(), term()) :: {:ok, binary(), integer(), nil} | :ignore
   def match(%__MODULE__{raw: sock}, {:udp, sock, _ip, _port, data}) do

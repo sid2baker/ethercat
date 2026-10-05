@@ -7,8 +7,16 @@ defmodule EtherCAT do
   resolving through the current singleton runtime:
 
       {:ok, session} = EtherCAT.start(backend: {:raw, %{interface: "eth0"}})
-      :ok = EtherCAT.await_operational(session)
-      {:ok, sample} = EtherCAT.sample(session, :inputs, :io)
+      :ok = EtherCAT.await_ready(session)
+      {:ok, :preop_ready} = EtherCAT.state(session)
+      {:ok, slaves} = EtherCAT.Diagnostics.slaves(session)
+      :ok = EtherCAT.stop(session)
+
+  With no explicit slave configuration, discovery holds the ring in PREOP;
+  it does not start cyclic I/O. For cyclic operation, supply ordered
+  `EtherCAT.Slave.Config` entries and `EtherCAT.Domain.Config` entries, then use
+  `await_operational/2`. See the [getting-started guide](readme.html) or the
+  no-hardware walkthrough in `EtherCAT.Simulator`.
 
   A stopped or replaced session returns `{:error, :stale_session}`.
 
@@ -67,7 +75,31 @@ defmodule EtherCAT do
   @type sample_map :: %{optional(domain_id()) => Sample.t()}
   @type slave_status :: EtherCAT.Slave.Status.t()
 
-  @doc "Start a master session and return its opaque identity."
+  @doc """
+  Start a master session and return its opaque identity.
+
+  The host must already supervise `EtherCAT.Runtime`. Startup is asynchronous:
+  use `await_ready/2` for PREOP provisioning or `await_operational/2` for cyclic I/O.
+
+  Options:
+
+  - `:backend` (required) — raw, redundant raw, or UDP `EtherCAT.Backend` description
+  - `:slaves` — `EtherCAT.Slave.Config` entries in physical bus order. Omit or pass
+    `[]` to assign discovered devices the names `:coupler`, `:slave_1`, … and hold
+    them in PREOP. These are positional names, not inferred device types.
+  - `:domains` — `EtherCAT.Domain.Config` entries, default `[]`. Domain IDs must
+    exist before slave process-data assignments refer to them.
+  - `:dc` — `EtherCAT.DC.Config` or keyword options; defaults to `%EtherCAT.DC.Config{}`.
+    Set `nil` to disable Distributed Clocks.
+  - `:base_station` — first assigned station address, default `0x1000`
+  - `:scan_stable_ms` / `:scan_poll_ms` — stable-count window and discovery poll
+    interval in milliseconds, default `1000` / `100`
+  - `:frame_timeout_ms` — optional bus response timeout override in milliseconds;
+    otherwise the runtime derives it from the configured cycle budget
+
+  Only one session can be active per BEAM node. This operation assigns station
+  addresses and changes slave state; do not share its interface with another master.
+  """
   @spec start(keyword()) :: {:ok, Session.t()} | {:error, term()}
   def start(opts \\ []) do
     case Master.start_session(opts) do
@@ -130,7 +162,15 @@ defmodule EtherCAT do
     end
   end
 
-  @doc "Return the latest retained sample for one slave and domain."
+  @doc """
+  Return the latest retained sample for one slave and domain.
+
+  Returns `{:error, :not_ready}` when no sample is retained for that domain,
+  including before its first input observation. `await_operational/2` alone does
+  not guarantee a sample is already available. Inspect `Sample.errors` for
+  per-signal decode failures and `status/2` for current runtime health; a retained
+  sample is not a liveness guarantee.
+  """
   @spec sample(Session.t(), slave_name(), domain_id()) ::
           {:ok, Sample.t()} | {:error, term()}
   def sample(session, slave_name, domain_id)
@@ -189,7 +229,15 @@ defmodule EtherCAT do
     end
   end
 
-  @doc "Read a decoded input and its observation timestamp in monotonic microseconds."
+  @doc """
+  Read a decoded input and its refresh timestamp in host monotonic microseconds.
+
+  Returns `{:error, :not_ready}` before the first valid domain refresh and
+  `{:error, {:stale, details}}` after the domain freshness window expires. Decode
+  failures remain errors, not substitute values. Unlike `sample/3`, this reads
+  the current domain image with freshness checking rather than a retained
+  change-driven observation.
+  """
   @spec read(Session.t(), slave_name(), atom()) ::
           {:ok, {term(), integer()}} | {:error, term()}
   def read(session, slave_name, signal_name)
@@ -199,7 +247,13 @@ defmodule EtherCAT do
     end
   end
 
-  @doc "Stage one decoded output signal for the session's next domain cycle."
+  @doc """
+  Stage one decoded output signal for the session's next domain cycle.
+
+  `:ok` means the driver encoded the value and the runtime staged it. It is not
+  an acknowledgement from the device or proof of physical actuation. Subsequent
+  writes can replace the staged value before a cycle transmits it.
+  """
   @spec write(Session.t(), slave_name(), atom(), term()) :: :ok | {:error, term()}
   def write(session, slave_name, signal_name, value)
       when is_atom(slave_name) and is_atom(signal_name) do

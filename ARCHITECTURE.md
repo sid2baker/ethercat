@@ -1,418 +1,235 @@
-# EtherCAT — Architecture
+# EtherCAT architecture
 
-## What This Is
+EtherCAT is an experimental pure-Elixir EtherCAT master: no NIF or custom kernel
+module. Physical rings use raw Ethernet sockets. UDP is a simulator/integration
+transport, not a claim that ordinary EtherCAT slaves accept UDP.
 
-A pure-Elixir EtherCAT master library. No NIF. No kernel module.
+Start with the [README](README.md) for setup and the public module docs for API
+contracts. This document explains ownership, sequencing, and data flow.
 
-Real hardware runs over raw sockets. UDP exists as a simulator and integration
-transport boundary, not as a claim that the production master speaks UDP on a
-real ring.
+## Public boundaries
 
-The target is still automation workloads (discrete I/O, drives) where 1–10 ms
-cycle times are sufficient and BEAM scheduler jitter is compensated by the
-distributed clock layer.
+| Module | Responsibility |
+|--------|----------------|
+| `EtherCAT` | Session lifecycle, protocol status, samples, descriptions, subscriptions, reads and writes |
+| `EtherCAT.Runtime` | Host-owned singleton supervision root |
+| `EtherCAT.Session` | Opaque master PID and generation identifying one session |
+| `EtherCAT.Backend` | Raw, redundant raw, or UDP transport description |
+| `EtherCAT.Scan` | One-shot discovery; assigns station addresses, so it is not passive |
+| `EtherCAT.Provisioning` | PREOP configuration, activation/deactivation, SDO traffic |
+| `EtherCAT.Diagnostics` | Live master, slave, domain, and DC inspection |
+| `EtherCAT.Signals` | Specialist signal/latch subscriptions |
+| `EtherCAT.Driver` | Device signal mappings, codecs, optional identity and static metadata |
+| `EtherCAT.Simulator` | Separately started virtual slave segment and fault scheduling |
 
----
+These are API roles, not separate processes. Machine-state projection, semantic
+commands, and machine events belong in a higher-level integration, not in the
+protocol driver.
 
-## Module Map
+## Supervision and session ownership
 
-```
+```text
 Host application supervisor
-└── EtherCAT.Runtime
-    │
-    ├── EtherCAT                    (protocol status/sample/notification/read/write API)
-    ├── EtherCAT.Session            (opaque master pid + session generation)
-    ├── EtherCAT.Backend            (normalized backend description)
-    ├── EtherCAT.Scan               (one-shot observational topology scan)
-    ├── EtherCAT.Provisioning       (advanced PREOP/configuration/SDO API)
-    ├── EtherCAT.Diagnostics        (advanced inspection and runtime visibility API)
-    ├── EtherCAT.Driver             (public driver behaviour for extension authors)
-    ├── EtherCAT.Signals                (signal and latch subscriptions)
-    │
-    ├── EtherCAT.Master             (singleton gen_statem — bus lifecycle coordinator)
-    │
-    ├── EtherCAT.SessionSupervisor  (dynamic supervisor for session-scoped runtime processes)
-    │   ├── EtherCAT.Bus            (bus scheduler — all frame I/O goes here)
-    │   │   ├── EtherCAT.Bus.Link.Single
-    │   │   ├── EtherCAT.Bus.Link.Redundant
-    │   │   ├── EtherCAT.Bus.Link.RedundantMerge
-    │   │   └── EtherCAT.Bus.Transport.*      (raw/UDP transport boundary)
-    │   ├── EtherCAT.DC             (gen_statem — DC maintenance + lock/status monitor)
-    │   └── EtherCAT.Domain         (gen_statem per domain — cyclic LRW exchange)
-    │
-    ├── EtherCAT.SlaveSupervisor    (dynamic supervisor — one_for_one slave runtime children)
-    │   └── EtherCAT.Slave          (gen_statem per named slave — ESM lifecycle, checked PREOP setup, checked SAFEOP sync/latch setup)
-    │       ├── EtherCAT.Slave.ESC.SII (EEPROM reader — stateless, called from Slave.init)
-    │       ├── EtherCAT.Driver (behaviour contract for user drivers)
-    │       ├── EtherCAT.Slave.Sync.Plan (pure sync/latch register planning)
-    │       └── EtherCAT.Slave.ESC.Registers (ESC register address map — pure functions)
+└── EtherCAT.Runtime                     (one per BEAM node; one_for_all)
+    ├── EtherCAT.Registry                (local slave/domain registry)
+    ├── EtherCAT.SlaveSupervisor          (dynamic, one_for_one)
+    │   └── EtherCAT.Slave × configured slave
+    ├── EtherCAT.SessionSupervisor       (dynamic, one_for_one)
+    │   ├── EtherCAT.Bus                 (single or redundant link process)
+    │   ├── EtherCAT.Domain × domain     (cyclic LRW and process image)
+    │   └── EtherCAT.DC                  (when DC runtime is active)
+    └── EtherCAT.Master                  (singleton lifecycle coordinator)
 ```
 
-`Master.FSM` owns lifecycle decisions and transition replies. `Master.Recovery`
-performs recovery operations and returns their results and updated master data;
-it does not select state-machine transitions. `Master.Diagnostics` collects live
-observations, and `Master.Status` projects explicitly supplied observations into
-the public status struct. The master captures a configuration snapshot and exact
-worker PIDs without making live process calls. Diagnostic callers gather those
-observations under a shared one-second budget and revalidate the session generation
-before returning; timeout, exit, and invalid-reply failures stay explicit.
-Worker lifecycle messages carry the originating PID and are validated against
-current registered workers and session configuration before entering transition
-logic. Unwrapped messages and stale workers cannot mutate the new session.
-An idle master has no desired runtime target; active sessions set one validated target (`:preop`, `:safeop`, or `:op`).
+The host starts `EtherCAT.Runtime`; the package does not autostart it as an OTP
+application. `EtherCAT.start/1` opens a session inside that tree. `EtherCAT.stop/1`
+ends the session, not the host-owned supervisor.
 
-Session process resolution validates the generation at the master, then looks up
-only the requested configured slave or domain. Descriptions and inventory read
-configuration directly, with lightweight identity and tracked-fault metadata;
-they do not construct diagnostic reports or query bus, DC, or domain processes.
+Normal runtime, provisioning, diagnostic, subscription, and capture calls carry
+an `EtherCAT.Session`. The master validates its generation before resolving
+workers. Stopped or replaced sessions cannot silently address new workers.
+Low-level bus/domain process APIs also exist for internal work and tests; they
+are not substitutes for the session-bound application API.
 
-Each bus link owns dispatch and send-result handling. `Bus.Link` shares queue
-selection, batching, datagram index assignment, and reply primitives. `Domain`
-owns its initialization and defaults; `Domain.Image` and `Domain.Layout` retain
-storage and layout responsibilities.
+Slaves register as `{:slave, name}` and domains as `{:domain, id}`. Worker lifecycle
+messages include their originating PID; the master checks it against the current
+workers and configuration before applying a transition.
 
-Optional sibling runtime (started separately, not under `EtherCAT.Runtime`):
+`Master.FSM` owns lifecycle decisions. `Master.Recovery` performs recovery work
+and returns results, rather than selecting state-machine transitions. Diagnostic
+callers collect live observations under a shared one-second budget and revalidate
+the session afterward. Timeouts, exits, and invalid replies remain explicit.
+Descriptions and inventory read configuration without constructing live diagnostic
+reports or querying bus, domain, and DC processes.
 
-```
-EtherCAT.Simulator
-├── EtherCAT.Simulator.Slave                (simulated slave builders + hydration from real drivers)
-├── EtherCAT.Simulator.Adapter              (optional simulator-side companion for real drivers)
-├── EtherCAT.Simulator.Fault                (public deterministic runtime fault builder)
-└── EtherCAT.Simulator.Transport
-    ├── EtherCAT.Simulator.Transport.Udp
-    │   └── EtherCAT.Simulator.Transport.Udp.Fault
-    └── EtherCAT.Simulator.Transport.Raw
-        ├── EtherCAT.Simulator.Transport.Raw.Fault
-        └── EtherCAT.Simulator.Transport.Raw.Endpoint   (internal worker)
-```
+## Startup and lifecycle
 
-Registry: `EtherCAT.Registry` (local). Slaves register as `{:slave, name}`;
-Domains register as `{:domain, id}`.
-
-The normal runtime surface is `EtherCAT`. `EtherCAT.Provisioning`,
-`EtherCAT.Diagnostics`, `EtherCAT.Signals`, and `EtherCAT.Driver` are specialist
-public modules. `EtherCAT.Master`, `EtherCAT.Slave`, `EtherCAT.Domain`, and
-`EtherCAT.DC` are the core runtime processes behind that surface. `Domain` and
-`DC` own their small `gen_statem` callbacks directly; larger lifecycle
-boundaries such as `Master` and `Slave` keep dedicated FSM modules so their
-state transitions can still be audited separately from operational helpers.
-Low-level mechanics live in helper namespaces (`EtherCAT.Master.*`,
-`EtherCAT.Slave.Runtime.*`, `EtherCAT.Domain.*`, `EtherCAT.DC.*`) only where
-they carry real protocol or lifecycle weight.
-
-`EtherCAT.Runtime` is the supported root boundary. Host applications own its
-lifecycle. `EtherCAT.start/1` opens the singleton session and returns an opaque
-`EtherCAT.Session` containing the master pid and session generation. Every
-runtime, provisioning, diagnostic, signal subscription, and capture operation
-requires that session. Calls are validated inside the master serialization
-boundary, so a stopped session cannot target a later replacement session.
-
-`EtherCAT.Simulator` follows the same boundary rule on the test/runtime side:
-the public simulator process owns segment state, datagram execution,
-`status/0`, and deterministic fault scheduling, while profile logic and device
-behavior live under `EtherCAT.Simulator.Slave.*`.
-
-The top-level runtime roles are now explicit:
-
-- `EtherCAT.Backend` describes how a runtime attaches to a transport boundary
-- `EtherCAT.Scan.scan/1` reports observed topology only
-- `EtherCAT.Diagnostics.master_status/1` reports session controller/runtime state
-- `EtherCAT.Simulator.status/0` reports simulator/runtime state
-
----
-
-## Data Flow
-
-### Startup (Master coordinates)
-
-```
-Master :discovering ──── BRD 0x0000, count stable ──── Master :awaiting_preop
-  │
-  ├── APWR 0x0010 × N        assign station addresses
-  ├── DC.initialize_clocks/2 snapshot read + init-plan apply
-  ├── SessionSupervisor      start Domain gen_statems (must exist before slaves)
-  └── SlaveSupervisor        start Slave gen_statems (each auto-advances to PREOP)
-        │
-        Slave :init ─── SII read ─── checked mailbox SM setup ─── AL 0x02 ─── Slave :preop
-              │
-              explicit post-transition PREOP setup:
-                mailbox_config → process-data plan → domain SM registration/FMMU writes
-                → build SM-indexed signal decode map → {:slave_ready, name, :preop}
-              │
-              Master collects all {:slave_ready} →
-              quiesce startup traffic before publishing ready
-              │
-              (explicit config) DC runtime start → domain cycling
-              (separate DC frame carries FRMW + diagnostics) → optional DC lock wait → SafeOp
-              → checked post-transition DC SYNC/latch setup → Op → Master :operational
-              OR activation remains incomplete → Master :activation_blocked
-              OR (dynamic startup) remain in PREOP for runtime configuration →
-              Master :preop_ready
+```text
+EtherCAT.start(options) → returns session; startup continues asynchronously
+  Master :discovering
+    count stable slaves → assign station addresses → optional DC initialization
+    start domains in :open → start slaves in physical configuration order
+  Master :awaiting_preop
+    each slave: INIT → SII read → checked mailbox SM setup → PREOP
+      → driver mailbox configuration → checked process-data plan
+      → domain registration and FMMU programming → report PREOP-ready
+    master drains startup traffic with Bus.quiesce
+  no activation requested → :preop_ready
+  activation requested
+    → optional DC runtime → domain cycling → optional DC lock wait
+    → SAFEOP → checked slave-local SYNC/latch setup → OP
+    → :operational, or :activation_blocked if the target is not reached
 ```
 
-### Cyclic I/O (runtime + driver)
+The absence of an explicit slave list means discovery/provisioning, not automatic
+cyclic configuration. Discovered devices are named `:coupler`, `:slave_1`, … by
+position and held in PREOP. Those names do not identify device types. Explicit
+`EtherCAT.Slave.Config` entries default to `target_state: :op`; their order determines
+which physical devices they configure. Driver identity is not automatic device
+compatibility enforcement.
 
-```
-Domain :cycling
-  state_timeout :tick every whole-millisecond cycle_time_us
-    build_frame  → splice outputs from ETS into zero-filled binary (iodata, no alloc)
-    Bus.transaction LRW
-      → raw socket send → receive → response binary
-    dispatch_inputs → compare each slice against ETS → on change:
-      ETS update + send the coherent per-slave domain response image to the slave pid
-      Slave computes changed signal names from changed SM slices
-      → decodes the complete input image for that slave and domain
-      → retains and publishes %EtherCAT.Sample{}
-      → reuses the same decoded values for raw signal subscribers
-```
+`EtherCAT.state/1` exposes:
 
-A sample is coherent only within its domain cycle. A slave split across domains
-produces independent samples; the runtime does not imply cross-domain
-consistency.
+- `:discovering` — scanning and preparing session workers
+- `:awaiting_preop` — waiting for checked slave-local PREOP setup
+- `:preop_ready` — usable PREOP session, not cyclic operation
+- `:deactivated` — live session intentionally held below OP, normally SAFEOP
+- `:operational` — activated runtime; non-critical slave-local faults may still exist
+- `:activation_blocked` — requested target not fully reached
+- `:recovering` — critical runtime fault recovery
 
-### Protocol status and notifications
+`await_ready/2` accepts `:preop_ready`, `:deactivated`, or `:operational`.
+`await_operational/2` waits for activation. Neither promises that every signal has
+already produced its first sample or that a previously observed state remains
+healthy forever.
 
-`EtherCAT.subscribe/2` installs the subscriber and reads the current
-`EtherCAT.Slave.Status` plus retained samples at one slave-process serialization
-boundary, returning `{:ok, ref, status, samples}`. The same process subsequently
-sends `{:ethercat, ref, payload}` containing samples and `EtherCAT.Notification`
-values, preserving their local ordering. `EtherCAT.unsubscribe/3` cancels that
-registration. Push delivery has no backpressure; consumers that only need the
-latest values can poll `EtherCAT.samples/2`.
+Health polling is deliberately suppressed during an initial all-PREOP provisioning
+session. Activation restores configured polling, including for slaves intentionally
+left in PREOP. Runtime-held PREOP/SAFEOP states can then detect disconnects and
+lower-state regressions. `health_poll_ms: nil` explicitly disables slave polling;
+cyclic domain faults are a separate source of runtime health.
 
-Slave AL/runtime transitions produce `:slave_state_changed` notifications.
-Domains fan lifecycle and cycle-health transitions to each attached slave;
-slave runtimes retain those `EtherCAT.Domain.Status` values and publish
-`:domain_status_changed` notifications. These are protocol/runtime facts for a
-higher-level adapter to interpret, not machine availability or semantic events.
+Deactivation stops cycling and retreats activatable slaves to SAFEOP or PREOP.
+Reconfiguration requires PREOP, not the default SAFEOP hold. Fault recovery aims
+at the desired runtime target; it must not promote a deliberately held slave to OP.
 
-### Protocol write path (application → bus)
+## Cyclic data flow
 
-```
-Application
-  EtherCAT.write(session, slave, signal, value)
-    → driver.encode_signal/3
-    → runtime stages the encoded value through Domain.write/3
-  next Domain LRW tick picks up the value and writes it to the slave
-```
-
-`EtherCAT.Signals.*` remains available for signal and latch subscriptions used by specialist
-diagnostics and tooling.
-
----
-
-## Public Lifecycle
-
-`EtherCAT.state/1` exposes the actual `EtherCAT.Master` state machine for one session:
-
-- `:discovering` - scanning, assigning stations, and starting session runtime
-- `:awaiting_preop` - waiting for configured slaves to finish checked PREOP setup
-- `:preop_ready` - bus is usable in PREOP after startup traffic has been drained
-- `:deactivated` - session is live but intentionally held below OP, typically SAFEOP
-- `:operational` - cyclic exchange active
-- `:activation_blocked` - startup or activation reached a usable floor but not the requested target
-- `:recovering` - runtime fault recovery is in progress
-
-`await_ready/1` waits for a usable state (`:preop_ready`, `:deactivated`, or
-`:operational`). Before replying from startup or activation paths, the master
-quiesces the bus so the first public mailbox/configuration exchange starts from
-a quiet transport state.
-
-Even while the session is intentionally held in PREOP or SAFEOP, slave health
-polling remains active. Disconnects and lower-than-held AL-state regressions
-still surface as runtime faults instead of leaving those held states stale.
-
----
-
-## Key Design Decisions
-
-### Bus as single serialization point
-
-All frame I/O goes through `EtherCAT.Bus`. `Bus` is the scheduler `gen_statem`:
-- `Bus.transaction/2` — reliable work. Delivery matters more than timing; reliable
-  submissions may batch with other reliable submissions when the bus is already busy.
-- `Bus.transaction/3` — realtime work with a staleness deadline. Realtime submissions
-  are dropped if stale, always take priority over reliable backlog, and never share a
-  frame with reliable traffic.
-
-Callers define transaction boundaries with `EtherCAT.Bus.Transaction`; the bus decides
-frame boundaries. This prevents multiple gen_statems from racing on the socket while
-keeping frame packing policy out of slave/domain/master call sites.
-
-`Bus` delegates exchange execution to `EtherCAT.Bus.Link.*`:
-- `EtherCAT.Bus.Link.Single` for one interface
-- `EtherCAT.Bus.Link.Redundant` for duplicated send + observed redundant-path interpretation
-
-### Bus execution layers
-
-The current design keeps three concerns separate:
-
-- queueing and caller reply policy
-- socket/transport I/O
-- topology inference and cable-fault interpretation
-
-The current design splits those concerns more cleanly:
-
-- `EtherCAT.Bus` remains the single scheduler and caller-facing serialization point
-- `EtherCAT.Bus.Transport.*` stays the low-level socket boundary (`RawSocket`, `UdpSocket`)
-- `EtherCAT.Bus.Link.*` executes one EtherCAT exchange over one or more transports
-- `EtherCAT.Bus.Link` provides the shared batching, queue, and caller-reply helpers
-- `EtherCAT.Bus.Link.RedundantMerge` is the pure merge helper for split redundant replies
-- `Bus.info/1` exposes the active link's queue, in-flight exchange, and topology/health state directly
-
-The important design change is that topology is derived from observed frame
-returns, not controlled from OS carrier events.
-
-Target module shape:
-
-```
-EtherCAT.Bus
-├── EtherCAT.Bus.Result
-├── EtherCAT.Bus.Link
-│   ├── EtherCAT.Bus.Link.Single
-│   └── EtherCAT.Bus.Link.Redundant
-├── EtherCAT.Bus.Link.RedundantMerge
-└── EtherCAT.Bus.Transport
-    ├── EtherCAT.Bus.Transport.RawSocket
-    └── EtherCAT.Bus.Transport.UdpSocket
+```text
+Application: EtherCAT.write(session, slave, signal, value)
+  → slave invokes driver.encode_signal/3
+  → runtime validates width/padding and stages output in domain ETS
+  → next domain tick builds LRW image from staged outputs
+  → Bus schedules and executes exchange
+  → domain validates transport reply and WKC
+  → valid changed input slices update ETS
+  → slave receives a coherent input image for its domain
+  → driver decodes signals; slave retains/publishes EtherCAT.Sample
 ```
 
-Conceptual boundaries:
+Domain periods are whole milliseconds expressed as `cycle_time_us`. The domain
+owns timing, validity, and its ETS-backed process image. Low-level image reads and
+writes bypass the domain mailbox; public signal calls still pass through the slave
+for codec and session-bound access. ETS is an implementation detail, not the
+application integration contract.
 
-- `Transport` — one socket/device transport, no topology ownership
-- `Link.Single` / `Link.Redundant` — execute one exchange over one or more transports
-- `RedundantMerge` — pure per-exchange truth (`path_shape`, merged datagrams, total WKC)
-- `Bus.info/1` — current public runtime view (type, topology, health, queues, exchange)
+Input publication is change-driven, not a guarantee of one message per cycle.
+The retained sample describes one slave in one domain cycle; different domains
+have independent consistency boundaries. `Sample.inputs` contains successfully
+decoded values and `Sample.errors` contains failures, without substituting old
+values. `observed_at` is host monotonic microseconds, not wall time or DC time.
+Use current status/domain diagnostics as well as retained data to assess health.
 
-Per-exchange `path_shape` values from `EtherCAT.Bus.Link.RedundantMerge`:
+A successful write means staging, not device acknowledgement or physical actuation.
+A later write may replace the staged value before transmission. Faults and stopped
+cycling can prevent staged data from reaching the device.
 
-- `:single`
-- `:full_redundancy`
-- `:primary_only`
-- `:secondary_only`
-- `:complementary_partials`
-- `:no_valid_return`
-- `:invalid`
+### Subscriptions and notifications
 
-Public `topology` values from `Bus.info/1` today:
+`EtherCAT.subscribe/3` registers a subscriber and obtains current status/samples
+at one slave-process serialization boundary. It returns
+`{:ok, ref, status, samples}`. Later `{:ethercat, ref, payload}` messages contain
+samples or `EtherCAT.Notification` values, ordered by that slave process.
 
-- `:single`
-- `:redundant`
-- `:degraded_primary_leg`
-- `:degraded_secondary_leg`
-- `:offline`
+Notifications report slave state and attached-domain lifecycle/health changes;
+they do not imply machine availability or command completion. Push delivery has
+no backpressure. Poll `samples/2` when only the latest observation is needed.
+Subscriber or slave exit cancels a registration; `unsubscribe/3` does not remove
+messages already in the subscriber's mailbox.
 
-Redundant topology should degrade quickly and recover conservatively. A strong
-send/receive failure can change public topology immediately, while promotion
-back to `:redundant` should require observed healthy traffic rather than OS
-carrier state alone.
+## Bus scheduling and transport
 
-OS link state is intentionally outside the bus runtime model. Interface status
-is a separate diagnostic concern and is not part of the correctness path for
-bus exchange execution.
+All frame I/O passes through the bus scheduler. Callers define transaction
+boundaries with `EtherCAT.Bus.Transaction`; the bus chooses frame boundaries.
 
-### ETS hot path for I/O
+- Reliable transactions do not expire while queued and may batch together.
+  They can still fail or time out after dispatch.
+- Realtime transactions have a maximum queued age, take priority over reliable
+  work, and never share a frame with reliable transactions. This is scheduling
+  policy, not a hard real-time guarantee.
 
-Domain I/O bypasses the gen_statem entirely. The ETS table for each domain is `:public`
-with `read_concurrency: true` / `write_concurrency: true`. Any process can read current
-input values or write output values directly without a message round-trip.
+```text
+EtherCAT.Bus                         caller-facing scheduler API
+├── Bus.Link                         queues, batching, indices, replies
+├── Bus.Link.Single                  one-transport exchange execution
+├── Bus.Link.Redundant               dual-raw exchange execution
+├── Bus.Link.RedundantMerge          pure reply merging/classification
+└── Bus.Transport.*                  raw/UDP socket boundary
+```
 
-### Jitter compensation via DC
+The active link is the bus process, not a child process behind a second scheduler.
+Link modules own dispatch and send-result handling. Redundant exchange handling
+uses observed frame returns and open/send failures; OS carrier state is not the
+correctness model. `Bus.info/1` exposes topology, transport health, queues, and
+in-flight state. A degraded topology and a valid merged exchange are distinct
+observations. See `EtherCAT.Bus.Link.Redundant` for authoritative-reply and timeout
+rules, rather than inferring health from carrier alone.
 
-BEAM's scheduler has sub-millisecond jitter. The Distributed Clock layer compensates:
-ESC clocks are synchronized to sub-microsecond precision by the dedicated `DC` runtime, which
-sends a realtime FRMW maintenance frame to the reference slave and periodically appends
-`0x092C` diagnostics for lock detection. Per-slave
-SYNC0/SYNC1/latch intent is configured through
-`%EtherCAT.Slave.Config{sync: %EtherCAT.Slave.Sync.Config{...}}`. SYNC0 pulses fire from the hardware
-clock, not the software scheduler — PDO exchange timing is hardware-anchored regardless of BEAM scheduling.
+## Distributed Clocks and timing limits
 
-### gen_statem + :state_enter throughout
+DC initialization selects the first DC-capable station, measures receive times,
+and applies offset/delay corrections. The current initialization topology model
+is linear and ordered by scan position. A separate DC runtime sends FRMW
+maintenance and periodic `0x092C` diagnostics; it tracks lock against the configured
+threshold and applies the selected lock-loss policy.
 
-All gen_statems use `[:handle_event_function, :state_enter]`. Enter callbacks arm recurring
-timers (domain tick, DC tick, latch poll) and emit telemetry. No enter callback may
-transition state (illegal in OTP). State-deciding logic lives in the event handler that
-calls `{:next_state, ...}`.
+Slave-local `EtherCAT.Slave.Sync.Config` describes SYNC0, SYNC1, and latch intent.
+Hardware-generated SYNC pulses can decouple device application timing from host
+jitter **when process data arrives before the required deadline**. DC does not
+make frame transmission hardware-timed, eliminate BEAM/OS jitter, or rescue late
+PDO data. Clock precision, sustainable cycle rate, and watchdog behavior must be
+measured on the actual hardware under representative load. There is no universal
+frame-time budget or hard real-time guarantee in this library.
 
-### Real driver boundary vs simulator boundary
+## Driver and simulator boundary
 
-`EtherCAT.Driver` owns protocol/device concerns only:
+`EtherCAT.Driver` declares named mappings over discovered PDOs and codecs for the
+registered directions. `describe/1` provides offline metadata; it does not invoke
+layout discovery. Codecs return explicit success/error tuples. Callbacks execute
+synchronously in the slave and should remain pure and fast.
 
-- device identity
-- logical signal naming and PDO layout (`signal_model/2`), using public
-  `EtherCAT.Driver.PDO` discovery data and `EtherCAT.Driver.Signal` mappings
-- static signal metadata
-- signal encode/decode
+Optional `EtherCAT.Driver.Provisioning` callbacks supply mailbox/sync setup.
+Simulation stays separate: `EtherCAT.Simulator.Adapter` supplies authored device
+options, and `Simulator.Slave.from_driver/2` combines those options with declared
+identity defaults. Mapping declarations alone cannot infer a simulator's object
+dictionary or device behavior.
 
-Machine-state projection, semantic command planning, and machine events belong
-above EtherCAT in a separate semantic integration layer.
+The separately started simulator owns datagram execution, segment state,
+snapshots, and deterministic runtime faults. Its UDP/raw endpoints own transport
+faults. It models protocol behavior, not a physical ESC or a complete DC/wire
+latency model. See the [simulator guide](lib/ethercat/simulator.md),
+[scenario suite](test/integration/simulator/README.md), and
+[hardware guide](test/integration/hardware/README.md).
 
-Specialist driver behaviours hang off the core:
+## Implementation entry points
 
-- `EtherCAT.Driver.Provisioning` for PREOP mailbox configuration and sync-update object writes
-- `EtherCAT.Simulator.Adapter` for simulator-side authored definitions
+- `lib/ethercat.ex` — supported application runtime API
+- `lib/ethercat/master.ex` and `master/fsm.ex` — lifecycle coordination
+- `lib/ethercat/slave.ex` and `slave/fsm.ex` — ESM and device runtime
+- `lib/ethercat/domain.ex` and `domain/cycle.ex` — cyclic image ownership
+- `lib/ethercat/bus.ex` and `bus/link/` — scheduler and exchange execution
+- `lib/ethercat/dc.ex` — initialization and runtime lock monitoring
+- `lib/ethercat/simulator.ex` and `simulator.md` — virtual segment boundary
 
-Codecs return explicit success/error tuples and are required only for the
-registered signal directions. The runtime validates output width and padding
-before staging. Decode failures appear in `Sample.errors`, direct-read errors,
-and specialist signal-error messages. Driver callbacks run synchronously in the
-slave and should remain pure and fast; latch side effects belong in subscriber
-processes. Static descriptions never call layout discovery.
-
-Exact simulator authoring does not live in the real driver behaviour. Drivers
-may optionally expose `identity/0` directly on `EtherCAT.Driver`. When a
-driver needs profile-specific simulator defaults, `MyDriver.Simulator` can
-implement `EtherCAT.Simulator.Adapter`, and
-`EtherCAT.Simulator.Slave.from_driver/2` merges that simulator-side authored
-configuration with the real driver's declared identity.
-
----
-
-## Startup Sequence Detail
-
-1. `Bus.start_link/1` — starts the bus scheduler and opens the selected `Bus.Link.*` over one or two transports
-2. `DC.initialize_clocks/2` — BWR latch, read per-slave DC snapshots, build chain init plan, write offsets and delays
-3. `Domain.start_link` per config — creates ETS tables, enters `:open`
-4. `Slave.start_link` per config — starts SII read, checked mailbox SM setup in INIT, auto-advances to `:preop`, then runs explicit PREOP-local mailbox/process-data configuration
-5. `Master` waits for all `{:slave_ready, name, :preop}` messages (30 s timeout). That message means the slave finished its local PREOP setup, not just that AL state reached PREOP.
-6. Before reporting a usable startup state, the master drains late startup traffic with `Bus.quiesce/2` so the first public mailbox call or activation exchange starts cleanly.
-7. If activatable slaves exist: `DC.start_link` — starts DC maintenance plus lock/status monitoring (after all slaves are in PREOP)
-8. If activatable slaves exist: `Domain.start_cycling` per domain — begins self-timed LRW
-9. If activatable slaves exist and `dc.await_lock? == true`: wait for the DC monitor to report `:locked`
-10. If activatable slaves exist: `Slave.request(:safeop)` per slave — SAFEOP transition completes first, then checked ESC sync/latch configuration runs as explicit post-transition work (`0x0910/0x092C` snapshot, aligned start-time plan, `0x0980`, `0x0981`)
-11. If activatable slaves exist: `Slave.request(:op)` per slave — full process data exchange active
-12. Public startup settles in `:preop_ready`, `:operational`, or `:activation_blocked` depending on whether activation was requested and whether any activation/runtime faults remain
-
----
-
-## Frame Budget (100 µs / 1 kHz example)
-
-| Phase | Time |
-|-------|------|
-| BEAM scheduler + send syscall | ~50–200 µs (variable, dominant) |
-| Wire propagation (10 slaves × 100 ns/hop + cable) | ~5–10 µs |
-| ESC processing delay per slave | ~1 µs |
-| LRW datagram overhead | ~2 µs |
-
-At 1 ms cycle, the BEAM scheduler jitter is ~10–20% of the period. DC hardware clocks
-absorb this jitter at the slave application layer — the SYNC0 pulse fires on schedule
-even if the LRW frame arrives early or late.
-
----
-
-## Component Entry Files
-
-Each subsystem has a co-located source or source-adjacent entry file:
-
-| File | Component |
-|------|-----------|
-| `lib/ethercat/slave.ex` | Slave gen_statem state-machine module — ESM lifecycle, driver boundary, PREOP/SAFEOP/OP routing |
-| `lib/ethercat/master.ex` | Master gen_statem state-machine module — discovery, activation, recovery, public status |
-| `lib/ethercat/domain.ex` | Domain gen_statem state-machine module — cyclic LRW ownership, ETS image contract, hot-path coordination |
-| `lib/ethercat/bus.ex` | Bus scheduler — transaction classes, frame dispatch, transport boundary |
-| `lib/ethercat/dc.ex` | DC runtime — maintenance loop, lock/runtime status, master notifications |
-| `lib/ethercat/simulator.ex` | Public simulator runtime — segment execution, snapshots, deterministic fault scheduling |
-| `lib/ethercat/simulator.md` | Simulator process boundary, transport split, and fault-builder surface |
-
-Deeper ESC hardware and register background should live in local helper material
-outside the tracked repo, not in project-owned documentation.
+State machines use `:state_enter` for side effects and timer setup only. State
+transitions are selected by event handlers, never by enter callbacks.

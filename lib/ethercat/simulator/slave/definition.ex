@@ -139,6 +139,28 @@ defmodule EtherCAT.Simulator.Slave.Definition do
     |> Map.merge(base, fn _key, _optional, required -> required end)
   end
 
+  @doc """
+  Build a simulated device from profile defaults and explicit overrides.
+
+  Profiles are `:coupler`, `:digital_io`, `:mailbox_device`, `:lan9252_demo`,
+  `:analog_io`, `:temperature_input`, and `:servo_drive`. Pass `:name` to distinguish
+  devices in a segment. Other options override identity, PDOs, signals, mailbox
+  objects, behavior, and the authored fields described by `t:t/0`.
+
+  For example, this creates a synthetic one-byte output/input image with loopback:
+
+      EtherCAT.Simulator.Slave.Definition.build(:digital_io, name: :io)
+
+  A channel-oriented input fixture can instead use:
+
+      EtherCAT.Simulator.Slave.Definition.build(:digital_io,
+        name: :inputs, mode: :channels, direction: :input, channels: 8
+      )
+
+  These are protocol fixtures, not proof of a vendor device's behavior. When a
+  real driver has a simulator companion, prefer
+  `EtherCAT.Simulator.Slave.from_driver/2` to keep its identity defaults aligned.
+  """
   @spec build(atom(), keyword()) :: t()
   def build(profile, opts \\ []) do
     profile_spec = profile_spec(profile, opts)

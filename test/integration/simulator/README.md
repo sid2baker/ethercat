@@ -1,9 +1,36 @@
-## Simulator Integration Loop
+# Simulator integration guide
 
-Use this folder as a bounded self-improvement loop for the simulator and the
-master runtime.
+These tests run the real master against a virtual slave segment. They are the
+first place to reproduce transport, WKC, AL-state, mailbox, and recovery faults
+without risking physical outputs. For a standalone application example, see the
+[UDP walkthrough](../../../lib/ethercat/simulator.md#run-a-local-udp-example).
 
-The rule is simple:
+## Run the suite
+
+From the repository root:
+
+```bash
+mix deps.get
+# Explicitly UDP-only, even on a host with raw test interfaces configured:
+ETHERCAT_INTEGRATION_TRANSPORT=udp mix test test/integration/simulator --exclude raw_socket --exclude raw_socket_redundant --exclude raw_socket_redundant_toggle
+
+# One deterministic regression:
+ETHERCAT_INTEGRATION_TRANSPORT=udp mix test test/integration/simulator/01_transient_timeout_test.exs
+```
+
+No physical hardware or raw-socket capability is required for UDP tests. The
+runtime and simulator are node-wide singletons, so integration modules use
+`async: false` and register cleanup with `SimulatorRing.stop_all!/0`. The test
+helper supervises `EtherCAT.Runtime`; do not start another copy in each test.
+
+A normal `mix test test/integration/simulator` also runs raw variants when their
+interfaces and permissions are available. Missing prerequisites are reported as
+excluded tests, not evidence that those transports passed. See
+[transport coverage](#transport-baseline-coverage) below.
+
+## Add a regression
+
+Use a bounded reproduce → fix → verify loop:
 
 1. Write a short scenario spec first as `NN_case_name.md`.
 2. Add the smallest failing integration test as `NN_case_name_test.exs`.
@@ -75,7 +102,7 @@ plan -> fix -> verify -> commit.
 - `01`: transient full-response timeout
 - `02`: cyclic WKC mismatch
 - `03`: slave disconnect with health polling and PREOP-first reconnect healing
-- `04`: raw frame corruption or stale/duplicate frame
+- `04`: UDP-edge EtherCAT payload corruption, replay, or mismatched datagram index
 - `05`: slave retreat to `SAFEOP` with health polling, including later disconnect while held there
 - `06`: mailbox abort during startup or recovery
 - `07`: combined fault script, e.g. timeout -> reconnect -> WKC skew
@@ -125,8 +152,9 @@ plan -> fix -> verify -> commit.
 - `51`: a startup-held `:preop_ready` provisioning session should keep background health polling suppressed for slaves that are reconfigured but still intentionally left in `PREOP`
 - `52`: the manual-based `ATV320` driver should expose typed CiA402 state through the public runtime, keep generic scanner words mapped, and resume command flow cleanly after a slave-local `SAFEOP` retreat
 
-These are the current regression scenarios, not just backlog items. Each one
-should keep its `.md` note and matching `_test.exs` file aligned.
+These are regression records, not a speculative backlog. Keep each executable
+scenario's `.md` note and `_test.exs` aligned. Scenario `42` is explicitly a
+hardware-only record and has no simulator test.
 
 The folder also contains a few transport-resilience checks that are not part of
 the numbered scenario ladder. For example,
@@ -145,6 +173,15 @@ The baseline healthy-ring coverage is transport-aware.
 - The same scenario includes redundant raw variants tagged
   `:raw_socket_redundant`. Those run when both redundant raw veth pairs are
   available.
+
+Raw variants need Linux veth pairs and `CAP_NET_RAW` (or equivalent privileges).
+Default pairs are `veth-m0` ↔ `veth-s0` and, for redundancy, `veth-m1` ↔ `veth-s1`.
+Single-link overrides are `ETHERCAT_RAW_MASTER_INTERFACE` and
+`ETHERCAT_RAW_SIMULATOR_INTERFACE`. Redundant overrides use
+`ETHERCAT_REDUNDANT_RAW_{MASTER,SIMULATOR}_{PRIMARY,SECONDARY}_INTERFACE`.
+Link-toggle tests additionally need non-interactive permission to run `ip link set`.
+Create only dedicated test interfaces; never point these helpers at a production
+ring. `test/test_helper.exs` reports missing setup and excludes unavailable variants.
 
 The raw helpers also assume exclusive ownership of the configured veth
 interfaces. Before booting a raw simulator ring, they inspect
@@ -255,14 +292,9 @@ Current mailbox protocol fault kinds:
 - `:invalid_segment_padding`
 - `{:segment_command, command}`
 
-Current mailbox stages accepted by `Fault.mailbox_abort/5` and
-`Fault.mailbox_protocol_fault/5`:
-
-- `:request`
-- `:upload_init`
-- `:upload_segment`
-- `:download_init`
-- `:download_segment`
+Mailbox protocol faults accept `:request`, `:upload_init`, `:upload_segment`,
+`:download_init`, and `:download_segment`. Mailbox aborts use the narrower
+`stage:` option: `:request`, `:upload_segment`, or `:download_segment`.
 
 Use the mailbox-specific builders when the scenario is about CoE/mailbox
 protocol semantics rather than generic datagram loss:
@@ -270,10 +302,11 @@ protocol semantics rather than generic datagram loss:
 - `Fault.mailbox_abort(slave_name, index, subindex, abort_code, opts)`
 - `Fault.mailbox_protocol_fault(slave_name, index, subindex, stage, fault_kind)`
 
-Direct mailbox and slave-local fault injections remain sticky until
-`Simulator.clear_faults/0`. The same mailbox protocol fault used as a step
-inside `Fault.script/1` is consumed on first match, which is the preferred way
-to model "first retry fails, later retry self-heals" reconnect scenarios.
+Direct mailbox fault rules remain sticky until `Simulator.clear_faults/0`.
+State-changing faults such as power-cycle and SAFEOP retreat apply a mutation;
+clearing faults does not restore the device's previous state. The same mailbox
+protocol fault used inside `Fault.script/1` is consumed on first match, which
+models "first retry fails, later retry self-heals" reconnect scenarios.
 
 ## Cyclic Scenario Rules
 
@@ -302,9 +335,9 @@ Use wall-clock timing only when the trigger really is elapsed time:
 
 - `Fault.after_ms/2` delays when a fault becomes active
 - it does **not** simulate late-but-valid transport replies or random jitter
-- if a scenario needs "reply arrives too late" semantics, that is a missing
-  UDP-edge fault shape, not a reason to sprinkle `Process.sleep/1` into the
-  test
+- use `RawFault.delay_response/2` for controlled raw-egress delay
+- UDP does not currently have an equivalent general reply-delay model; do not
+  substitute sleeps for a missing transport fault boundary
 
 For cyclic assertions, prefer checking the user-visible runtime effect instead
 of inferring it from helper internals:
@@ -320,7 +353,7 @@ those windows.
 
 ## Integration Helper API
 
-Prefer the new test helpers for new scenarios:
+Reuse the maintained helpers rather than building a second harness:
 
 - `EtherCAT.Integration.Expect`
   - standalone assertion helpers for plain ExUnit tests
@@ -451,8 +484,7 @@ That keeps this folder centered on the hardest class of failures:
 
 ## Fault Report And Repair Loop
 
-When a simulator scenario finds a product fault, the LLM should leave a clear
-repair trail:
+When a simulator scenario finds a product fault, leave a clear repair trail:
 
 1. Name the fault in one sentence.
 2. Describe the trigger and expected behavior.

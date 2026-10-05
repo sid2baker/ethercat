@@ -11,6 +11,22 @@ defmodule EtherCAT.Diagnostics do
   `{:error, {:diagnostic_unavailable, source, reason}}`, where `source` is `:bus`,
   `:dc`, or `{:domain, id}`. The session is revalidated after collection; results
   from a stopped or replaced generation return `{:error, :stale_session}`.
+
+  Choose the narrowest query you need:
+
+  | Query | Use |
+  |-------|-----|
+  | `master_status/1` | Session target, activation/recovery faults, and subsystem observations |
+  | `slaves/1` | Discovered/configured slave summary |
+  | `slave_info/2` | One slave's AL state, identity, registrations, and runtime details |
+  | `domain_info/2` | One domain's cycle health, counters, and invalid reason |
+  | `dc_status/1` | DC lock state and synchronization diagnostics |
+  | `last_failure/1` | Retained master failure information, when present |
+
+  Diagnostic collection is not an atomic snapshot of the entire ring. An
+  operational master can still track non-critical slave-local faults; inspect
+  the returned fault fields rather than using its state as machine readiness.
+  For static/offline metadata use `EtherCAT.describe/2` or `EtherCAT.inventory/1`.
   """
 
   alias EtherCAT.Domain

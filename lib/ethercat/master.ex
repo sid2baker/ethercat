@@ -88,7 +88,7 @@ defmodule EtherCAT.Master do
       deactivated --> recovering: critical runtime fault
       deactivated --> idle: EtherCAT.stop/1 or fatal subsystem exit
       operational --> recovering: critical runtime fault
-      operational --> deactivated: deProvisioning.activate/1 settles in SAFEOP
+      operational --> deactivated: Provisioning.deactivate/1 settles in SAFEOP
       operational --> preop_ready: deactivate to PREOP
       operational --> idle: EtherCAT.stop/1 or fatal subsystem exit
       activation_blocked --> operational: activation failures clear and target is OP

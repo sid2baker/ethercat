@@ -16,8 +16,14 @@ defmodule EtherCAT.Signals do
 
   Signal updates arrive as `{:ethercat, :signal, slave_name, signal_name, value}`.
   Decode failures arrive as `{:ethercat, :signal_error, slave_name, signal_name, reason}`
-  on each failed cycle, including cycles whose raw bytes did not change.
+  for each decoded input observation containing that failure, even if only another
+  signal in the slave/domain image changed. Unchanged input images do not guarantee
+  a new observation on every cycle.
   Latch edges arrive as `{:ethercat, :latch, slave_name, latch_name, timestamp_ns}`.
+
+  These messages have no subscription reference or backpressure. Registrations
+  last for the subscriber/slave process lifetime. Prefer `EtherCAT.subscribe/3`
+  when you need cancellable, reference-scoped protocol observations.
   """
   @spec subscribe(Session.t(), atom(), atom(), pid()) :: :ok | {:error, term()}
   def subscribe(session, slave_name, signal_name, pid \\ self())

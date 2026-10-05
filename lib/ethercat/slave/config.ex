@@ -1,6 +1,11 @@
 defmodule EtherCAT.Slave.Config do
   @moduledoc """
-  Declarative configuration struct for a Slave.
+  Declarative configuration for one slave in physical bus order.
+
+  Pass these entries in `EtherCAT.start/1`'s `:slaves` list. Names are application
+  identifiers, not device matching rules; the runtime does not select a position
+  by driver identity. Explicit entries default to `target_state: :op`, whereas
+  discovery without a slave list creates PREOP-held configurations.
 
   Fields:
     - `:name` (required) — atom identifying this slave
@@ -8,19 +13,20 @@ defmodule EtherCAT.Slave.Config do
       defaults to the built-in default driver
     - `:config` — driver-specific configuration map, default `%{}`
     - `:process_data` — one of:
-      - `:none` — do not auto-register process data
+      - `:none` (default) — do not auto-register process data
       - `{:all, domain_id}` — register all signal names from the driver's
         `signal_model/2` against one domain
       - `[{signal_name, domain_id}]` — explicit signal-to-domain assignments
     - `:target_state` — desired startup target for this slave:
-      - `:op` — master will advance it to cyclic operation
+      - `:op` (default) — master will attempt to advance it to OP
       - `:preop` — master will leave it in PREOP for manual configuration
     - `:sync` — optional `%EtherCAT.Slave.Sync.Config{}` describing slave-local
       SYNC0/SYNC1 and latch intent
-    - `:health_poll_ms` — interval in milliseconds to poll AL Status after reaching `:op`.
-      When set, the slave periodically reads register `0x0130` and emits a
-      `[:ethercat, :slave, :health, :fault]` telemetry event if the slave has faulted
-      or dropped out of Op. Defaults to `250`; set it to `nil` to disable polling.
+    - `:health_poll_ms` — AL Status polling interval in milliseconds, default `250`;
+      set `nil` to disable polling. Runtime polling detects disconnects and AL-state
+      regressions in OP and runtime-held PREOP/SAFEOP. It is suppressed while the
+      whole session is held in its initial PREOP provisioning phase, then restored
+      on activation, including for slaves whose target remains PREOP.
   """
 
   @default_health_poll_ms 250

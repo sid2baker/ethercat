@@ -1,12 +1,18 @@
 defmodule EtherCAT.Scan do
   @moduledoc """
-  One-shot backend scan that reports observed topology without starting the
-  master runtime.
+  One-shot backend scan that reports observed topology without opening a
+  master session.
 
   `scan/1` is a standalone discovery path. It will refuse to probe a backend
   that is already owned by a live local master session, because scan assigns
   station addresses as part of discovery and is therefore not safe to run
-  against an active runtime on the same backend.
+  against an active runtime on the same backend. It does not detect competing
+  masters in other BEAM nodes or operating-system processes; exclusive interface
+  ownership is the caller's responsibility.
+
+  Scanning can run without `EtherCAT.Runtime`. It opens a temporary bus and
+  closes it before returning; it does not configure cyclic process data or
+  produce an `EtherCAT.Session`.
   """
 
   alias EtherCAT.Backend
