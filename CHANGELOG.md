@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Drivers now use explicit codec results, public PDO/signal types, and optional
+  direction-specific codecs. Static descriptions no longer infer discovered layout,
+  and latch consumers use subscriptions instead of inline driver hooks. Invalid
+  writes fail before staging; samples expose decoding errors without substitute
+  values. Bundled drivers and generated scaffolds use the new contract (`1360779`).
 - Simplify the public API: rename `await_running` to `await_ready`, remove duplicate
   raw read/write operations, move signal subscriptions to `EtherCAT.Signals`, and
   make descriptions strictly static. Protocol subscriptions gain unique references
