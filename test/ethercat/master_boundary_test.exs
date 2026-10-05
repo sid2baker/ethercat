@@ -203,6 +203,24 @@ defmodule EtherCAT.MasterBoundaryTest do
              Task.await(query, 750)
   end
 
+  test "DC wait captures a pid and rejects a reply from a stopped session", %{master: master} do
+    dc = probe(EtherCAT.DC)
+
+    session =
+      install(master, :operational, %Master{
+        generation: make_ref(),
+        desired_runtime_target: :op,
+        dc_config: %DCConfig{}
+      })
+
+    assert {:ok, ^dc} = Session.call(session, :dc_runtime)
+    query = Task.async(fn -> EtherCAT.Provisioning.await_dc_locked(session) end)
+    assert_receive {:probe_call, ^dc, :status, from}
+    assert :ok = EtherCAT.stop(session)
+    :gen_statem.reply(from, %EtherCAT.DC.Status{lock_state: :locked})
+    assert {:error, :stale_session} = Task.await(query)
+  end
+
   defp diagnostic_worker(source) do
     data = %Master{generation: make_ref(), desired_runtime_target: :op}
 

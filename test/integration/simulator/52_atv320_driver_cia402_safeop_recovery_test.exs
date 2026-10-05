@@ -27,14 +27,15 @@ defmodule EtherCAT.Integration.Simulator.ATV320ProtocolSafeopRecoveryTest do
     assert {:ok, [:coupler, :drive]} = EtherCAT.slaves(ethercat)
     assert {:ok, %{coupler: _, drive: _}} = EtherCAT.inventory(ethercat)
 
-    assert {:ok, %EtherCAT.Slave.Status{state: :op}, _initial_samples} =
+    assert {:ok, ref, %EtherCAT.Slave.Status{state: :op}, _initial_samples} =
              EtherCAT.subscribe(ethercat, :drive, self())
 
-    {:ok, ethercat: ethercat}
+    {:ok, ethercat: ethercat, subscription: ref}
   end
 
   test "ATV320 protocol samples and scanner writes survive SAFEOP retreat", %{
-    ethercat: ethercat
+    ethercat: ethercat,
+    subscription: ref
   } do
     Scenario.new()
     |> Scenario.trace()
@@ -119,11 +120,12 @@ defmodule EtherCAT.Integration.Simulator.ATV320ProtocolSafeopRecoveryTest do
         label: "SAFEOP retreat stays slave-local"
       )
 
-      assert_receive %Notification{
-        slave: :drive,
-        kind: :slave_state_changed,
-        details: %{previous_state: :op, current: %SlaveStatus{state: :safeop}}
-      }
+      assert_receive {:ethercat, ^ref,
+                      %Notification{
+                        slave: :drive,
+                        kind: :slave_state_changed,
+                        details: %{previous_state: :op, current: %SlaveStatus{state: :safeop}}
+                      }}
 
       Expect.eventually(
         fn ->
@@ -136,11 +138,12 @@ defmodule EtherCAT.Integration.Simulator.ATV320ProtocolSafeopRecoveryTest do
         label: "SAFEOP retreat heals back to AL OP"
       )
 
-      assert_receive %Notification{
-        slave: :drive,
-        kind: :slave_state_changed,
-        details: %{previous_state: :safeop, current: %SlaveStatus{state: :op}}
-      }
+      assert_receive {:ethercat, ^ref,
+                      %Notification{
+                        slave: :drive,
+                        kind: :slave_state_changed,
+                        details: %{previous_state: :safeop, current: %SlaveStatus{state: :op}}
+                      }}
     end)
     |> Scenario.act("protocol writes and samples still work after recovery", fn _ctx ->
       write_controlword!(ethercat, 0x0000, 0x0040)

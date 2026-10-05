@@ -393,7 +393,7 @@ defmodule EtherCAT.CaptureTest do
                frame_timeout_ms: 20
              )
 
-    assert :ok = EtherCAT.await_running(session, 2_000)
+    assert :ok = EtherCAT.await_ready(session, 2_000)
     session
   end
 

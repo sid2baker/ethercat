@@ -27,7 +27,7 @@ Host application supervisor
     ├── EtherCAT.Provisioning       (advanced PREOP/configuration/SDO API)
     ├── EtherCAT.Diagnostics        (advanced inspection and runtime visibility API)
     ├── EtherCAT.Driver             (public driver behaviour for extension authors)
-    ├── EtherCAT.Raw                (advanced raw-process-data API)
+    ├── EtherCAT.Signals                (signal and latch subscriptions)
     │
     ├── EtherCAT.Master             (singleton gen_statem — bus lifecycle coordinator)
     │
@@ -90,7 +90,7 @@ Registry: `EtherCAT.Registry` (local). Slaves register as `{:slave, name}`;
 Domains register as `{:domain, id}`.
 
 The normal runtime surface is `EtherCAT`. `EtherCAT.Provisioning`,
-`EtherCAT.Diagnostics`, `EtherCAT.Raw`, and `EtherCAT.Driver` are specialist
+`EtherCAT.Diagnostics`, `EtherCAT.Signals`, and `EtherCAT.Driver` are specialist
 public modules. `EtherCAT.Master`, `EtherCAT.Slave`, `EtherCAT.Domain`, and
 `EtherCAT.DC` are the core runtime processes behind that surface. `Domain` and
 `DC` own their small `gen_statem` callbacks directly; larger lifecycle
@@ -103,7 +103,7 @@ they carry real protocol or lifecycle weight.
 `EtherCAT.Runtime` is the supported root boundary. Host applications own its
 lifecycle. `EtherCAT.start/1` opens the singleton session and returns an opaque
 `EtherCAT.Session` containing the master pid and session generation. Every
-runtime, provisioning, diagnostic, raw process-data, and capture operation
+runtime, provisioning, diagnostic, signal subscription, and capture operation
 requires that session. Calls are validated inside the master serialization
 boundary, so a stopped session cannot target a later replacement session.
 
@@ -174,8 +174,11 @@ consistency.
 
 `EtherCAT.subscribe/2` installs the subscriber and reads the current
 `EtherCAT.Slave.Status` plus retained samples at one slave-process serialization
-boundary. The same process subsequently sends samples and
-`EtherCAT.Notification` values, preserving their local ordering.
+boundary, returning `{:ok, ref, status, samples}`. The same process subsequently
+sends `{:ethercat, ref, payload}` containing samples and `EtherCAT.Notification`
+values, preserving their local ordering. `EtherCAT.unsubscribe/3` cancels that
+registration. Push delivery has no backpressure; consumers that only need the
+latest values can poll `EtherCAT.samples/2`.
 
 Slave AL/runtime transitions produce `:slave_state_changed` notifications.
 Domains fan lifecycle and cycle-health transitions to each attached slave;
@@ -193,7 +196,7 @@ Application
   next Domain LRW tick picks up the value and writes it to the slave
 ```
 
-`EtherCAT.Raw.*` remains available for direct PDO/latch access used by specialist
+`EtherCAT.Signals.*` remains available for signal and latch subscriptions used by specialist
 diagnostics and tooling.
 
 ---
@@ -210,7 +213,7 @@ diagnostics and tooling.
 - `:activation_blocked` - startup or activation reached a usable floor but not the requested target
 - `:recovering` - runtime fault recovery is in progress
 
-`await_running/1` waits for a usable state (`:preop_ready`, `:deactivated`, or
+`await_ready/1` waits for a usable state (`:preop_ready`, `:deactivated`, or
 `:operational`). Before replying from startup or activation paths, the master
 quiesces the bus so the first public mailbox/configuration exchange starts from
 a quiet transport state.

@@ -37,7 +37,7 @@ defmodule EtherCAT.Integration.Simulator.SegmentedMailboxAbortSDOTest do
     SimulatorRing.boot_preop_ready!(
       simulator_opts: [devices: devices, connections: []],
       start_opts: [domains: [], slaves: slaves, frame_timeout_ms: 20],
-      await_running_ms: 2_500
+      await_ready_ms: 2_500
     )
 
     :ok

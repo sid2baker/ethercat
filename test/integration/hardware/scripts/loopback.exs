@@ -100,7 +100,7 @@ sm0_before =
 
 IO.puts("EL2809 SM0+SM1 before write_output: #{sm0_before}")
 
-EtherCAT.Raw.write_output(ethercat, :out, :ch1, 1)
+EtherCAT.write(ethercat, :out, :ch1, 1)
 Process.sleep(20)
 
 # ETS holds the raw encoded value the domain will splice into the frame

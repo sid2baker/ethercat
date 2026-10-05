@@ -19,20 +19,16 @@ defmodule EtherCAT.SlaveDescriptionTest do
 
   test "configured keeps canonical endpoint names" do
     description =
-      SlaveDescription.configured(
-        :inputs,
-        EtherCAT.Driver.EL1809,
-        %{},
-        station: 0x1001,
-        target_state: :op,
-        fault: {:down, :link_lost}
-      )
+      SlaveDescription.from_config(%EtherCAT.Slave.Config{
+        name: :inputs,
+        driver: EtherCAT.Driver.EL1809,
+        config: %{},
+        target_state: :op
+      })
 
     assert description.name == :inputs
     assert description.driver == EtherCAT.Driver.EL1809
-    assert description.station == 0x1001
     assert description.target_state == :op
-    assert description.fault == {:down, :link_lost}
 
     assert Enum.take(description.endpoints, 2) == [
              %Endpoint{signal: :ch1, direction: :input, type: :boolean},
@@ -40,24 +36,18 @@ defmodule EtherCAT.SlaveDescriptionTest do
            ]
   end
 
-  test "from_configured_slave builds descriptions from retained config plus runtime summary" do
+  test "from_config builds descriptions from retained configuration" do
     description =
-      SlaveDescription.from_configured_slave(%{
+      SlaveDescription.from_config(%EtherCAT.Slave.Config{
         name: :outputs,
-        station: 0x1002,
-        server: {:via, Registry, {EtherCAT.Registry, {:slave, :outputs}}},
-        pid: self(),
         driver: EtherCAT.Driver.EL2809,
         config: %{},
         target_state: :op,
         process_data: {:all, :io},
-        health_poll_ms: 250,
-        fault: nil
+        health_poll_ms: 250
       })
 
     assert description.name == :outputs
-    assert description.station == 0x1002
-    assert description.pid == self()
     assert description.target_state == :op
 
     assert Enum.at(description.endpoints, 0) ==

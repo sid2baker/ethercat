@@ -2,10 +2,8 @@ defmodule EtherCAT.SlaveDescription do
   @moduledoc """
   Public description for one configured slave.
 
-  This struct is intentionally configuration-backed. It carries static signal
-  metadata plus light runtime summary fields such as station, pid, target
-  state, and tracked fault. Current process observations are represented by
-  `EtherCAT.Sample`.
+  Descriptions contain configuration and static signal metadata. Use
+  `EtherCAT.status/2` for runtime status and `EtherCAT.samples/2` for observations.
   """
 
   alias EtherCAT.Driver
@@ -17,10 +15,7 @@ defmodule EtherCAT.SlaveDescription do
     :name,
     :driver,
     :device_type,
-    :station,
-    :pid,
     :target_state,
-    :fault,
     endpoints: []
   ]
 
@@ -28,10 +23,7 @@ defmodule EtherCAT.SlaveDescription do
           name: atom(),
           driver: module(),
           device_type: atom() | nil,
-          station: non_neg_integer() | nil,
-          pid: pid() | nil,
-          target_state: :preop | :op | nil,
-          fault: term() | nil,
+          target_state: :preop | :op,
           endpoints: [Endpoint.t()]
         }
 
@@ -58,48 +50,18 @@ defmodule EtherCAT.SlaveDescription do
     }
   end
 
-  @spec configured(atom(), module(), Driver.config(), keyword()) :: t()
-  def configured(name, driver, config, opts \\ [])
-      when is_atom(name) and is_atom(driver) and is_map(config) and is_list(opts) do
-    native = native_description(driver, config)
+  @doc false
+  @spec from_config(EtherCAT.Slave.Config.t()) :: t()
+  def from_config(%EtherCAT.Slave.Config{} = config) do
+    native = native_description(config.driver, config.config)
 
     %__MODULE__{
-      name: name,
-      driver: driver,
+      name: config.name,
+      driver: config.driver,
       device_type: native.device_type,
-      station: Keyword.get(opts, :station),
-      pid: Keyword.get(opts, :pid),
-      target_state: Keyword.get(opts, :target_state),
-      fault: Keyword.get(opts, :fault),
+      target_state: config.target_state,
       endpoints: native.endpoints
     }
-  end
-
-  @spec from_configured_slave(%{
-          name: atom(),
-          driver: module(),
-          config: map(),
-          station: non_neg_integer() | nil,
-          pid: pid() | nil,
-          target_state: :preop | :op,
-          fault: term()
-        }) :: t()
-  def from_configured_slave(%{
-        name: name,
-        driver: driver,
-        config: config,
-        station: station,
-        pid: pid,
-        target_state: target_state,
-        fault: fault
-      })
-      when is_atom(name) and is_atom(driver) and is_map(config) do
-    configured(name, driver, config,
-      station: station,
-      pid: pid,
-      target_state: target_state,
-      fault: fault
-    )
   end
 
   defp normalize_endpoints(endpoints) when is_list(endpoints) do

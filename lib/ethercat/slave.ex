@@ -62,7 +62,7 @@ defmodule EtherCAT.Slave do
           driver: module() | nil,
           config: map(),
           samples: %{optional(atom()) => EtherCAT.Sample.t()},
-          protocol_subscriptions: MapSet.t(pid()),
+          protocol_subscriptions: %{optional(reference()) => pid()},
           domain_statuses: %{optional(atom()) => EtherCAT.Domain.Status.t()},
           state_reason: term() | nil,
           error_code: non_neg_integer() | nil,
@@ -119,7 +119,7 @@ defmodule EtherCAT.Slave do
     :output_sm_images,
     :subscriptions,
     samples: %{},
-    protocol_subscriptions: MapSet.new(),
+    protocol_subscriptions: %{},
     domain_statuses: %{},
     subscriber_refs: %{},
     startup_retry_phase: nil,
@@ -145,11 +145,16 @@ defmodule EtherCAT.Slave do
 
   @doc false
   @spec subscribe_protocol(server(), pid()) ::
-          {:ok, EtherCAT.Slave.Status.t(), %{optional(atom()) => EtherCAT.Sample.t()}}
+          {:ok, reference(), EtherCAT.Slave.Status.t(),
+           %{optional(atom()) => EtherCAT.Sample.t()}}
           | {:error, :not_found | :timeout | {:server_exit, term()}}
   def subscribe_protocol(slave_name, pid \\ self()) do
     safe_call(slave_name, {:subscribe_protocol, pid})
   end
+
+  @doc false
+  @spec unsubscribe_protocol(server(), reference()) :: :ok | {:error, term()}
+  def unsubscribe_protocol(slave, ref), do: safe_call(slave, {:unsubscribe_protocol, ref})
 
   @doc """
   Subscribe `pid` to a registered process-data signal or configured latch name.

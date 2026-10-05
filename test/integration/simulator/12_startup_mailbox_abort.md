@@ -27,7 +27,7 @@ Observed with:
 - `Simulator.inject_fault({:mailbox_abort, :mailbox, 0x2000, 0x02, 0x0601_0002})`
 
 - the master enters `:activation_blocked`
-- `EtherCAT.await_running/1` reports `{:activation_failed, %{mailbox: {:safeop, {:preop_configuration_failed, {:mailbox_config_failed, ...}}}}}`
+- `EtherCAT.await_ready/1` reports `{:activation_failed, %{mailbox: {:safeop, {:preop_configuration_failed, {:mailbox_config_failed, ...}}}}}`
 - `EtherCAT.Diagnostics.slave_info(session, :mailbox)` reports the exact mailbox configuration error
 - after clearing the injected abort and restarting the master, startup reaches
   `:operational`

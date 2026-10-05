@@ -4,6 +4,9 @@ defmodule EtherCAT.Domain.Status do
 
   Domain status is retained by each attached slave runtime and included in the
   atomic result of `EtherCAT.subscribe/2`.
+
+  `observed_at` is a host monotonic timestamp in microseconds, not wall-clock
+  time or EtherCAT distributed-clock time. Compare it only within the same VM.
   """
 
   alias EtherCAT.Domain

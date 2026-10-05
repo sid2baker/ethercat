@@ -60,7 +60,7 @@ defmodule EtherCAT.Integration.Simulator.StartupMailboxResponseTimeoutTest do
 
     assert {:error,
             {:activation_failed, %{mailbox: {:safeop, {:preop_configuration_failed, @failure}}}}} =
-             EtherCAT.await_running(first_session, 3_000)
+             EtherCAT.await_ready(first_session, 3_000)
 
     assert {:ok, :activation_blocked} = EtherCAT.state(first_session)
     assert {:ok, current_session} = EtherCAT.Session.current()
@@ -74,7 +74,7 @@ defmodule EtherCAT.Integration.Simulator.StartupMailboxResponseTimeoutTest do
     assert {:error, :stale_session} = EtherCAT.state(first_session)
     assert {:error, :stale_session} = EtherCAT.Diagnostics.slaves(first_session)
     assert {:error, :stale_session} = EtherCAT.Provisioning.activate(first_session)
-    assert {:error, :stale_session} = EtherCAT.Raw.read_input(first_session, :mailbox, :unused)
+    assert {:error, :stale_session} = EtherCAT.read(first_session, :mailbox, :unused)
 
     second_session =
       SimulatorRing.start_master!(simulator,

@@ -68,7 +68,7 @@ defmodule EtherCATTest do
 
   test "top-level API is slave-centric and EtherCAT is the only normal runtime entry point" do
     assert Code.ensure_loaded?(EtherCAT)
-    assert Code.ensure_loaded?(EtherCAT.Raw)
+    assert Code.ensure_loaded?(EtherCAT.Signals)
     assert Code.ensure_loaded?(EtherCAT.Diagnostics)
     assert Code.ensure_loaded?(EtherCAT.Provisioning)
     assert Code.ensure_loaded?(EtherCAT.Endpoint)
@@ -114,12 +114,12 @@ defmodule EtherCATTest do
     refute function_exported?(EtherCAT, :snapshot, 0)
     refute function_exported?(EtherCAT, :snapshot, 1)
     refute function_exported?(EtherCAT, :command, 3)
-    refute function_exported?(EtherCAT.Raw, :read_input, 2)
-    assert function_exported?(EtherCAT.Raw, :read_input, 3)
-    refute function_exported?(EtherCAT.Raw, :write_output, 3)
-    assert function_exported?(EtherCAT.Raw, :write_output, 4)
-    assert function_exported?(EtherCAT.Raw, :subscribe, 3)
-    assert function_exported?(EtherCAT.Raw, :subscribe, 4)
+    refute function_exported?(EtherCAT.Signals, :read_input, 2)
+    refute function_exported?(EtherCAT.Signals, :read_input, 3)
+    refute function_exported?(EtherCAT.Signals, :write_output, 3)
+    refute function_exported?(EtherCAT.Signals, :write_output, 4)
+    assert function_exported?(EtherCAT.Signals, :subscribe, 3)
+    assert function_exported?(EtherCAT.Signals, :subscribe, 4)
     refute function_exported?(EtherCAT.Diagnostics, :slave_info, 1)
     assert function_exported?(EtherCAT.Diagnostics, :slave_info, 2)
     refute function_exported?(EtherCAT.Provisioning, :upload_sdo, 3)
@@ -135,7 +135,7 @@ defmodule EtherCATTest do
     assert {:error, :stale_session} = EtherCAT.status(stale, :sensor)
     assert {:error, :stale_session} = EtherCAT.Diagnostics.dc_status(stale)
     assert {:error, :stale_session} = EtherCAT.Provisioning.activate(stale)
-    assert {:error, :stale_session} = EtherCAT.Raw.read_input(stale, :sensor, :input)
+    assert {:error, :stale_session} = EtherCAT.read(stale, :sensor, :input)
   end
 
   test "session lookups and descriptions do not call diagnostic processes" do
@@ -197,9 +197,7 @@ defmodule EtherCATTest do
 
           assert {:ok, description} = EtherCAT.describe(session, :lookup_sensor)
           assert description.name == :lookup_sensor
-          assert description.pid == slave
-          assert description.station == 0x1001
-          assert {:ok, %{pid: nil}} = EtherCAT.describe(session, :missing_sensor)
+          assert {:ok, %{name: :missing_sensor}} = EtherCAT.describe(session, :missing_sensor)
           assert {:error, :not_found} = EtherCAT.describe(session, :outside_session)
           assert {:ok, inventory} = EtherCAT.inventory(session)
           assert inventory.lookup_sensor == description
@@ -231,13 +229,13 @@ defmodule EtherCATTest do
     assert {:error, :not_started} = EtherCAT.Session.current()
   end
 
-  test "await_running returns timeout instead of exiting when the master call itself times out" do
+  test "await_ready returns timeout instead of exiting when the master call itself times out" do
     _pid = ensure_master_running()
     :sys.suspend(EtherCAT.Master)
     on_exit(fn -> :sys.resume(EtherCAT.Master) end)
 
     session = EtherCAT.Session.new(Process.whereis(EtherCAT.Master), make_ref())
-    assert {:error, :timeout} = EtherCAT.await_running(session, 5)
+    assert {:error, :timeout} = EtherCAT.await_ready(session, 5)
   end
 
   test "await_operational returns timeout instead of exiting when the master call itself times out" do

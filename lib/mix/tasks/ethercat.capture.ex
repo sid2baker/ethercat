@@ -36,7 +36,7 @@ defmodule Mix.Tasks.Ethercat.Capture do
           Mix.raise("failed to start EtherCAT capture session: #{inspect(reason)}")
       end
 
-    case EtherCAT.await_running(session, Keyword.fetch!(opts, :await_ms)) do
+    case EtherCAT.await_ready(session, Keyword.fetch!(opts, :await_ms)) do
       :ok ->
         print_session_banner(session, opts)
 

@@ -326,11 +326,11 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
       |> maybe_put_transport(opts)
       |> start_simulator!()
 
-    await_timeout_ms = Keyword.get(opts, :await_running_ms, 2_000)
+    await_timeout_ms = Keyword.get(opts, :await_ready_ms, 2_000)
 
     case start_master(simulator, opts) do
       {:ok, session} ->
-        case EtherCAT.await_running(session, await_timeout_ms) do
+        case EtherCAT.await_ready(session, await_timeout_ms) do
           :ok ->
             simulator
 

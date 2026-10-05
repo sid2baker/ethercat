@@ -52,7 +52,7 @@ Process.sleep(300)
   )
 
 # Allow startup to complete to PREOP
-:ok = EtherCAT.await_running(ethercat, 10_000)
+:ok = EtherCAT.await_ready(ethercat, 10_000)
 
 {:ok, bus} = EtherCAT.Diagnostics.bus(ethercat)
 {:ok, slaves} = EtherCAT.Diagnostics.slaves(ethercat)

@@ -22,9 +22,9 @@ defmodule EtherCAT.Master.FSM do
   @awaiting_preop_timeout_ms 30_000
 
   # Final startup mailbox replies can still arrive just after the
-  # bus first reports idle. `await_running/1` waits through a short quiet window
+  # bus first reports idle. `await_ready/1` waits through a short quiet window
   # and drains once more so the first public mailbox call starts from quiescence.
-  @await_running_quiet_ms 2
+  @await_ready_quiet_ms 2
   @retry_ms 1_000
   @operational :operational
 
@@ -136,7 +136,7 @@ defmodule EtherCAT.Master.FSM do
     {:keep_state_and_data, [{:reply, from, {:ok, Diagnostics.capture(:idle, data)}}]}
   end
 
-  def handle_event({:call, from}, :await_running, :idle, _data) do
+  def handle_event({:call, from}, :await_ready, :idle, _data) do
     {:keep_state_and_data, [{:reply, from, {:error, :not_started}}]}
   end
 
@@ -274,7 +274,7 @@ defmodule EtherCAT.Master.FSM do
     {:next_state, :idle, reset_master(data.last_failure), [{:reply, from, :ok}]}
   end
 
-  def handle_event({:call, from}, :await_running, :discovering, data) do
+  def handle_event({:call, from}, :await_ready, :discovering, data) do
     {:keep_state, %{data | await_callers: [from | data.await_callers]}}
   end
 
@@ -367,7 +367,7 @@ defmodule EtherCAT.Master.FSM do
     {:next_state, :idle, reset_master(data.last_failure), [{:reply, from, :ok}]}
   end
 
-  def handle_event({:call, from}, :await_running, :awaiting_preop, data) do
+  def handle_event({:call, from}, :await_ready, :awaiting_preop, data) do
     {:keep_state, %{data | await_callers: [from | data.await_callers]}}
   end
 
@@ -388,7 +388,7 @@ defmodule EtherCAT.Master.FSM do
       runtime_target: data.desired_runtime_target
     )
 
-    {:keep_state, reply_running_waiters(data)}
+    {:keep_state, reply_ready_waiters(data)}
   end
 
   def handle_event(:enter, old, :deactivated, data) do
@@ -402,7 +402,7 @@ defmodule EtherCAT.Master.FSM do
       runtime_target: data.desired_runtime_target
     )
 
-    {:keep_state, reply_running_waiters(data)}
+    {:keep_state, reply_ready_waiters(data)}
   end
 
   def handle_event(:enter, old, :operational, data) do
@@ -429,9 +429,9 @@ defmodule EtherCAT.Master.FSM do
     {:next_state, :idle, reset_master(data.last_failure), [{:reply, from, :ok}]}
   end
 
-  def handle_event({:call, from}, :await_running, state, _data)
+  def handle_event({:call, from}, :await_ready, state, _data)
       when state in [:preop_ready, :deactivated, :operational] do
-    {:keep_state_and_data, [{:reply, from, await_running_reply(state)}]}
+    {:keep_state_and_data, [{:reply, from, await_ready_reply(state)}]}
   end
 
   def handle_event({:call, from}, :await_operational, :operational, _data) do
@@ -559,7 +559,7 @@ defmodule EtherCAT.Master.FSM do
     {:next_state, :idle, reset_master(data.last_failure), [{:reply, from, :ok}]}
   end
 
-  def handle_event({:call, from}, :await_running, :activation_blocked, data) do
+  def handle_event({:call, from}, :await_ready, :activation_blocked, data) do
     {:keep_state_and_data, [{:reply, from, activation_blocked_reply(data)}]}
   end
 
@@ -635,7 +635,7 @@ defmodule EtherCAT.Master.FSM do
     {:next_state, :idle, reset_master(data.last_failure), [{:reply, from, :ok}]}
   end
 
-  def handle_event({:call, from}, :await_running, :recovering, data) do
+  def handle_event({:call, from}, :await_ready, :recovering, data) do
     {:keep_state_and_data, [{:reply, from, recovering_reply(data)}]}
   end
 
@@ -1299,21 +1299,21 @@ defmodule EtherCAT.Master.FSM do
   defp deactivated_target_settled?(:deactivated, _data, :safeop), do: true
   defp deactivated_target_settled?(_state, _data, _target), do: false
 
-  defp reply_running_waiters(%{await_callers: []} = data), do: data
+  defp reply_ready_waiters(%{await_callers: []} = data), do: data
 
-  defp reply_running_waiters(data) do
-    reply = await_running_reply(desired_public_state(data))
+  defp reply_ready_waiters(data) do
+    reply = await_ready_reply(desired_public_state(data))
     reply_await_callers(data.await_callers, reply)
     %{data | await_callers: []}
   end
 
-  defp await_running_reply(state) when state in [:preop_ready, :deactivated],
-    do: quiesced_running_reply()
+  defp await_ready_reply(state) when state in [:preop_ready, :deactivated],
+    do: quiesced_ready_reply()
 
-  defp await_running_reply(:operational), do: :ok
+  defp await_ready_reply(:operational), do: :ok
 
-  defp quiesced_running_reply do
-    case Bus.quiesce(Bus, @await_running_quiet_ms) do
+  defp quiesced_ready_reply do
+    case Bus.quiesce(Bus, @await_ready_quiet_ms) do
       :ok -> :ok
       {:error, reason} -> {:error, {:bus_not_ready, reason}}
     end
@@ -1598,11 +1598,13 @@ defmodule EtherCAT.Master.FSM do
   end
 
   defp handle_active_call(from, :dc_runtime, _state, _data) do
-    if dc_running?() do
-      {:keep_state_and_data, [{:reply, from, {:ok, DC}}]}
-    else
-      {:keep_state_and_data, [{:reply, from, {:error, :dc_inactive}}]}
-    end
+    reply =
+      case Process.whereis(DC) do
+        nil -> {:error, :dc_inactive}
+        pid -> {:ok, pid}
+      end
+
+    {:keep_state_and_data, [{:reply, from, reply}]}
   end
 
   defp handle_active_call(from, {:resolve_slave, name}, _state, data) when is_atom(name) do
@@ -1626,7 +1628,7 @@ defmodule EtherCAT.Master.FSM do
   defp handle_active_call(from, {:slave_configuration, name}, _state, data) do
     reply =
       case Config.fetch_slave_config(data.slave_configs, name) do
-        {:ok, config, _index} -> {:ok, describe_configuration(data, config)}
+        {:ok, config, _index} -> {:ok, config}
         {:error, _reason} -> {:error, :not_found}
       end
 
@@ -1634,7 +1636,7 @@ defmodule EtherCAT.Master.FSM do
   end
 
   defp handle_active_call(from, :slave_configurations, _state, data) do
-    configs = Enum.map(data.slave_configs, &describe_configuration(data, &1))
+    configs = data.slave_configs
     {:keep_state_and_data, [{:reply, from, {:ok, configs}}]}
   end
 
@@ -1675,10 +1677,6 @@ defmodule EtherCAT.Master.FSM do
     else
       {:error, :unknown_domain}
     end
-  end
-
-  defp dc_running? do
-    is_pid(Process.whereis(DC))
   end
 
   defp desired_public_state(%{desired_runtime_target: :op}), do: :operational
@@ -1796,30 +1794,6 @@ defmodule EtherCAT.Master.FSM do
       [{pid, _value}] -> {:ok, pid}
       [] -> {:error, :not_found}
     end
-  end
-
-  defp describe_configuration(data, config) do
-    pid =
-      case resolve_registered(:slave, config.name) do
-        {:ok, pid} -> pid
-        {:error, :not_found} -> nil
-      end
-
-    station =
-      case List.keyfind(data.slaves, config.name, 0) do
-        {_name, station} -> station
-        nil -> nil
-      end
-
-    %{
-      name: config.name,
-      driver: config.driver,
-      config: config.config,
-      target_state: config.target_state,
-      station: station,
-      pid: pid,
-      fault: Map.get(data.slave_faults, config.name)
-    }
   end
 
   defp log_recovery_succeeded(data) do

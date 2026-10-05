@@ -28,7 +28,7 @@ Observed with:
 - `Simulator.inject_fault(Fault.mailbox_protocol_fault(:mailbox, 0x2003, 0x01, :download_segment, :drop_response) |> Fault.after_milestone(Fault.mailbox_step(:mailbox, :download_segment, 1)))`
 
 - the master enters `:activation_blocked`
-- session-bound `EtherCAT.await_running/2` reports
+- session-bound `EtherCAT.await_ready/2` reports
   `{:activation_failed, %{mailbox: {:safeop, {:preop_configuration_failed, {:mailbox_config_failed, 0x2003, 0x01, :response_timeout}}}}}`
 - `EtherCAT.Diagnostics.slave_info(session, :mailbox)` reports the exact mailbox configuration error
 - after clearing the injected fault and restarting the master, the old runtime

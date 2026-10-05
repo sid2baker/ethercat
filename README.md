@@ -80,7 +80,7 @@ returns an opaque `%EtherCAT.Session{}` required by every runtime operation.
 
 {:ok, session} = EtherCAT.start(backend: {:raw, %{interface: "eth0"}})
 
-:ok = EtherCAT.await_running(session)
+:ok = EtherCAT.await_ready(session)
 
 EtherCAT.state(session)
 #=> {:ok, :preop_ready}
@@ -89,10 +89,10 @@ EtherCAT.Diagnostics.master_status(session)
 #=> {:ok, %EtherCAT.Master.Status{backend: %EtherCAT.Backend.Raw{interface: "eth0"}, ...}}
 
 EtherCAT.Diagnostics.slaves(session)
-#=> [
+#=> {:ok, [
 #=>   %{name: :slave_0, station: 0x1000, server: {:via, Registry, ...}, pid: #PID<...>},
 #=>   ...
-#=> ]
+#=> ]}
 
 EtherCAT.stop(session)
 ```
@@ -169,25 +169,27 @@ input_description.endpoints
 Map.keys(inventory)
 #=> [:coupler, :inputs, :outputs]
 
-{:ok, status, initial_samples} = EtherCAT.subscribe(session, :inputs)
+{:ok, ref, status, initial_samples} = EtherCAT.subscribe(session, :inputs)
 status.state
 #=> :op
 initial_samples
 #=> %{:io => %EtherCAT.Sample{...}}
 
 receive do
-  %EtherCAT.Sample{
+  {:ethercat, ^ref, %EtherCAT.Sample{
     slave: :inputs,
     domain: :io,
     cycle: 42,
     observed_at: timestamp_us,
     inputs: %{ch1: true}
-  } = sample ->
+  } = sample} ->
     sample
 
-  %EtherCAT.Notification{kind: :domain_status_changed} = notification ->
+  {:ethercat, ^ref, %EtherCAT.Notification{kind: :domain_status_changed} = notification} ->
     notification
 end
+
+:ok = EtherCAT.unsubscribe(session, :inputs, ref)
 
 :ok = EtherCAT.write(session, :outputs, :ch1, true)
 {:ok, {true, updated_at_us}} = EtherCAT.read(session, :inputs, :ch1)
@@ -206,7 +208,13 @@ process observations. Subscriptions deliver both coherent samples and
 protocol-level state notifications. `read/3` and `write/4` are explicit
 low-level signal operations. Every call requires its session; a stopped or
 replaced session fails with `{:error, :stale_session}`.
-`EtherCAT.Raw` remains available for session-bound PDO/latch tooling.
+Subscriptions use push delivery with no backpressure or dropped observations.
+Use `samples/2` to poll the latest retained values if your consumer cannot keep
+up with every cycle. Cancellation stops future delivery; already queued messages
+keep their reference so they can be ignored. Observation timestamps are host
+monotonic microseconds, not wall-clock or distributed-clock time.
+
+`EtherCAT.Signals` remains available for session-bound signal and latch subscriptions.
 
 Semantic commands, machine state, and machine events belong in a separate
 integration layer above EtherCAT, such as an `Entity.Provider` adapter.
@@ -220,7 +228,7 @@ For PREOP-first workflows, configure discovered slaves dynamically:
     domains: [%EtherCAT.Domain.Config{id: :main, cycle_time_us: 1_000}]
   )
 
-:ok = EtherCAT.await_running(session)
+:ok = EtherCAT.await_ready(session)
 
 :ok =
   EtherCAT.Provisioning.configure_slave(
@@ -274,8 +282,8 @@ dictionary automatically.
 If you understand those five roles, the rest of the API is predictable.
 
 The normal application-facing surface is `EtherCAT`. Session-bound
-provisioning, diagnostics, and raw PDO access live under
-`EtherCAT.Provisioning`, `EtherCAT.Diagnostics`, and `EtherCAT.Raw`; driver
+provisioning, diagnostics, and signal and latch subscriptions live under
+`EtherCAT.Provisioning`, `EtherCAT.Diagnostics`, and `EtherCAT.Signals`; driver
 extension contracts live under `EtherCAT.Driver`. `Master`, `Slave`, `Domain`,
 and `DC` are internal runtime processes behind those boundaries.
 
@@ -290,7 +298,7 @@ Public startup and runtime health are exposed through `EtherCAT.state/1`:
 - `:activation_blocked` — requested transitions could not be completed
 - `:recovering` — a critical runtime fault is being healed
 
-`await_running/1` waits for a usable session and returns activation/configuration
+`await_ready/1` waits for a usable session and returns activation/configuration
 errors directly if startup cannot reach one. `await_operational/1` waits for
 cyclic OP. Inspect `EtherCAT.Diagnostics.slaves/1` for non-critical per-slave
 fault state.

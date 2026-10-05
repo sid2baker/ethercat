@@ -96,7 +96,7 @@ defmodule EtherCAT.Integration.Simulator.SplitDomainEL3202ReconnectPreopTimeoutT
             Expect.domain(:main, cycle_health: :healthy)
 
             assert :ok =
-                     EtherCAT.Raw.write_output(
+                     EtherCAT.write(
                        SimulatorRing.session!(),
                        :outputs,
                        :ch1,
@@ -104,7 +104,7 @@ defmodule EtherCAT.Integration.Simulator.SplitDomainEL3202ReconnectPreopTimeoutT
                      )
 
             assert {:ok, {true, updated_at_us}} =
-                     EtherCAT.Raw.read_input(
+                     EtherCAT.read(
                        SimulatorRing.session!(),
                        :inputs,
                        :ch1
@@ -122,7 +122,7 @@ defmodule EtherCAT.Integration.Simulator.SplitDomainEL3202ReconnectPreopTimeoutT
           Expect.domain(:main, cycle_health: :healthy)
 
           assert {:ok, {true, updated_at_us}} =
-                   EtherCAT.Raw.read_input(
+                   EtherCAT.read(
                      SimulatorRing.session!(),
                      :inputs,
                      :ch1
@@ -176,7 +176,7 @@ defmodule EtherCAT.Integration.Simulator.SplitDomainEL3202ReconnectPreopTimeoutT
 
   defp assert_rtd_reading(signal_name, expected_reading) do
     assert {:ok, {reading, updated_at_us}} =
-             EtherCAT.Raw.read_input(
+             EtherCAT.read(
                SimulatorRing.session!(),
                :rtd,
                signal_name

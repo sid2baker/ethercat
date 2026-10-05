@@ -306,7 +306,7 @@ start_bus = fn health_poll_ms_opt ->
         ] ++ if(include_rtd, do: [rtd_config], else: [])
     )
 
-  :ok = EtherCAT.await_running(ethercat, 15_000)
+  :ok = EtherCAT.await_ready(ethercat, 15_000)
   ethercat
 end
 

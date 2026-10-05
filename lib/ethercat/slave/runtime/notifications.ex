@@ -6,7 +6,7 @@ defmodule EtherCAT.Slave.Runtime.Notifications do
   alias EtherCAT.Slave
   alias EtherCAT.Slave.Status, as: SlaveStatus
 
-  @spec subscribe(%Slave{}, pid()) :: %Slave{}
+  @spec subscribe(%Slave{}, pid()) :: {reference(), %Slave{}}
   def subscribe(data, pid) do
     subscriber_refs =
       if Map.has_key?(data.subscriber_refs, pid) do
@@ -15,11 +15,38 @@ defmodule EtherCAT.Slave.Runtime.Notifications do
         Map.put(data.subscriber_refs, pid, Process.monitor(pid))
       end
 
-    %{
-      data
-      | protocol_subscriptions: MapSet.put(data.protocol_subscriptions, pid),
-        subscriber_refs: subscriber_refs
-    }
+    ref = make_ref()
+
+    {ref,
+     %{
+       data
+       | protocol_subscriptions: Map.put(data.protocol_subscriptions, ref, pid),
+         subscriber_refs: subscriber_refs
+     }}
+  end
+
+  @spec unsubscribe(%Slave{}, reference()) :: %Slave{}
+  def unsubscribe(data, ref) do
+    case Map.pop(data.protocol_subscriptions, ref) do
+      {nil, _subscriptions} ->
+        data
+
+      {pid, subscriptions} ->
+        data = %{data | protocol_subscriptions: subscriptions}
+
+        subscribed? =
+          Enum.any?(subscriptions, fn {_ref, subscriber} -> subscriber == pid end) or
+            Enum.any?(data.subscriptions, fn {_name, subscribers} ->
+              MapSet.member?(subscribers, pid)
+            end)
+
+        if subscribed? do
+          data
+        else
+          Process.demonitor(Map.fetch!(data.subscriber_refs, pid), [:flush])
+          %{data | subscriber_refs: Map.delete(data.subscriber_refs, pid)}
+        end
+    end
   end
 
   @spec state_changed(%Slave{}, SlaveStatus.state(), SlaveStatus.state()) :: :ok
@@ -46,7 +73,10 @@ defmodule EtherCAT.Slave.Runtime.Notifications do
 
   @spec dispatch(%Slave{}, struct()) :: :ok
   def dispatch(data, message) do
-    Enum.each(data.protocol_subscriptions, &send(&1, message))
+    Enum.each(data.protocol_subscriptions, fn {ref, pid} ->
+      send(pid, {:ethercat, ref, message})
+    end)
+
     :ok
   end
 

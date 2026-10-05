@@ -148,7 +148,7 @@ defmodule EtherCAT.Integration.Simulator.EL3202ReconnectPreopEventDisconnectMixT
     end)
     |> Scenario.act("write output ch1 high after the EL3202 heals", fn _ctx ->
       assert :ok =
-               EtherCAT.Raw.write_output(
+               EtherCAT.write(
                  SimulatorRing.session!(),
                  :outputs,
                  :ch1,
@@ -161,7 +161,7 @@ defmodule EtherCAT.Integration.Simulator.EL3202ReconnectPreopEventDisconnectMixT
         Expect.eventually(
           fn ->
             assert {:ok, {true, updated_at_us}} =
-                     EtherCAT.Raw.read_input(
+                     EtherCAT.read(
                        SimulatorRing.session!(),
                        :inputs,
                        :ch1
@@ -232,7 +232,7 @@ defmodule EtherCAT.Integration.Simulator.EL3202ReconnectPreopEventDisconnectMixT
 
   defp assert_rtd_reading(signal_name, expected_reading) do
     assert {:ok, {reading, updated_at_us}} =
-             EtherCAT.Raw.read_input(
+             EtherCAT.read(
                SimulatorRing.session!(),
                :rtd,
                signal_name

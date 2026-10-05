@@ -54,7 +54,7 @@ defmodule EtherCAT.Integration.Simulator.PermanentSlaveDisconnectRecoveryStuckTe
     end)
     |> Scenario.act("loopback I/O works after recovery", fn _ctx ->
       assert :ok =
-               EtherCAT.Raw.write_output(
+               EtherCAT.write(
                  SimulatorRing.session!(),
                  :outputs,
                  :ch1,
@@ -64,7 +64,7 @@ defmodule EtherCAT.Integration.Simulator.PermanentSlaveDisconnectRecoveryStuckTe
       Expect.eventually(
         fn ->
           assert {:ok, {true, updated_at_us}} =
-                   EtherCAT.Raw.read_input(
+                   EtherCAT.read(
                      SimulatorRing.session!(),
                      :inputs,
                      :ch1
@@ -123,7 +123,7 @@ defmodule EtherCAT.Integration.Simulator.PermanentSlaveDisconnectRecoveryStuckTe
       assert nil == SimulatorRing.fault_for(:outputs)
 
       assert :ok =
-               EtherCAT.Raw.write_output(
+               EtherCAT.write(
                  SimulatorRing.session!(),
                  :outputs,
                  :ch1,
@@ -133,7 +133,7 @@ defmodule EtherCAT.Integration.Simulator.PermanentSlaveDisconnectRecoveryStuckTe
       Expect.eventually(
         fn ->
           assert {:ok, {true, updated_at_us}} =
-                   EtherCAT.Raw.read_input(
+                   EtherCAT.read(
                      SimulatorRing.session!(),
                      :inputs,
                      :ch1
@@ -186,7 +186,7 @@ defmodule EtherCAT.Integration.Simulator.PermanentSlaveDisconnectRecoveryStuckTe
       assert nil == SimulatorRing.fault_for(:outputs)
 
       assert :ok =
-               EtherCAT.Raw.write_output(
+               EtherCAT.write(
                  SimulatorRing.session!(),
                  :outputs,
                  :ch1,
@@ -196,7 +196,7 @@ defmodule EtherCAT.Integration.Simulator.PermanentSlaveDisconnectRecoveryStuckTe
       Expect.eventually(
         fn ->
           assert {:ok, {true, updated_at_us}} =
-                   EtherCAT.Raw.read_input(
+                   EtherCAT.read(
                      SimulatorRing.session!(),
                      :inputs,
                      :ch1
@@ -248,7 +248,7 @@ defmodule EtherCAT.Integration.Simulator.PermanentSlaveDisconnectRecoveryStuckTe
       assert nil == SimulatorRing.fault_for(:outputs)
 
       assert :ok =
-               EtherCAT.Raw.write_output(
+               EtherCAT.write(
                  SimulatorRing.session!(),
                  :outputs,
                  :ch1,
@@ -258,7 +258,7 @@ defmodule EtherCAT.Integration.Simulator.PermanentSlaveDisconnectRecoveryStuckTe
       Expect.eventually(
         fn ->
           assert {:ok, {true, updated_at_us}} =
-                   EtherCAT.Raw.read_input(
+                   EtherCAT.read(
                      SimulatorRing.session!(),
                      :inputs,
                      :ch1
@@ -320,7 +320,7 @@ defmodule EtherCAT.Integration.Simulator.PermanentSlaveDisconnectRecoveryStuckTe
       assert nil == SimulatorRing.fault_for(:outputs)
 
       assert :ok =
-               EtherCAT.Raw.write_output(
+               EtherCAT.write(
                  SimulatorRing.session!(),
                  :outputs,
                  :ch1,
@@ -330,7 +330,7 @@ defmodule EtherCAT.Integration.Simulator.PermanentSlaveDisconnectRecoveryStuckTe
       Expect.eventually(
         fn ->
           assert {:ok, {true, updated_at_us}} =
-                   EtherCAT.Raw.read_input(
+                   EtherCAT.read(
                      SimulatorRing.session!(),
                      :inputs,
                      :ch1

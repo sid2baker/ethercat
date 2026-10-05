@@ -4,7 +4,7 @@ defmodule EtherCAT.Session do
 
   A session is bound to both the master process and one generation of that
   process. It is the required capability for runtime, provisioning,
-  diagnostics, raw process-data, and live capture operations.
+  diagnostics, signal subscription, and live capture operations.
 
   Once stopped or replaced, operations made with the old session return
   `{:error, :stale_session}` rather than targeting a replacement session.

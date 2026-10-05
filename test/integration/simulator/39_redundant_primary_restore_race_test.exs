@@ -4,7 +4,6 @@ defmodule EtherCAT.Integration.Simulator.RedundantPrimaryRestoreRaceTest do
   alias EtherCAT.Integration.Expect
   alias EtherCAT.Integration.Trace
   alias EtherCAT.IntegrationSupport.{RedundantSimulatorRing, SimulatorRing}
-  alias EtherCAT.Raw
 
   @domain_cycle_invalid_event [:ethercat, :domain, :cycle, :invalid]
   @domain_cycle_transport_miss_event [:ethercat, :domain, :cycle, :transport_miss]
@@ -75,20 +74,20 @@ defmodule EtherCAT.Integration.Simulator.RedundantPrimaryRestoreRaceTest do
   end
 
   defp assert_loopback_io do
-    assert :ok = Raw.write_output(SimulatorRing.session!(), :outputs, :ch1, 1)
-    assert :ok = Raw.write_output(SimulatorRing.session!(), :outputs, :ch16, 1)
+    assert :ok = EtherCAT.write(SimulatorRing.session!(), :outputs, :ch1, 1)
+    assert :ok = EtherCAT.write(SimulatorRing.session!(), :outputs, :ch16, 1)
 
     Expect.eventually(fn ->
       Expect.master_state(:operational)
       Expect.domain(:main, cycle_health: :healthy)
 
       assert {:ok, {true, ch1_updated_at_us}} =
-               Raw.read_input(SimulatorRing.session!(), :inputs, :ch1)
+               EtherCAT.read(SimulatorRing.session!(), :inputs, :ch1)
 
       assert is_integer(ch1_updated_at_us)
 
       assert {:ok, {true, ch16_updated_at_us}} =
-               Raw.read_input(SimulatorRing.session!(), :inputs, :ch16)
+               EtherCAT.read(SimulatorRing.session!(), :inputs, :ch16)
 
       assert is_integer(ch16_updated_at_us)
 

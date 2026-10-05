@@ -5,6 +5,9 @@ defmodule EtherCAT.Sample do
   A sample contains protocol truth only. It does not project machine state,
   advertise semantic commands, or infer completion of application intent.
   Samples from different domains do not share a consistency boundary.
+
+  `observed_at` is a host monotonic timestamp in microseconds, not wall-clock
+  time or EtherCAT distributed-clock time. Compare it only within the same VM.
   """
 
   @enforce_keys [:slave, :domain, :cycle, :observed_at, :inputs]

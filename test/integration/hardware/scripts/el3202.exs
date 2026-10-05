@@ -68,12 +68,12 @@ Process.sleep(300)
   )
 
 IO.puts("Waiting for OP...")
-:ok = EtherCAT.await_running(ethercat, 10_000)
+:ok = EtherCAT.await_ready(ethercat, 10_000)
 IO.puts("Running.")
 IO.puts("Subscribed channels: #{Enum.map_join(channels, ", ", &Atom.to_string/1)}\n")
 
 Enum.each(channels, fn channel ->
-  EtherCAT.Raw.subscribe(ethercat, :rtd, channel, self())
+  EtherCAT.Signals.subscribe(ethercat, :rtd, channel, self())
 end)
 
 Enum.each(1..samples, fn _ ->

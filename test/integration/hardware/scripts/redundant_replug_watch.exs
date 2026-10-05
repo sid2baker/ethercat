@@ -229,7 +229,7 @@ defmodule EtherCAT.HardwareScripts.RedundantReplugWatch do
     1..8
     |> Enum.zip(bits)
     |> Enum.reduce_while(:ok, fn {index, value}, :ok ->
-      case EtherCAT.Raw.write_output(session, :outputs, channel_name(index), value) do
+      case EtherCAT.write(session, :outputs, channel_name(index), value) do
         :ok -> {:cont, :ok}
         {:error, reason} -> {:halt, {:error, {channel_name(index), reason}}}
       end
@@ -261,7 +261,7 @@ defmodule EtherCAT.HardwareScripts.RedundantReplugWatch do
   defp read_pattern(session) do
     1..8
     |> Enum.reduce_while({:ok, []}, fn index, {:ok, values} ->
-      case EtherCAT.Raw.read_input(session, :inputs, channel_name(index)) do
+      case EtherCAT.read(session, :inputs, channel_name(index)) do
         {:ok, {value, updated_at_us}} when value in [0, 1] and is_integer(updated_at_us) ->
           {:cont, {:ok, [{index, value, updated_at_us} | values]}}
 

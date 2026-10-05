@@ -130,7 +130,7 @@ rtd_slave = Hardware.rtd()
     }
   )
 
-:ok = EtherCAT.await_running(ethercat, 15_000)
+:ok = EtherCAT.await_ready(ethercat, 15_000)
 
 {:ok, bus} = EtherCAT.Diagnostics.bus(ethercat)
 
@@ -401,10 +401,10 @@ IO.puts(
   "\n── 6. Loopback jitter (DC#{if dc_active, do: " enabled", else: " disabled"}) ───────────────────────────────────"
 )
 
-EtherCAT.Raw.subscribe(ethercat, :inputs, input_channel, self())
+EtherCAT.Signals.subscribe(ethercat, :inputs, input_channel, self())
 
 # Stabilise: write 0, sleep, flush
-EtherCAT.Raw.write_output(ethercat, :outputs, output_channel, 0)
+EtherCAT.write(ethercat, :outputs, output_channel, 0)
 Process.sleep(period_ms * 5)
 
 # Flush stale notifications
@@ -420,7 +420,7 @@ end)
 
 IO.puts("  Priming loopback #{output_channel}=1...")
 
-EtherCAT.Raw.write_output(ethercat, :outputs, output_channel, 1)
+EtherCAT.write(ethercat, :outputs, output_channel, 1)
 
 primed =
   receive do
@@ -440,7 +440,7 @@ jitter_result =
       Enum.map_reduce(0..(jitter_samples - 1), System.monotonic_time(:microsecond), fn i,
                                                                                        prev_t ->
         target = rem(i, 2)
-        EtherCAT.Raw.write_output(ethercat, :outputs, output_channel, target)
+        EtherCAT.write(ethercat, :outputs, output_channel, target)
 
         receive do
           {:ethercat, :signal, :inputs, ^input_channel, ^target} -> :ok
@@ -545,6 +545,6 @@ end
 IO.puts("──────────────────────────────────────────────────────────────────")
 
 # Cleanup
-EtherCAT.Raw.write_output(ethercat, :outputs, output_channel, 0)
+EtherCAT.write(ethercat, :outputs, output_channel, 0)
 Process.sleep(period_ms * 3)
 EtherCAT.stop(ethercat)

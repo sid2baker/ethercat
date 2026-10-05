@@ -74,7 +74,7 @@ defmodule EtherCAT.SampleApiTest do
         output_domain_ids_by_sm: %{{:sm, 2} => [domain_id]},
         output_sm_images: %{{:sm, 2} => <<0>>},
         samples: %{},
-        protocol_subscriptions: MapSet.new(),
+        protocol_subscriptions: %{},
         domain_statuses: %{},
         subscriptions: %{},
         subscriber_refs: %{}
@@ -93,19 +93,20 @@ defmodule EtherCAT.SampleApiTest do
     input_key: input_key,
     data: data
   } do
-    data = Notifications.subscribe(data, self())
+    {ref, data} = Notifications.subscribe(data, self())
     observed_at = System.monotonic_time(:microsecond)
 
     data =
       Samples.refresh(data, domain_id, 7, %{input_key => <<1>>}, observed_at, [:ch1])
 
-    assert_receive %Sample{
-      slave: :test_slave,
-      domain: ^domain_id,
-      cycle: 7,
-      observed_at: ^observed_at,
-      inputs: %{ch1: true}
-    }
+    assert_receive {:ethercat, ^ref,
+                    %Sample{
+                      slave: :test_slave,
+                      domain: ^domain_id,
+                      cycle: 7,
+                      observed_at: ^observed_at,
+                      inputs: %{ch1: true}
+                    }}
 
     assert %Sample{inputs: %{ch1: true}} = data.samples[domain_id]
   end
@@ -128,7 +129,7 @@ defmodule EtherCAT.SampleApiTest do
     domain_id: domain_id,
     data: data
   } do
-    data = Notifications.subscribe(data, self())
+    {ref, data} = Notifications.subscribe(data, self())
     status = SlaveStatus.from_runtime(:safeop, data)
 
     assert %DomainStatus{lifecycle: :open, cycle_health: :not_ready} =
@@ -136,18 +137,19 @@ defmodule EtherCAT.SampleApiTest do
 
     assert :ok = Notifications.state_changed(data, :safeop, :op)
 
-    assert_receive %Notification{
-      slave: :test_slave,
-      kind: :slave_state_changed,
-      details: %{previous_state: :safeop, current: %SlaveStatus{state: :op}}
-    }
+    assert_receive {:ethercat, ^ref,
+                    %Notification{
+                      slave: :test_slave,
+                      kind: :slave_state_changed,
+                      details: %{previous_state: :safeop, current: %SlaveStatus{state: :op}}
+                    }}
   end
 
   test "domain status changes are retained and published without duplicates", %{
     domain_id: domain_id,
     data: data
   } do
-    data = Notifications.subscribe(data, self())
+    {ref, data} = Notifications.subscribe(data, self())
     observed_at = System.monotonic_time(:microsecond)
 
     degraded =
@@ -155,16 +157,41 @@ defmodule EtherCAT.SampleApiTest do
 
     data = Notifications.domain_status(data, degraded)
 
-    assert_receive %Notification{
-      slave: :test_slave,
-      kind: :domain_status_changed,
-      observed_at: ^observed_at,
-      details: %{current: ^degraded}
-    }
+    assert_receive {:ethercat, ^ref,
+                    %Notification{
+                      slave: :test_slave,
+                      kind: :domain_status_changed,
+                      observed_at: ^observed_at,
+                      details: %{current: ^degraded}
+                    }}
 
     duplicate = %{degraded | observed_at: observed_at + 1}
     _data = Notifications.domain_status(data, duplicate)
-    refute_receive %Notification{kind: :domain_status_changed}
+    refute_receive {:ethercat, ^ref, %Notification{kind: :domain_status_changed}}
+  end
+
+  test "cancellation preserves other registrations and releases the final monitor", %{data: data} do
+    {first, data} = Notifications.subscribe(data, self())
+    {second, data} = Notifications.subscribe(data, self())
+    refute first == second
+    monitor = Map.fetch!(data.subscriber_refs, self())
+    data = Notifications.unsubscribe(data, first)
+    assert Map.fetch!(data.subscriber_refs, self()) == monitor
+    assert :ok = Notifications.state_changed(data, :safeop, :op)
+    refute_receive {:ethercat, ^first, _}
+    assert_receive {:ethercat, ^second, %Notification{}}
+    data = Notifications.unsubscribe(data, second)
+    assert data.protocol_subscriptions == %{}
+    assert data.subscriber_refs == %{}
+    assert Notifications.unsubscribe(data, second) == data
+  end
+
+  test "protocol cancellation preserves a signal subscriber's monitor", %{data: data} do
+    {ref, data} = Notifications.subscribe(data, self())
+    data = %{data | subscriptions: %{ch1: MapSet.new([self()])}}
+    data = Notifications.unsubscribe(data, ref)
+    assert Map.has_key?(data.subscriber_refs, self())
+    assert MapSet.member?(data.subscriptions.ch1, self())
   end
 
   test "protocol output writes stage directly into the domain image", %{

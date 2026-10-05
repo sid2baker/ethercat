@@ -161,7 +161,7 @@ rtd_slave = Hardware.rtd(process_data: {:all, :rtd})
       ] ++ if(include_rtd, do: [rtd_slave], else: [])
   )
 
-:ok = EtherCAT.await_running(ethercat, 15_000)
+:ok = EtherCAT.await_ready(ethercat, 15_000)
 IO.puts("  Bus reached OP.")
 
 Enum.each([:fast, :slow] ++ if(include_rtd, do: [:rtd], else: []), fn domain_id ->
@@ -285,8 +285,8 @@ domain_stats =
 IO.puts("── 3. Split-SM loopback latency ─────────────────────────────────")
 IO.puts("  each pair shares the same slave SyncManagers but runs in a different domain\n")
 
-EtherCAT.Raw.subscribe(ethercat, :inputs, :ch1, self())
-EtherCAT.Raw.subscribe(ethercat, :inputs, :ch2, self())
+EtherCAT.Signals.subscribe(ethercat, :inputs, :ch1, self())
+EtherCAT.Signals.subscribe(ethercat, :inputs, :ch2, self())
 
 flush_input = fn flush_input, signal_name ->
   receive do
@@ -308,10 +308,10 @@ measure_loopback = fn label, signal_name, period_ms ->
       "(one output cycle + one input cycle)"
   )
 
-  EtherCAT.Raw.write_output(ethercat, :outputs, signal_name, 0)
+  EtherCAT.write(ethercat, :outputs, signal_name, 0)
   Process.sleep(period_ms * 5)
   flush_input.(flush_input, signal_name)
-  EtherCAT.Raw.write_output(ethercat, :outputs, signal_name, 1)
+  EtherCAT.write(ethercat, :outputs, signal_name, 1)
 
   primed =
     receive do
@@ -326,7 +326,7 @@ measure_loopback = fn label, signal_name, period_ms ->
         Enum.reduce(1..cross_samples, {[], :primed}, fn idx, {acc, _prev} ->
           target = rem(idx, 2)
           t0 = System.monotonic_time(:microsecond)
-          EtherCAT.Raw.write_output(ethercat, :outputs, signal_name, target)
+          EtherCAT.write(ethercat, :outputs, signal_name, target)
 
           latency_us =
             receive do
@@ -380,7 +380,7 @@ measure_loopback = fn label, signal_name, period_ms ->
       nil
     end
 
-  EtherCAT.Raw.write_output(ethercat, :outputs, signal_name, 0)
+  EtherCAT.write(ethercat, :outputs, signal_name, 0)
   result
 end
 

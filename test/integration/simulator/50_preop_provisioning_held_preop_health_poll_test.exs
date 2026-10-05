@@ -30,7 +30,7 @@ defmodule EtherCAT.Integration.Simulator.PreopProvisioningHeldPreopHealthPollTes
     SimulatorRing.boot_preop_ready!(
       ring: :segmented,
       start_opts: [slaves: slaves],
-      await_running_ms: 2_500
+      await_ready_ms: 2_500
     )
 
     :ok

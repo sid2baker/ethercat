@@ -8,6 +8,9 @@ defmodule EtherCAT.Notification do
   A subscriber receives `:slave_state_changed` when the slave runtime enters a
   different EtherCAT state and `:domain_status_changed` when the lifecycle or
   cycle health of an attached process-data domain changes.
+
+  `observed_at` is a host monotonic timestamp in microseconds, not wall-clock
+  time or EtherCAT distributed-clock time. Compare it only within the same VM.
   """
 
   alias EtherCAT.Domain.Status, as: DomainStatus

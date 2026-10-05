@@ -13,9 +13,13 @@ defmodule EtherCAT.Provisioning do
 
   @spec await_dc_locked(Session.t(), pos_integer()) :: :ok | {:error, term()}
   def await_dc_locked(session, timeout_ms \\ 5_000) do
-    case Session.call(session, :dc_runtime) do
-      {:ok, dc_server} -> DC.await_locked(dc_server, timeout_ms)
-      {:error, _reason} = error -> error
+    with {:ok, dc_server} <- Session.call(session, :dc_runtime) do
+      result = DC.await_locked(dc_server, timeout_ms)
+
+      case Session.call(session, :state) do
+        {:error, _reason} = error -> error
+        _state -> result
+      end
     end
   end
 

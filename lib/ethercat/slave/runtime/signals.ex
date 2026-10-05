@@ -60,7 +60,9 @@ defmodule EtherCAT.Slave.Runtime.Signals do
   @spec drop_subscriber(%EtherCAT.Slave{}, pid()) :: %EtherCAT.Slave{}
   def drop_subscriber(data, pid) do
     subscriptions = prune_subscription_pid(data.subscriptions, pid)
-    protocol_subscriptions = MapSet.delete(data.protocol_subscriptions || MapSet.new(), pid)
+
+    protocol_subscriptions =
+      Map.reject(data.protocol_subscriptions, fn {_ref, subscriber} -> subscriber == pid end)
 
     %{
       data

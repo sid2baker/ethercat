@@ -276,20 +276,20 @@ defmodule EtherCAT.MasterTest do
 
   test "stop in discovering replies blocked await callers" do
     stop_from = {self(), make_ref()}
-    await_running_from = {self(), make_ref()}
+    await_ready_from = {self(), make_ref()}
     await_operational_from = {self(), make_ref()}
-    await_running_ref = elem(await_running_from, 1)
+    await_ready_ref = elem(await_ready_from, 1)
     await_operational_ref = elem(await_operational_from, 1)
 
     data = %EtherCAT.Master{
-      await_callers: [await_running_from],
+      await_callers: [await_ready_from],
       await_operational_callers: [await_operational_from]
     }
 
     assert {:next_state, :idle, %EtherCAT.Master{}, [{:reply, ^stop_from, :ok}]} =
              EtherCAT.Master.FSM.handle_event({:call, stop_from}, :stop, :discovering, data)
 
-    assert_receive {^await_running_ref, {:error, :stopped}}
+    assert_receive {^await_ready_ref, {:error, :stopped}}
     assert_receive {^await_operational_ref, {:error, :stopped}}
   end
 
@@ -1166,12 +1166,13 @@ defmodule EtherCAT.MasterTest do
                %EtherCAT.Master{}
              )
 
-    start_supervised!(%{
-      id: make_ref(),
-      start: {Agent, :start_link, [fn -> :ok end, [name: EtherCAT.DC]]}
-    })
+    dc =
+      start_supervised!(%{
+        id: make_ref(),
+        start: {Agent, :start_link, [fn -> :ok end, [name: EtherCAT.DC]]}
+      })
 
-    assert {:keep_state_and_data, [{:reply, ^from, {:ok, EtherCAT.DC}}]} =
+    assert {:keep_state_and_data, [{:reply, ^from, {:ok, ^dc}}]} =
              EtherCAT.Master.FSM.handle_event(
                {:call, from},
                :dc_runtime,

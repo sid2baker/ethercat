@@ -48,7 +48,7 @@ defmodule EtherCAT.Integration.Simulator.StartupMailboxAbortTest do
 
     assert {:error,
             {:activation_failed, %{mailbox: {:safeop, {:preop_configuration_failed, @failure}}}}} =
-             EtherCAT.await_running(SimulatorRing.session!(), 2_500)
+             EtherCAT.await_ready(SimulatorRing.session!(), 2_500)
 
     assert {:ok, :activation_blocked} = EtherCAT.state(SimulatorRing.session!())
 

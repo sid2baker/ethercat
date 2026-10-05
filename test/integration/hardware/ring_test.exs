@@ -52,13 +52,13 @@ defmodule EtherCAT.Integration.Hardware.RingTest do
         assert expected_link == Hardware.expected_bus_link(profile)
 
         EtherCAT.Integration.Assertions.assert_eventually(fn ->
-          assert {:ok, {value, updated_at_us}} = EtherCAT.Raw.read_input(session, :inputs, :ch1)
+          assert {:ok, {value, updated_at_us}} = EtherCAT.read(session, :inputs, :ch1)
           assert is_integer(value)
           assert is_integer(updated_at_us)
         end)
 
-        assert :ok = EtherCAT.Raw.write_output(session, :outputs, :ch1, 1)
-        assert :ok = EtherCAT.Raw.write_output(session, :outputs, :ch16, 0)
+        assert :ok = EtherCAT.write(session, :outputs, :ch1, 1)
+        assert :ok = EtherCAT.write(session, :outputs, :ch16, 0)
       end
     end
 

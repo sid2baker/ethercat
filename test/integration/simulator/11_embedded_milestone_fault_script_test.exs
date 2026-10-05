@@ -83,7 +83,7 @@ defmodule EtherCAT.Integration.Simulator.EmbeddedMilestoneFaultScriptTest do
     )
 
     assert :ok =
-             EtherCAT.Raw.write_output(
+             EtherCAT.write(
                SimulatorRing.session!(),
                :outputs,
                :ch1,
@@ -92,7 +92,7 @@ defmodule EtherCAT.Integration.Simulator.EmbeddedMilestoneFaultScriptTest do
 
     assert_eventually(fn ->
       assert {:ok, {true, updated_at_us}} =
-               EtherCAT.Raw.read_input(
+               EtherCAT.read(
                  SimulatorRing.session!(),
                  :inputs,
                  :ch1

@@ -27,7 +27,7 @@ defmodule EtherCAT do
 
   - `EtherCAT.Provisioning` for PREOP configuration, activation, and SDO traffic
   - `EtherCAT.Diagnostics` for DC, slave, domain, and topology inspection
-  - `EtherCAT.Raw` for direct PDO and latch access
+  - `EtherCAT.Signals` for signal and latch subscriptions
   - `EtherCAT.Driver` for protocol/device driver authors
   - `EtherCAT.Simulator` for testing and simulator workflows
 
@@ -53,7 +53,12 @@ defmodule EtherCAT do
 
   @type session :: Session.t()
   @type session_query_error ::
-          {:error, :not_started | :stale_session | :timeout | {:server_exit, term()}}
+          {:error,
+           :not_started
+           | :stale_session
+           | :timeout
+           | {:server_exit, term()}
+           | {:diagnostic_unavailable, term(), term()}}
   @type session_query_result(value) :: {:ok, value} | session_query_error()
   @type slave_name :: atom()
   @type domain_id :: atom()
@@ -79,11 +84,15 @@ defmodule EtherCAT do
     |> normalize_stop_reply()
   end
 
-  @doc "Block until `session` reaches a usable state."
-  @spec await_running(Session.t(), pos_integer()) :: :ok | {:error, term()}
-  def await_running(session, timeout_ms \\ 10_000)
+  @doc """
+  Wait for PREOP readiness, completed deactivation, or operational cyclic runtime.
+
+  Use `await_operational/2` when your application requires cyclic I/O.
+  """
+  @spec await_ready(Session.t(), pos_integer()) :: :ok | {:error, term()}
+  def await_ready(session, timeout_ms \\ 10_000)
       when is_integer(timeout_ms) and timeout_ms > 0 do
-    Session.call(session, :await_running, wait_call_timeout(timeout_ms))
+    Session.call(session, :await_ready, wait_call_timeout(timeout_ms))
   end
 
   @doc "Block until `session` reaches operational cyclic runtime."
@@ -99,7 +108,11 @@ defmodule EtherCAT do
 
   @doc "Return configured slave names for the session."
   @spec slaves(Session.t()) :: session_query_result([slave_name()])
-  def slaves(session), do: slave_names(Session.call(session, :slaves))
+  def slaves(session) do
+    with {:ok, configs} <- Session.call(session, :slave_configurations) do
+      {:ok, Enum.map(configs, & &1.name)}
+    end
+  end
 
   @doc "Return current protocol/runtime status for one slave."
   @spec status(Session.t(), slave_name()) :: {:ok, slave_status()} | {:error, term()}
@@ -131,7 +144,7 @@ defmodule EtherCAT do
   @spec describe(Session.t(), slave_name()) :: {:ok, description()} | {:error, term()}
   def describe(session, slave_name) when is_atom(slave_name) do
     with {:ok, configured_slave} <- Session.call(session, {:slave_configuration, slave_name}) do
-      {:ok, SlaveDescription.from_configured_slave(configured_slave)}
+      {:ok, SlaveDescription.from_config(configured_slave)}
     end
   end
 
@@ -139,7 +152,7 @@ defmodule EtherCAT do
   @spec inventory(Session.t()) :: session_query_result(inventory())
   def inventory(session) do
     with {:ok, configs} <- Session.call(session, :slave_configurations) do
-      {:ok, Map.new(configs, &{&1.name, SlaveDescription.from_configured_slave(&1)})}
+      {:ok, Map.new(configs, &{&1.name, SlaveDescription.from_config(&1)})}
     end
   end
 
@@ -148,10 +161,15 @@ defmodule EtherCAT do
 
   Registration and the returned status/sample values share the slave process's
   serialization boundary. Subsequent observations arrive as
-  `%EtherCAT.Sample{}` and `%EtherCAT.Notification{}` messages.
+  `{:ethercat, ref, payload}` messages, where payload is an `EtherCAT.Sample`
+  or `EtherCAT.Notification`. Each registration has a unique reference.
+
+  Delivery is push-based with no backpressure or dropping. Subscribers must keep
+  up; use `samples/2` to poll the latest values when every cycle is unnecessary.
+  Registrations end when the subscriber or slave exits.
   """
   @spec subscribe(Session.t(), slave_name(), pid()) ::
-          {:ok, slave_status(), sample_map()} | {:error, term()}
+          {:ok, reference(), slave_status(), sample_map()} | {:error, term()}
   def subscribe(session, slave_name, pid \\ self())
       when is_atom(slave_name) and is_pid(pid) do
     with {:ok, slave} <- Session.slave(session, slave_name) do
@@ -159,7 +177,19 @@ defmodule EtherCAT do
     end
   end
 
-  @doc "Read one decoded input signal from the session's process image."
+  @doc """
+  Cancel a protocol subscription. Repeated cancellation is harmless.
+
+  Already queued messages retain their reference and may still be received.
+  """
+  @spec unsubscribe(Session.t(), slave_name(), reference()) :: :ok | {:error, term()}
+  def unsubscribe(session, slave_name, ref) when is_atom(slave_name) and is_reference(ref) do
+    with {:ok, slave} <- Session.slave(session, slave_name) do
+      Slave.unsubscribe_protocol(slave, ref)
+    end
+  end
+
+  @doc "Read a decoded input and its observation timestamp in monotonic microseconds."
   @spec read(Session.t(), slave_name(), atom()) ::
           {:ok, {term(), integer()}} | {:error, term()}
   def read(session, slave_name, signal_name)
@@ -189,9 +219,6 @@ defmodule EtherCAT do
   end
 
   defp sample_from_samples({:error, _reason} = error, _domain_id), do: error
-
-  defp slave_names({:error, _reason} = error), do: error
-  defp slave_names(slaves), do: {:ok, Enum.map(slaves, & &1.name)}
 
   defp ok_query({:error, _reason} = error), do: error
   defp ok_query(value), do: {:ok, value}

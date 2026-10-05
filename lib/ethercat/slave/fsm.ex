@@ -304,10 +304,14 @@ defmodule EtherCAT.Slave.FSM do
     end
   end
 
+  defp handle_call(from, {:unsubscribe_protocol, ref}, _state, data) do
+    {:keep_state, Notifications.unsubscribe(data, ref), [{:reply, from, :ok}]}
+  end
+
   defp handle_call(from, {:subscribe_protocol, pid}, state, data) do
-    new_data = Notifications.subscribe(data, pid)
+    {ref, new_data} = Notifications.subscribe(data, pid)
     status = EtherCAT.Slave.Status.from_runtime(state, new_data)
-    {:keep_state, new_data, [{:reply, from, {:ok, status, Samples.all(new_data)}}]}
+    {:keep_state, new_data, [{:reply, from, {:ok, ref, status, Samples.all(new_data)}}]}
   end
 
   defp handle_call(from, {:write_output, _signal_name, _value}, :down, _data) do
@@ -389,7 +393,7 @@ defmodule EtherCAT.Slave.FSM do
       output_sm_images: %{},
       subscriptions: %{},
       samples: %{},
-      protocol_subscriptions: MapSet.new(),
+      protocol_subscriptions: %{},
       domain_statuses: %{},
       state_reason: nil,
       subscriber_refs: %{}
