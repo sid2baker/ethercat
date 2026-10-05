@@ -183,7 +183,7 @@ defmodule EtherCAT.DC.Runtime do
 
     if failures == 3 do
       Telemetry.dc_runtime_state_changed(:healthy, :failing, reason, failures)
-      send(EtherCAT.Master, {:dc_runtime_failed, reason})
+      send(EtherCAT.Master, {:worker_event, self(), {:dc_runtime_failed, reason}})
     end
 
     if diagnostics? and data.monitored_stations != [] do
@@ -226,11 +226,11 @@ defmodule EtherCAT.DC.Runtime do
   end
 
   defp maybe_notify_runtime_recovered(%{notify_recovered_on_success?: true}) do
-    send(EtherCAT.Master, {:dc_runtime_recovered})
+    send(EtherCAT.Master, {:worker_event, self(), {:dc_runtime_recovered}})
   end
 
   defp maybe_notify_runtime_recovered(%{fail_count: fail_count}) when fail_count >= 3 do
-    send(EtherCAT.Master, {:dc_runtime_recovered})
+    send(EtherCAT.Master, {:worker_event, self(), {:dc_runtime_recovered}})
   end
 
   defp maybe_notify_runtime_recovered(_data), do: :ok
@@ -269,12 +269,15 @@ defmodule EtherCAT.DC.Runtime do
 
   defp maybe_notify_lock_change(%{lock_state: :locked}, %{lock_state: new_state} = new_data)
        when new_state != :locked do
-    send(EtherCAT.Master, {:dc_lock_lost, new_state, new_data.max_sync_diff_ns})
+    send(
+      EtherCAT.Master,
+      {:worker_event, self(), {:dc_lock_lost, new_state, new_data.max_sync_diff_ns}}
+    )
   end
 
   defp maybe_notify_lock_change(%{lock_state: old_state}, %{lock_state: :locked} = new_data)
        when old_state != :locked do
-    send(EtherCAT.Master, {:dc_lock_regained, new_data.max_sync_diff_ns})
+    send(EtherCAT.Master, {:worker_event, self(), {:dc_lock_regained, new_data.max_sync_diff_ns}})
   end
 
   defp maybe_notify_lock_change(_old_data, _new_data), do: :ok

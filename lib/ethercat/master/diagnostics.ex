@@ -1,27 +1,159 @@
 defmodule EtherCAT.Master.Diagnostics do
   @moduledoc false
 
-  alias EtherCAT.{Bus, DC, Domain}
+  alias EtherCAT.{Bus, DC, Session, Utils}
   alias EtherCAT.DC.Status, as: DCStatus
   alias EtherCAT.Master.Status
 
-  @spec status(Status.lifecycle(), %EtherCAT.Master{}) :: Status.t()
-  def status(lifecycle, data) do
-    Status.from_runtime(lifecycle, data, %{
-      dc_status: dc_status(data),
-      bus_status: bus_status(),
-      configured_domains: configured_domains(data),
-      configured_slaves: configured_slaves(data)
-    })
+  @observation_timeout_ms 1_000
+
+  @type query :: :status | :dc_status | :reference_clock | :domains
+  @type t :: %__MODULE__{status: Status.t(), bus: pid() | nil, dc: pid() | nil}
+  defstruct [:status, :bus, :dc]
+
+  # Capture identities while the master serializes the session. Collection must
+  # use these pids, never resolve names again after the snapshot is returned.
+  @spec capture(Status.lifecycle(), %EtherCAT.Master{}) :: t()
+  def capture(lifecycle, data) do
+    domains =
+      Enum.map(data.domain_configs, fn config ->
+        %{
+          id: config.id,
+          configured_cycle_time_us: config.cycle_time_us,
+          logical_base: config.logical_base,
+          pid: lookup_domain_pid(config.id),
+          live_cycle_time_us: nil
+        }
+      end)
+
+    %__MODULE__{
+      status:
+        Status.from_runtime(lifecycle, data, %{
+          dc_status: configured_dc_status(data),
+          bus_status: nil,
+          configured_domains: domains,
+          configured_slaves: configured_slaves(data)
+        }),
+      bus: Process.whereis(Bus),
+      dc: Process.whereis(DC)
+    }
   end
 
-  @spec dc_status(%EtherCAT.Master{}) :: DCStatus.t()
-  def dc_status(%{dc_config: nil}) do
-    %DCStatus{lock_state: :disabled}
+  @spec query(Session.t(), query()) :: {:ok, term()} | {:error, term()}
+  def query(session, query) do
+    with {:ok, snapshot} <- Session.call(session, :diagnostic_snapshot) do
+      result = collect(snapshot, query)
+
+      # A stopped/replaced session invalidates even a successful observation.
+      with {:ok, _generation} <- Session.call(session, :session_identity) do
+        result
+      end
+    end
   end
 
-  def dc_status(data) do
-    base_status = %DCStatus{
+  @spec collect(t(), query()) :: {:ok, term()} | {:error, term()}
+  def collect(snapshot, query) do
+    deadline = System.monotonic_time(:millisecond) + @observation_timeout_ms
+    collect(snapshot, query, deadline)
+  end
+
+  defp collect(snapshot, :status, deadline) do
+    with {:ok, dc} <- read_dc(snapshot, deadline),
+         {:ok, bus} <- read_bus(snapshot.bus, deadline),
+         {:ok, domains} <- read_domains(snapshot.status.configured_domains, deadline) do
+      reference_clock =
+        case Status.reference_clock_reply(dc) do
+          {:ok, clock} -> clock
+          {:error, _reason} -> nil
+        end
+
+      {:ok,
+       %{
+         snapshot.status
+         | dc_status: dc,
+           bus_status: bus,
+           configured_domains: domains,
+           reference_clock: reference_clock
+       }}
+    end
+  end
+
+  defp collect(snapshot, :dc_status, deadline), do: read_dc(snapshot, deadline)
+
+  defp collect(snapshot, :reference_clock, deadline) do
+    with {:ok, dc} <- read_dc(snapshot, deadline) do
+      Status.reference_clock_reply(dc)
+    end
+  end
+
+  defp collect(snapshot, :domains, deadline) do
+    with {:ok, domains} <- read_domains(snapshot.status.configured_domains, deadline) do
+      live =
+        for domain <- domains,
+            is_pid(domain.pid),
+            do: {domain.id, domain.live_cycle_time_us, domain.pid}
+
+      {:ok, live}
+    end
+  end
+
+  defp read_dc(%{status: %{dc_status: %{configured?: false} = dc}}, _deadline), do: {:ok, dc}
+  defp read_dc(%{dc: nil, status: %{dc_status: dc}}, _deadline), do: {:ok, dc}
+
+  defp read_dc(snapshot, deadline) do
+    with {:ok, dc} <- observe(snapshot.dc, :status, :dc, deadline) do
+      {:ok, %{dc | reference_clock: snapshot.status.dc_status.reference_clock}}
+    end
+  end
+
+  defp read_bus(nil, _deadline), do: {:ok, nil}
+  defp read_bus(pid, deadline), do: observe(pid, :info, :bus, deadline)
+
+  defp read_domains(domains, deadline) do
+    Enum.reduce_while(domains, {:ok, []}, fn
+      %{pid: nil} = domain, {:ok, acc} ->
+        {:cont, {:ok, [domain | acc]}}
+
+      domain, {:ok, acc} ->
+        case observe(domain.pid, :info, {:domain, domain.id}, deadline) do
+          {:ok, %{cycle_time_us: cycle_time_us}}
+          when is_integer(cycle_time_us) and cycle_time_us > 0 ->
+            {:cont, {:ok, [%{domain | live_cycle_time_us: cycle_time_us} | acc]}}
+
+          {:ok, _reply} ->
+            {:halt, unavailable({:domain, domain.id}, :invalid_reply)}
+
+          {:error, _reason} = error ->
+            {:halt, error}
+        end
+    end)
+    |> reverse_domains()
+  end
+
+  defp reverse_domains({:ok, domains}), do: {:ok, Enum.reverse(domains)}
+  defp reverse_domains({:error, _reason} = error), do: error
+
+  defp observe(pid, message, source, deadline) do
+    remaining = deadline - System.monotonic_time(:millisecond)
+
+    if remaining > 0 do
+      case {message, Utils.statem_call(pid, message, :not_running, remaining)} do
+        {:status, %DCStatus{} = status} -> {:ok, status}
+        {:info, {:ok, info}} when is_map(info) -> {:ok, info}
+        {_message, {:error, reason}} -> unavailable(source, reason)
+        _reply -> unavailable(source, :invalid_reply)
+      end
+    else
+      unavailable(source, :timeout)
+    end
+  end
+
+  defp unavailable(source, reason), do: {:error, {:diagnostic_unavailable, source, reason}}
+
+  defp configured_dc_status(%{dc_config: nil}), do: %DCStatus{lock_state: :disabled}
+
+  defp configured_dc_status(data) do
+    %DCStatus{
       configured?: true,
       active?: false,
       cycle_ns: data.dc_config.cycle_ns,
@@ -31,18 +163,6 @@ defmodule EtherCAT.Master.Diagnostics do
       reference_clock: reference_clock_name(data),
       lock_state: :inactive
     }
-
-    if dc_running?() do
-      case DC.status(DC) do
-        %DCStatus{} = status ->
-          %{status | reference_clock: reference_clock_name(data)}
-
-        {:error, _reason} ->
-          base_status
-      end
-    else
-      base_status
-    end
   end
 
   @spec slaves(%EtherCAT.Master{}) ::
@@ -87,68 +207,6 @@ defmodule EtherCAT.Master.Diagnostics do
     end)
   end
 
-  @spec domains(%EtherCAT.Master{}) :: [{atom(), pos_integer(), pid()}]
-  def domains(data) do
-    data.domain_configs
-    |> Enum.flat_map(fn config ->
-      case Registry.lookup(EtherCAT.Registry, {:domain, config.id}) do
-        [{pid, _}] ->
-          case Domain.info(config.id) do
-            {:ok, %{cycle_time_us: cycle_time_us}} -> [{config.id, cycle_time_us, pid}]
-            _ -> []
-          end
-
-        [] ->
-          []
-      end
-    end)
-  end
-
-  @spec configured_domains(%EtherCAT.Master{}) :: [Status.configured_domain()]
-  def configured_domains(data) do
-    Enum.map(data.domain_configs, fn config ->
-      pid =
-        case Registry.lookup(EtherCAT.Registry, {:domain, config.id}) do
-          [{domain_pid, _}] -> domain_pid
-          [] -> nil
-        end
-
-      live_cycle_time_us =
-        case Domain.info(config.id) do
-          {:ok, %{cycle_time_us: cycle_time_us}} when is_integer(cycle_time_us) ->
-            cycle_time_us
-
-          _other ->
-            nil
-        end
-
-      %{
-        id: config.id,
-        configured_cycle_time_us: config.cycle_time_us,
-        logical_base: config.logical_base,
-        pid: pid,
-        live_cycle_time_us: live_cycle_time_us
-      }
-    end)
-  end
-
-  @spec bus_public_ref(%EtherCAT.Master{}) :: Bus.server() | nil
-  def bus_public_ref(_data) do
-    if bus_running?(), do: Bus, else: nil
-  end
-
-  @spec bus_status() :: map() | nil
-  def bus_status do
-    if bus_running?() do
-      case Bus.info(Bus) do
-        {:ok, info} -> info
-        _other -> nil
-      end
-    else
-      nil
-    end
-  end
-
   defp reference_clock_name(%{dc_ref_station: nil}), do: nil
 
   defp reference_clock_name(data) do
@@ -169,11 +227,10 @@ defmodule EtherCAT.Master.Diagnostics do
 
   defp slave_server(name), do: {:via, Registry, {EtherCAT.Registry, {:slave, name}}}
 
-  defp bus_running? do
-    is_pid(Process.whereis(Bus))
-  end
-
-  defp dc_running? do
-    is_pid(Process.whereis(DC))
+  defp lookup_domain_pid(id) do
+    case Registry.lookup(EtherCAT.Registry, {:domain, id}) do
+      [{pid, _}] -> pid
+      [] -> nil
+    end
   end
 end

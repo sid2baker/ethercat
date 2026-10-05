@@ -5,7 +5,6 @@ defmodule EtherCAT.Master.Activation do
 
   alias EtherCAT.{Bus, DC, Domain, Slave, Telemetry, Utils}
   alias EtherCAT.Master.Config
-  alias EtherCAT.Master.Diagnostics
   alias EtherCAT.Master.Session
 
   @activation_quiet_ms 2
@@ -158,7 +157,7 @@ defmodule EtherCAT.Master.Activation do
           :ok
 
         {:error, :timeout} ->
-          {:error, {:dc_lock_timeout, Diagnostics.dc_status(data)}}
+          {:error, :dc_lock_timeout}
 
         {:error, reason} ->
           {:error, {:dc_lock_failed, reason}}

@@ -43,7 +43,7 @@ defmodule EtherCAT.Slave.Runtime.Configuration do
       "[Slave #{name}] preop: ready (#{map_size(new_data.signal_registrations)} signal(s) registered)"
     )
 
-    send(EtherCAT.Master, {:slave_ready, name, :preop})
+    send(EtherCAT.Master, {:worker_event, self(), {:slave_ready, name, :preop}})
     {:ok, new_data}
   end
 

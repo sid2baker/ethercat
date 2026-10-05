@@ -48,7 +48,10 @@ defmodule EtherCAT.Slave.Runtime.Health do
 
           case transition_to.(data, :safeop) do
             {:ok, new_data} ->
-              send(EtherCAT.Master, {:slave_retreated, data.name, :safeop})
+              send(
+                EtherCAT.Master,
+                {:worker_event, self(), {:slave_retreated, data.name, :safeop}}
+              )
 
               state_reason =
                 if error_ind do
@@ -176,7 +179,7 @@ defmodule EtherCAT.Slave.Runtime.Health do
       reason_kind: reason_kind
     )
 
-    send(EtherCAT.Master, {:slave_down, name, reason_kind})
+    send(EtherCAT.Master, {:worker_event, self(), {:slave_down, name, reason_kind}})
     {:next_state, :down, %{data | state_reason: reason}}
   end
 
@@ -225,7 +228,7 @@ defmodule EtherCAT.Slave.Runtime.Health do
         %{data | state_reason: state_reason}
       end
 
-    send(EtherCAT.Master, {:slave_retreated, data.name, actual_state})
+    send(EtherCAT.Master, {:worker_event, self(), {:slave_retreated, data.name, actual_state}})
     {:next_state, actual_state, new_data}
   end
 

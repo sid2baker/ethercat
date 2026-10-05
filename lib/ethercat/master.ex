@@ -119,7 +119,7 @@ defmodule EtherCAT.Master do
           dc_ref_station: non_neg_integer() | nil,
           dc_stations: [non_neg_integer()],
           backend: EtherCAT.Backend.t() | nil,
-          domain_configs: [EtherCAT.Domain.Config.t()],
+          domain_configs: [EtherCAT.Master.Config.Domain.plan()],
           slave_configs: [EtherCAT.Slave.Config.t()],
           dc_config: EtherCAT.DC.Config.t() | nil,
           frame_timeout_floor_ms: pos_integer(),
@@ -195,17 +195,14 @@ defmodule EtherCAT.Master do
   def start_session(opts \\ []), do: safe_call({:start, opts})
 
   @doc false
-  @spec current_status() :: Status.t() | {:error, :timeout | {:server_exit, term()}}
+  @spec current_status() :: Status.t() | {:error, term()}
   def current_status do
-    case Process.whereis(__MODULE__) do
-      nil ->
-        Status.stopped()
-
-      _pid ->
-        case safe_call(:status) do
-          {:error, :not_started} -> Status.stopped()
-          other -> other
-        end
+    with {:ok, session} <- EtherCAT.Session.current(),
+         {:ok, status} <- EtherCAT.Diagnostics.master_status(session) do
+      status
+    else
+      {:error, :not_started} -> Status.stopped()
+      {:error, _reason} = error -> error
     end
   end
 

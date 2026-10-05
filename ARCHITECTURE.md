@@ -52,8 +52,14 @@ Host application supervisor
 performs recovery operations and returns their results and updated master data;
 it does not select state-machine transitions. `Master.Diagnostics` collects live
 observations, and `Master.Status` projects explicitly supplied observations into
-the public status struct. An idle master has no desired runtime target; active
-sessions set one validated target (`:preop`, `:safeop`, or `:op`).
+the public status struct. The master captures a configuration snapshot and exact
+worker PIDs without making live process calls. Diagnostic callers gather those
+observations under a shared one-second budget and revalidate the session generation
+before returning; timeout, exit, and invalid-reply failures stay explicit.
+Worker lifecycle messages carry the originating PID and are validated against
+current registered workers and session configuration before entering transition
+logic. Unwrapped messages and stale workers cannot mutate the new session.
+An idle master has no desired runtime target; active sessions set one validated target (`:preop`, `:safeop`, or `:op`).
 
 Session process resolution validates the generation at the master, then looks up
 only the requested configured slave or domain. Descriptions and inventory read

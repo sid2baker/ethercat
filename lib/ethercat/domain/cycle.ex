@@ -205,7 +205,7 @@ defmodule EtherCAT.Domain.Cycle do
     if stop_domain_now?(reason, new_data.miss_count, data.miss_threshold) do
       log_domain_stop(data.id, reason, data.miss_threshold)
       Telemetry.domain_stopped(data.id, reason)
-      send(EtherCAT.Master, {:domain_stopped, data.id, reason})
+      send(EtherCAT.Master, {:worker_event, self(), {:domain_stopped, data.id, reason}})
       {:next_state, :stopped, %{new_data | stop_reason: reason}}
     else
       {:keep_state, new_data, next_timeout}
@@ -335,7 +335,11 @@ defmodule EtherCAT.Domain.Cycle do
          invalid_streak_count,
          true
        ) do
-    send(EtherCAT.Master, {:domain_cycle_degraded, id, reason, invalid_streak_count})
+    send(
+      EtherCAT.Master,
+      {:worker_event, self(), {:domain_cycle_degraded, id, reason, invalid_streak_count}}
+    )
+
     Notifications.dispatch(data, :cycling, :degraded, reason, observed_at)
   end
 
@@ -350,7 +354,7 @@ defmodule EtherCAT.Domain.Cycle do
 
   defp maybe_notify_valid_cycle(data, observed_at) do
     if data.degraded? do
-      send(EtherCAT.Master, {:domain_cycle_recovered, data.id})
+      send(EtherCAT.Master, {:worker_event, self(), {:domain_cycle_recovered, data.id}})
     end
 
     if data.cycle_health != :healthy or data.degraded? do

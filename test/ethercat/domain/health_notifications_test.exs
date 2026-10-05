@@ -144,30 +144,34 @@ defmodule EtherCAT.Domain.HealthNotificationsTest do
   end
 
   defp assert_master_message(_master_pid, true, message) do
-    assert_receive ^message
+    assert_receive {:worker_event, _, ^message}
   end
 
   defp assert_master_message(master_pid, false, message) do
-    assert_receive {:trace, ^master_pid, :receive, ^message}
+    assert_receive {:trace, ^master_pid, :receive, {:worker_event, _, ^message}}
   end
 
   defp refute_master_message(_master_pid, true, message) do
-    refute_receive ^message
+    refute_receive {:worker_event, _, ^message}
   end
 
   defp refute_master_message(master_pid, false, message) do
-    refute_receive {:trace, ^master_pid, :receive, ^message}
+    refute_receive {:trace, ^master_pid, :receive, {:worker_event, _, ^message}}
   end
 
   defp assert_no_master_message(_master_pid, true) do
-    refute_receive {:domain_cycle_degraded, _, _, _}
-    refute_receive {:domain_cycle_recovered, _}
-    refute_receive {:domain_stopped, _, _}
+    refute_receive {:worker_event, _, {:domain_cycle_degraded, _, _, _}}
+    refute_receive {:worker_event, _, {:domain_cycle_recovered, _}}
+    refute_receive {:worker_event, _, {:domain_stopped, _, _}}
   end
 
   defp assert_no_master_message(master_pid, false) do
-    refute_receive {:trace, ^master_pid, :receive, {:domain_cycle_degraded, _, _, _}}
-    refute_receive {:trace, ^master_pid, :receive, {:domain_cycle_recovered, _}}
-    refute_receive {:trace, ^master_pid, :receive, {:domain_stopped, _, _}}
+    refute_receive {:trace, ^master_pid, :receive,
+                    {:worker_event, _, {:domain_cycle_degraded, _, _, _}}}
+
+    refute_receive {:trace, ^master_pid, :receive,
+                    {:worker_event, _, {:domain_cycle_recovered, _}}}
+
+    refute_receive {:trace, ^master_pid, :receive, {:worker_event, _, {:domain_stopped, _, _}}}
   end
 end
