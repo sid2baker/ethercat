@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Runtime lookup and static descriptions now use targeted session-validated requests;
+  link dispatch, domain initialization, and master lifecycle decisions live in their
+  owning modules, with diagnostic formatting separated from live queries. CI no
+  longer requires zero duplicate code blocks (`417dcbc`).
 - `EtherCAT.start/1` now returns an opaque `%EtherCAT.Session{}` required by
   lifecycle, protocol, provisioning, diagnostics, raw process-data, and capture
   operations. Singleton convenience variants and `%EtherCAT.Runtime.Handle{}`
