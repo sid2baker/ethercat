@@ -37,6 +37,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   runtime (`6bb51d3`).
 
 ### Fixed
+- Worker lifecycle notifications now validate their originating process against the
+  active session. Diagnostic collection runs outside the master with a bounded
+  timeout, explicit query failures, and a final session-generation check; slave
+  recovery decisions are handled directly by the FSM. DC activation lock timeouts
+  return `:dc_lock_timeout` without issuing another diagnostic query (`8653d87`).
 - Public `EtherCAT.subscribe/2` now honors explicit subscriber pids; SII
   category parsing returns structured errors for malformed EEPROM data; and
   capture/simulator generated signal names are bounded before atom interning
