@@ -112,6 +112,7 @@ defmodule EtherCAT.Master do
 
   @type server :: :gen_statem.server_ref()
 
+  @typedoc false
   @type t :: %__MODULE__{
           generation: reference() | nil,
           bus_ref: reference() | nil,

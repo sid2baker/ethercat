@@ -1,6 +1,6 @@
 defmodule EtherCAT.Driver.PDO do
   @moduledoc """
-  One discovered PDO supplied to `EtherCAT.Driver.signal_model/2`.
+  One discovered PDO supplied to `c:EtherCAT.Driver.signal_model/2`.
 
   Direction is from the master's perspective. `bit_offset` is relative to its
   SyncManager image; `bit_size` is the PDO's complete size in bits. A signal's
