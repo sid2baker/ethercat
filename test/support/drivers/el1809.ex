@@ -36,31 +36,28 @@ defmodule EtherCAT.Driver.EL1809 do
   @impl true
   def signal_model(_config, _sii_pdo_configs) do
     [
-      ch1: 0x1A00,
-      ch2: 0x1A01,
-      ch3: 0x1A02,
-      ch4: 0x1A03,
-      ch5: 0x1A04,
-      ch6: 0x1A05,
-      ch7: 0x1A06,
-      ch8: 0x1A07,
-      ch9: 0x1A08,
-      ch10: 0x1A09,
-      ch11: 0x1A0A,
-      ch12: 0x1A0B,
-      ch13: 0x1A0C,
-      ch14: 0x1A0D,
-      ch15: 0x1A0E,
-      ch16: 0x1A0F
+      ch1: %EtherCAT.Driver.Signal{pdo_index: 0x1A00},
+      ch2: %EtherCAT.Driver.Signal{pdo_index: 0x1A01},
+      ch3: %EtherCAT.Driver.Signal{pdo_index: 0x1A02},
+      ch4: %EtherCAT.Driver.Signal{pdo_index: 0x1A03},
+      ch5: %EtherCAT.Driver.Signal{pdo_index: 0x1A04},
+      ch6: %EtherCAT.Driver.Signal{pdo_index: 0x1A05},
+      ch7: %EtherCAT.Driver.Signal{pdo_index: 0x1A06},
+      ch8: %EtherCAT.Driver.Signal{pdo_index: 0x1A07},
+      ch9: %EtherCAT.Driver.Signal{pdo_index: 0x1A08},
+      ch10: %EtherCAT.Driver.Signal{pdo_index: 0x1A09},
+      ch11: %EtherCAT.Driver.Signal{pdo_index: 0x1A0A},
+      ch12: %EtherCAT.Driver.Signal{pdo_index: 0x1A0B},
+      ch13: %EtherCAT.Driver.Signal{pdo_index: 0x1A0C},
+      ch14: %EtherCAT.Driver.Signal{pdo_index: 0x1A0D},
+      ch15: %EtherCAT.Driver.Signal{pdo_index: 0x1A0E},
+      ch16: %EtherCAT.Driver.Signal{pdo_index: 0x1A0F}
     ]
   end
 
   @impl true
-  def encode_signal(_signal, _config, _value), do: <<>>
-
-  @impl true
-  def decode_signal(_signal, _config, <<_::7, bit::1>>), do: bit == 1
-  def decode_signal(_signal, _config, _raw), do: false
+  def decode_signal(_signal, _config, <<0::7, bit::1>>), do: {:ok, bit == 1}
+  def decode_signal(_signal, _config, _raw), do: {:error, :invalid_data}
 
   @impl true
   def describe(_config) do

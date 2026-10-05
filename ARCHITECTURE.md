@@ -339,7 +339,8 @@ calls `{:next_state, ...}`.
 `EtherCAT.Driver` owns protocol/device concerns only:
 
 - device identity
-- logical signal naming and PDO layout (`signal_model/2`)
+- logical signal naming and PDO layout (`signal_model/2`), using public
+  `EtherCAT.Driver.PDO` discovery data and `EtherCAT.Driver.Signal` mappings
 - static signal metadata
 - signal encode/decode
 
@@ -349,8 +350,14 @@ above EtherCAT in a separate semantic integration layer.
 Specialist driver behaviours hang off the core:
 
 - `EtherCAT.Driver.Provisioning` for PREOP mailbox configuration and sync-update object writes
-- `EtherCAT.Driver.Latch` for optional DC latch hooks
 - `EtherCAT.Simulator.Adapter` for simulator-side authored definitions
+
+Codecs return explicit success/error tuples and are required only for the
+registered signal directions. The runtime validates output width and padding
+before staging. Decode failures appear in `Sample.errors`, direct-read errors,
+and specialist signal-error messages. Driver callbacks run synchronously in the
+slave and should remain pure and fast; latch side effects belong in subscriber
+processes. Static descriptions never call layout discovery.
 
 Exact simulator authoring does not live in the real driver behaviour. Drivers
 may optionally expose `identity/0` directly on `EtherCAT.Driver`. When a

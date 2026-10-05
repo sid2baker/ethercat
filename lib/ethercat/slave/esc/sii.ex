@@ -104,13 +104,7 @@ defmodule EtherCAT.Slave.ESC.SII do
           ctrl :: non_neg_integer()
         }
 
-  @type pdo_config :: %{
-          index: non_neg_integer(),
-          direction: :input | :output,
-          sm_index: non_neg_integer(),
-          bit_size: non_neg_integer(),
-          bit_offset: non_neg_integer()
-        }
+  @type pdo_config :: EtherCAT.Driver.PDO.t()
 
   @doc """
   Read SyncManager configurations from SII category 0x0029.
@@ -280,7 +274,15 @@ defmodule EtherCAT.Slave.ESC.SII do
     entry_data = binary_part(rest, 0, entry_bytes)
     tail = binary_part(rest, entry_bytes, rest_size - entry_bytes)
     bits = sum_entry_bits(entry_data, 0)
-    pdo = %{index: pdo_idx, direction: dir, sm_index: sm_idx, bit_size: bits, bit_offset: 0}
+
+    pdo = %EtherCAT.Driver.PDO{
+      index: pdo_idx,
+      direction: dir,
+      sm_index: sm_idx,
+      bit_size: bits,
+      bit_offset: 0
+    }
+
     next_tail = if complete < n, do: <<>>, else: tail
     parse_pdo_category(next_tail, dir, [pdo | acc])
   end

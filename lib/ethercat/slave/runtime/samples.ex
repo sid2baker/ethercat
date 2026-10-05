@@ -22,17 +22,18 @@ defmodule EtherCAT.Slave.Runtime.Samples do
       )
       when is_atom(domain_id) and is_integer(cycle) and cycle >= 0 and is_map(sm_inputs) and
              is_integer(observed_at) and is_list(changed_signal_names) do
-    inputs = decode_inputs(data, domain_id, sm_inputs)
+    {inputs, errors} = decode_inputs(data, domain_id, sm_inputs)
 
     sample = %Sample{
       slave: data.name,
       domain: domain_id,
       cycle: cycle,
       observed_at: observed_at,
-      inputs: inputs
+      inputs: inputs,
+      errors: errors
     }
 
-    Signals.dispatch_sampled_inputs(data, changed_signal_names, inputs)
+    Signals.dispatch_sampled_inputs(data, changed_signal_names, inputs, errors)
     Notifications.dispatch(data, sample)
     %{data | samples: Map.put(data.samples, domain_id, sample)}
   end
@@ -45,10 +46,17 @@ defmodule EtherCAT.Slave.Runtime.Samples do
     |> Enum.filter(fn {_name, registration} ->
       registration.direction == :input and registration.domain_id == domain_id
     end)
-    |> Map.new(fn {signal_name, registration} ->
+    |> Enum.reduce({%{}, %{}}, fn {signal_name, registration}, {inputs, errors} ->
       sm_bytes = Map.fetch!(sm_inputs, {data.name, registration.sm_key})
       raw = Signals.extract_sm_bits(sm_bytes, registration.bit_offset, registration.bit_size)
-      {signal_name, data.driver.decode_signal(signal_name, data.config, raw)}
+
+      case EtherCAT.Driver.Runtime.decode(data.driver, signal_name, data.config, raw) do
+        {:ok, value} ->
+          {Map.put(inputs, signal_name, value), errors}
+
+        {:error, {:decode_failed, ^signal_name, reason}} ->
+          {inputs, Map.put(errors, signal_name, reason)}
+      end
     end)
   end
 end

@@ -111,14 +111,11 @@ defmodule MyApp.EL1809 do
   @behaviour EtherCAT.Driver
 
   @impl true
-  def signal_model(_config, _sii_pdo_configs), do: [ch1: 0x1A00]
+  def signal_model(_config, _pdos), do: [ch1: %EtherCAT.Driver.Signal{pdo_index: 0x1A00}]
 
   @impl true
-  def encode_signal(_signal, _config, _value), do: <<>>
-
-  @impl true
-  def decode_signal(_signal, _config, <<_::7, bit::1>>), do: bit == 1
-  def decode_signal(_signal, _config, _), do: false
+  def decode_signal(_signal, _config, <<0::7, bit::1>>), do: {:ok, bit == 1}
+  def decode_signal(_signal, _config, _raw), do: {:error, :invalid_data}
 
   @impl true
   def describe(_config) do
@@ -208,6 +205,19 @@ process observations. Subscriptions deliver both coherent samples and
 protocol-level state notifications. `read/3` and `write/4` are explicit
 low-level signal operations. Every call requires its session; a stopped or
 replaced session fails with `{:error, :stale_session}`.
+Driver codecs return `{:ok, value}` or `{:error, reason}`. Failed writes leave
+outputs unchanged. Samples contain successful values in `inputs` and failed
+signal names/reasons in `errors`; a failed value is never replaced with zero or
+retained from an earlier cycle. `read/3` returns `{:error, {:decode_failed,
+signal, reason}}` when decoding fails.
+
+Drivers declare mappings with `EtherCAT.Driver.Signal` and receive discovered
+`EtherCAT.Driver.PDO` structs in `signal_model/2`. Input-only drivers need only
+`decode_signal/3`; output-only drivers need only `encode_signal/3`. Encoded data
+must have exactly `ceil(bit_size / 8)` bytes with unused high bits set to zero.
+See `EtherCAT.Driver` for the byte-order contract. Static `describe/1` metadata
+is independent of discovery; omitted endpoint metadata produces an empty list.
+
 Subscriptions use push delivery with no backpressure or dropped observations.
 Use `samples/2` to poll the latest retained values if your consumer cannot keep
 up with every cycle. Cancellation stops future delivery; already queued messages

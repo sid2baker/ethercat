@@ -4,7 +4,7 @@ defmodule EtherCAT.Driver.ATV320Test do
   alias EtherCAT.Driver.ATV320
   alias EtherCAT.Simulator.Slave
   alias EtherCAT.Simulator.Slave.Runtime.Device
-  alias EtherCAT.Slave.ProcessData.Signal
+  alias EtherCAT.Driver.Signal
 
   test "signal_model/2 exposes the default six-word scanner layout without SII PDOs" do
     model = Map.new(ATV320.signal_model(%{}, []))
@@ -20,11 +20,41 @@ defmodule EtherCAT.Driver.ATV320Test do
 
   test "signal_model/2 maps 16-bit scanner slots across split PDOs in SII order" do
     pdo_configs = [
-      %{index: 0x1A00, direction: :input, sm_index: 3, bit_size: 32, bit_offset: 0},
-      %{index: 0x1A01, direction: :input, sm_index: 3, bit_size: 64, bit_offset: 32},
-      %{index: 0x1600, direction: :output, sm_index: 2, bit_size: 32, bit_offset: 0},
-      %{index: 0x1601, direction: :output, sm_index: 2, bit_size: 16, bit_offset: 32},
-      %{index: 0x1602, direction: :output, sm_index: 2, bit_size: 48, bit_offset: 48}
+      %EtherCAT.Driver.PDO{
+        index: 0x1A00,
+        direction: :input,
+        sm_index: 3,
+        bit_size: 32,
+        bit_offset: 0
+      },
+      %EtherCAT.Driver.PDO{
+        index: 0x1A01,
+        direction: :input,
+        sm_index: 3,
+        bit_size: 64,
+        bit_offset: 32
+      },
+      %EtherCAT.Driver.PDO{
+        index: 0x1600,
+        direction: :output,
+        sm_index: 2,
+        bit_size: 32,
+        bit_offset: 0
+      },
+      %EtherCAT.Driver.PDO{
+        index: 0x1601,
+        direction: :output,
+        sm_index: 2,
+        bit_size: 16,
+        bit_offset: 32
+      },
+      %EtherCAT.Driver.PDO{
+        index: 0x1602,
+        direction: :output,
+        sm_index: 2,
+        bit_size: 48,
+        bit_offset: 48
+      }
     ]
 
     model = Map.new(ATV320.signal_model(%{}, pdo_configs))
@@ -42,8 +72,8 @@ defmodule EtherCAT.Driver.ATV320Test do
   end
 
   test "signed scanner values preserve protocol encoding" do
-    assert <<80, 251>> == ATV320.encode_signal(:target_velocity, %{}, -1200)
-    assert -1200 == ATV320.decode_signal(:actual_velocity, %{}, <<80, 251>>)
+    assert {:ok, <<80, 251>>} == ATV320.encode_signal(:target_velocity, %{}, -1200)
+    assert {:ok, -1200} == ATV320.decode_signal(:actual_velocity, %{}, <<80, 251>>)
   end
 
   test "simulator companion hydrates a six-word mailbox-backed scanner device" do

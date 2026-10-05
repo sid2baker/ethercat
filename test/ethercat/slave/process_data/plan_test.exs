@@ -3,7 +3,7 @@ defmodule EtherCAT.Slave.ProcessData.PlanTest do
 
   alias EtherCAT.Slave.ProcessData.Plan
   alias EtherCAT.Slave.ProcessData.Plan.DomainAttachment
-  alias EtherCAT.Slave.ProcessData.Signal
+  alias EtherCAT.Driver.Signal
 
   defmodule TestDriver do
     @behaviour EtherCAT.Driver
@@ -11,19 +11,19 @@ defmodule EtherCAT.Slave.ProcessData.PlanTest do
     @impl true
     def signal_model(_config, _sii_pdo_configs) do
       [
-        out1: 0x1600,
-        in1: 0x1A00,
-        in2: 0x1A01,
+        out1: %EtherCAT.Driver.Signal{pdo_index: 0x1600},
+        in1: %EtherCAT.Driver.Signal{pdo_index: 0x1A00},
+        in2: %EtherCAT.Driver.Signal{pdo_index: 0x1A01},
         status_word: Signal.slice(0x1A02, 0, 16),
         actual_position: Signal.slice(0x1A02, 16, 32)
       ]
     end
 
     @impl true
-    def encode_signal(_signal, _config, _value), do: <<>>
+    def encode_signal(_signal, _config, _value), do: {:error, :invalid_value}
 
     @impl true
-    def decode_signal(_signal, _config, raw), do: raw
+    def decode_signal(_signal, _config, raw), do: {:ok, raw}
   end
 
   test "normalizes :none and {:all, domain} requests" do
@@ -46,9 +46,9 @@ defmodule EtherCAT.Slave.ProcessData.PlanTest do
     requested = [out1: :main, in1: :main, in2: :main, status_word: :main, actual_position: :main]
 
     model = [
-      out1: 0x1600,
-      in1: 0x1A00,
-      in2: 0x1A01,
+      out1: %EtherCAT.Driver.Signal{pdo_index: 0x1600},
+      in1: %EtherCAT.Driver.Signal{pdo_index: 0x1A00},
+      in2: %EtherCAT.Driver.Signal{pdo_index: 0x1A01},
       status_word: Signal.slice(0x1A02, 0, 16),
       actual_position: Signal.slice(0x1A02, 16, 32)
     ]
@@ -108,18 +108,23 @@ defmodule EtherCAT.Slave.ProcessData.PlanTest do
     assert {:error, {:signal_not_in_driver_model, :missing}} =
              Plan.build(
                [missing: :main],
-               [out1: 0x1600],
+               [out1: %EtherCAT.Driver.Signal{pdo_index: 0x1600}],
                sii_pdo_configs,
                sii_sm_configs
              )
 
     assert {:error, {:pdo_not_in_sii, 0x1A00}} =
-             Plan.build([in1: :main], [in1: 0x1A00], sii_pdo_configs, sii_sm_configs)
+             Plan.build(
+               [in1: :main],
+               [in1: %EtherCAT.Driver.Signal{pdo_index: 0x1A00}],
+               sii_pdo_configs,
+               sii_sm_configs
+             )
 
     assert {:error, {:sm_not_in_sii, 3}} =
              Plan.build(
                [in1: :main],
-               [in1: 0x1A00],
+               [in1: %EtherCAT.Driver.Signal{pdo_index: 0x1A00}],
                [%{index: 0x1A00, direction: :input, sm_index: 3, bit_size: 8, bit_offset: 0}],
                sii_sm_configs
              )
@@ -144,7 +149,10 @@ defmodule EtherCAT.Slave.ProcessData.PlanTest do
     assert {:ok, [input_group]} =
              Plan.build(
                [first: :main, second: :aux],
-               [first: 0x1A00, second: 0x1A01],
+               [
+                 first: %EtherCAT.Driver.Signal{pdo_index: 0x1A00},
+                 second: %EtherCAT.Driver.Signal{pdo_index: 0x1A01}
+               ],
                sii_pdo_configs,
                sii_sm_configs
              )
@@ -172,7 +180,10 @@ defmodule EtherCAT.Slave.ProcessData.PlanTest do
     assert {:ok, [output_group]} =
              Plan.build(
                [first: :main, second: :aux],
-               [first: 0x1600, second: 0x1601],
+               [
+                 first: %EtherCAT.Driver.Signal{pdo_index: 0x1600},
+                 second: %EtherCAT.Driver.Signal{pdo_index: 0x1601}
+               ],
                output_pdo_configs,
                output_sm_configs
              )

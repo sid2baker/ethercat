@@ -18,12 +18,6 @@ defmodule EtherCAT.Driver.EK1100 do
   def signal_model(_config, _sii_pdo_configs), do: []
 
   @impl true
-  def encode_signal(_signal, _config, _value), do: <<>>
-
-  @impl true
-  def decode_signal(_signal, _config, _raw), do: nil
-
-  @impl true
   def describe(_config), do: %{device_type: :coupler, endpoints: []}
 end
 

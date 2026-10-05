@@ -9,7 +9,6 @@ defmodule EtherCAT.Simulator.Slave.Definition do
   """
 
   alias EtherCAT.Driver
-  alias EtherCAT.Driver.Runtime, as: DriverRuntime
   alias EtherCAT.Simulator.Adapter
 
   @typedoc "Mailbox SM layout declared by the simulated device."
@@ -20,12 +19,7 @@ defmodule EtherCAT.Simulator.Slave.Definition do
           send_size: non_neg_integer()
         }
 
-  @type pdo_entry :: %{
-          index: non_neg_integer(),
-          direction: :input | :output,
-          sm_index: non_neg_integer(),
-          bit_size: pos_integer()
-        }
+  @type pdo_entry :: EtherCAT.Driver.PDO.t()
 
   @type signal_spec :: %{
           required(:direction) => :input | :output,
@@ -117,7 +111,13 @@ defmodule EtherCAT.Simulator.Slave.Definition do
   @spec pdo_entry(non_neg_integer(), :input | :output, non_neg_integer(), pos_integer()) ::
           pdo_entry()
   def pdo_entry(index, direction, sm_index, bit_size) do
-    %{index: index, direction: direction, sm_index: sm_index, bit_size: bit_size}
+    %EtherCAT.Driver.PDO{
+      index: index,
+      direction: direction,
+      sm_index: sm_index,
+      bit_size: bit_size,
+      bit_offset: 0
+    }
   end
 
   @doc false
@@ -197,7 +197,6 @@ defmodule EtherCAT.Simulator.Slave.Definition do
       |> Adapter.definition_options(config)
       |> normalize_definition_options!(adapter)
       |> merge_driver_identity(driver)
-      |> maybe_strip_process_data(driver, config)
 
     profile = Keyword.fetch!(opts, :profile)
     opts = Keyword.delete(opts, :profile)
@@ -230,21 +229,6 @@ defmodule EtherCAT.Simulator.Slave.Definition do
   end
 
   defp maybe_put_identity_revision(opts, _revision), do: opts
-
-  defp maybe_strip_process_data(opts, driver, config) do
-    case DriverRuntime.signal_model(driver, config) do
-      [] ->
-        opts
-        |> Keyword.put(:signals, %{})
-        |> Keyword.put(:pdo_entries, [])
-        |> Keyword.put(:output_size, 0)
-        |> Keyword.put(:input_size, 0)
-        |> Keyword.put(:mirror_output_to_input?, false)
-
-      _signals ->
-        opts
-    end
-  end
 
   defp profile_spec(profile, opts), do: profile_module(profile).spec(opts)
 

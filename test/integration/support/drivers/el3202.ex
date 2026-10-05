@@ -19,8 +19,8 @@ defmodule EtherCAT.IntegrationSupport.Drivers.EL3202 do
   end
 
   @signals [
-    channel1: 0x1A00,
-    channel2: 0x1A01
+    channel1: %EtherCAT.Driver.Signal{pdo_index: 0x1A00},
+    channel2: %EtherCAT.Driver.Signal{pdo_index: 0x1A01}
   ]
 
   @impl true
@@ -30,9 +30,6 @@ defmodule EtherCAT.IntegrationSupport.Drivers.EL3202 do
   def mailbox_steps(_config, %{phase: :preop}), do: @mailbox_steps
 
   def mailbox_steps(_config, _context), do: []
-
-  @impl true
-  def encode_signal(_signal, _config, _value), do: <<>>
 
   @impl true
   def decode_signal(:channel1, _config, <<
@@ -47,14 +44,15 @@ defmodule EtherCAT.IntegrationSupport.Drivers.EL3202 do
         _::6,
         value::16-little
       >>) do
-    %{
-      ohms: value / 16.0,
-      overrange: overrange == 1,
-      underrange: underrange == 1,
-      error: error == 1,
-      invalid: state == 1,
-      toggle: toggle
-    }
+    {:ok,
+     %{
+       ohms: value / 16.0,
+       overrange: overrange == 1,
+       underrange: underrange == 1,
+       error: error == 1,
+       invalid: state == 1,
+       toggle: toggle
+     }}
   end
 
   def decode_signal(:channel2, _config, <<
@@ -69,20 +67,30 @@ defmodule EtherCAT.IntegrationSupport.Drivers.EL3202 do
         _::6,
         value::16-little
       >>) do
-    %{
-      ohms: value / 16.0,
-      overrange: overrange == 1,
-      underrange: underrange == 1,
-      error: error == 1,
-      invalid: state == 1,
-      toggle: toggle
-    }
+    {:ok,
+     %{
+       ohms: value / 16.0,
+       overrange: overrange == 1,
+       underrange: underrange == 1,
+       error: error == 1,
+       invalid: state == 1,
+       toggle: toggle
+     }}
   end
 
-  def decode_signal(_signal, _config, _raw), do: nil
+  def decode_signal(_signal, _config, _raw), do: {:error, :invalid_data}
 
   @impl true
-  def describe(_config), do: %{device_type: :temperature_input}
+  def describe(_config) do
+    %{
+      device_type: :temperature_input,
+      endpoints:
+        Enum.map(
+          [:channel1, :channel2],
+          &%EtherCAT.Endpoint{signal: &1, direction: :input, type: :temperature}
+        )
+    }
+  end
 end
 
 defmodule EtherCAT.IntegrationSupport.Drivers.EL3202.Simulator do

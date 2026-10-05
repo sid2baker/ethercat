@@ -32,10 +32,10 @@ defmodule EtherCAT.Slave.Mailbox.CoETest do
     def signal_model(_config, _sii_pdo_configs), do: []
 
     @impl true
-    def encode_signal(_signal, _config, _value), do: <<>>
+    def encode_signal(_signal, _config, _value), do: {:error, :invalid_value}
 
     @impl true
-    def decode_signal(_signal, _config, raw), do: raw
+    def decode_signal(_signal, _config, raw), do: {:ok, raw}
 
     @impl true
     def mailbox_steps(_config, %{phase: :preop}) do
@@ -53,10 +53,10 @@ defmodule EtherCAT.Slave.Mailbox.CoETest do
     def signal_model(_config, _sii_pdo_configs), do: []
 
     @impl true
-    def encode_signal(_signal, _config, _value), do: <<>>
+    def encode_signal(_signal, _config, _value), do: {:error, :invalid_value}
 
     @impl true
-    def decode_signal(_signal, _config, raw), do: raw
+    def decode_signal(_signal, _config, raw), do: {:ok, raw}
 
     @impl true
     def mailbox_steps(_config, %{phase: :sync_update}) do

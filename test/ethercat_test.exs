@@ -58,12 +58,12 @@ defmodule EtherCATTest do
     assert cfg.sync == nil
   end
 
-  test "default slave driver is a safe no-op profile" do
+  test "default slave driver exposes raw codecs and rejects nonbinary outputs" do
     driver = EtherCAT.Driver.Default
 
-    assert driver.signal_model(%{}) == []
-    assert driver.encode_signal(:unused, %{}, 1) == <<>>
-    assert driver.decode_signal(:unused, %{}, <<0xAB, 0xCD>>) == <<0xAB, 0xCD>>
+    assert driver.signal_model(%{}, []) == []
+    assert driver.encode_signal(:unused, %{}, 1) == {:error, :invalid_value}
+    assert driver.decode_signal(:unused, %{}, <<0xAB, 0xCD>>) == {:ok, <<0xAB, 0xCD>>}
   end
 
   test "top-level API is slave-centric and EtherCAT is the only normal runtime entry point" do

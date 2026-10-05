@@ -101,7 +101,11 @@ defmodule EtherCAT.Slave.Runtime.Signals do
           {:ok, %{value: sm_bytes, updated_at_us: refreshed_at_us, freshness: %{state: :fresh}}}
           when is_integer(refreshed_at_us) ->
             raw = extract_sm_bits(sm_bytes, bit_offset, bit_size)
-            {:ok, {data.driver.decode_signal(signal_name, data.config, raw), refreshed_at_us}}
+
+            with {:ok, value} <-
+                   EtherCAT.Driver.Runtime.decode(data.driver, signal_name, data.config, raw) do
+              {:ok, {value, refreshed_at_us}}
+            end
         end
     end
   end
@@ -122,8 +126,8 @@ defmodule EtherCAT.Slave.Runtime.Signals do
     |> Enum.reverse()
   end
 
-  @spec dispatch_sampled_inputs(%EtherCAT.Slave{}, [atom()], map()) :: :ok
-  def dispatch_sampled_inputs(data, changed_signal_names, decoded_inputs)
+  @spec dispatch_sampled_inputs(%EtherCAT.Slave{}, [atom()], map(), map()) :: :ok
+  def dispatch_sampled_inputs(data, changed_signal_names, decoded_inputs, errors)
       when is_list(changed_signal_names) and is_map(decoded_inputs) do
     notifications =
       changed_signal_names
@@ -144,6 +148,12 @@ defmodule EtherCAT.Slave.Runtime.Signals do
 
     Enum.each(Enum.reverse(notifications), fn {pid, signal_name, decoded} ->
       send(pid, {:ethercat, :signal, data.name, signal_name, decoded})
+    end)
+
+    Enum.each(errors, fn {signal_name, reason} ->
+      data.subscriptions
+      |> Map.get(signal_name, MapSet.new())
+      |> Enum.each(&send(&1, {:ethercat, :signal_error, data.name, signal_name, reason}))
     end)
 
     :ok

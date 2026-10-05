@@ -4,6 +4,31 @@ defmodule EtherCAT.SlaveDescriptionTest do
   alias EtherCAT.Endpoint
   alias EtherCAT.SlaveDescription
 
+  defmodule DiscoveredDriver do
+    @behaviour EtherCAT.Driver
+    @impl true
+    def signal_model(_config, [%EtherCAT.Driver.PDO{index: index}]) do
+      [input: %EtherCAT.Driver.Signal{pdo_index: index}]
+    end
+
+    @impl true
+    def describe(_config),
+      do: %{endpoints: [%Endpoint{signal: :input, direction: :input, type: :raw}]}
+  end
+
+  defmodule UndescribedDriver do
+    @behaviour EtherCAT.Driver
+    @impl true
+    def signal_model(_config, [_pdo]), do: []
+  end
+
+  test "descriptions never call discovery-dependent layout callbacks" do
+    assert %{endpoints: [%Endpoint{signal: :input}]} =
+             SlaveDescription.native_description(DiscoveredDriver, %{})
+
+    assert %{endpoints: []} = SlaveDescription.native_description(UndescribedDriver, %{})
+  end
+
   test "native_description returns driver-native endpoints" do
     description = SlaveDescription.native_description(EtherCAT.Driver.EL1809, %{})
 

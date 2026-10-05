@@ -16,15 +16,32 @@ defmodule EtherCAT.Driver do
   Specialist protocol concerns live on separate behaviours:
 
   - `EtherCAT.Driver.Provisioning` for mailbox startup/setup steps
-  - `EtherCAT.Driver.Latch` for DC latch callbacks
   - `EtherCAT.Simulator.Adapter` for simulator-side companion definitions
+
+  Latch events are consumed through `EtherCAT.Signals` subscriptions.
+
+  Codec callbacks run inside the slave process and must be fast, pure functions.
+  Return `{:error, reason}` for invalid values or undecodable data. Exceptions
+  indicate driver bugs and are not converted to successful observations.
+
+  Codecs receive or return byte-aligned binaries of `ceil(bit_size / 8)` bytes.
+  Fields use EtherCAT little-endian bit order: bit zero is the least significant
+  bit of the first byte. Unused high bits of the last byte must be zero. Signed
+  and multi-byte values must be encoded explicitly by the driver.
+
+  Implement only the codecs needed by the registered signal directions. The
+  runtime checks those capabilities during PREOP configuration.
+
+  `describe/1` supplies static metadata only; when absent, endpoints are empty.
+  `signal_model/2` receives discovered PDOs and is never called to build a
+  description. Return named `EtherCAT.Driver.Signal` structs for all mappings.
 
   Concrete device drivers are normally application-owned. This library ships
   the contract and a generic default driver, while sample device-specific
   drivers live in test support only.
   """
 
-  alias EtherCAT.Slave.ProcessData.Signal
+  alias EtherCAT.Driver.Signal
 
   @type signal_name :: atom()
   @type config :: map()
@@ -39,15 +56,17 @@ defmodule EtherCAT.Driver do
           optional(:endpoints) => [EtherCAT.Endpoint.t() | map()]
         }
 
-  @callback signal_model(config(), sii_pdo_configs :: [map()]) ::
-              [{signal_name(), non_neg_integer() | Signal.t()}]
+  @callback signal_model(config(), pdos :: [EtherCAT.Driver.PDO.t()]) ::
+              [{signal_name(), Signal.t()}]
 
   @callback identity() :: identity() | nil
-  @callback encode_signal(signal_name(), config(), term()) :: binary()
-  @callback decode_signal(signal_name(), config(), binary()) :: term()
+  @callback encode_signal(signal_name(), config(), term()) :: {:ok, binary()} | {:error, term()}
+  @callback decode_signal(signal_name(), config(), binary()) :: {:ok, term()} | {:error, term()}
   @callback describe(config()) :: description()
 
   @optional_callbacks [
+    encode_signal: 3,
+    decode_signal: 3,
     identity: 0,
     describe: 1
   ]

@@ -8,7 +8,6 @@ defmodule EtherCAT.SlaveDescription do
 
   alias EtherCAT.Driver
   alias EtherCAT.Endpoint
-  alias EtherCAT.Slave.ProcessData.Signal
 
   @enforce_keys [:name, :driver, :endpoints]
   defstruct [
@@ -36,7 +35,7 @@ defmodule EtherCAT.SlaveDescription do
   def native_description(driver, config) when is_atom(driver) and is_map(config) do
     raw_description =
       if Code.ensure_loaded?(driver) and function_exported?(driver, :describe, 1) do
-        apply(driver, :describe, [config]) || %{}
+        driver.describe(config)
       else
         %{}
       end
@@ -45,7 +44,7 @@ defmodule EtherCAT.SlaveDescription do
       device_type: Map.get(raw_description, :device_type),
       endpoints:
         raw_description
-        |> Map.get(:endpoints, infer_endpoints(driver, config))
+        |> Map.get(:endpoints, [])
         |> normalize_endpoints()
     }
   end
@@ -70,7 +69,9 @@ defmodule EtherCAT.SlaveDescription do
     |> ensure_unique!(:signal)
   end
 
-  defp normalize_endpoints(_endpoints), do: []
+  defp normalize_endpoints(endpoints) do
+    raise ArgumentError, "invalid driver endpoints: #{inspect(endpoints)}"
+  end
 
   defp normalize_endpoint!(%Endpoint{} = endpoint) do
     validate_endpoint!(endpoint)
@@ -115,27 +116,6 @@ defmodule EtherCAT.SlaveDescription do
   defp validate_endpoint!(endpoint) do
     raise ArgumentError, "invalid endpoint description: #{inspect(endpoint)}"
   end
-
-  defp infer_endpoints(driver, config) do
-    driver
-    |> EtherCAT.Driver.Runtime.signal_model(config, [])
-    |> Enum.map(fn {signal_name, signal_model} ->
-      %Endpoint{
-        signal: signal_name,
-        direction: infer_direction(signal_model),
-        type: :raw
-      }
-    end)
-  end
-
-  defp infer_direction(%Signal{pdo_index: pdo_index}), do: infer_direction(pdo_index)
-
-  defp infer_direction(pdo_index)
-       when is_integer(pdo_index) and pdo_index >= 0x1600 and pdo_index < 0x1A00,
-       do: :output
-
-  defp infer_direction(pdo_index) when is_integer(pdo_index) and pdo_index >= 0x1A00, do: :input
-  defp infer_direction(_other), do: :input
 
   defp ensure_unique!(entries, field) do
     values = Enum.map(entries, &Map.fetch!(&1, field))

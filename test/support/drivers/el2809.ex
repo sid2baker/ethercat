@@ -36,30 +36,29 @@ defmodule EtherCAT.Driver.EL2809 do
   @impl true
   def signal_model(_config, _sii_pdo_configs) do
     [
-      ch1: 0x1600,
-      ch2: 0x1601,
-      ch3: 0x1602,
-      ch4: 0x1603,
-      ch5: 0x1604,
-      ch6: 0x1605,
-      ch7: 0x1606,
-      ch8: 0x1607,
-      ch9: 0x1608,
-      ch10: 0x1609,
-      ch11: 0x160A,
-      ch12: 0x160B,
-      ch13: 0x160C,
-      ch14: 0x160D,
-      ch15: 0x160E,
-      ch16: 0x160F
+      ch1: %EtherCAT.Driver.Signal{pdo_index: 0x1600},
+      ch2: %EtherCAT.Driver.Signal{pdo_index: 0x1601},
+      ch3: %EtherCAT.Driver.Signal{pdo_index: 0x1602},
+      ch4: %EtherCAT.Driver.Signal{pdo_index: 0x1603},
+      ch5: %EtherCAT.Driver.Signal{pdo_index: 0x1604},
+      ch6: %EtherCAT.Driver.Signal{pdo_index: 0x1605},
+      ch7: %EtherCAT.Driver.Signal{pdo_index: 0x1606},
+      ch8: %EtherCAT.Driver.Signal{pdo_index: 0x1607},
+      ch9: %EtherCAT.Driver.Signal{pdo_index: 0x1608},
+      ch10: %EtherCAT.Driver.Signal{pdo_index: 0x1609},
+      ch11: %EtherCAT.Driver.Signal{pdo_index: 0x160A},
+      ch12: %EtherCAT.Driver.Signal{pdo_index: 0x160B},
+      ch13: %EtherCAT.Driver.Signal{pdo_index: 0x160C},
+      ch14: %EtherCAT.Driver.Signal{pdo_index: 0x160D},
+      ch15: %EtherCAT.Driver.Signal{pdo_index: 0x160E},
+      ch16: %EtherCAT.Driver.Signal{pdo_index: 0x160F}
     ]
   end
 
   @impl true
-  def encode_signal(_signal, _config, value), do: <<encode_bool(value)::8>>
-
-  @impl true
-  def decode_signal(_signal, _config, _raw), do: nil
+  def encode_signal(_signal, _config, value) when value in [true, 1], do: {:ok, <<1>>}
+  def encode_signal(_signal, _config, value) when value in [false, 0], do: {:ok, <<0>>}
+  def encode_signal(_signal, _config, _value), do: {:error, :invalid_value}
 
   @impl true
   def describe(_config) do
@@ -68,9 +67,6 @@ defmodule EtherCAT.Driver.EL2809 do
       endpoints: Enum.map(@channels, &%Endpoint{signal: &1, direction: :output, type: :boolean})
     }
   end
-
-  defp encode_bool(value) when value in [true, 1], do: 1
-  defp encode_bool(_value), do: 0
 end
 
 defmodule EtherCAT.Driver.EL2809.Simulator do

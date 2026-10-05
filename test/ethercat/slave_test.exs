@@ -14,13 +14,13 @@ defmodule EtherCAT.SlaveTest do
     def signal_model(_config, _sii_pdo_configs), do: []
 
     @impl true
-    def encode_signal(_signal, _config, _value), do: <<>>
+    def encode_signal(_signal, _config, _value), do: {:error, :invalid_value}
 
     @impl true
-    def decode_signal(_signal, _config, <<_::7, bit::1>>), do: bit
+    def decode_signal(_signal, _config, <<_::7, bit::1>>), do: {:ok, bit}
 
     @impl true
-    def decode_signal(_signal, _config, _raw), do: 0
+    def decode_signal(_signal, _config, _raw), do: {:error, :invalid_data}
   end
 
   defmodule BitDriver do
@@ -30,26 +30,27 @@ defmodule EtherCAT.SlaveTest do
     def signal_model(_config, _sii_pdo_configs), do: []
 
     @impl true
-    def encode_signal(_signal, _config, value), do: <<value::8>>
+    def encode_signal(_signal, _config, value), do: {:ok, <<value::8>>}
 
     @impl true
-    def decode_signal(_signal, _config, <<_::7, bit::1>>), do: bit
+    def decode_signal(_signal, _config, <<_::7, bit::1>>), do: {:ok, bit}
 
     @impl true
-    def decode_signal(_signal, _config, _raw), do: 0
+    def decode_signal(_signal, _config, _raw), do: {:error, :invalid_data}
   end
 
   defmodule SplitOutputDriver do
     @behaviour EtherCAT.Driver
 
     @impl true
-    def signal_model(_config, _sii_pdo_configs), do: [ch1: 0, ch2: 1]
+    def signal_model(_config, _sii_pdo_configs),
+      do: [ch1: %EtherCAT.Driver.Signal{pdo_index: 0}, ch2: %EtherCAT.Driver.Signal{pdo_index: 1}]
 
     @impl true
-    def encode_signal(_signal, _config, value), do: <<value::8>>
+    def encode_signal(_signal, _config, value), do: {:ok, <<value::8>>}
 
     @impl true
-    def decode_signal(_signal, _config, raw), do: raw
+    def decode_signal(_signal, _config, raw), do: {:ok, raw}
   end
 
   defmodule InvalidMailboxDriver do
@@ -60,10 +61,10 @@ defmodule EtherCAT.SlaveTest do
     def signal_model(_config, _sii_pdo_configs), do: []
 
     @impl true
-    def encode_signal(_signal, _config, _value), do: <<>>
+    def encode_signal(_signal, _config, _value), do: {:error, :invalid_value}
 
     @impl true
-    def decode_signal(_signal, _config, raw), do: raw
+    def decode_signal(_signal, _config, raw), do: {:ok, raw}
 
     @impl true
     def mailbox_steps(_config, %{phase: :preop}), do: [:bad_step]
@@ -78,10 +79,10 @@ defmodule EtherCAT.SlaveTest do
     def signal_model(_config, _sii_pdo_configs), do: []
 
     @impl true
-    def encode_signal(_signal, _config, _value), do: <<>>
+    def encode_signal(_signal, _config, _value), do: {:error, :invalid_value}
 
     @impl true
-    def decode_signal(_signal, _config, raw), do: raw
+    def decode_signal(_signal, _config, raw), do: {:ok, raw}
 
     @impl true
     def mailbox_steps(_config, %{phase: :sync_update}), do: [:bad_step]

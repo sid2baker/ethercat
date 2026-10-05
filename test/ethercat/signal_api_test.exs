@@ -17,15 +17,20 @@ defmodule EtherCAT.SampleApiTest do
 
     @impl true
     def signal_model(_config, _sii_pdo_configs),
-      do: [coil: 0x1600, ch1: 0x1A00, ch2: 0x1A01]
+      do: [
+        coil: %EtherCAT.Driver.Signal{pdo_index: 0x1600},
+        ch1: %EtherCAT.Driver.Signal{pdo_index: 0x1A00},
+        ch2: %EtherCAT.Driver.Signal{pdo_index: 0x1A01}
+      ]
 
     @impl true
-    def encode_signal(_signal, _config, value) when value in [true, 1], do: <<1>>
-    def encode_signal(_signal, _config, _value), do: <<0>>
+    def encode_signal(_signal, _config, value) when value in [true, 1], do: {:ok, <<1>>}
+    def encode_signal(_signal, _config, value) when value in [false, 0], do: {:ok, <<0>>}
+    def encode_signal(_signal, _config, _value), do: {:error, :invalid_value}
 
     @impl true
-    def decode_signal(_signal, _config, <<_::7, bit::1>>), do: bit == 1
-    def decode_signal(_signal, _config, _raw), do: false
+    def decode_signal(_signal, _config, <<_::7, bit::1>>), do: {:ok, bit == 1}
+    def decode_signal(_signal, _config, _raw), do: {:error, :invalid_data}
 
     @impl true
     def describe(_config) do
@@ -38,6 +43,16 @@ defmodule EtherCAT.SampleApiTest do
         ]
       }
     end
+  end
+
+  defmodule FailingDriver do
+    @behaviour EtherCAT.Driver
+    @impl true
+    def signal_model(_config, _pdos), do: []
+    @impl true
+    def encode_signal(_signal, %{encoded: encoded}, _value), do: {:ok, encoded}
+    @impl true
+    def decode_signal(_signal, _config, _raw), do: {:error, :bad_sensor_data}
   end
 
   setup do
@@ -86,6 +101,47 @@ defmodule EtherCAT.SampleApiTest do
     end)
 
     {:ok, domain_id: domain_id, input_key: input_key, output_key: output_key, data: data}
+  end
+
+  test "invalid writes leave the process image unchanged", %{
+    data: data,
+    domain_id: domain,
+    output_key: key
+  } do
+    assert {:error, {:encode_failed, :coil, :invalid_value}} =
+             Outputs.write_signal(data, :coil, :invalid)
+
+    for encoded <- [<<>>, <<1, 0>>, <<2>>] do
+      bad = %{data | driver: FailingDriver, config: %{encoded: encoded}}
+      assert {:error, {:encode_failed, :coil, _reason}} = Outputs.write_signal(bad, :coil, true)
+      assert {:ok, <<0>>} = EtherCAT.Domain.read(domain, key)
+    end
+  end
+
+  test "direct reads propagate decoding errors", %{data: data, domain_id: domain, input_key: key} do
+    now = System.monotonic_time(:microsecond)
+    :ets.insert(domain, {key, <<1>>, {:input, now}})
+    Image.put_domain_status(domain, now, 1_000_000)
+
+    assert {:error, {:decode_failed, :ch1, :bad_sensor_data}} =
+             EtherCAT.Slave.Runtime.Signals.read_input(%{data | driver: FailingDriver}, :ch1)
+  end
+
+  test "failed decoding replaces the previous value with an explicit cycle error", %{
+    data: data,
+    domain_id: domain,
+    input_key: key
+  } do
+    {ref, data} = Notifications.subscribe(data, self())
+    data = Samples.refresh(data, domain, 1, %{key => <<1>>}, 1, [:ch1])
+    assert data.samples[domain].inputs == %{ch1: true}
+    assert_receive {:ethercat, ^ref, %Sample{cycle: 1}}
+    data = %{data | driver: FailingDriver, subscriptions: %{ch1: MapSet.new([self()])}}
+    data = Samples.refresh(data, domain, 2, %{key => <<1>>}, 2, [])
+    assert %Sample{inputs: %{}, errors: %{ch1: :bad_sensor_data}} = data.samples[domain]
+    assert_receive {:ethercat, ^ref, %Sample{cycle: 2, errors: %{ch1: :bad_sensor_data}}}
+    assert_receive {:ethercat, :signal_error, :test_slave, :ch1, :bad_sensor_data}
+    refute_receive {:ethercat, :signal, :test_slave, :ch1, _}
   end
 
   test "sample refresh publishes a complete coherent domain observation", %{

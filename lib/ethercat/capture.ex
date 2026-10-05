@@ -42,7 +42,6 @@ defmodule EtherCAT.Capture do
   alias EtherCAT.Session
   alias EtherCAT.Simulator.Slave.Definition
   alias EtherCAT.Simulator.Slave.Object
-  alias EtherCAT.Driver.Default, as: DefaultDriver
   alias EtherCAT.SignalName
   alias EtherCAT.Slave.ESC.SII
   alias EtherCAT.Slave.Mailbox
@@ -648,8 +647,6 @@ defmodule EtherCAT.Capture do
   end
 
   defp normalize_pdo_layout(pdo_configs) do
-    signal_names = DefaultDriver.signal_model(%{}, pdo_configs) |> Map.new()
-
     layout =
       Enum.reduce(
         pdo_configs,
@@ -658,8 +655,7 @@ defmodule EtherCAT.Capture do
           direction = pdo.direction
           bit_offset = Map.fetch!(acc.offsets, direction)
 
-          signal_name =
-            Map.get(signal_names, pdo.index, generated_signal_name(pdo.index))
+          signal_name = generated_signal_name(pdo.index)
 
           signal =
             Definition.signal(
@@ -893,6 +889,8 @@ defmodule EtherCAT.Capture do
       "",
       render_driver_signal_model_block(scaffold.signal_model),
       "",
+      render_driver_description_block(scaffold),
+      "",
       render_driver_mailbox_block(scaffold.mailbox_steps),
       "",
       render_driver_codec_block(scaffold),
@@ -938,12 +936,33 @@ defmodule EtherCAT.Capture do
     [
       inline_literal("  @signals ", signal_model_literal),
       "",
-      "  def signal_model(config), do: signal_model(config, [])",
-      "",
       "  @impl true",
       "  def signal_model(_config, _sii_pdo_configs), do: @signals"
     ]
     |> Enum.join("\n")
+  end
+
+  defp render_driver_description_block(scaffold) do
+    input_type =
+      cond do
+        scaffold.codec_template == :beckhoff_el3202 -> :temperature
+        digital_group?(scaffold.input_entries) -> :boolean
+        true -> :raw
+      end
+
+    output_type = if digital_group?(scaffold.output_entries), do: :boolean, else: :raw
+
+    endpoints =
+      Enum.map_join(scaffold.input_entries ++ scaffold.output_entries, ",\n", fn entry ->
+        type = if entry.direction == :input, do: input_type, else: output_type
+
+        "%EtherCAT.Endpoint{signal: #{signal_name_literal(entry.name)}, direction: #{inspect(entry.direction)}, type: #{inspect(type)}}"
+      end)
+
+    """
+      @impl true
+      def describe(_config), do: %{endpoints: [#{endpoints}]}
+    """
   end
 
   defp render_driver_mailbox_block([]), do: ""
@@ -971,113 +990,47 @@ defmodule EtherCAT.Capture do
   end
 
   defp render_generic_driver_codec_block(scaffold) do
-    input_signals = scaffold.input_signals
-    output_signals = scaffold.output_signals
-    input_entries = scaffold.input_entries
-    output_entries = scaffold.output_entries
+    encoder =
+      cond do
+        scaffold.output_entries == [] ->
+          ""
 
-    cond do
-      output_entries == [] and input_entries == [] ->
-        """
-          @impl true
-          def encode_signal(_signal, _config, _value), do: <<>>
+        digital_group?(scaffold.output_entries) ->
+          """
+            @impl true
+            def encode_signal(_signal, _config, value) when value in [true, 1], do: {:ok, <<1>>}
+            def encode_signal(_signal, _config, value) when value in [false, 0], do: {:ok, <<0>>}
+            def encode_signal(_signal, _config, _value), do: {:error, :invalid_value}
+          """
 
-          @impl true
-          def decode_signal(_signal, _config, _raw), do: nil
-        """
+        true ->
+          """
+            @impl true
+            def encode_signal(_signal, _config, value) when is_binary(value), do: {:ok, value}
+            def encode_signal(_signal, _config, _value), do: {:error, :invalid_value}
+          """
+      end
 
-      output_entries == [] and digital_group?(input_entries) ->
-        """
-          @impl true
-          def encode_signal(_signal, _config, _value), do: <<>>
+    decoder =
+      cond do
+        scaffold.input_entries == [] ->
+          ""
 
-          @impl true
-          def decode_signal(_signal, _config, <<_::7, bit::1>>), do: bit
+        digital_group?(scaffold.input_entries) ->
+          """
+            @impl true
+            def decode_signal(_signal, _config, <<0::7, bit::1>>), do: {:ok, bit == 1}
+            def decode_signal(_signal, _config, _raw), do: {:error, :invalid_data}
+          """
 
-          def decode_signal(_signal, _config, _raw), do: 0
-        """
+        true ->
+          """
+            @impl true
+            def decode_signal(_signal, _config, raw), do: {:ok, raw}
+          """
+      end
 
-      input_entries == [] and digital_group?(output_entries) ->
-        """
-          @impl true
-          def encode_signal(_signal, _config, true), do: <<1>>
-
-          def encode_signal(_signal, _config, false), do: <<0>>
-
-          def encode_signal(_signal, _config, value) when is_integer(value), do: <<value::8>>
-
-          def encode_signal(_signal, _config, _value), do: <<>>
-
-          @impl true
-          def decode_signal(_signal, _config, _raw), do: nil
-        """
-
-      digital_group?(input_entries) and digital_group?(output_entries) ->
-        [
-          inline_literal("  @input_signals ", render_signal_name_list_literal(input_signals)),
-          inline_literal("  @output_signals ", render_signal_name_list_literal(output_signals)),
-          "",
-          "  @impl true",
-          "  def encode_signal(signal, _config, true) when signal in @output_signals, do: <<1>>",
-          "",
-          "  def encode_signal(signal, _config, false) when signal in @output_signals, do: <<0>>",
-          "",
-          "  def encode_signal(signal, _config, value) when signal in @output_signals and is_integer(value),",
-          "    do: <<value::8>>",
-          "",
-          "  def encode_signal(_signal, _config, _value), do: <<>>",
-          "",
-          "  @impl true",
-          "  def decode_signal(signal, _config, <<_::7, bit::1>>) when signal in @input_signals,",
-          "    do: bit",
-          "",
-          "  def decode_signal(signal, _config, _raw) when signal in @input_signals, do: 0",
-          "",
-          "  def decode_signal(_signal, _config, _raw), do: nil"
-        ]
-        |> Enum.join("\n")
-
-      output_entries == [] ->
-        """
-          @impl true
-          def encode_signal(_signal, _config, _value), do: <<>>
-
-          @impl true
-          def decode_signal(_signal, _config, raw), do: raw
-        """
-
-      input_entries == [] ->
-        """
-          @impl true
-          def encode_signal(_signal, _config, value) when is_binary(value), do: value
-
-          def encode_signal(_signal, _config, _value), do: <<>>
-
-          @impl true
-          def decode_signal(_signal, _config, _raw), do: nil
-        """
-
-      true ->
-        [
-          inline_literal("  @input_signals ", render_signal_name_list_literal(input_signals)),
-          inline_literal("  @output_signals ", render_signal_name_list_literal(output_signals)),
-          "",
-          "  @impl true",
-          "  def encode_signal(signal, _config, value) when signal in @output_signals and is_binary(value),",
-          "    do: value",
-          "",
-          "  def encode_signal(signal, _config, _value) when signal in @output_signals, do: <<>>",
-          "",
-          "  def encode_signal(_signal, _config, _value), do: <<>>",
-          "",
-          "  @impl true",
-          "  def decode_signal(signal, _config, raw) when signal in @input_signals, do: raw",
-          "",
-          "  def decode_signal(_signal, _config, _raw), do: nil"
-        ]
-        |> Enum.join("\n")
-    end
-    |> String.trim_trailing()
+    String.trim_trailing(encoder <> "\n" <> decoder)
   end
 
   defp render_el3202_codec_block(scaffold) do
@@ -1087,9 +1040,6 @@ defmodule EtherCAT.Capture do
       |> Enum.map(& &1.name)
 
     [
-      "  @impl true",
-      "  def encode_signal(_signal, _config, _value), do: <<>>",
-      "",
       "  @impl true",
       "  def decode_signal(#{signal_name_literal(channel1)}, _config, <<",
       "        _::1,",
@@ -1103,14 +1053,14 @@ defmodule EtherCAT.Capture do
       "        _::6,",
       "        value::16-little",
       "      >>) do",
-      "    %{",
+      "    {:ok, %{",
       "      ohms: value / 16.0,",
       "      overrange: overrange == 1,",
       "      underrange: underrange == 1,",
       "      error: error == 1,",
       "      invalid: state == 1,",
       "      toggle: toggle",
-      "    }",
+      "    }}",
       "  end",
       "",
       "  def decode_signal(#{signal_name_literal(channel2)}, _config, <<",
@@ -1125,17 +1075,17 @@ defmodule EtherCAT.Capture do
       "        _::6,",
       "        value::16-little",
       "      >>) do",
-      "    %{",
+      "    {:ok, %{",
       "      ohms: value / 16.0,",
       "      overrange: overrange == 1,",
       "      underrange: underrange == 1,",
       "      error: error == 1,",
       "      invalid: state == 1,",
       "      toggle: toggle",
-      "    }",
+      "    }}",
       "  end",
       "",
-      "  def decode_signal(_signal, _config, _raw), do: nil"
+      "  def decode_signal(_signal, _config, _raw), do: {:error, :invalid_data}"
     ]
     |> Enum.join("\n")
   end
@@ -1161,14 +1111,6 @@ defmodule EtherCAT.Capture do
       signal_model: Enum.map(signal_entries, &{&1.name, &1.pdo_index}),
       input_entries: Enum.filter(signal_entries, &(&1.direction == :input)),
       output_entries: Enum.filter(signal_entries, &(&1.direction == :output)),
-      input_signals:
-        signal_entries
-        |> Enum.filter(&(&1.direction == :input))
-        |> Enum.map(& &1.name),
-      output_signals:
-        signal_entries
-        |> Enum.filter(&(&1.direction == :output))
-        |> Enum.map(& &1.name),
       mailbox_steps: driver_mailbox_steps(capture),
       codec_template: template_codec(template),
       simulator_definition_options:
@@ -1446,14 +1388,10 @@ defmodule EtherCAT.Capture do
     IO.iodata_to_binary([
       "[\n",
       Enum.map_join(signal_model, ",\n", fn {name, index} ->
-        "  #{signal_name_key_literal(name)}: #{hex_literal(index, 4)}"
+        "  #{signal_name_key_literal(name)}: %EtherCAT.Driver.Signal{pdo_index: #{hex_literal(index, 4)}}"
       end),
       "\n]"
     ])
-  end
-
-  defp render_signal_name_list_literal(list) do
-    IO.iodata_to_binary(["[", Enum.map_join(list, ", ", &signal_name_literal/1), "]"])
   end
 
   defp inline_literal(prefix, literal) do

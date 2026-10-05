@@ -15,26 +15,31 @@ defmodule EtherCAT.DriverTest do
     end
 
     @impl true
-    def signal_model(_config, _sii_pdo_configs), do: [out: 0x1600, in: 0x1A00]
+    def signal_model(_config, _sii_pdo_configs),
+      do: [
+        out: %EtherCAT.Driver.Signal{pdo_index: 0x1600},
+        in: %EtherCAT.Driver.Signal{pdo_index: 0x1A00}
+      ]
 
     @impl true
-    def encode_signal(_signal, _config, value), do: <<value::8>>
+    def encode_signal(_signal, _config, value), do: {:ok, <<value::8>>}
 
     @impl true
-    def decode_signal(_signal, _config, <<value::8>>), do: value
+    def decode_signal(_signal, _config, <<value::8>>), do: {:ok, value}
   end
 
   defmodule NoSimulationDriver do
     @behaviour EtherCAT.Driver
 
     @impl true
-    def signal_model(_config, _sii_pdo_configs), do: [out: 0x1600]
+    def signal_model(_config, _sii_pdo_configs),
+      do: [out: %EtherCAT.Driver.Signal{pdo_index: 0x1600}]
 
     @impl true
-    def encode_signal(_signal, _config, value), do: <<value::8>>
+    def encode_signal(_signal, _config, value), do: {:ok, <<value::8>>}
 
     @impl true
-    def decode_signal(_signal, _config, <<value::8>>), do: value
+    def decode_signal(_signal, _config, <<value::8>>), do: {:ok, value}
   end
 
   defmodule RevisionIdentityDriver do
@@ -46,13 +51,14 @@ defmodule EtherCAT.DriverTest do
     end
 
     @impl true
-    def signal_model(_config, _sii_pdo_configs), do: [out: 0x1600]
+    def signal_model(_config, _sii_pdo_configs),
+      do: [out: %EtherCAT.Driver.Signal{pdo_index: 0x1600}]
 
     @impl true
-    def encode_signal(_signal, _config, value), do: <<value::8>>
+    def encode_signal(_signal, _config, value), do: {:ok, <<value::8>>}
 
     @impl true
-    def decode_signal(_signal, _config, <<value::8>>), do: value
+    def decode_signal(_signal, _config, <<value::8>>), do: {:ok, value}
   end
 
   defmodule IdentityDriver.Simulator do
@@ -83,7 +89,10 @@ defmodule EtherCAT.DriverTest do
   end
 
   test "signal_model/2 returns the driver's logical signals" do
-    assert [out: 0x1600, in: 0x1A00] == DriverRuntime.signal_model(IdentityDriver, %{})
+    assert [
+             out: %EtherCAT.Driver.Signal{pdo_index: 0x1600},
+             in: %EtherCAT.Driver.Signal{pdo_index: 0x1A00}
+           ] == DriverRuntime.signal_model(IdentityDriver, %{}, [])
   end
 
   test "from_driver/2 defaults simulator identity from the driver" do

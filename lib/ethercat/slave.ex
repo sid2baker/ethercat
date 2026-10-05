@@ -160,6 +160,7 @@ defmodule EtherCAT.Slave do
   Subscribe `pid` to a registered process-data signal or configured latch name.
 
   Signal updates arrive as `{:ethercat, :signal, slave_name, signal_name, value}`.
+  Decode failures arrive as `{:ethercat, :signal_error, slave_name, signal_name, reason}`.
   Latch edges arrive as `{:ethercat, :latch, slave_name, latch_name, timestamp_ns}`.
   """
   @spec subscribe(server(), atom(), pid()) ::

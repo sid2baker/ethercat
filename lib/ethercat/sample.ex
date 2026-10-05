@@ -4,6 +4,10 @@ defmodule EtherCAT.Sample do
 
   A sample contains protocol truth only. It does not project machine state,
   advertise semantic commands, or infer completion of application intent.
+  `inputs` contains only successfully decoded values. `errors` maps failed signal
+  names to decoder reasons for this cycle; no previous or substitute value is
+  retained for those signals.
+
   Samples from different domains do not share a consistency boundary.
 
   `observed_at` is a host monotonic timestamp in microseconds, not wall-clock
@@ -11,13 +15,14 @@ defmodule EtherCAT.Sample do
   """
 
   @enforce_keys [:slave, :domain, :cycle, :observed_at, :inputs]
-  defstruct [:slave, :domain, :cycle, :observed_at, :inputs]
+  defstruct [:slave, :domain, :cycle, :observed_at, :inputs, errors: %{}]
 
   @type t :: %__MODULE__{
           slave: atom(),
           domain: atom(),
           cycle: non_neg_integer(),
           observed_at: integer(),
-          inputs: %{optional(atom()) => term()}
+          inputs: %{optional(atom()) => term()},
+          errors: %{optional(atom()) => term()}
         }
 end

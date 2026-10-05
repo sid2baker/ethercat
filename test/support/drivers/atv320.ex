@@ -4,7 +4,7 @@ defmodule EtherCAT.Driver.ATV320 do
   @behaviour EtherCAT.Driver
 
   alias EtherCAT.Endpoint
-  alias EtherCAT.Slave.ProcessData.Signal
+  alias EtherCAT.Driver.Signal
 
   @scanner_word_count 6
   @word_bits 16
@@ -195,22 +195,22 @@ defmodule EtherCAT.Driver.ATV320 do
   end
 
   defp encode_u16(value) when is_integer(value) and value >= 0 and value <= 0xFFFF,
-    do: <<value::16-little>>
+    do: {:ok, <<value::16-little>>}
 
-  defp encode_u16(value) when is_binary(value) and byte_size(value) == 2, do: value
-  defp encode_u16(_value), do: <<>>
+  defp encode_u16(value) when is_binary(value) and byte_size(value) == 2, do: {:ok, value}
+  defp encode_u16(_value), do: {:error, :invalid_value}
 
   defp encode_i16(value) when is_integer(value) and value >= -32_768 and value <= 32_767,
-    do: <<value::16-signed-little>>
+    do: {:ok, <<value::16-signed-little>>}
 
-  defp encode_i16(value) when is_binary(value) and byte_size(value) == 2, do: value
-  defp encode_i16(_value), do: <<>>
+  defp encode_i16(value) when is_binary(value) and byte_size(value) == 2, do: {:ok, value}
+  defp encode_i16(_value), do: {:error, :invalid_value}
 
-  defp decode_u16(<<value::16-little>>), do: value
-  defp decode_u16(_raw), do: 0
+  defp decode_u16(<<value::16-little>>), do: {:ok, value}
+  defp decode_u16(_raw), do: {:error, :invalid_data}
 
-  defp decode_i16(<<value::16-signed-little>>), do: value
-  defp decode_i16(_raw), do: 0
+  defp decode_i16(<<value::16-signed-little>>), do: {:ok, value}
+  defp decode_i16(_raw), do: {:error, :invalid_data}
 
   defp valid_extra_names?(names) when is_list(names) do
     reserved = [

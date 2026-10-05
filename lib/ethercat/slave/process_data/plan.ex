@@ -60,7 +60,7 @@ defmodule EtherCAT.Slave.ProcessData.Plan do
   alias EtherCAT.Driver
   alias EtherCAT.Slave.ProcessData.Plan.DomainAttachment
   alias EtherCAT.Slave.ProcessData.Plan.SmGroup
-  alias EtherCAT.Slave.ProcessData.Signal
+  alias EtherCAT.Driver.Signal
 
   @type signal_name :: atom()
   @type process_data_request :: :none | {:all, atom()} | [{signal_name(), atom()}]
@@ -76,7 +76,7 @@ defmodule EtherCAT.Slave.ProcessData.Plan do
           required(:bit_offset) => non_neg_integer()
         }
 
-  @type signal_model :: [{signal_name(), non_neg_integer() | Signal.t()}]
+  @type signal_model :: [{signal_name(), Signal.t()}]
 
   @type resolved_signal :: {signal_name(), atom(), Signal.t(), sii_pdo_config()}
 
@@ -145,11 +145,6 @@ defmodule EtherCAT.Slave.ProcessData.Plan do
       {:ok, declaration} -> normalize_signal_declaration(signal_name, declaration)
       :error -> {:error, {:signal_not_in_driver_model, signal_name}}
     end
-  end
-
-  defp normalize_signal_declaration(_signal_name, declaration)
-       when is_integer(declaration) and declaration >= 0 do
-    {:ok, Signal.whole_pdo(declaration)}
   end
 
   defp normalize_signal_declaration(signal_name, %Signal{} = declaration) do

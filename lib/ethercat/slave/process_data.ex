@@ -54,6 +54,7 @@ defmodule EtherCAT.Slave.ProcessData do
              mailbox_data.sii_pdo_configs,
              mailbox_data.sii_sm_configs
            ),
+         :ok <- Driver.Runtime.validate_codecs(mailbox_data.driver, sm_groups),
          :ok <- validate_fmmu_capacity(mailbox_data, sm_groups),
          {:ok, registrations} <- apply_process_data_groups(mailbox_data, sm_groups) do
       output_domain_ids_by_sm = build_output_domain_index(registrations)

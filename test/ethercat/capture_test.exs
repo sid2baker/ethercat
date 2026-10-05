@@ -174,11 +174,16 @@ defmodule EtherCAT.CaptureTest do
     assert module in compiled_modules
     assert simulator_module in compiled_modules
     assert %{vendor_id: 0x0000_0002, product_code: 0x0711_3052} = module.identity()
-    assert signal_model = module.signal_model(%{})
+    assert signal_model = module.signal_model(%{}, [])
     assert length(signal_model) == 16
-    assert hd(signal_model) == {:ch1, 0x1A00}
-    assert module.encode_signal(:ch1, %{}, :ignored) == <<>>
-    assert module.decode_signal(:ch1, %{}, <<1>>) == 1
+    assert hd(signal_model) == {:ch1, %EtherCAT.Driver.Signal{pdo_index: 0x1A00}}
+    refute function_exported?(module, :encode_signal, 3)
+    assert module.decode_signal(:ch1, %{}, <<1>>) == {:ok, true}
+    assert module.decode_signal(:ch1, %{}, <<2>>) == {:error, :invalid_data}
+
+    assert %{endpoints: [%EtherCAT.Endpoint{signal: :ch1, type: :boolean} | _]} =
+             EtherCAT.SlaveDescription.native_description(module, %{})
+
     refute function_exported?(module, :project_state, 4)
     refute function_exported?(module, :command, 4)
 
@@ -226,13 +231,13 @@ defmodule EtherCAT.CaptureTest do
     assert module in compiled_modules
     assert simulator_module in compiled_modules
     assert %{vendor_id: 0x0000_0ACE, product_code: 0x0000_1602} = module.identity()
-    assert module.signal_model(%{}) == []
+    assert module.signal_model(%{}, []) == []
 
     assert module.mailbox_steps(%{}, %{phase: :preop, sync: nil}) ==
              [{:sdo_download, 0x2000, 0x02, <<0>>}]
 
-    assert module.encode_signal(:blob, %{}, :ignored) == <<>>
-    assert module.decode_signal(:blob, %{}, <<1, 2>>) == nil
+    refute function_exported?(module, :encode_signal, 3)
+    refute function_exported?(module, :decode_signal, 3)
 
     opts = simulator_module.definition_options(%{})
     assert Keyword.fetch!(opts, :profile) == :mailbox_device
@@ -262,7 +267,7 @@ defmodule EtherCAT.CaptureTest do
 
     assert source =~ "defmodule #{inspect(module)} do"
     assert source =~ "defmodule #{inspect(simulator_module)} do"
-    assert source =~ "left_input: 0x1A00"
+    assert source =~ "left_input: %EtherCAT.Driver.Signal{pdo_index: 0x1A00}"
     refute source =~ "EtherCAT.Capture.capture("
     refute source =~ "EtherCAT.Capture.load_capture!"
 
@@ -273,7 +278,9 @@ defmodule EtherCAT.CaptureTest do
 
     assert module in compiled_modules
     assert simulator_module in compiled_modules
-    assert {:left_input, 0x1A00} = hd(module.signal_model(%{}))
+
+    assert {:left_input, %EtherCAT.Driver.Signal{pdo_index: 0x1A00}} =
+             hd(module.signal_model(%{}, []))
 
     assert Keyword.fetch!(simulator_module.definition_options(%{}), :input_names) |> hd() ==
              :left_input
@@ -345,21 +352,25 @@ defmodule EtherCAT.CaptureTest do
     assert %{vendor_id: 0x0000_0002, product_code: 0x0C82_3052, revision: 0x0016_0000} =
              module.identity()
 
-    assert module.signal_model(%{}) == [channel1: 0x1A00, channel2: 0x1A01]
+    assert module.signal_model(%{}, []) == [
+             channel1: %EtherCAT.Driver.Signal{pdo_index: 0x1A00},
+             channel2: %EtherCAT.Driver.Signal{pdo_index: 0x1A01}
+           ]
 
     assert module.mailbox_steps(%{}, %{phase: :preop, sync: nil}) == [
              {:sdo_download, 0x8000, 0x19, <<8::16-little>>},
              {:sdo_download, 0x8010, 0x19, <<8::16-little>>}
            ]
 
-    assert %{
-             ohms: 100.0,
-             overrange: false,
-             underrange: false,
-             error: false,
-             invalid: false,
-             toggle: 1
-           } =
+    assert {:ok,
+            %{
+              ohms: 100.0,
+              overrange: false,
+              underrange: false,
+              error: false,
+              invalid: false,
+              toggle: 1
+            }} =
              module.decode_signal(
                :channel1,
                %{},

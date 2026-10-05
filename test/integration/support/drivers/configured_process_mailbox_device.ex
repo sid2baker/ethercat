@@ -4,7 +4,7 @@ defmodule EtherCAT.IntegrationSupport.Drivers.ConfiguredProcessMailboxDevice do
   @behaviour EtherCAT.Driver
   @behaviour EtherCAT.Driver.Provisioning
 
-  alias EtherCAT.Slave.ProcessData.Signal
+  alias EtherCAT.Driver.Signal
 
   @signals [
     led0: Signal.slice(0x1600, 0, 8),
@@ -30,13 +30,13 @@ defmodule EtherCAT.IntegrationSupport.Drivers.ConfiguredProcessMailboxDevice do
   @impl true
   def encode_signal(_signal, _config, value)
       when is_integer(value) and value >= 0 and value <= 255,
-      do: <<value::8>>
+      do: {:ok, <<value::8>>}
 
-  def encode_signal(_signal, _config, _value), do: <<>>
+  def encode_signal(_signal, _config, _value), do: {:error, :invalid_value}
 
   @impl true
-  def decode_signal(_signal, _config, <<value::8>>), do: value
-  def decode_signal(_signal, _config, raw), do: raw
+  def decode_signal(_signal, _config, <<value::8>>), do: {:ok, value}
+  def decode_signal(_signal, _config, _raw), do: {:error, :invalid_data}
 
   def startup_blob do
     0..191
