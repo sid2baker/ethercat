@@ -1,7 +1,7 @@
 defmodule EtherCAT.MixProject do
   use Mix.Project
 
-  @version "0.5.0-dev"
+  @version "0.5.0"
   @source_url "https://github.com/sid2baker/ethercat"
 
   def project do
@@ -69,6 +69,7 @@ defmodule EtherCAT.MixProject do
     [
       main: "EtherCAT",
       source_url: @source_url,
+      source_ref: "v#{@version}",
       extras: ["README.md", "CHANGELOG.md"],
       before_closing_head_tag: &before_closing_head_tag/1
     ]

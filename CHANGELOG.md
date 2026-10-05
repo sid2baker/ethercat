@@ -7,136 +7,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-- Drivers now use explicit codec results, public PDO/signal types, and optional
-  direction-specific codecs. Static descriptions no longer infer discovered layout,
-  and latch consumers use subscriptions instead of inline driver hooks. Invalid
-  writes fail before staging; samples expose decoding errors without substitute
-  values. Bundled drivers and generated scaffolds use the new contract (`1360779`).
-- Simplify the public API: rename `await_running` to `await_ready`, remove duplicate
-  raw read/write operations, move signal subscriptions to `EtherCAT.Signals`, and
-  make descriptions strictly static. Protocol subscriptions gain unique references
-  and cancellation; DC waits stay bound to their original process and session (`3798e47`).
-- Runtime lookup and static descriptions now use targeted session-validated requests;
-  link dispatch, domain initialization, and master lifecycle decisions live in their
-  owning modules, with diagnostic formatting separated from live queries. CI no
-  longer requires zero duplicate code blocks (`417dcbc`).
-- `EtherCAT.start/1` now returns an opaque `%EtherCAT.Session{}` required by
-  lifecycle, protocol, provisioning, diagnostics, raw process-data, and capture
-  operations. Singleton convenience variants and `%EtherCAT.Runtime.Handle{}`
-  were removed, and stopped generations now consistently return
-  `{:error, :stale_session}` (`b5ae7bd`; supersedes `5fd6eaa`).
-- Protocol subscriptions now atomically return current slave/domain status and
-  retained samples, then deliver `%EtherCAT.Sample{}` values alongside
-  `%EtherCAT.Notification{}` messages for slave runtime-state and attached-domain
-  lifecycle/health changes (`eda0e72`).
-- EtherCAT's public runtime boundary is now protocol-focused: coherent
-  per-domain `%EtherCAT.Sample{}` observations and explicit `read/3`/`write/4`
-  operations replace projected slave snapshots, semantic events, and
-  driver-backed commands; `EtherCAT.Driver` now owns only identity, PDO signal
-  layout/metadata, and value codecs (`da97385`).
-- Concrete sample drivers (`EK1100`, `EL1809`, `EL2809`, and the manual-based
-  `ATV320`) now live in test support instead of `lib/`, so the published
-  library ships only the generic driver contracts/helpers plus
-  the generic default driver; consuming applications are expected to own real
-  device drivers (`d5497a7`).
-- EtherCAT no longer autostarts as an OTP application; host applications now
-  supervise `EtherCAT.Runtime` directly, while `EtherCAT.start/1` and
-  `EtherCAT.stop/1` control the singleton session inside that host-owned
-  runtime (`6bb51d3`).
+## [0.5.0] - 2026-10-05
+
+### Breaking changes
+- Host applications must now supervise `EtherCAT.Runtime`; the package no longer
+  starts the runtime automatically. `EtherCAT.start/1` returns `{:ok, session}`,
+  and runtime, provisioning, diagnostics, signal, and capture operations require
+  that `%EtherCAT.Session{}`. Stopped or replaced sessions return
+  `{:error, :stale_session}` rather than addressing a newer runtime
+  (`6bb51d3`, `b5ae7bd`).
+- Master and simulator transport configuration now uses explicit `backend:`
+  values normalized by `EtherCAT.Backend`. For raw Ethernet, replace
+  `interface: "eth0"` with `backend: {:raw, %{interface: "eth0"}}` (`2d77d36`).
+- Replace `await_running` with `EtherCAT.await_ready/2`, `read_input` with
+  `EtherCAT.read/3`, and `write_output` with `EtherCAT.write/4`. Provisioning,
+  SDO transfers, and DC lock waits move to `EtherCAT.Provisioning`; diagnostic
+  queries move to `EtherCAT.Diagnostics`; individual signal/latch subscriptions
+  move to `EtherCAT.Signals`. All take the session first (`f15d37b`, `3798e47`).
+- `EtherCAT.slaves/1` returns configured names. Use
+  `EtherCAT.Diagnostics.slaves/1` for detailed slave summaries (`f15d37b`, `b5ae7bd`).
+- Custom drivers must implement `EtherCAT.Driver` instead of
+  `EtherCAT.Slave.Driver`. `signal_model/2` receives public `EtherCAT.Driver.PDO`
+  values and returns named `EtherCAT.Driver.Signal` structs, not integer PDO
+  shortcuts. Codecs return `{:ok, value}` or `{:error, reason}` and are required
+  only for registered input/output directions (`f15d37b`, `1360779`).
+- Driver mailbox and sync setup now use
+  `c:EtherCAT.Driver.Provisioning.mailbox_steps/2`. Inline lifecycle and latch
+  callbacks are removed; consume protocol notifications and `EtherCAT.Signals`
+  subscriptions instead. Machine commands, state projection, and semantic events
+  belong in the consuming application (`f15d37b`, `da97385`, `1360779`).
+- Simulator companions now implement `EtherCAT.Simulator.Adapter` instead of
+  `EtherCAT.Simulator.DriverAdapter` and supply an explicit profile through
+  `definition_options/1`; simulator process-data definitions are no longer
+  inferred from driver mappings (`7830f13`, `1360779`).
+- Slave configuration rejects unknown options. Signal references and endpoint
+  metadata use canonical driver signal names without slave-local aliases
+  (`a79e14c`).
+
+### Added
+- Coherent per-domain `%EtherCAT.Sample{}` observations through `sample/3` and
+  `samples/2`, with per-signal decoding errors rather than substitute values
+  (`da97385`, `1360779`).
+- Protocol subscriptions atomically return `{:ok, ref, status, samples}`, then
+  deliver `{:ethercat, ref, payload}` messages carrying `%EtherCAT.Sample{}` or
+  `%EtherCAT.Notification{}` values for slave/domain changes. Cancel a registration
+  with `EtherCAT.unsubscribe/3` (`eda0e72`, `3798e47`).
+- Static slave descriptions through `EtherCAT.describe/2` and `EtherCAT.inventory/1`.
+  Optional driver metadata is independent of discovery and live values; device
+  drivers remain application-owned (`ec6336a`, `d5497a7`, `3798e47`, `1360779`).
+- Structured master, simulator, and scan observations through
+  `%EtherCAT.Master.Status{}`, `%EtherCAT.Simulator.Status{}`, and
+  `%EtherCAT.Scan.Result{}` (`2d77d36`).
 
 ### Fixed
-- Worker lifecycle notifications now validate their originating process against the
-  active session. Diagnostic collection runs outside the master with a bounded
-  timeout, explicit query failures, and a final session-generation check; slave
-  recovery decisions are handled directly by the FSM. DC activation lock timeouts
-  return `:dc_lock_timeout` without issuing another diagnostic query (`8653d87`).
-- Public `EtherCAT.subscribe/2` now honors explicit subscriber pids; SII
-  category parsing returns structured errors for malformed EEPROM data; and
-  capture/simulator generated signal names are bounded before atom interning
-  while generated-source formatting failures return explicit errors
+- Invalid codec results, output widths, and nonzero padding fail before staging
+  writes; input decoding failures remain visible in reads, samples, and signal
+  subscriptions (`1360779`).
+- Stale worker lifecycle notifications cannot mutate the active session.
+  Diagnostic collection uses a bounded timeout, explicit query failures, and a
+  final session check without blocking the master on worker queries. DC waits
+  remain bound to their original process/session, and activation lock timeouts
+  return `:dc_lock_timeout` without an additional query (`8653d87`, `3798e47`).
+- Standalone scans refuse backends owned by the local master, preventing station
+  reassignment on a live session. Simulator status identifies transport-only
+  starts and reports detached runs as `backend: nil` (`3ebdedc`).
+- Initial PREOP-only provisioning suppresses background health polling, including
+  after configuration updates that keep slaves in PREOP (`473e224`, `1e10075`).
+- PREOP-first activation restores health polling and converges to `:operational`.
+  Slaves intentionally held in PREOP remain monitored during operational sessions
+  and recover to their configured target; live polling changes apply immediately
+  (`8521af7`, `d126047`, `c2a27ea`).
+- Explicit subscriber pids are honored, malformed SII EEPROM categories return
+  structured errors, and capture/simulator name generation is bounded before atom
+  interning. Generated-source formatting failures return explicit errors
   (`263204d`).
-- Simulator slave behavior modules now use explicit overridable defaults through
-  the simulator slave behaviour helper, so the runtime can call callbacks
-  directly instead of reflectively probing module load/export state while still
-  allowing sparse simulator behavior implementations (`d5497a7`).
-- Driver-backed commands now pass through the generic slave runtime without
-  crashing on non-`set_output` names, so drivers can expose custom command
-  surfaces such as `:shutdown` and `:enable_operation`
-  normally (`d5497a7`).
-- `EtherCAT.Scan.scan/1` now refuses to probe a backend already owned by the
-  local master, so standalone discovery cannot reassign station addresses on a
-  live runtime, and simulator status now infers backend identity from
-  transport-only runtime starts while keeping detached no-transport runs
-  explicit as `backend: nil` (`3ebdedc`).
-- Startup-held `:preop_ready` provisioning sessions now keep background health
-  polling suppressed when `configure_slave/2` updates a slave that still
-  remains targeted at `:preop`, instead of turning that configuration-only
-  session into `:recovering` on later disconnect (`1e10075`).
-- PREOP-first mixed provisioning now restores runtime health polling for
-  slaves intentionally left in `:preop`, and live PREOP reconfigure updates now
-  re-arm or cancel the slave health poll timeout immediately instead of waiting
-  for a later state transition (`d126047`).
-- PREOP-first provisioning now restores runtime slave health polling on
-  target-state-only activation updates and keeps the master converging back to
-  `:operational` after `Provisioning.activate/0` instead of silently staying on
-  the startup `:preop` target (`8521af7`).
-- Mixed operational sessions now keep health polling active on slaves
-  intentionally held in `:preop` and recover those slaves back to their
-  configured target instead of silently skipping the fault or promoting them to
-  `:op` (`c2a27ea`).
-- Startup-held `:preop_ready` sessions no longer let the default `250ms`
-  slave health poll mark disconnected PREOP-held slaves `:down` and push the
-  master into `:recovering` (`473e224`).
-
-### Changed
-- Driver descriptions, snapshots, commands, and events now use canonical
-  driver signal names only: slave-local endpoint aliasing is gone, endpoint
-  metadata no longer carries a separate public `name`, and slave config
-  normalization now rejects unknown options instead of silently carrying alias
-  data through the runtime; the public slave-description builder was also
-  renamed to match those configured canonical semantics (`a79e14c`,
-  `9a4395e`, `cd49dd2`).
-- The former EtherCAT.describe/1 and EtherCAT.inventory/0 APIs came from the master's
-  retained configured slave summaries instead of live snapshots, so interface
-  description is separated from current endpoint values while `snapshot/0` and
-  `snapshot/1` remain the live state image (`ec6336a`).
-- Master and simulator startup now attach through explicit `backend:` values,
-  `EtherCAT.Backend` normalizes UDP/raw/redundant transport descriptions, and
-  the runtime exposes first-class `%EtherCAT.Master.Status{}`,
-  `%EtherCAT.Simulator.Status{}`, and `%EtherCAT.Scan.Result{}` structures
-  instead of leaving callers to reconstruct runtime roles from fragmented
-  queries (`2d77d36`).
-- The public runtime surface now names the managed instance consistently as a
-  slave: EtherCAT.slaves/0, `snapshot.slaves`, `%EtherCAT.SlaveSnapshot{}`,
-  and `%EtherCAT.Event{slave: ...}` replace the old mixed device/slave naming
-  (`f15d37b`).
-- `EtherCAT` is now the only normal public runtime entry point: `slaves/0`,
-  `snapshot/0`, `snapshot/1`, `describe/1`, `subscribe/2`, and `command/3`
-  expose the driver-backed slave surface directly, and `EtherCAT.Device` is
-  gone (`f15d37b`).
-- `EtherCAT.Driver` was reduced to a smaller extension contract centered on
-  `signal_model/2`, `project_state/4`, and `command/4`; mailbox setup and
-  latch hooks now live under specialist behaviours, while optional simulator
-  identity moved back onto the optional `identity/0` callback on
-  `EtherCAT.Driver`, simulator companions
-  use `EtherCAT.Simulator.Adapter`, and the extra simulator-side driver helper
-  split was removed (`7830f13`).
-- The former aggregate snapshot API returned a best-effort collection of
-  `%EtherCAT.SlaveSnapshot{}` structs instead of a flattened signal map, and
-  `%EtherCAT.Event{}` is documented as the top-level driver/slave event
-  envelope (`f15d37b`).
-- Driver-backed commands now own the normal top-level write path, and command
-  output staging emits public state-change events through the same `EtherCAT`
-  subscription stream (`f15d37b`).
-- Cyclic input refresh no longer decodes changed inputs twice: the slave runtime
-  now computes changed input names from domain change notifications, samples and
-  decodes inputs once during device-state refresh, and reuses that decoded image
-  for both raw signal subscriptions and driver projection (`f15d37b`).
-- The legacy `EtherCAT.Slave.Driver` compatibility shim is gone, and the
-  built-in default driver implementation now lives in one place instead of
-  splitting the implementation across extra slave-internal wrapper modules
-  (`f15d37b`).
 
 ## [0.4.2] - 2026-03-19
 

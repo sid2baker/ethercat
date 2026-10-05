@@ -14,24 +14,23 @@ kernel modules. Intended for discrete I/O, diagnostics, and soft-real-time
 
 Want an interactive UI? Start with
 [`kino_ethercat`](https://github.com/sid2baker/kino_ethercat).
-Without hardware, try the [UDP simulator walkthrough](https://github.com/sid2baker/ethercat/blob/main/lib/ethercat/simulator.md#run-a-local-udp-example)
+Without hardware, try the [UDP simulator walkthrough](https://hexdocs.pm/ethercat/0.5.0/EtherCAT.Simulator.html#module-run-a-local-udp-example)
 or run the simulator tests below.
 
 ## 1. Install and supervise the runtime
 
-**This guide targets `main` (`0.5.0-dev`), not the released `0.4.2` API.**
-Add the development dependency to your application's `mix.exs`:
+This guide targets **EtherCAT 0.5.0**. Add the Hex dependency to your
+application's `mix.exs`:
 
 ```elixir
 def deps do
-  [{:ethercat, github: "sid2baker/ethercat", branch: "main"}]
+  [{:ethercat, "~> 0.5.0"}]
 end
 ```
 
-For the published package, use `{:ethercat, "~> 0.4.2"}` and the
-[matching API documentation](https://hexdocs.pm/ethercat/0.4.2/).
-See the [changelog](https://github.com/sid2baker/ethercat/blob/main/CHANGELOG.md)
-for breaking changes on `main`.
+Use the [0.5.0 API reference](https://hexdocs.pm/ethercat/0.5.0/).
+Upgrading from `0.4.x`? Read the [migration notes](#upgrade-guide) below;
+`0.5.0` changes the runtime and driver APIs without compatibility shims.
 
 Run `mix deps.get`, then add `{EtherCAT.Runtime, []}` to your application's
 supervision tree. EtherCAT does not start the runtime automatically.
@@ -76,7 +75,7 @@ EtherCAT.Diagnostics.slaves(session)
 
 Drivers are application-owned. This minimal driver reads channel 1 of an
 EL1809; static endpoint metadata is optional. For shared mappings and metadata,
-see the [driver authoring guide](https://github.com/sid2baker/ethercat/blob/main/lib/ethercat/driver.ex).
+see the [driver authoring guide](https://hexdocs.pm/ethercat/0.5.0/EtherCAT.Driver.html).
 
 ```elixir
 defmodule MyApp.EL1809 do
@@ -140,6 +139,45 @@ EtherCAT.status(session, :inputs)
 | Sample has decoding errors | Check the driver's mapping, bit widths, and codec; failed values are not replaced with zero or earlier values. |
 | Subscriber mailbox grows | Poll with `EtherCAT.samples/2` instead; subscriptions have no backpressure or dropping. |
 
+## Upgrade guide
+
+For applications using `0.4.x`:
+
+- **Supervise the runtime yourself.** Add `{EtherCAT.Runtime, []}` to the host
+  supervision tree; starting the `:ethercat` application no longer starts a master.
+- **Keep the session.** `EtherCAT.start/1` returns `{:ok, session}`, not `:ok`.
+  Pass it to runtime, provisioning, diagnostics, signal, and capture operations.
+  A stopped session returns `{:error, :stale_session}`; it never follows a restart.
+- **Use an explicit backend.** Replace `interface: "eth0"` with
+  `backend: {:raw, %{interface: "eth0"}}`. UDP and redundant raw configurations
+  also use `EtherCAT.Backend`.
+
+| 0.4.x call | 0.5.0 replacement |
+| --- | --- |
+| `EtherCAT.await_running()` | `EtherCAT.await_ready(session)`; use `await_operational(session)` for cyclic I/O |
+| `EtherCAT.read_input(slave, signal)` | `EtherCAT.read(session, slave, signal)` |
+| `EtherCAT.write_output(slave, signal, value)` | `EtherCAT.write(session, slave, signal, value)` |
+| `EtherCAT.subscribe(slave, signal)` | `EtherCAT.Signals.subscribe(session, slave, signal)` |
+| `EtherCAT.configure_slave(slave, opts)` / `activate()` / `deactivate()` | `EtherCAT.Provisioning` equivalents, with the session first |
+| SDO transfers and DC lock waits on `EtherCAT` | `EtherCAT.Provisioning`, with the session first |
+| Slave/domain/DC inspection on `EtherCAT` | `EtherCAT.Diagnostics`, with the session first |
+| `EtherCAT.stop()` | `EtherCAT.stop(session)` |
+
+`EtherCAT.slaves(session)` returns configured names; use
+`EtherCAT.Diagnostics.slaves(session)` for detailed summaries. For coherent
+per-domain observations, use `sample/3` or `subscribe/3` on `EtherCAT`.
+Protocol subscriptions return `{:ok, ref, status, samples}` and deliver
+`{:ethercat, ref, payload}` messages; cancel them with `unsubscribe/3`.
+
+**Migrate custom drivers** from `EtherCAT.Slave.Driver` to `EtherCAT.Driver`.
+Implement `signal_model/2` with named `EtherCAT.Driver.Signal` mappings, and
+return `{:ok, value}` or `{:error, reason}` from codecs. Mailbox setup moves to
+`c:EtherCAT.Driver.Provisioning.mailbox_steps/2`; consume lifecycle notifications
+and latch subscriptions instead of inline driver hooks. Simulator companions
+implement `EtherCAT.Simulator.Adapter` and supply an explicit profile.
+See the [driver contract](https://hexdocs.pm/ethercat/0.5.0/EtherCAT.Driver.html)
+and [full changelog](https://github.com/sid2baker/ethercat/blob/v0.5.0/CHANGELOG.md).
+
 ## Test without hardware
 
 From a repository checkout:
@@ -152,15 +190,15 @@ mix test test/ethercat/driver/catalogue_example_test.exs
 
 The simulator suite exercises the real master over virtual slave segments.
 The driver comparison demonstrates a shared signal catalogue without changing
-the public callbacks. The command above explicitly excludes raw transports. Hardware and raw-socket
-tests need separate setup.
+the public callbacks. The command above explicitly excludes raw transports.
+Hardware and raw-socket tests need separate setup.
 
 ## Pick your next task
 
-- **Write a driver:** [callback contract and catalogue pattern](https://github.com/sid2baker/ethercat/blob/main/lib/ethercat/driver.ex).
+- **Write a driver:** [callback contract and catalogue pattern](https://hexdocs.pm/ethercat/0.5.0/EtherCAT.Driver.html).
 - **Configure a PREOP session or use SDOs:** `EtherCAT.Provisioning`.
 - **Write outputs or subscribe to observations:** `EtherCAT`; signal/latch subscriptions: `EtherCAT.Signals`.
 - **Build virtual devices or inject faults:** `EtherCAT.Simulator`.
 - **Capture hardware:** `iex -S mix ethercat.capture --interface eth0`; see `EtherCAT.Capture`.
-- **Run hardware checks:** `MIX_ENV=test mix run test/integration/hardware/scripts/scan.exs --interface eth0`; see the [hardware guide](https://github.com/sid2baker/ethercat/blob/main/test/integration/hardware/README.md) before running bench scripts.
-- **Understand internals:** [architecture](https://github.com/sid2baker/ethercat/blob/main/ARCHITECTURE.md). Build the API reference for your checkout with `mix docs`.
+- **Run hardware checks:** `MIX_ENV=test mix run test/integration/hardware/scripts/scan.exs --interface eth0`; see the [hardware guide](https://github.com/sid2baker/ethercat/blob/v0.5.0/test/integration/hardware/README.md) before running bench scripts.
+- **Understand internals:** [architecture](https://github.com/sid2baker/ethercat/blob/v0.5.0/ARCHITECTURE.md). Build the API reference for your checkout with `mix docs`.
