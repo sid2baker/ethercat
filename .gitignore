@@ -28,3 +28,7 @@ todo/
 
 # Local AI assistant settings
 .claude/settings.local.json
+
+# The macOS port program, compiled from priv/bpf/ethercat_bpf.c when it is first used.
+/priv/bpf/ethercat_bpf
+/priv/bpf/*.building

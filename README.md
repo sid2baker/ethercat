@@ -56,6 +56,13 @@ Restart IEx/the application after granting the capability. Replace `eth0` with
 your interface. Scan **before** opening a master session; scanning assigns
 station addresses and must not run against an active ring.
 
+On macOS, for a rack on a desk, the same `{:raw, %{interface: "en7"}}` backend
+works through a BPF device and a small C port program, which is compiled with
+the system's C compiler the first time it is used. It needs read and write
+access to `/dev/bpf*`: root, or the `access_bpf` group that Wireshark's ChmodBPF
+sets up. See `EtherCAT.Bus.Transport.Bpf`. The raw simulator and redundant
+rings are Linux only.
+
 ```elixir
 backend = {:raw, %{interface: "eth0"}}
 {:ok, scan} = EtherCAT.Scan.scan(backend)

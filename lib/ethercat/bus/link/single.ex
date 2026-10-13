@@ -19,7 +19,8 @@ defmodule EtherCAT.Bus.Link.Single do
   alias EtherCAT.Bus.{Datagram, Frame}
   alias EtherCAT.Bus.Link
   alias EtherCAT.Bus.Link.Submission
-  alias EtherCAT.Bus.Transport.{RawSocket, UdpSocket}
+  alias EtherCAT.Bus.Transport
+  alias EtherCAT.Bus.Transport.UdpSocket
   alias EtherCAT.Telemetry
 
   @max_dispatch_errors 3
@@ -476,7 +477,7 @@ defmodule EtherCAT.Bus.Link.Single do
     opts[:transport_mod] ||
       case opts[:transport] do
         :udp -> UdpSocket
-        _ -> RawSocket
+        _ -> Transport.raw()
       end
   end
 end

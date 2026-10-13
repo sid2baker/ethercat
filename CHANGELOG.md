@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Raw Ethernet on macOS: `{:raw, %{interface: "en7"}}` uses the new
+  `EtherCAT.Bus.Transport.Bpf`, which sends and receives EtherCAT frames through
+  a BPF device with a small C port program (`priv/bpf/ethercat_bpf.c`), compiled
+  with the system's C compiler on first use. `EtherCAT.Bus.Transport.raw/0`
+  gives the raw transport of the operating system. Linux is unchanged.
+
 ## [0.5.0] - 2026-10-05
 
 ### Breaking changes

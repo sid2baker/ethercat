@@ -90,7 +90,7 @@ defmodule EtherCAT.Bus.Link.Redundant do
   alias EtherCAT.Bus.Frame
   alias EtherCAT.Bus.Link
   alias EtherCAT.Bus.Link.{RedundantMerge, Submission}
-  alias EtherCAT.Bus.Transport.RawSocket
+  alias EtherCAT.Bus.Transport
   alias EtherCAT.Telemetry
 
   @max_dispatch_errors 3
@@ -1086,6 +1086,6 @@ defmodule EtherCAT.Bus.Link.Redundant do
   end
 
   defp resolve_transport_mod(opts) do
-    opts[:transport_mod] || RawSocket
+    opts[:transport_mod] || Transport.raw()
   end
 end

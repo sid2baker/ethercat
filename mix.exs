@@ -61,7 +61,7 @@ defmodule EtherCAT.MixProject do
     [
       licenses: ["Apache-2.0"],
       links: %{"GitHub" => @source_url},
-      files: ~w(lib mix.exs README.md LICENSE CHANGELOG.md usage-rules.md)
+      files: ~w(lib priv/bpf/ethercat_bpf.c mix.exs README.md LICENSE CHANGELOG.md usage-rules.md)
     ]
   end
 

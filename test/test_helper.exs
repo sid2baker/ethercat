@@ -13,6 +13,41 @@ defmodule EtherCAT.TestHelper do
     )
   end
 
+  # The macOS raw transport is tested on the interface ETHERCAT_BPF_INTERFACE names: one that is not
+  # on a network, such as a USB Ethernet adapter with no cable in it, as the test sends frames on it.
+  def bpf_excludes do
+    interface = System.get_env("ETHERCAT_BPF_INTERFACE")
+
+    cond do
+      :os.type() != {:unix, :darwin} ->
+        [:bpf]
+
+      interface in [nil, ""] ->
+        IO.puts(
+          :stderr,
+          "warning: excluding :bpf tests. Set ETHERCAT_BPF_INTERFACE to an Ethernet interface " <>
+            "that is not on a network, such as a USB adapter with no cable in it."
+        )
+
+        [:bpf]
+
+      true ->
+        case EtherCAT.Bus.Transport.Bpf.open(interface: interface) do
+          {:ok, transport} ->
+            EtherCAT.Bus.Transport.Bpf.close(transport)
+            []
+
+          {:error, reason} ->
+            IO.puts(
+              :stderr,
+              "warning: excluding :bpf tests: #{interface} cannot be opened, #{inspect(reason)}"
+            )
+
+            [:bpf]
+        end
+    end
+  end
+
   def raw_socket_redundant_excludes do
     exclusion_for(:raw_socket_redundant, "redundant raw simulator", redundant_raw_interfaces())
   end
@@ -210,6 +245,7 @@ ExUnit.start(
   formatters: [ExUnit.CLIFormatter, EtherCAT.TestProgressFormatter],
   exclude:
     [:hardware] ++
+      EtherCAT.TestHelper.bpf_excludes() ++
       EtherCAT.TestHelper.raw_socket_excludes() ++
       EtherCAT.TestHelper.raw_socket_redundant_excludes() ++
       EtherCAT.TestHelper.raw_socket_redundant_toggle_excludes()
