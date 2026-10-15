@@ -44,6 +44,11 @@ defmodule EtherCAT.Slave.Mailbox.CoE do
   This module stays procedural and synchronous because it is currently used from
   slave PREOP configuration paths, not as a standalone mailbox state machine.
 
+  Each mailbox exchange polls for a response for up to one second of elapsed
+  monotonic time, including bus transactions and scheduler delays. An in-flight
+  transaction retains the bus's own timeout; transport and working-counter
+  failures are returned as such, not hidden as mailbox response timeouts.
+
   This is the runtime CoE transport/protocol layer. For the small driver-facing
   helper that builds common `0x1C32` / `0x1C33` mailbox steps, see
   `EtherCAT.Slave.Sync.CoE`.
@@ -65,7 +70,7 @@ defmodule EtherCAT.Slave.Mailbox.CoE do
   @command_upload_segment_request 0x60
   @command_download_init 0x21
 
-  @poll_limit 1000
+  @response_timeout_ms 1_000
   @poll_interval_ms 1
 
   @mailbox_header_size 6
@@ -497,27 +502,41 @@ defmodule EtherCAT.Slave.Mailbox.CoE do
     )
   end
 
-  defp wait_response(bus, station), do: wait_response(bus, station, @poll_limit)
+  defp wait_response(bus, station) do
+    deadline_ms = System.monotonic_time(:millisecond) + @response_timeout_ms
+    wait_response(bus, station, deadline_ms)
+  end
 
-  defp wait_response(_bus, _station, 0), do: {:error, :response_timeout}
+  defp wait_response(bus, station, deadline_ms) do
+    if System.monotonic_time(:millisecond) >= deadline_ms do
+      {:error, :response_timeout}
+    else
+      case Bus.transaction(bus, Transaction.fprd(station, Registers.sm_status(1))) do
+        {:ok, [%{data: <<status::8>>, wkc: wkc}]} when wkc > 0 ->
+          wait_response_status(bus, station, deadline_ms, status)
 
-  defp wait_response(bus, station, remaining) do
-    case Bus.transaction(bus, Transaction.fprd(station, Registers.sm_status(1))) do
-      {:ok, [%{data: <<status::8>>, wkc: wkc}]} when wkc > 0 ->
-        case <<status::8>> do
-          <<_::4, 1::1, _::3>> ->
-            :ok
+        {:ok, [%{wkc: 0}]} ->
+          {:error, :no_response}
 
-          _ ->
-            Process.sleep(@poll_interval_ms)
-            wait_response(bus, station, remaining - 1)
-        end
+        {:error, _} = err ->
+          err
+      end
+    end
+  end
 
-      {:ok, [%{wkc: 0}]} ->
-        {:error, :no_response}
+  defp wait_response_status(bus, station, deadline_ms, status) do
+    remaining_ms = deadline_ms - System.monotonic_time(:millisecond)
 
-      {:error, _} = err ->
-        err
+    cond do
+      remaining_ms <= 0 ->
+        {:error, :response_timeout}
+
+      match?(<<_::4, 1::1, _::3>>, <<status::8>>) ->
+        :ok
+
+      true ->
+        Process.sleep(min(@poll_interval_ms, remaining_ms))
+        wait_response(bus, station, deadline_ms)
     end
   end
 

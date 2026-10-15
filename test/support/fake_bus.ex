@@ -41,6 +41,15 @@ defmodule EtherCAT.TestSupport.FakeBus do
   @impl true
   def handle_call(
         {:transact, tx, _stale_after_us, _enqueued_at_us},
+        from,
+        %{responses: [{:delay, delay_ms, reply} | rest], calls_rev: calls_rev} = state
+      ) do
+    Process.send_after(self(), {:delayed_reply, from, reply}, delay_ms)
+    {:noreply, %{state | responses: rest, calls_rev: [tx | calls_rev]}}
+  end
+
+  def handle_call(
+        {:transact, tx, _stale_after_us, _enqueued_at_us},
         _from,
         %{responses: [reply | rest], calls_rev: calls_rev} = state
       ) do
@@ -73,6 +82,12 @@ defmodule EtherCAT.TestSupport.FakeBus do
 
   def handle_call(:info, _from, %{info: info} = state) do
     {:reply, {:ok, info}, state}
+  end
+
+  @impl true
+  def handle_info({:delayed_reply, from, reply}, state) do
+    GenServer.reply(from, reply)
+    {:noreply, state}
   end
 
   defp options_list?(opts) do
