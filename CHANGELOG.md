@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   transports (`d8d59e3`).
 
 ### Fixed
+- Slave AL health reads retain their configured polling cadence but allow a
+  queued request the bus frame timeout before treating it as expired. Genuine
+  transport, WKC, and queue-expiry faults remain visible (`bb97dc7`).
 - CoE mailbox response polling uses a one-second monotonic deadline rather than
   a poll count, preventing scheduler and bus delays from prolonging polling or
   allowing late responses. Transport errors remain visible (`197cb39`).
