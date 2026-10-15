@@ -180,6 +180,54 @@ defmodule EtherCAT.Integration.Simulator.ATV320ProtocolSafeopRecoveryTest do
     |> Scenario.run()
   end
 
+  test "drive health tolerates a scheduling delay within the frame budget", %{ethercat: ethercat} do
+    [{drive, _}] = Registry.lookup(EtherCAT.Registry, {:slave, :drive})
+    handler_id = {__MODULE__, make_ref()}
+
+    :ok =
+      :telemetry.attach_many(
+        handler_id,
+        [[:ethercat, :bus, :transact, :start], [:ethercat, :bus, :transact, :stop]],
+        &__MODULE__.delay_health_poll/4,
+        {drive, self()}
+      )
+
+    on_exit(fn -> :telemetry.detach(handler_id) end)
+
+    assert_receive {:delayed_health_poll_result, result}, 2_500
+    assert result.status == :ok
+    assert result.error_kind == nil
+    assert {:ok, %SlaveStatus{state: :op}} = EtherCAT.status(ethercat, :drive)
+    Expect.slave_fault(:drive, nil)
+    Expect.master_state(:operational)
+    Expect.domain(:main, cycle_health: :healthy)
+  end
+
+  def delay_health_poll(
+        [:ethercat, :bus, :transact, :start],
+        _measurements,
+        %{class: :realtime},
+        {drive, _owner}
+      )
+      when self() == drive do
+    # Bus.transaction timestamps the request before this synchronous hook.
+    # Delay only the slave's health submission, not UDP replies or domain cycles,
+    # to exercise the real bus expiry check without relying on host contention.
+    Process.sleep(200)
+  end
+
+  def delay_health_poll(
+        [:ethercat, :bus, :transact, :stop],
+        _measurements,
+        %{class: :realtime} = metadata,
+        {drive, owner}
+      )
+      when self() == drive do
+    send(owner, {:delayed_health_poll_result, metadata})
+  end
+
+  def delay_health_poll(_event, _measurements, _metadata, _config), do: :ok
+
   defp boot_operational! do
     SimulatorRing.reset!()
     simulator = SimulatorRing.start_simulator!(devices: devices(), connections: [])
@@ -211,7 +259,10 @@ defmodule EtherCAT.Integration.Simulator.ATV320ProtocolSafeopRecoveryTest do
         driver: ATV320,
         process_data: {:all, :main},
         target_state: :op,
-        health_poll_ms: SimulatorRing.health_poll_ms()
+        # This protocol scenario does not count health polls or measure detection
+        # latency. Give health submissions the same queue-age budget as frames;
+        # the runtime expires them after half the health polling interval.
+        health_poll_ms: 2 * SimulatorRing.frame_timeout_ms()
       }
     ]
   end
