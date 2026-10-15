@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gives the raw transport of the operating system. Linux is unchanged (`1be936c`).
   Helper builds use owner-only temporary directories and a VM-local cache rather
   than trusting pre-existing executables; helper exits are reported as closed
-  transports (`pending`).
+  transports (`d8d59e3`).
 
 ### Fixed
 - CoE mailbox response polling uses a one-second monotonic deadline rather than
