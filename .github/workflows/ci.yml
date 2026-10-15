@@ -9,8 +9,12 @@ on:
 
 jobs:
   test:
-    name: Test
-    runs-on: ubuntu-24.04
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
     env:
       MIX_ENV: test
 
@@ -37,6 +41,7 @@ jobs:
         run: mix deps.get
 
       - name: Create raw test veth pairs
+        if: runner.os == 'Linux'
         run: |
           sudo ip link add veth-m0 type veth peer name veth-s0
           sudo ip link add veth-m1 type veth peer name veth-s1
@@ -46,10 +51,15 @@ jobs:
           sudo ip link set veth-s1 up
 
       - name: Grant CAP_NET_RAW to BEAM
+        if: runner.os == 'Linux'
         run: |
           BEAM=$(readlink -f "$(dirname "$(dirname "$(command -v erl)")")"/erts-*/bin/beam.smp)
           sudo setcap cap_net_raw+ep "$BEAM"
           getcap "$BEAM"
+
+      - name: Configure simulator loopback on macOS
+        if: runner.os == 'macOS'
+        run: sudo ifconfig lo0 alias 127.0.0.2
 
       - name: Run CI
         run: mix ci
