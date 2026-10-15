@@ -125,11 +125,12 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
   end
 
   def slave_configs(:segmented, opts) do
-    shared_health_poll_ms = Keyword.get(opts, :health_poll_ms)
-    output_health_poll_ms = Keyword.get(opts, :output_health_poll_ms, shared_health_poll_ms || 20)
-
-    mailbox_health_poll_ms =
-      Keyword.get(opts, :mailbox_health_poll_ms, shared_health_poll_ms || 20)
+    # Health requests expire after half this interval. A 20ms interval gives
+    # hosted runners only 10ms of scheduling headroom and creates unrelated
+    # disconnects while a scenario is observing a retained mailbox fault.
+    shared_health_poll_ms = Keyword.get(opts, :health_poll_ms, 100)
+    output_health_poll_ms = Keyword.get(opts, :output_health_poll_ms, shared_health_poll_ms)
+    mailbox_health_poll_ms = Keyword.get(opts, :mailbox_health_poll_ms, shared_health_poll_ms)
 
     Hardware.full_ring(
       opts
@@ -229,7 +230,9 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
       dc: nil,
       scan_stable_ms: 20,
       scan_poll_ms: 10,
-      frame_timeout_ms: 20,
+      # Hosted runners are not real-time systems. Keep scheduler stalls separate
+      # from the protocol faults these scenarios explicitly inject.
+      frame_timeout_ms: 100,
       domains: [default_domain()],
       slaves: slave_configs(ring, Keyword.get(opts, :slave_config_opts, []))
     ]

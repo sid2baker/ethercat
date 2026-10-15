@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- CoE mailbox response polling uses a one-second monotonic deadline rather than
+  a poll count, preventing scheduler and bus delays from prolonging polling or
+  allowing late responses. Transport errors remain visible (`197cb39`).
+
 ## [0.5.0] - 2026-10-05
 
 ### Breaking changes

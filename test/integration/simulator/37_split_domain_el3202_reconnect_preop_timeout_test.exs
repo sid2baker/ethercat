@@ -169,8 +169,8 @@ defmodule EtherCAT.Integration.Simulator.SplitDomainEL3202ReconnectPreopTimeoutT
     [
       Hardware.coupler(),
       Hardware.inputs(),
-      Hardware.outputs(health_poll_ms: 20),
-      Hardware.rtd(process_data: {:all, :rtd}, health_poll_ms: 20)
+      Hardware.outputs(health_poll_ms: 100),
+      Hardware.rtd(process_data: {:all, :rtd}, health_poll_ms: 100)
     ]
   end
 

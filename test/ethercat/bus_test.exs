@@ -460,7 +460,7 @@ defmodule EtherCAT.BusTest do
   end
 
   test "redundant link does not complete on reverse-path data before the forward cross arrives" do
-    {:ok, bus} = start_redundant_circuit_bus(frame_timeout_ms: 30)
+    {:ok, bus} = start_redundant_circuit_bus(frame_timeout_ms: 500)
     pri_mac = fake_mac("pri")
     sec_mac = fake_mac("sec")
 
@@ -473,7 +473,9 @@ defmodule EtherCAT.BusTest do
       src_mac: sec_mac
     )
 
-    refute Task.yield(read, 20)
+    # This call follows the injected reply from the same sender, so it is a
+    # processing barrier without sleeping through most of the frame deadline.
+    assert {:ok, %{in_flight: %{pri_replied?: true, sec_replied?: false}}} = Bus.info(bus)
 
     reply_transport(bus, secondary, fn dg -> %{dg | data: <<0x22, 0x22>>, wkc: 1} end,
       src_mac: pri_mac
