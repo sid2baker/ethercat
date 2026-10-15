@@ -450,7 +450,10 @@ defmodule EtherCAT.BusTest do
     # Healthy ring: secondary's frame arrives on primary (reverse cross),
     # primary's frame arrives on secondary (forward cross = authoritative).
     reply_transport(bus, primary, fn dg -> %{dg | wkc: 0} end, src_mac: sec_mac)
-    refute_receive {:fake_transport_sent, _, _, _, _}, 20
+    # The same-sender info call is a processing barrier. An unchanged zero-WKC
+    # copy is ignored, rather than counted as a reply or allowed to complete.
+    assert {:ok, %{in_flight: %{pri_replied?: false, sec_replied?: false}}} = Bus.info(bus)
+    refute_receive {:fake_transport_sent, _, _, _, _}, 0
 
     reply_transport(bus, secondary, fn dg -> %{dg | data: <<0x22, 0x22>>, wkc: 1} end,
       src_mac: pri_mac
@@ -460,7 +463,7 @@ defmodule EtherCAT.BusTest do
   end
 
   test "redundant link does not complete on reverse-path data before the forward cross arrives" do
-    {:ok, bus} = start_redundant_circuit_bus(frame_timeout_ms: 500)
+    {:ok, bus} = start_redundant_circuit_bus()
     pri_mac = fake_mac("pri")
     sec_mac = fake_mac("sec")
 
@@ -506,7 +509,8 @@ defmodule EtherCAT.BusTest do
       src_mac: pri_mac
     )
 
-    refute_receive {:fake_transport_sent, _, _, _, _}, 20
+    assert {:ok, %{in_flight: %{pri_replied?: true, sec_replied?: false}}} = Bus.info(bus)
+    refute_receive {:fake_transport_sent, _, _, _, _}, 0
 
     reply_transport(bus, secondary, fn dg -> %{dg | data: <<0xF0, 0xF1, 0x12, 0x13>>, wkc: 2} end,
       src_mac: sec_mac
@@ -541,7 +545,7 @@ defmodule EtherCAT.BusTest do
   test "redundant multi-datagram BWR returns cross-delivery data when echoes arrive first (bounce MAC)" do
     # Echoes classified as bounces (own MAC on own port) — link layer must not
     # complete on merged wkc=0 bounces before real cross-deliveries arrive.
-    {:ok, bus} = start_redundant_circuit_bus(frame_timeout_ms: 100)
+    {:ok, bus} = start_redundant_circuit_bus()
     pri_mac = fake_mac("pri")
     sec_mac = fake_mac("sec")
 
@@ -561,7 +565,9 @@ defmodule EtherCAT.BusTest do
     reply_transport(bus, secondary, fn dg -> dg end, src_mac: sec_mac)
 
     # Real forward cross arrives later with wkc=3
-    Process.sleep(5)
+    assert {:ok, %{in_flight: %{pri_replied?: false, sec_replied?: false}}} =
+             EtherCAT.Bus.info(bus)
+
     reply_transport(bus, secondary, fn dg -> %{dg | wkc: 3} end, src_mac: pri_mac)
 
     assert {:ok, results} = Task.await(read)
@@ -574,7 +580,7 @@ defmodule EtherCAT.BusTest do
     # with a source MAC that matches neither NIC. Without the non-authoritative
     # `wkc=0` guard, interpret/3 would complete the exchange immediately with
     # zeroed results before the real processed cross-delivery arrives.
-    {:ok, bus} = start_redundant_circuit_bus(frame_timeout_ms: 100)
+    {:ok, bus} = start_redundant_circuit_bus()
     slave_mac = <<0xEA, 0x0C, 0xE6, 0xE4, 0xB2, 0xB0>>
 
     tx =
@@ -593,7 +599,9 @@ defmodule EtherCAT.BusTest do
     reply_transport(bus, secondary, fn dg -> dg end, src_mac: slave_mac)
 
     # Real cross-delivery arrives later with wkc=3
-    Process.sleep(5)
+    assert {:ok, %{in_flight: %{pri_replied?: false, sec_replied?: false}}} =
+             EtherCAT.Bus.info(bus)
+
     reply_transport(bus, secondary, fn dg -> %{dg | wkc: 3} end, src_mac: slave_mac)
 
     assert {:ok, results} = Task.await(read)
@@ -603,7 +611,7 @@ defmodule EtherCAT.BusTest do
 
   test "redundant single-datagram BRD returns cross-delivery data when echoes arrive first" do
     # Same echo race with single BRD — unknown MAC variant.
-    {:ok, bus} = start_redundant_circuit_bus(frame_timeout_ms: 100)
+    {:ok, bus} = start_redundant_circuit_bus()
     slave_mac = <<0xEA, 0x0C, 0xE6, 0xE4, 0xB2, 0xB0>>
 
     read = Task.async(fn -> Bus.transaction(bus, Transaction.brd({0x0000, 1})) end)
@@ -616,7 +624,9 @@ defmodule EtherCAT.BusTest do
     reply_transport(bus, secondary, fn dg -> dg end, src_mac: slave_mac)
 
     # Real cross-delivery
-    Process.sleep(5)
+    assert {:ok, %{in_flight: %{pri_replied?: false, sec_replied?: false}}} =
+             EtherCAT.Bus.info(bus)
+
     reply_transport(bus, secondary, fn dg -> %{dg | wkc: 3} end, src_mac: slave_mac)
 
     assert {:ok, [%{wkc: 3}]} = Task.await(read)
@@ -731,7 +741,8 @@ defmodule EtherCAT.BusTest do
     degraded = Task.async(fn -> Bus.transaction(bus, Transaction.fprd(0x1001, {0x0130, 2})) end)
 
     secondary_only = assert_sent_transport("sec")
-    refute_receive {:fake_transport_sent, "pri", _, _, _}, 20
+    assert {:ok, %{in_flight: %{}}} = Bus.info(bus)
+    refute_receive {:fake_transport_sent, "pri", _, _, _}, 0
 
     reply_transport(bus, secondary_only, fn dg -> %{dg | data: <<0x32, 0x32>>, wkc: 1} end)
 
@@ -1158,7 +1169,9 @@ defmodule EtherCAT.BusTest do
       Keyword.merge(
         [
           backup_interface: "sec",
-          frame_timeout_ms: 50,
+          # Ordering tests synchronize through Bus.info/1, not short wall-clock
+          # deadlines. Timeout-specific tests override this generous budget.
+          frame_timeout_ms: 500,
           interface: "pri",
           test_pid: self(),
           transport_mod: FakeTransport
