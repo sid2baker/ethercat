@@ -36,7 +36,12 @@ defmodule EtherCAT.Bus.Transport.Bpf.ProgramTest do
   test "concurrent callers reuse only a completed build", %{source: source} do
     results =
       1..8
-      |> Task.async_stream(fn _ -> Program.ensure(source) end, max_concurrency: 8)
+      # The first caller invokes the host C compiler; queued callers wait for
+      # that build, which can take longer than Task's default five seconds.
+      |> Task.async_stream(fn _ -> Program.ensure(source) end,
+        max_concurrency: 8,
+        timeout: 30_000
+      )
       |> Enum.to_list()
 
     assert [{:ok, {:ok, program}}] = Enum.uniq(results)
