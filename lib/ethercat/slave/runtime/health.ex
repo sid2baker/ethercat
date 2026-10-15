@@ -22,7 +22,7 @@ defmodule EtherCAT.Slave.Runtime.Health do
   def poll_op(data, opts) do
     transition_to = Keyword.fetch!(opts, :transition_to)
     op_code = Keyword.fetch!(opts, :op_code)
-    deadline_us = data.health_poll_ms * 500
+    deadline_us = poll_stale_after_us(data)
 
     case Bus.transaction(
            data.bus,
@@ -94,7 +94,7 @@ defmodule EtherCAT.Slave.Runtime.Health do
   end
 
   defp poll_held_state(data, expected_state) do
-    deadline_us = data.health_poll_ms * 500
+    deadline_us = poll_stale_after_us(data)
     expected_code = al_state_code(expected_state)
 
     case Bus.transaction(
@@ -162,6 +162,12 @@ defmodule EtherCAT.Slave.Runtime.Health do
 
   @spec health_poll_action(pos_integer()) :: {{:timeout, :health_poll}, pos_integer(), nil}
   def health_poll_action(ms), do: {{:timeout, :health_poll}, ms, nil}
+
+  # A queued health read must not expire before a preceding frame can time out.
+  # Keep the half-interval budget when it is larger than the frame budget.
+  defp poll_stale_after_us(data) do
+    max(data.health_poll_ms * 500, (data.frame_timeout_ms || 0) * 1_000 + 1_000)
+  end
 
   defp report_down(data, reason, reason_text) do
     name = data.name

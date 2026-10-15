@@ -27,6 +27,10 @@ defmodule EtherCAT.TestSupport.FakeBus do
     GenServer.call(server, :calls)
   end
 
+  def stale_after_us(server) do
+    GenServer.call(server, :stale_after_us)
+  end
+
   @impl true
   def init(opts) do
     {:ok,
@@ -34,38 +38,43 @@ defmodule EtherCAT.TestSupport.FakeBus do
        responses: Keyword.get(opts, :responses, []),
        info: Keyword.get(opts, :info),
        default_reply: Keyword.get(opts, :default_reply, @default_reply),
-       calls_rev: []
+       calls_rev: [],
+       stale_after_us_rev: []
      }}
   end
 
   @impl true
   def handle_call(
-        {:transact, tx, _stale_after_us, _enqueued_at_us},
+        {:transact, tx, stale_after_us, _enqueued_at_us},
         from,
-        %{responses: [{:delay, delay_ms, reply} | rest], calls_rev: calls_rev} = state
+        %{responses: [{:delay, delay_ms, reply} | rest]} = state
       ) do
     Process.send_after(self(), {:delayed_reply, from, reply}, delay_ms)
-    {:noreply, %{state | responses: rest, calls_rev: [tx | calls_rev]}}
+    {:noreply, record_call(%{state | responses: rest}, tx, stale_after_us)}
   end
 
   def handle_call(
-        {:transact, tx, _stale_after_us, _enqueued_at_us},
+        {:transact, tx, stale_after_us, _enqueued_at_us},
         _from,
-        %{responses: [reply | rest], calls_rev: calls_rev} = state
+        %{responses: [reply | rest]} = state
       ) do
-    {:reply, reply, %{state | responses: rest, calls_rev: [tx | calls_rev]}}
+    {:reply, reply, record_call(%{state | responses: rest}, tx, stale_after_us)}
   end
 
   def handle_call(
-        {:transact, tx, _stale_after_us, _enqueued_at_us},
+        {:transact, tx, stale_after_us, _enqueued_at_us},
         _from,
-        %{default_reply: default_reply, calls_rev: calls_rev} = state
+        %{default_reply: default_reply} = state
       ) do
-    {:reply, default_reply, %{state | calls_rev: [tx | calls_rev]}}
+    {:reply, default_reply, record_call(state, tx, stale_after_us)}
   end
 
   def handle_call(:calls, _from, %{calls_rev: calls_rev} = state) do
     {:reply, Enum.reverse(calls_rev), state}
+  end
+
+  def handle_call(:stale_after_us, _from, %{stale_after_us_rev: deadlines} = state) do
+    {:reply, Enum.reverse(deadlines), state}
   end
 
   def handle_call(:settle, _from, state) do
@@ -88,6 +97,14 @@ defmodule EtherCAT.TestSupport.FakeBus do
   def handle_info({:delayed_reply, from, reply}, state) do
     GenServer.reply(from, reply)
     {:noreply, state}
+  end
+
+  defp record_call(state, tx, stale_after_us) do
+    %{
+      state
+      | calls_rev: [tx | state.calls_rev],
+        stale_after_us_rev: [stale_after_us | state.stale_after_us_rev]
+    }
   end
 
   defp options_list?(opts) do

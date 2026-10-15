@@ -504,6 +504,7 @@ defmodule EtherCAT.Master.Startup do
             process_data: entry.process_data,
             dc_cycle_ns: dc_cycle_ns,
             sync: entry.sync,
+            frame_timeout_ms: recommended_frame_timeout_ms(data, bus_count),
             health_poll_ms: startup_health_poll_ms(entry, startup_runtime_target)
           ]
 

@@ -26,7 +26,9 @@ defmodule EtherCAT.Slave.Config do
       set `nil` to disable polling. Runtime polling detects disconnects and AL-state
       regressions in OP and runtime-held PREOP/SAFEOP. It is suppressed while the
       whole session is held in its initial PREOP provisioning phase, then restored
-      on activation, including for slaves whose target remains PREOP.
+      on activation, including for slaves whose target remains PREOP. Health
+      requests keep this cadence but their bus queue-age budget is at least the
+      configured frame response timeout.
   """
 
   @default_health_poll_ms 250

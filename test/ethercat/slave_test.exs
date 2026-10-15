@@ -1003,6 +1003,46 @@ defmodule EtherCAT.SlaveTest do
              )
   end
 
+  test "health polls keep their cadence but allow the configured frame budget in the bus queue" do
+    reply = {:ok, [%{data: <<0x08, 0x00>>, wkc: 1, circular: false, irq: 0}]}
+    bus = start_supervised!({FakeBus, responses: List.duplicate(reply, 3)})
+
+    data = %EtherCAT.Slave{
+      bus: bus,
+      station: 0x1001,
+      name: :sensor,
+      health_poll_ms: 100,
+      frame_timeout_ms: 500
+    }
+
+    assert {:keep_state_and_data, [{{:timeout, :health_poll}, 100, nil}]} =
+             EtherCAT.Slave.FSM.handle_event({:timeout, :health_poll}, nil, :op, data)
+
+    for state <- [:preop, :safeop] do
+      assert {:keep_state_and_data, [{{:timeout, :health_poll}, 100, nil}]} =
+               EtherCAT.Slave.FSM.handle_event({:timeout, :health_poll}, nil, state, data)
+    end
+
+    assert FakeBus.stale_after_us(bus) == [501_000, 501_000, 501_000]
+  end
+
+  test "health poll preserves its longer configured interval budget and reports bus expiry" do
+    bus = start_supervised!({FakeBus, responses: [{:error, :expired}]})
+
+    data = %EtherCAT.Slave{
+      bus: bus,
+      station: 0x1001,
+      name: :sensor,
+      health_poll_ms: 2_000,
+      frame_timeout_ms: 500
+    }
+
+    assert {:next_state, :down, %EtherCAT.Slave{state_reason: :expired}} =
+             EtherCAT.Slave.FSM.handle_event({:timeout, :health_poll}, nil, :preop, data)
+
+    assert FakeBus.stale_after_us(bus) == [1_000_000]
+  end
+
   test "preop health poll enters down on disconnect" do
     bus =
       start_supervised!(

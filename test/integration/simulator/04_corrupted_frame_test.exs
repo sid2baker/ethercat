@@ -8,7 +8,16 @@ defmodule EtherCAT.Integration.Simulator.CorruptedFrameTest do
   alias EtherCAT.Simulator.Transport.Udp.Fault, as: UdpFault
 
   setup do
-    SimulatorRing.boot_operational!(await_operational_ms: 3_000)
+    # These are domain frame-corruption tests. Keep background AL reads from
+    # consuming the counted UDP reply faults before the cyclic domain does.
+    SimulatorRing.boot_operational!(
+      await_operational_ms: 3_000,
+      slave_config_opts: [
+        coupler: [health_poll_ms: nil],
+        inputs: [health_poll_ms: nil],
+        outputs: [health_poll_ms: nil]
+      ]
+    )
 
     trace = Trace.start_capture()
 

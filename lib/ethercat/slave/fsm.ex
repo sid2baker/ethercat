@@ -385,6 +385,7 @@ defmodule EtherCAT.Slave.FSM do
       latch_poll_ms: nil,
       health_poll_ms:
         Keyword.get(opts, :health_poll_ms, EtherCAT.Slave.Config.default_health_poll_ms()),
+      frame_timeout_ms: Keyword.get(opts, :frame_timeout_ms),
       startup_retry_phase: nil,
       startup_retry_count: 0,
       signal_registrations: %{},

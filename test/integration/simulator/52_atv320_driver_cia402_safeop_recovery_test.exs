@@ -260,9 +260,8 @@ defmodule EtherCAT.Integration.Simulator.ATV320ProtocolSafeopRecoveryTest do
         process_data: {:all, :main},
         target_state: :op,
         # This protocol scenario does not count health polls or measure detection
-        # latency. Give health submissions the same queue-age budget as frames;
-        # the runtime expires them after half the health polling interval.
-        health_poll_ms: 2 * SimulatorRing.frame_timeout_ms()
+        # latency. The runtime gives queued reads the configured frame budget.
+        health_poll_ms: SimulatorRing.health_poll_ms()
       }
     ]
   end
