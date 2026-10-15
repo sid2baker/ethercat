@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a BPF device with a small C port program (`priv/bpf/ethercat_bpf.c`), compiled
   with the system's C compiler on first use. `EtherCAT.Bus.Transport.raw/0`
   gives the raw transport of the operating system. Linux is unchanged (`1be936c`).
+  Helper builds use owner-only temporary directories and a VM-local cache rather
+  than trusting pre-existing executables; helper exits are reported as closed
+  transports (`pending`).
 
 ### Fixed
 - CoE mailbox response polling uses a one-second monotonic deadline rather than

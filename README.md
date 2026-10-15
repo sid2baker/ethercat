@@ -200,6 +200,29 @@ The driver comparison demonstrates a shared signal catalogue without changing
 the public callbacks. The command above explicitly excludes raw transports.
 Hardware and raw-socket tests need separate setup.
 
+### macOS BPF tests without hardware
+
+With the Xcode command line tools and read/write access to `/dev/bpf*` (see
+`EtherCAT.Bus.Transport.Bpf`), create an isolated virtual Ethernet pair:
+
+```bash
+sudo ifconfig feth0 create
+sudo ifconfig feth1 create
+sudo ifconfig feth1 peer feth0
+sudo ifconfig feth0 up
+sudo ifconfig feth1 up
+ETHERCAT_BPF_INTERFACE=feth0 ETHERCAT_BPF_PEER_INTERFACE=feth1 mix ci
+sudo ifconfig feth0 destroy
+sudo ifconfig feth1 destroy
+```
+
+Do not attach these interfaces to a bridge or use physical adapters. These tests
+send raw frames and check actual receive filtering, VLANs, padding, no self-receive,
+and helper lifecycle. CI provisions this pair automatically and runs the same
+`mix ci` on Linux and macOS. Without the BPF environment variables, wire tests are
+excluded; once configured, setup or helper errors fail the suite. Portable helper
+build-security and port-liveness tests run on both platforms.
+
 ## Pick your next task
 
 - **Write a driver:** [callback contract and catalogue pattern](https://hexdocs.pm/ethercat/0.5.0/EtherCAT.Driver.html).

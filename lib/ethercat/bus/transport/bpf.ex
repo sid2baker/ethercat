@@ -15,8 +15,10 @@ defmodule EtherCAT.Bus.Transport.Bpf do
   ## The port program
 
   The program is `priv/bpf/ethercat_bpf.c`. It is compiled with the system's C compiler the first
-  time a transport is opened, and again when its source is newer, so it needs the Xcode command
-  line tools (`xcode-select --install`) and nothing at build time, on any platform.
+  time a transport is opened in each VM, and again when its source changes. It needs the Xcode
+  command line tools (`xcode-select --install`) and nothing at build time, on any platform.
+  Each build uses a new owner-only temporary directory; existing on-disk executables are never
+  trusted as a cache. Successful builds remain in the OS temporary directory for reuse by this VM.
 
   ## Access
 
@@ -183,7 +185,7 @@ defmodule EtherCAT.Bus.Transport.Bpf do
   @doc "Returns `true` when the port program is running."
   @spec open?(t()) :: boolean()
   def open?(%__MODULE__{port: nil}), do: false
-  def open?(%__MODULE__{}), do: true
+  def open?(%__MODULE__{port: port}), do: Port.info(port) != nil
 
   @impl true
   @doc "Returns the network interface name for telemetry and link monitoring."
@@ -196,7 +198,7 @@ defmodule EtherCAT.Bus.Transport.Bpf do
   def interface(%__MODULE__{interface: interface}), do: interface
 
   @doc """
-  The port program, compiled when it is not there or older than its source.
+  The port program, compiled securely once per VM and source revision.
 
   Returns `{:ok, path}`, or `{:error, reason}` when there is no C compiler or it failed.
   """
@@ -204,55 +206,10 @@ defmodule EtherCAT.Bus.Transport.Bpf do
   def program do
     source = Application.app_dir(:ethercat, "priv/bpf/ethercat_bpf.c")
 
-    # Beside its source where that can be written, as in a project's own build, and else in the
-    # temporary directory, under the version of the source it was built from.
-    targets = [
-      Path.rootname(source),
-      Path.join(System.tmp_dir!(), "ethercat_bpf-#{source |> File.read!() |> :erlang.phash2()}")
-    ]
-
-    case Enum.find(targets, &fresh?(&1, source)) do
-      nil -> build(source, targets, nil)
-      built -> {:ok, built}
-    end
+    EtherCAT.Bus.Transport.Bpf.Program.ensure(source)
   end
 
   # -- private ----------------------------------------------------------------
-
-  defp fresh?(target, source) do
-    with {:ok, %{mtime: built, type: :regular}} <- File.stat(target, time: :posix),
-         {:ok, %{mtime: written}} <- File.stat(source, time: :posix) do
-      built >= written
-    else
-      _missing -> false
-    end
-  end
-
-  defp build(_source, [], last_error), do: {:error, last_error}
-
-  defp build(source, [target | others], _last_error) do
-    case System.find_executable("cc") do
-      nil ->
-        {:error, :no_c_compiler}
-
-      cc ->
-        # Built under a name of its own and moved into place, so that two transports that open at
-        # once never run a half-written program.
-        building = "#{target}.#{System.unique_integer([:positive])}.building"
-
-        case System.cmd(cc, ["-O2", "-o", building, source], stderr_to_stdout: true) do
-          {_output, 0} ->
-            case File.rename(building, target) do
-              :ok -> {:ok, target}
-              {:error, reason} -> build(source, others, {:bpf_build_failed, reason})
-            end
-
-          {output, _status} ->
-            File.rm(building)
-            build(source, others, {:bpf_build_failed, String.trim(output)})
-        end
-    end
-  end
 
   defp close_port(port) do
     try do

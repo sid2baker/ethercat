@@ -13,8 +13,8 @@ defmodule EtherCAT.TestHelper do
     )
   end
 
-  # The macOS raw transport is tested on the interface ETHERCAT_BPF_INTERFACE names: one that is not
-  # on a network, such as a USB Ethernet adapter with no cable in it, as the test sends frames on it.
+  # BPF tests require an isolated feth pair. Once explicitly configured, setup
+  # or helper failures must fail the tests, never silently exclude them.
   def bpf_excludes do
     interface = System.get_env("ETHERCAT_BPF_INTERFACE")
 
@@ -25,26 +25,14 @@ defmodule EtherCAT.TestHelper do
       interface in [nil, ""] ->
         IO.puts(
           :stderr,
-          "warning: excluding :bpf tests. Set ETHERCAT_BPF_INTERFACE to an Ethernet interface " <>
-            "that is not on a network, such as a USB adapter with no cable in it."
+          "warning: excluding :bpf tests. Set ETHERCAT_BPF_INTERFACE and " <>
+            "ETHERCAT_BPF_PEER_INTERFACE to an isolated feth pair (see README.md)."
         )
 
         [:bpf]
 
       true ->
-        case EtherCAT.Bus.Transport.Bpf.open(interface: interface) do
-          {:ok, transport} ->
-            EtherCAT.Bus.Transport.Bpf.close(transport)
-            []
-
-          {:error, reason} ->
-            IO.puts(
-              :stderr,
-              "warning: excluding :bpf tests: #{interface} cannot be opened, #{inspect(reason)}"
-            )
-
-            [:bpf]
-        end
+        []
     end
   end
 

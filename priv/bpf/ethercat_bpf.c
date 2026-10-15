@@ -182,14 +182,8 @@ int main(int argc, char **argv) {
   u_int on = 1, off = 0;
   /* A read gives a frame as soon as it has come, and not when the buffer is full. */
   if (ioctl(bpf, BIOCIMMEDIATE, &on) < 0) fail("BIOCIMMEDIATE");
-  /* What is sent on the interface from this machine is not received here. The tests build a
-     listener that does receive it, to see what the program sends without a second interface. */
-#ifdef ETHERCAT_BPF_SEE_SENT
-  if (ioctl(bpf, BIOCSSEESENT, &on) < 0) fail("BIOCSSEESENT");
-  (void)off;
-#else
+  /* Never receive this interface's own transmissions. Tests use a separate feth peer. */
   if (ioctl(bpf, BIOCSSEESENT, &off) < 0) fail("BIOCSSEESENT");
-#endif
   /* The source address of a frame is sent as it was written. */
   if (ioctl(bpf, BIOCSHDRCMPLT, &on) < 0) fail("BIOCSHDRCMPLT");
 

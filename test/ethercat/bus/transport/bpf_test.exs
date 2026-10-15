@@ -10,40 +10,17 @@ defmodule EtherCAT.Bus.Transport.BpfTest do
   @broadcast <<0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF>>
 
   setup_all do
-    interface = System.fetch_env!("ETHERCAT_BPF_INTERFACE")
-
-    # A second port program on the same interface, built to receive what the machine itself sends:
-    # it shows what the transport puts on the wire without a second interface to receive it on.
-    source = Application.app_dir(:ethercat, "priv/bpf/ethercat_bpf.c")
-
-    listener =
-      Path.join(System.tmp_dir!(), "ethercat_bpf_listener_#{System.unique_integer([:positive])}")
-
-    {_output, 0} =
-      System.cmd("cc", ["-O2", "-DETHERCAT_BPF_SEE_SENT=1", "-o", listener, source],
-        stderr_to_stdout: true
-      )
-
-    on_exit(fn -> File.rm(listener) end)
-    %{interface: interface, listener: listener}
+    # Use an isolated feth pair, never a physical NIC or the runner's network.
+    %{
+      interface: System.fetch_env!("ETHERCAT_BPF_INTERFACE"),
+      peer: System.fetch_env!("ETHERCAT_BPF_PEER_INTERFACE")
+    }
   end
 
-  defp listen(%{interface: interface, listener: listener}) do
-    port =
-      Port.open({:spawn_executable, listener}, [
-        :binary,
-        :exit_status,
-        {:packet, 2},
-        args: [interface]
-      ])
-
-    assert_receive {^port, {:data, <<?R, _mac::binary-size(6)>>}}, 2_000
-    port
-  end
-
-  # Writes a whole Ethernet frame on the interface, as another station might have sent it.
-  defp inject(port, dst, src, ethertype, payload) do
-    body = <<dst::binary, src::binary, ethertype::16, payload::binary>>
+  # Writes a whole Ethernet frame through the peer, so it arrives on the
+  # transport's real receive path with the production BIOCSSEESENT setting.
+  defp inject(port, src, ethertype, payload) do
+    body = <<@broadcast::binary, src::binary, ethertype::16, payload::binary>>
     Port.command(port, <<body::binary, 0::size(max(0, 60 - byte_size(body)))-unit(8)>>)
   end
 
@@ -87,9 +64,10 @@ defmodule EtherCAT.Bus.Transport.BpfTest do
 
   test "a payload goes out as an EtherCAT frame, and the transport does not hear itself",
        context do
-    listener = listen(context)
+    {:ok, listener} = Bpf.open(interface: context.peer)
     {:ok, transport} = Bpf.open(interface: context.interface)
     payloads = for n <- 1..5, do: <<n, 0xEC, 0xA7>> <> :binary.copy(<<n>>, n * 20)
+    listener_port = listener.port
 
     for payload <- payloads do
       assert {:ok, tx_at} = Bpf.send(transport, payload)
@@ -97,66 +75,56 @@ defmodule EtherCAT.Bus.Transport.BpfTest do
     end
 
     for payload <- payloads do
-      assert_receive {^listener, {:data, <<?F, frame::binary>>}}, 1_000
+      assert_receive {^listener_port, {:data, <<?F, frame::binary>>}}, 2_000
       <<dst::binary-size(6), src::binary-size(6), type::16, rest::binary>> = frame
       assert {dst, src, type} == {@broadcast, transport.src_mac, @ethertype}
       assert String.starts_with?(rest, payload)
-      # A short frame is padded to the least an Ethernet frame may be.
       assert byte_size(frame) == max(60, 14 + byte_size(payload))
     end
 
     port = transport.port
     refute_receive {^port, _message}, 100
     Bpf.close(transport)
-    Port.close(listener)
+    Bpf.close(listener)
   end
 
-  test "a frame that arrives is matched to its payload, and what is not EtherCAT never arrives",
-       context do
+  test "incoming frames are filtered and matched, including VLAN and invalid sources", context do
     {:ok, transport} = Bpf.open(interface: context.interface)
-    # With see-sent on, what one port program writes is what the other receives.
-    {:ok, peer} = Bpf.open(interface: context.interface)
-    sender = listen(context)
+    {:ok, peer} = Bpf.open(interface: context.peer)
     port = transport.port
     station = <<0x02, 0x00, 0x5E, 0x10, 0x00, 0x01>>
 
-    # The transport proper never receives what this machine sends: so it is tried on the listener's
-    # kind of program, by reading that program's messages with the transport's own match.
-    seeing = %{transport | port: sender}
+    inject(peer.port, station, 0x0806, <<1, 2, 3, 4>>)
+    inject(peer.port, station, @ethertype, <<0xAA, 0xBB, 0xCC>>)
+    inject(peer.port, station, 0x8100, <<0, 5, @ethertype::16, 0xDD, 0xEE>>)
+    inject(peer.port, <<0::48>>, @ethertype, <<0x11>>)
 
-    inject(peer.port, @broadcast, station, 0x0806, <<1, 2, 3, 4>>)
-    inject(peer.port, @broadcast, station, @ethertype, <<0xAA, 0xBB, 0xCC>>)
-    inject(peer.port, @broadcast, station, 0x8100, <<0, 5, @ethertype::16, 0xDD, 0xEE>>)
-    inject(peer.port, @broadcast, <<0::48>>, @ethertype, <<0x11>>)
+    assert_receive {^port, {:data, <<?F, _::binary>>}} = first, 2_000
 
-    assert_receive {^sender, {:data, <<?F, _::binary>>}} = first, 1_000
-    assert {:ok, <<0xAA, 0xBB, 0xCC, _pad::binary>>, rx_at, ^station} = Bpf.match(seeing, first)
+    assert {:ok, <<0xAA, 0xBB, 0xCC, _pad::binary>>, rx_at, ^station} =
+             Bpf.match(transport, first)
+
     assert is_integer(rx_at)
 
-    # One VLAN tag is seen through.
-    assert_receive {^sender, {:data, <<?F, _::binary>>}} = tagged, 1_000
-    assert {:ok, <<0xDD, 0xEE, _pad::binary>>, _rx_at, ^station} = Bpf.match(seeing, tagged)
+    assert_receive {^port, {:data, <<?F, _::binary>>}} = tagged, 2_000
+    assert {:ok, <<0xDD, 0xEE, _pad::binary>>, _rx_at, ^station} = Bpf.match(transport, tagged)
 
-    # A frame from no station is dropped by the transport; the ARP frame never came this far.
-    assert_receive {^sender, {:data, <<?F, _::binary>>}} = nobody, 1_000
-    assert Bpf.match(seeing, nobody) == :ignore
-    refute_receive {^sender, {:data, _frame}}, 100
-
-    # What is not from the transport's own port is not its message.
-    assert Bpf.match(transport, first) == :ignore
+    # The ARP frame never passed the kernel filter; the zero source is rejected
+    # by the transport rather than accepted as a station response.
+    assert_receive {^port, {:data, <<?F, _::binary>>}} = nobody, 2_000
+    assert Bpf.match(transport, nobody) == :ignore
+    refute_receive {^port, {:data, _frame}}, 100
+    assert Bpf.match(peer, first) == :ignore
     assert Bpf.match(transport, :anything) == :ignore
-    refute_receive {^port, _message}, 50
 
     Bpf.close(transport)
     Bpf.close(peer)
-    Port.close(sender)
   end
 
   test "frames that wait are drained, and a port program that ends is an error", context do
     {:ok, transport} = Bpf.open(interface: context.interface)
     port = transport.port
 
-    # Frames in the mailbox, as they are when they arrive with nobody waiting.
     for n <- 1..3, do: send(self(), {port, {:data, <<?F, n>>}})
     assert :ok = Bpf.drain(transport)
     refute_receive {^port, {:data, _frame}}, 20
@@ -168,6 +136,7 @@ defmodule EtherCAT.Bus.Transport.BpfTest do
     System.cmd("kill", ["-9", "#{os_pid}"])
     assert_receive {^port, {:exit_status, status}} = gone, 2_000
     assert Bpf.match(transport, gone) == {:error, {:bpf_port_exited, status}}
+    refute Bpf.open?(transport)
     assert Bpf.send(transport, <<1>>) == {:error, :closed}
 
     closed = Bpf.close(transport)
