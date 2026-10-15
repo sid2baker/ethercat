@@ -27,7 +27,7 @@ state, but remains electrically present on the segment.
 ## Actual Behavior Today
 
 Observed with `Simulator.inject_fault({:retreat_to_safeop, :outputs})` and
-`output_health_poll_ms: 20`:
+`output_health_poll_ms: SimulatorRing.health_poll_ms()`:
 
 - the outputs slave emits a health-fault telemetry event with AL state `0x04`
 - the outputs slave fault becomes `{:retreated, :safeop}`

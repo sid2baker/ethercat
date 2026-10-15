@@ -402,7 +402,7 @@ defmodule EtherCAT.CaptureTest do
                scan_stable_ms: 20,
                scan_poll_ms: 10,
                # Capture tests exercise data and scaffolding, not real-time latency.
-               frame_timeout_ms: 100
+               frame_timeout_ms: SimulatorRing.frame_timeout_ms()
              )
 
     assert :ok = EtherCAT.await_ready(session, 2_000)

@@ -11,8 +11,7 @@ defmodule EtherCAT.Integration.Simulator.DelayedSlaveFaultScriptTest do
     on_exit(fn -> SimulatorRing.stop_all!() end)
 
     SimulatorRing.boot_operational!(
-      slave_config_opts: [output_health_poll_ms: 20],
-      start_opts: [frame_timeout_ms: 10],
+      slave_config_opts: [output_health_poll_ms: SimulatorRing.health_poll_ms()],
       await_operational_ms: 2_500
     )
 
@@ -24,13 +23,21 @@ defmodule EtherCAT.Integration.Simulator.DelayedSlaveFaultScriptTest do
       List.duplicate(Fault.drop_responses(), 6) ++ List.duplicate(Fault.wkc_offset(-1), 4)
 
     assert :ok = Simulator.inject_fault(Fault.script(fault_script))
-    assert :ok = Simulator.inject_fault(Fault.retreat_to_safeop(:outputs) |> Fault.after_ms(600))
+    # Allow all six dropped frames to time out and recovery to finish before
+    # the independent, timer-scheduled SAFEOP fault becomes eligible.
+    retreat_delay_ms = 6 * SimulatorRing.frame_timeout_ms() + 2_000
+
+    assert :ok =
+             Simulator.inject_fault(
+               Fault.retreat_to_safeop(:outputs)
+               |> Fault.after_ms(retreat_delay_ms)
+             )
 
     assert_eventually(
       fn ->
         assert {:ok, :recovering} = EtherCAT.state(SimulatorRing.session!())
       end,
-      80
+      160
     )
 
     assert_eventually(
@@ -42,7 +49,7 @@ defmodule EtherCAT.Integration.Simulator.DelayedSlaveFaultScriptTest do
         assert {:ok, :operational} = EtherCAT.state(SimulatorRing.session!())
         assert nil == SimulatorRing.fault_for(:outputs)
       end,
-      120
+      300
     )
 
     assert_eventually(
@@ -53,7 +60,7 @@ defmodule EtherCAT.Integration.Simulator.DelayedSlaveFaultScriptTest do
         assert {:ok, %{al_state: :safeop}} =
                  EtherCAT.Diagnostics.slave_info(SimulatorRing.session!(), :outputs)
       end,
-      120
+      300
     )
 
     assert_eventually(

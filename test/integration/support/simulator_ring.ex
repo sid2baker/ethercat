@@ -19,6 +19,12 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
   @master_ip {127, 0, 0, 1}
   @simulator_ip {127, 0, 0, 2}
   @raw_boot_attempts 3
+
+  # Shared by Linux and macOS: these are protocol scenarios, not real-time
+  # scheduling benchmarks. Keep ordinary host delays below the transport budget.
+  @frame_timeout_ms 500
+  # Health requests expire after half the polling interval.
+  @health_poll_ms 100
   @default_connections [
     {{:outputs, :ch1}, {:inputs, :ch1}},
     {{:outputs, :ch16}, {:inputs, :ch16}}
@@ -37,6 +43,12 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
               master_interface: binary(),
               simulator_interface: binary()
             }
+
+  @spec frame_timeout_ms() :: pos_integer()
+  def frame_timeout_ms, do: @frame_timeout_ms
+
+  @spec health_poll_ms() :: pos_integer()
+  def health_poll_ms, do: @health_poll_ms
 
   @spec master_ip() :: :inet.ip_address()
   def master_ip, do: @master_ip
@@ -125,10 +137,7 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
   end
 
   def slave_configs(:segmented, opts) do
-    # Health requests expire after half this interval. A 20ms interval gives
-    # hosted runners only 10ms of scheduling headroom and creates unrelated
-    # disconnects while a scenario is observing a retained mailbox fault.
-    shared_health_poll_ms = Keyword.get(opts, :health_poll_ms, 100)
+    shared_health_poll_ms = Keyword.get(opts, :health_poll_ms, health_poll_ms())
     output_health_poll_ms = Keyword.get(opts, :output_health_poll_ms, shared_health_poll_ms)
     mailbox_health_poll_ms = Keyword.get(opts, :mailbox_health_poll_ms, shared_health_poll_ms)
 
@@ -230,9 +239,7 @@ defmodule EtherCAT.IntegrationSupport.SimulatorRing do
       dc: nil,
       scan_stable_ms: 20,
       scan_poll_ms: 10,
-      # Hosted runners are not real-time systems. Keep scheduler stalls separate
-      # from the protocol faults these scenarios explicitly inject.
-      frame_timeout_ms: 100,
+      frame_timeout_ms: frame_timeout_ms(),
       domains: [default_domain()],
       slaves: slave_configs(ring, Keyword.get(opts, :slave_config_opts, []))
     ]

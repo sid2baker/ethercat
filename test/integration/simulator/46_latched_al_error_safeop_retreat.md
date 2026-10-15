@@ -23,7 +23,7 @@ physically disappear.
 ## Actual Behavior Today
 
 Observed with `Simulator.inject_fault(Fault.latch_al_error(:outputs, 0x001D))`
-and `output_health_poll_ms: 20`:
+and `output_health_poll_ms: SimulatorRing.health_poll_ms()`:
 
 - the outputs slave emits a health-fault telemetry event with AL state `0x08`
   and error code `0x001D`

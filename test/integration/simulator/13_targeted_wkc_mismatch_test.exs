@@ -11,7 +11,10 @@ defmodule EtherCAT.Integration.Simulator.TargetedWKCMismatchTest do
   setup do
     on_exit(fn -> SimulatorRing.stop_all!() end)
 
-    SimulatorRing.boot_operational!(slave_config_opts: [output_health_poll_ms: 100])
+    SimulatorRing.boot_operational!(
+      slave_config_opts: [output_health_poll_ms: SimulatorRing.health_poll_ms()]
+    )
+
     :ok
   end
 

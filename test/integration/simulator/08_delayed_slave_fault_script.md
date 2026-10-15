@@ -21,7 +21,9 @@ device later retreats to `SAFEOP` due to a local condition.
 Observed with:
 
 - `Simulator.inject_fault({:fault_script, List.duplicate(:drop_responses, 6) ++ List.duplicate({:wkc_offset, -1}, 4)})`
-- `Simulator.inject_fault({:after_ms, 600, {:retreat_to_safeop, :outputs}})`
+- a `Fault.retreat_to_safeop(:outputs)` scheduled with `Fault.after_ms/2`,
+  using `6 * SimulatorRing.frame_timeout_ms() + 2_000` to leave room for
+  all six dropped frames and recovery before the independent timer fires
 
 - the master first enters `:recovering`
 - the delayed fault stays visible in `Simulator.info/0` while pending

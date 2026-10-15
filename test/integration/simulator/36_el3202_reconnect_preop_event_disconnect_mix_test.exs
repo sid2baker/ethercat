@@ -31,7 +31,10 @@ defmodule EtherCAT.Integration.Simulator.EL3202ReconnectPreopEventDisconnectMixT
 
     SimulatorRing.boot_operational!(
       ring: :hardware,
-      slave_config_opts: [output_health_poll_ms: 100, rtd_health_poll_ms: 100]
+      slave_config_opts: [
+        output_health_poll_ms: SimulatorRing.health_poll_ms(),
+        rtd_health_poll_ms: SimulatorRing.health_poll_ms()
+      ]
     )
 
     :ok

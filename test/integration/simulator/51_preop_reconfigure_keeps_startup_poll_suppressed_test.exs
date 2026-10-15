@@ -36,7 +36,7 @@ defmodule EtherCAT.Integration.Simulator.PreopReconfigureKeepsStartupPollSuppres
 
     SimulatorRing.boot_preop_ready!(
       simulator_opts: [devices: devices, connections: []],
-      start_opts: [domains: [], slaves: slaves, frame_timeout_ms: 20],
+      start_opts: [domains: [], slaves: slaves],
       await_ready_ms: 2_500
     )
 
@@ -51,7 +51,7 @@ defmodule EtherCAT.Integration.Simulator.PreopReconfigureKeepsStartupPollSuppres
                SimulatorRing.session!(),
                :outputs,
                target_state: :preop,
-               health_poll_ms: 20
+               health_poll_ms: SimulatorRing.health_poll_ms()
              )
 
     assert :ok = Simulator.inject_fault(Fault.disconnect(:outputs))

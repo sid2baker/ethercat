@@ -122,14 +122,14 @@ defmodule EtherCAT.Integration.Simulator.ReconnectPreopMailboxAbortTest do
         driver: EL2809,
         process_data: {:all, :main},
         target_state: :op,
-        health_poll_ms: 20
+        health_poll_ms: SimulatorRing.health_poll_ms()
       },
       %SlaveConfig{
         name: :mailbox,
         driver: ConfiguredMailboxDevice,
         process_data: :none,
         target_state: :op,
-        health_poll_ms: 20
+        health_poll_ms: SimulatorRing.health_poll_ms()
       }
     ]
   end

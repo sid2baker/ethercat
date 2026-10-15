@@ -21,7 +21,7 @@ An I/O terminal loses power, a field cable goes intermittent, or a connector is
 ## Actual Behavior Today
 
 Observed with `Simulator.inject_fault({:next_exchanges, 30, {:disconnect, :outputs}})` and
-`output_health_poll_ms: 20`:
+`output_health_poll_ms: SimulatorRing.health_poll_ms()`:
 
 - the domain first reports `{:wkc_mismatch, %{expected: 3, actual: 1}}`
 - master enters `:recovering`
