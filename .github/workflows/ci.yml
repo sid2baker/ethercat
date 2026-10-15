@@ -61,5 +61,25 @@ jobs:
         if: runner.os == 'macOS'
         run: sudo ifconfig lo0 alias 127.0.0.2
 
+      - name: Create isolated BPF test interfaces
+        if: runner.os == 'macOS'
+        run: |
+          sudo ifconfig feth0 create
+          sudo ifconfig feth1 create
+          sudo ifconfig feth1 peer feth0
+          sudo ifconfig feth0 up
+          sudo ifconfig feth1 up
+          # Only this ephemeral runner gets direct BPF access. No physical NIC,
+          # IP address, bridge, or Internet sharing is used by these tests.
+          sudo chown "$(id -u):$(id -g)" /dev/bpf*
+          echo "ETHERCAT_BPF_INTERFACE=feth0" >> "$GITHUB_ENV"
+          echo "ETHERCAT_BPF_PEER_INTERFACE=feth1" >> "$GITHUB_ENV"
+
       - name: Run CI
         run: mix ci
+
+      - name: Remove BPF test interfaces
+        if: always() && runner.os == 'macOS'
+        run: |
+          sudo ifconfig feth0 destroy
+          sudo ifconfig feth1 destroy

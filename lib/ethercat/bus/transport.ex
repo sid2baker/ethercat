@@ -7,7 +7,8 @@ defmodule EtherCAT.Bus.Transport do
 
   ## Implementations
 
-    - `EtherCAT.Bus.Transport.RawSocket` — AF_PACKET raw Ethernet
+    - `EtherCAT.Bus.Transport.RawSocket` — AF_PACKET raw Ethernet, on Linux
+    - `EtherCAT.Bus.Transport.Bpf` — BPF raw Ethernet through a port program, on macOS
     - `EtherCAT.Bus.Transport.UdpSocket` — UDP/IP encapsulation (spec §2.6)
 
   ## Async receive flow
@@ -24,6 +25,18 @@ defmodule EtherCAT.Bus.Transport do
   """
 
   @type t :: struct()
+
+  @doc """
+  The raw Ethernet transport of this operating system: `EtherCAT.Bus.Transport.Bpf` on macOS,
+  which has no `AF_PACKET` sockets, and `EtherCAT.Bus.Transport.RawSocket` everywhere else.
+  """
+  @spec raw() :: module()
+  def raw do
+    case :os.type() do
+      {:unix, :darwin} -> EtherCAT.Bus.Transport.Bpf
+      _other -> EtherCAT.Bus.Transport.RawSocket
+    end
+  end
 
   @doc "Open a transport from keyword options."
   @callback open(keyword()) :: {:ok, t()} | {:error, term()}

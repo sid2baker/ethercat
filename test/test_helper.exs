@@ -13,6 +13,29 @@ defmodule EtherCAT.TestHelper do
     )
   end
 
+  # BPF tests require an isolated feth pair. Once explicitly configured, setup
+  # or helper failures must fail the tests, never silently exclude them.
+  def bpf_excludes do
+    interface = System.get_env("ETHERCAT_BPF_INTERFACE")
+
+    cond do
+      :os.type() != {:unix, :darwin} ->
+        [:bpf]
+
+      interface in [nil, ""] ->
+        IO.puts(
+          :stderr,
+          "warning: excluding :bpf tests. Set ETHERCAT_BPF_INTERFACE and " <>
+            "ETHERCAT_BPF_PEER_INTERFACE to an isolated feth pair (see README.md)."
+        )
+
+        [:bpf]
+
+      true ->
+        []
+    end
+  end
+
   def raw_socket_redundant_excludes do
     exclusion_for(:raw_socket_redundant, "redundant raw simulator", redundant_raw_interfaces())
   end
@@ -210,6 +233,7 @@ ExUnit.start(
   formatters: [ExUnit.CLIFormatter, EtherCAT.TestProgressFormatter],
   exclude:
     [:hardware] ++
+      EtherCAT.TestHelper.bpf_excludes() ++
       EtherCAT.TestHelper.raw_socket_excludes() ++
       EtherCAT.TestHelper.raw_socket_redundant_excludes() ++
       EtherCAT.TestHelper.raw_socket_redundant_toggle_excludes()
