@@ -211,7 +211,7 @@ defmodule EtherCAT.Integration.Simulator.ATV320ProtocolSafeopRecoveryTest do
         driver: ATV320,
         process_data: {:all, :main},
         target_state: :op,
-        health_poll_ms: 20
+        health_poll_ms: SimulatorRing.health_poll_ms()
       }
     ]
   end

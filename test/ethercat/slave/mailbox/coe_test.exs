@@ -90,6 +90,98 @@ defmodule EtherCAT.Slave.Mailbox.CoETest do
     assert request.body == <<0x2B, 0x00, 0x20, 0x01, 0x34, 0x12, 0x00, 0x00>>
   end
 
+  test "download_sdo polls until the mailbox response is ready" do
+    bus =
+      start_supervised!({
+        FakeBus,
+        [
+          write_ok(),
+          mailbox_empty(),
+          mailbox_empty(),
+          mailbox_ready(),
+          mailbox_read(download_init_ack(1, 0x2000, 0x01), @mailbox_config.send_size)
+        ]
+      })
+
+    assert {:ok, 1} = CoE.download_sdo(bus, @station, @mailbox_config, 0, 0x2000, 0x01, <<1>>)
+    assert length(FakeBus.calls(bus)) == 5
+  end
+
+  test "download_sdo stops polling after elapsed time exhausts the response deadline" do
+    bus =
+      start_supervised!({FakeBus, [write_ok(), {:delay, 1_100, mailbox_empty()}]})
+
+    assert {:error, :response_timeout} =
+             CoE.download_sdo(bus, @station, @mailbox_config, 0, 0x2000, 0x01, <<1>>)
+
+    # A slow poll has consumed the budget; do not issue another transaction.
+    assert length(FakeBus.calls(bus)) == 2
+  end
+
+  test "upload_sdo rejects a ready response received after the response deadline" do
+    bus =
+      start_supervised!({
+        FakeBus,
+        [
+          write_ok(),
+          {:delay, 1_100, mailbox_ready()},
+          mailbox_read(
+            upload_init_expedited_response(1, 0x3000, 0x02, <<1>>),
+            @mailbox_config.send_size
+          )
+        ]
+      })
+
+    assert {:error, :response_timeout} =
+             CoE.upload_sdo(bus, @station, @mailbox_config, 0, 0x3000, 0x02)
+
+    assert length(FakeBus.calls(bus)) == 2
+  end
+
+  test "response polling preserves transport errors and zero working counters" do
+    for {reply, reason} <- [
+          {{:error, :timeout}, :timeout},
+          {{:error, :closed}, :closed},
+          {{:ok, [%{reply_datagram(<<0>>) | wkc: 0}]}, :no_response}
+        ] do
+      bus = start_supervised!({FakeBus, [write_ok(), mailbox_empty(), reply]})
+
+      assert {:error, ^reason} =
+               CoE.download_sdo(bus, @station, @mailbox_config, 0, 0x2000, 0x01, <<1>>)
+
+      assert length(FakeBus.calls(bus)) == 3
+    end
+  end
+
+  test "a transport timeout is not relabeled when the response deadline has elapsed" do
+    bus = start_supervised!({FakeBus, [write_ok(), {:delay, 1_100, {:error, :timeout}}]})
+
+    assert {:error, :timeout} =
+             CoE.download_sdo(bus, @station, @mailbox_config, 0, 0x2000, 0x01, <<1>>)
+
+    assert length(FakeBus.calls(bus)) == 2
+  end
+
+  test "each segmented exchange gets its own response deadline" do
+    bus =
+      start_supervised!({
+        FakeBus,
+        [
+          write_ok(),
+          {:delay, 600, mailbox_ready()},
+          mailbox_read(download_init_ack(1, 0x2001, 0x01), @mailbox_config.send_size),
+          write_ok(),
+          {:delay, 600, mailbox_ready()},
+          mailbox_read(download_segment_ack(2, 0), @mailbox_config.send_size)
+        ]
+      })
+
+    assert {:ok, 2} =
+             CoE.download_sdo(bus, @station, @mailbox_config, 0, 0x2001, 0x01, "segmented!!?")
+
+    assert length(FakeBus.calls(bus)) == 6
+  end
+
   test "download_sdo segments larger payloads and flips the toggle bit" do
     data = <<0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19>>
 
@@ -478,6 +570,8 @@ defmodule EtherCAT.Slave.Mailbox.CoETest do
   defp write_ok, do: {:ok, [reply_datagram(<<>>)]}
 
   defp mailbox_ready, do: {:ok, [reply_datagram(<<0x08>>)]}
+
+  defp mailbox_empty, do: {:ok, [reply_datagram(<<0>>)]}
 
   defp mailbox_read(frame, send_size) do
     {:ok, [reply_datagram(pad_frame(frame, send_size))]}

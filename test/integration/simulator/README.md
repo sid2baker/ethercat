@@ -28,6 +28,23 @@ interfaces and permissions are available. Missing prerequisites are reported as
 excluded tests, not evidence that those transports passed. See
 [transport coverage](#transport-baseline-coverage) below.
 
+## Timing on shared hosts
+
+The UDP protocol scenarios use `SimulatorRing.frame_timeout_ms/0` (500 ms)
+for frame replies and `SimulatorRing.health_poll_ms/0` (100 ms) where they
+explicitly enable frequent health polling. These test-only budgets are the
+same on Linux and macOS; they do not change production defaults. A health
+request's queue-age budget is half its polling interval, so a 20 ms poll
+leaves only 10 ms of scheduling headroom on a hosted runner.
+
+Inherit the frame budget from `SimulatorRing.start_master/2` rather than
+copying a short timeout into each scenario. Tests that deliberately measure
+cycle/timeout behavior may still override it. Counted dropped-frame scripts
+must allow enough observation time for every dropped frame to time out;
+timer-scheduled follow-up faults must account for that duration too. Keep
+exact fault assertions: transport timeouts must not be accepted in place of
+mailbox response timeouts or retained AL-state faults.
+
 ## Add a regression
 
 Use a bounded reproduce → fix → verify loop:

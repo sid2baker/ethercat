@@ -12,7 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `EtherCAT.Bus.Transport.Bpf`, which sends and receives EtherCAT frames through
   a BPF device with a small C port program (`priv/bpf/ethercat_bpf.c`), compiled
   with the system's C compiler on first use. `EtherCAT.Bus.Transport.raw/0`
-  gives the raw transport of the operating system. Linux is unchanged.
+  gives the raw transport of the operating system. Linux is unchanged (`1be936c`).
+
+### Fixed
+- CoE mailbox response polling uses a one-second monotonic deadline rather than
+  a poll count, preventing scheduler and bus delays from prolonging polling or
+  allowing late responses. Transport errors remain visible (`197cb39`).
 
 ## [0.5.0] - 2026-10-05
 

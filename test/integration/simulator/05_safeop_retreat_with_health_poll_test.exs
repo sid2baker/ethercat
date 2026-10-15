@@ -9,8 +9,7 @@ defmodule EtherCAT.Integration.Simulator.SafeOpRetreatWithHealthPollTest do
 
   setup do
     SimulatorRing.boot_operational!(
-      slave_config_opts: [output_health_poll_ms: 20],
-      start_opts: [frame_timeout_ms: 10],
+      slave_config_opts: [output_health_poll_ms: SimulatorRing.health_poll_ms()],
       await_operational_ms: 2_500
     )
 

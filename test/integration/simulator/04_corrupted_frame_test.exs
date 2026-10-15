@@ -8,10 +8,7 @@ defmodule EtherCAT.Integration.Simulator.CorruptedFrameTest do
   alias EtherCAT.Simulator.Transport.Udp.Fault, as: UdpFault
 
   setup do
-    SimulatorRing.boot_operational!(
-      start_opts: [frame_timeout_ms: 10],
-      await_operational_ms: 3_000
-    )
+    SimulatorRing.boot_operational!(await_operational_ms: 3_000)
 
     trace = Trace.start_capture()
 

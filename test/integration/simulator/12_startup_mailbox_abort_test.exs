@@ -42,9 +42,7 @@ defmodule EtherCAT.Integration.Simulator.StartupMailboxAbortTest do
 
     assert :ok = Simulator.inject_fault(Fault.mailbox_abort(:mailbox, 0x2000, 0x02, @abort_code))
 
-    SimulatorRing.start_master!(simulator,
-      start_opts: [domains: [], slaves: slaves, frame_timeout_ms: 20]
-    )
+    SimulatorRing.start_master!(simulator, start_opts: [domains: [], slaves: slaves])
 
     assert {:error,
             {:activation_failed, %{mailbox: {:safeop, {:preop_configuration_failed, @failure}}}}} =
@@ -58,9 +56,7 @@ defmodule EtherCAT.Integration.Simulator.StartupMailboxAbortTest do
     assert :ok = Simulator.clear_faults()
     assert :ok = EtherCAT.stop(SimulatorRing.session!())
 
-    SimulatorRing.start_master!(simulator,
-      start_opts: [domains: [], slaves: slaves, frame_timeout_ms: 20]
-    )
+    SimulatorRing.start_master!(simulator, start_opts: [domains: [], slaves: slaves])
 
     assert :ok = EtherCAT.await_operational(SimulatorRing.session!(), 2_500)
     assert {:ok, :operational} = EtherCAT.state(SimulatorRing.session!())

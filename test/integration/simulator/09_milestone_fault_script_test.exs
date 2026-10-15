@@ -11,8 +11,7 @@ defmodule EtherCAT.Integration.Simulator.MilestoneFaultScriptTest do
     on_exit(fn -> SimulatorRing.stop_all!() end)
 
     SimulatorRing.boot_operational!(
-      slave_config_opts: [output_health_poll_ms: 20],
-      start_opts: [frame_timeout_ms: 10],
+      slave_config_opts: [output_health_poll_ms: SimulatorRing.health_poll_ms()],
       await_operational_ms: 2_500
     )
 
@@ -35,7 +34,7 @@ defmodule EtherCAT.Integration.Simulator.MilestoneFaultScriptTest do
       fn ->
         assert {:ok, :recovering} = EtherCAT.state(SimulatorRing.session!())
       end,
-      80
+      160
     )
 
     assert_eventually(
@@ -57,7 +56,7 @@ defmodule EtherCAT.Integration.Simulator.MilestoneFaultScriptTest do
         assert {:ok, :operational} = EtherCAT.state(SimulatorRing.session!())
         assert nil == SimulatorRing.fault_for(:outputs)
       end,
-      160
+      300
     )
 
     assert_eventually(

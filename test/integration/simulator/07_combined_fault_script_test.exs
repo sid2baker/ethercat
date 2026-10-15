@@ -11,8 +11,7 @@ defmodule EtherCAT.Integration.Simulator.CombinedFaultScriptTest do
     on_exit(fn -> SimulatorRing.stop_all!() end)
 
     SimulatorRing.boot_operational!(
-      slave_config_opts: [output_health_poll_ms: 20],
-      start_opts: [frame_timeout_ms: 10],
+      slave_config_opts: [output_health_poll_ms: SimulatorRing.health_poll_ms()],
       await_operational_ms: 2_500
     )
 
@@ -47,7 +46,7 @@ defmodule EtherCAT.Integration.Simulator.CombinedFaultScriptTest do
         assert {:ok, %{al_state: :op}} =
                  EtherCAT.Diagnostics.slave_info(SimulatorRing.session!(), :outputs)
       end,
-      200
+      400
     )
 
     assert :ok =

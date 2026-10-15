@@ -9,7 +9,6 @@ defmodule EtherCAT.Integration.Simulator.PreopProvisioningHeldPreopHealthPollTes
   alias EtherCAT.Slave.Config, as: SlaveConfig
 
   @disconnect_steps 40
-  @mailbox_health_poll_ms 20
 
   setup do
     on_exit(fn -> SimulatorRing.stop_all!() end)
@@ -23,7 +22,7 @@ defmodule EtherCAT.Integration.Simulator.PreopProvisioningHeldPreopHealthPollTes
         driver: SegmentedConfiguredMailboxDevice,
         process_data: :none,
         target_state: :preop,
-        health_poll_ms: @mailbox_health_poll_ms
+        health_poll_ms: SimulatorRing.health_poll_ms()
       }
     ]
 
